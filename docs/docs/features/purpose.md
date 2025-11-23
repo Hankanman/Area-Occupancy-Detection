@@ -18,7 +18,7 @@ Selecting a purpose automatically sets the **Decay Half Life** – the time it t
 
 The chosen purpose does not directly alter the Bayesian calculation beyond this decay timing. A shorter half life causes the probability to drop faster after activity stops; a longer half life keeps the area marked as occupied for longer.
 
-### Dynamic Sleeping Decay
+## Dynamic Sleeping Decay
 
 Areas with the `Sleeping` purpose have a special dynamic behavior tied to your household's sleep schedule.
 
