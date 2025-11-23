@@ -282,8 +282,10 @@ class TestAnalyzeAndSaveCorrelation:
         result = analyze_and_save_correlation(
             db, area_name, entity_id, analysis_period_days=30
         )
-        # May return False if insufficient data
-        assert isinstance(result, bool)
+        # Should return correlation data (dict) if successful
+        assert isinstance(result, dict)
+        assert result["area_name"] == area_name
+        assert result["entity_id"] == entity_id
 
     def test_analyze_and_save_correlation_no_data(self, test_db):
         """Test analyze_and_save when no correlation data is generated."""
@@ -293,7 +295,7 @@ class TestAnalyzeAndSaveCorrelation:
         result = analyze_and_save_correlation(
             db, area_name, "sensor.nonexistent", analysis_period_days=30
         )
-        assert result is False
+        assert result is None
 
 
 class TestCalculatePearsonCorrelationEdgeCases:

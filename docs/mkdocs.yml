@@ -108,6 +108,7 @@ nav:
       - Bayesian Calculation: features/calculation.md
       - Prior Learning: features/prior-learning.md
       - Sensor Likelihoods: features/likelihood.md
+      - Numeric Correlation: features/numeric-correlation.md
       - Area Purpose: features/purpose.md
       - Wasp in Box: features/wasp-in-box.md
       - Probability Decay: features/decay.md

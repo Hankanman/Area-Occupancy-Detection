@@ -693,6 +693,77 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
+    def test_update_correlation(self, coordinator: AreaOccupancyCoordinator) -> None:
+        """Test update_correlation method."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        # Test with valid positive correlation
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "occupancy_positive",
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+        }
+        entity.update_correlation(correlation_data)
+        # Active > 10 + 2*2 = 14
+        assert entity.learned_active_range == (14.0, float("inf"))
+        assert entity.active_range == (14.0, float("inf"))
+        # Check dynamic likelihoods: 0.5 ± (0.8 * 0.4) = 0.82, 0.18
+        assert abs(entity.prob_given_true - 0.82) < 0.001
+        assert abs(entity.prob_given_false - 0.18) < 0.001
+
+        # Test with valid negative correlation
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "occupancy_negative",
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+        }
+        entity.update_correlation(correlation_data)
+        # Active < 10 - 2*2 = 6
+        assert entity.learned_active_range == (float("-inf"), 6.0)
+        assert entity.active_range == (float("-inf"), 6.0)
+        # Check dynamic likelihoods: 0.5 ± (0.8 * 0.4) = 0.82, 0.18
+        assert abs(entity.prob_given_true - 0.82) < 0.001
+        assert abs(entity.prob_given_false - 0.18) < 0.001
+
+        # Test with low confidence - should now set range AND weak probabilities
+        correlation_data = {
+            "confidence": 0.2,
+            "correlation_type": "occupancy_positive",
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+        }
+        entity.update_correlation(correlation_data)
+        # Range should be set even with low confidence
+        assert entity.learned_active_range == (14.0, float("inf"))
+        # Check weak probabilities: 0.5 ± (0.2 * 0.4) = 0.58, 0.42
+        assert abs(entity.prob_given_true - 0.58) < 0.001
+        assert abs(entity.prob_given_false - 0.42) < 0.001
+
+        # Test with invalid data (missing keys)
+        correlation_data = {
+            "confidence": 0.9,
+            "correlation_type": "occupancy_positive",
+            # missing mean/std
+        }
+        entity.update_correlation(correlation_data)
+        assert entity.learned_active_range is None
+
+        # Test with 'none' correlation type
+        correlation_data = {
+            "confidence": 0.9,
+            "correlation_type": "none",
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+        }
+        entity.update_correlation(correlation_data)
+        assert entity.learned_active_range is None
+
+        # Test with None data
+        entity.update_correlation(None)
+        assert entity.learned_active_range is None
+
     @pytest.mark.asyncio
     async def test_entity_manager_cleanup(
         self, coordinator: AreaOccupancyCoordinator

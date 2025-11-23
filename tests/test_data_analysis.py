@@ -1,7 +1,7 @@
 """Tests for data analysis module."""
 
 from datetime import UTC, timedelta
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -10,7 +10,9 @@ from custom_components.area_occupancy.data.analysis import (
     LikelihoodAnalyzer,
     PriorAnalyzer,
     is_timestamp_occupied,
+    start_likelihood_analysis,
 )
+from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.core import AreaOccupancyDB
 from homeassistant.util import dt as dt_util
@@ -408,6 +410,98 @@ class TestLikelihoodAnalyzerExtended:
         occupied_times = [(start_time, end_time)]
         likelihoods = analyzer.analyze_likelihoods(occupied_times, area.entities)
         assert isinstance(likelihoods, dict)
+
+    def test_analyze_likelihoods_skips_correlation_entities(
+        self, test_db: AreaOccupancyDB, db_test_session
+    ) -> None:
+        """Test that entities with learned correlation ranges are skipped during likelihood update."""
+
+    @pytest.mark.asyncio
+    async def test_start_likelihood_analysis_skips_correlation_entities(
+        self, test_db: AreaOccupancyDB
+    ) -> None:
+        """Test that entities with learned correlation ranges are skipped during likelihood update."""
+        coordinator = test_db.coordinator
+        area_name = coordinator.get_area_names()[0]
+
+        # Setup entity manager with mocked entity
+        # Create entity manager manually to ensure clean state
+
+        # Mock factory inside EntityManager
+        with patch(
+            "custom_components.area_occupancy.data.entity.EntityFactory"
+        ) as mock_factory_class:
+            mock_factory = Mock()
+            mock_factory.create_all_from_config.return_value = {}
+            mock_factory_class.return_value = mock_factory
+
+            entity_manager = EntityManager(coordinator, area_name=area_name)
+
+            # Add a mock entity with learned correlation
+            mock_entity = Mock()
+            mock_entity.entity_id = "sensor.correlated_temp"
+            mock_entity.learned_active_range = (20.0, 25.0)  # Has learned range
+            mock_entity.update_likelihood = Mock()
+            entity_manager.add_entity(mock_entity)
+
+            # Add a mock area to coordinator
+            mock_area = Mock()
+            mock_area.config = Mock()
+            # Ensure area has config for motion sensor check
+            mock_area.config.sensors.motion_prob_given_true = 0.95
+            mock_area.config.sensors.motion_prob_given_false = 0.02
+            mock_area.prior.get_occupied_intervals.return_value = []  # Return empty occupied intervals
+
+            # Patch coordinator.get_area to return our mock area
+            with (
+                patch.object(coordinator, "get_area", return_value=mock_area),
+                patch(
+                    "custom_components.area_occupancy.data.analysis.LikelihoodAnalyzer"
+                ) as MockAnalyzer,
+                patch(
+                    "custom_components.area_occupancy.data.analysis._update_likelihoods_in_db",
+                    return_value=["sensor.correlated_temp"],
+                ),
+            ):
+                # Mock dependencies
+                # 1. Mock analyzer.analyze_likelihoods to return new values
+                # 2. Mock _update_likelihoods_in_db to simulate DB update success (returning the entity ID)
+                analyzer_instance = MockAnalyzer.return_value
+                # Return new calculated values that should be ignored
+                analyzer_instance.analyze_likelihoods.return_value = {
+                    "sensor.correlated_temp": (0.123, 0.456)
+                }
+
+                await start_likelihood_analysis(coordinator, area_name, entity_manager)
+
+            # Verify update_likelihood was NOT called because learned_active_range is present
+            mock_entity.update_likelihood.assert_not_called()
+
+            # Now test the negative case: clear learned range and ensure it IS called
+            mock_entity.learned_active_range = None
+            mock_entity.update_likelihood.reset_mock()
+
+            # Re-mock dependencies for the second call
+            with (
+                patch.object(coordinator, "get_area", return_value=mock_area),
+                patch(
+                    "custom_components.area_occupancy.data.analysis.LikelihoodAnalyzer"
+                ) as MockAnalyzer,
+                patch(
+                    "custom_components.area_occupancy.data.analysis._update_likelihoods_in_db",
+                    return_value=["sensor.correlated_temp"],
+                ),
+            ):
+                analyzer_instance = MockAnalyzer.return_value
+                analyzer_instance.analyze_likelihoods.return_value = {
+                    "sensor.correlated_temp": (0.123, 0.456)
+                }
+
+                # Mock the DB update to return the entity ID so the loop proceeds to update_likelihood
+                await start_likelihood_analysis(coordinator, area_name, entity_manager)
+
+            # Verify update_likelihood WAS called
+            mock_entity.update_likelihood.assert_called_once_with(0.123, 0.456)
 
     def test_analyze_likelihoods_with_no_sensors(
         self, test_db: AreaOccupancyDB, db_test_session

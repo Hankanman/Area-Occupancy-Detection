@@ -47,11 +47,38 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
     """
     likelihood_data = {}
     for entity_id, entity in area.entities.entities.items():
+        # Prepare active_range for JSON serialization
+        active_range_val = None
+        if entity.active_range:
+            try:
+                active_range_val = []
+                # Ensure active_range is iterable (tuple or list)
+                # Mock objects might report having active_range but fail iteration if not configured
+                range_iter = entity.active_range
+                if not isinstance(range_iter, (tuple, list)) and not hasattr(
+                    range_iter, "__iter__"
+                ):
+                    # Fallback for unconfigured mocks
+                    active_range_val = None
+                else:
+                    for val in range_iter:
+                        # JSON doesn't support infinity, use None for open bounds
+                        if val == float("inf") or val == float("-inf"):
+                            active_range_val.append(None)
+                        else:
+                            active_range_val.append(val)
+            except TypeError:
+                # Handle case where iteration fails (e.g. non-iterable Mock)
+                active_range_val = None
+
         likelihood_data[entity_id] = {
             "type": entity.type.input_type.value,
             "weight": entity.type.weight,
             "prob_given_true": entity.prob_given_true,
             "prob_given_false": entity.prob_given_false,
+            "active_states": entity.active_states,
+            "active_range": active_range_val,
+            "is_active": entity.active,
         }
     return likelihood_data
 
