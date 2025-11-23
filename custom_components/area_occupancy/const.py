@@ -39,6 +39,7 @@ CONF_ACTION_FINISH_SETUP: Final = "finish_setup"
 CONF_ACTION_EDIT: Final = "edit"
 CONF_ACTION_REMOVE: Final = "remove"
 CONF_ACTION_CANCEL: Final = "cancel"
+CONF_ACTION_GLOBAL_SETTINGS: Final = "global_settings"
 CONF_OPTION_PREFIX_AREA: Final = "area_"
 
 # Configuration constants
@@ -75,6 +76,8 @@ CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
+CONF_SLEEP_START: Final = "sleep_start"
+CONF_SLEEP_END: Final = "sleep_end"
 
 
 # Configured Weights
@@ -102,6 +105,8 @@ DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = 0.02  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
+DEFAULT_SLEEP_START: Final = "23:00:00"
+DEFAULT_SLEEP_END: Final = "07:00:00"
 
 # Database recovery defaults
 DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
