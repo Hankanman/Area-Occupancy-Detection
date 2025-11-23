@@ -337,6 +337,7 @@ The feature creates a binary sensor that becomes part of your Area Occupancy Det
 - **States**: `on` (occupied) / `off` (unoccupied)
 - **Device Class**: `occupancy`
 - **Weight**: The sensor's state is considered alongside other sensors in the Bayesian probability calculation, with its influence determined by the configured weight (default: 0.8)
+- **Decay Disabled**: Unlike standard motion sensors, this sensor has probability decay disabled. When the door opens, it transitions immediately to "OFF", ensuring the room is marked as vacant instantly without a fading memory period.
 
 ## Configuration
 

@@ -21,6 +21,7 @@ The first step after naming the area is choosing its **purpose**. This sets a se
 | **Passageway**         | Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.                                             | 60 seconds        |
 | **Utility**            | Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.                                                                    | 120 seconds       |
 | **Food-Prep**          | Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.                                       | 300 seconds       |
+| **Bathroom**           | Showers, baths, getting ready. Motion can be obstructed or minimal; a moderate memory prevents darkness during a shower.                                                              | 600 seconds       |
 | **Eating**             | Dining table, breakfast bar. Family members usually stay seated 10-20 minutes but may be fairly still between bites.                                                                  | 600 seconds       |
 | **Working / Studying** | Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".                                         | 600 seconds       |
 | **Social**             | Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.                                               | 720 seconds       |
@@ -28,6 +29,9 @@ The first step after naming the area is choosing its **purpose**. This sets a se
 | **Sleeping**           | Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up. | 1800 seconds      |
 
 You can override the resulting half life in the parameters section if needed.
+
+**Global Sleep Schedule:**
+For areas with the `Sleeping` purpose, the half-life dynamically adjusts based on your configured sleep schedule. You can set your household's `Sleep Start` and `Sleep End` times in the **Global Settings** menu (accessible via the main integration options). Outside of sleep hours, `Sleeping` areas behave like `Relaxing` areas (900s half-life).
 
 After providing the name and purpose, you'll be guided through selecting sensors and configuring parameters. You can also reconfigure these later by clicking **Configure** on the integration card.
 

@@ -354,10 +354,25 @@ class EntityFactory:
             )
 
         # Create decay object
+        # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        half_life = self.config.decay.half_life
+
+        area = self.coordinator.areas.get(self.area_name)
+        if area and area.wasp_entity_id == entity_id:
+            half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+
+        # Get sleep settings from integration config
+        sleep_start = getattr(self.coordinator.integration_config, "sleep_start", None)
+        sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
+        purpose = getattr(self.config, "purpose", None)
+
         decay = Decay(
-            half_life=self.config.decay.half_life,
+            half_life=half_life,
             is_decaying=is_decaying,
             decay_start=decay_start,
+            purpose=purpose,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
         )
 
         return Entity(
@@ -404,10 +419,25 @@ class EntityFactory:
             active_states=active_states,
             active_range=active_range,
         )
+
+        # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        half_life = self.config.decay.half_life
+        area = self.coordinator.areas.get(self.area_name)
+        if area and area.wasp_entity_id == entity_id:
+            half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+
+        # Get sleep settings from integration config
+        sleep_start = getattr(self.coordinator.integration_config, "sleep_start", None)
+        sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
+        purpose = getattr(self.config, "purpose", None)
+
         decay = Decay(
-            half_life=self.config.decay.half_life,
+            half_life=half_life,
             is_decaying=False,
             decay_start=dt_util.utcnow(),
+            purpose=purpose,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
         )
 
         # Motion sensors use configured likelihoods (user-configurable per area)
