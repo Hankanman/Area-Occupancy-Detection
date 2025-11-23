@@ -414,7 +414,7 @@ def analyze_and_save_correlation(
     area_name: str,
     entity_id: str,
     analysis_period_days: int = 30,
-) -> bool:
+) -> dict[str, Any] | None:
     """Analyze and save correlation for a numeric sensor.
 
     Args:
@@ -424,7 +424,7 @@ def analyze_and_save_correlation(
         analysis_period_days: Number of days to analyze
 
     Returns:
-        True if analysis completed and saved, False otherwise
+        Correlation data if analysis completed and saved, None otherwise
     """
     correlation_data = analyze_numeric_correlation(
         db, area_name, entity_id, analysis_period_days
@@ -436,9 +436,11 @@ def analyze_and_save_correlation(
             entity_id,
             area_name,
         )
-        return False
+        return None
 
-    return save_correlation_result(db, correlation_data)
+    if save_correlation_result(db, correlation_data):
+        return correlation_data
+    return None
 
 
 def get_correlation_for_entity(

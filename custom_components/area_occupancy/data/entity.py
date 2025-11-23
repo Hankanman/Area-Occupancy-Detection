@@ -35,6 +35,7 @@ class Entity:
     state_provider: Callable[[str], Any] | None = None
     last_updated: datetime | None = None
     previous_evidence: bool | None = None
+    learned_active_range: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -146,6 +147,8 @@ class Entity:
     @property
     def active_range(self) -> tuple[float, float] | None:
         """Get the active range for the entity."""
+        if self.learned_active_range is not None:
+            return self.learned_active_range
         return self.type.active_range
 
     @property
@@ -166,6 +169,89 @@ class Entity:
         self.prob_given_true = clamp_probability(prob_given_true)
         self.prob_given_false = clamp_probability(prob_given_false)
         self.last_updated = dt_util.utcnow()
+
+    def update_correlation(self, correlation_data: dict[str, Any]) -> None:
+        """Update the learned active range based on correlation data."""
+        if not correlation_data:
+            return
+
+        # Get correlation details
+        confidence = correlation_data.get("confidence", 0.0)
+        correlation_type = correlation_data.get("correlation_type")
+        mean_unoccupied = correlation_data.get("mean_value_when_unoccupied")
+        std_unoccupied = correlation_data.get("std_dev_when_unoccupied")
+
+        # If any required data is missing or type is none, reset learned range
+        if (
+            mean_unoccupied is None
+            or std_unoccupied is None
+            or correlation_type == "none"
+        ):
+            self.learned_active_range = None
+            return
+
+        # Calculate dynamic likelihoods based on confidence
+        # Formula:
+        #   prob_given_true = 0.5 + (confidence * 0.4) -> [0.5, 0.9]
+        #   prob_given_false = 0.5 - (confidence * 0.4) -> [0.5, 0.1]
+        # Low confidence gives weak evidence (near 0.5), high confidence gives strong evidence
+        scaled_prob_true = 0.5 + (confidence * 0.4)
+        scaled_prob_false = 0.5 - (confidence * 0.4)
+
+        self.update_likelihood(scaled_prob_true, scaled_prob_false)
+
+        # Calculate thresholds (mean ± 2σ)
+        k_factor = 2.0
+
+        # Get occupied stats if available for closed ranges
+        mean_occupied = correlation_data.get("mean_value_when_occupied")
+        std_occupied = correlation_data.get("std_dev_when_occupied")
+
+        if correlation_type == "occupancy_positive":
+            # Active > mean_unoccupied + K*std_unoccupied
+            lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
+
+            # Try to determine upper bound from occupied stats
+            if mean_occupied is not None and std_occupied is not None:
+                # Cap at mean_occupied + K*std_occupied
+                upper_bound = mean_occupied + (k_factor * std_occupied)
+                # Ensure logical consistency (upper > lower)
+                if upper_bound <= lower_bound:
+                    # Fallback to open-ended if stats overlap significantly
+                    upper_bound = float("inf")
+            else:
+                upper_bound = float("inf")
+
+            self.learned_active_range = (lower_bound, upper_bound)
+
+        elif correlation_type == "occupancy_negative":
+            # Active < mean_unoccupied - K*std_unoccupied
+            upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
+
+            # Try to determine lower bound from occupied stats
+            if mean_occupied is not None and std_occupied is not None:
+                # Floor at mean_occupied - K*std_occupied
+                lower_bound = mean_occupied - (k_factor * std_occupied)
+                # Ensure logical consistency (lower < upper)
+                if lower_bound >= upper_bound:
+                    # Fallback to open-ended if stats overlap significantly
+                    lower_bound = float("-inf")
+            else:
+                lower_bound = float("-inf")
+
+            self.learned_active_range = (lower_bound, upper_bound)
+        else:
+            self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated learned active range for %s: %s (type=%s, conf=%.2f, p_true=%.2f, p_false=%.2f)",
+            self.entity_id,
+            self.learned_active_range,
+            correlation_type,
+            confidence,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
 
     def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
         """Update the decay of the entity."""

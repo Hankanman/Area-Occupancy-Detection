@@ -1076,6 +1076,16 @@ async def start_likelihood_analysis(
             prob_given_true, prob_given_false = likelihoods[entity_id]
             try:
                 entity_obj = entity_manager.get_entity(entity_id)
+
+                # Skip update if entity has a learned active range from correlation
+                # This prevents overwriting dynamic correlation-based likelihoods with standard analysis results
+                if entity_obj.learned_active_range is not None:
+                    _LOGGER.debug(
+                        "Skipping standard likelihood update for %s (using learned correlation)",
+                        entity_id,
+                    )
+                    continue
+
                 entity_obj.update_likelihood(prob_given_true, prob_given_false)
             except ValueError as e:
                 _LOGGER.warning(

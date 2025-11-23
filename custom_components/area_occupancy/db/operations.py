@@ -77,13 +77,16 @@ async def load_data(db: AreaOccupancyDB) -> None:
     """
     # Import here to avoid circular imports
 
-    def _read_data_operation(area_name: str) -> tuple[Any, list[Any], list[str]]:
+    def _read_data_operation(
+        area_name: str,
+    ) -> tuple[Any, list[Any], list[str], dict[str, Any]]:
         """Read data WITHOUT lock (parallel-safe) for a specific area."""
         # Ensure tables exist (important for in-memory databases where
         # each connection gets its own database)
         if not maintenance.verify_all_tables_exist(db):
             maintenance.init_db(db)
         stale_entity_ids = []
+        correlations = {}
         with db.get_session() as session:
             # Query by area_name instead of entry_id
             area = session.query(db.Areas).filter_by(area_name=area_name).first()
@@ -93,6 +96,31 @@ async def load_data(db: AreaOccupancyDB) -> None:
                 .order_by(db.Entities.entity_id)
                 .all()
             )
+
+            # Fetch correlations for all entities in this area
+            all_corrs = (
+                session.query(db.NumericCorrelations)
+                .filter_by(area_name=area_name)
+                .order_by(db.NumericCorrelations.calculation_date.desc())
+                .all()
+            )
+
+            # Keep only the latest per entity_id
+            for corr in all_corrs:
+                if corr.entity_id not in correlations:
+                    correlations[corr.entity_id] = {
+                        "correlation_coefficient": corr.correlation_coefficient,
+                        "correlation_type": corr.correlation_type,
+                        "confidence": corr.confidence,
+                        "mean_value_when_occupied": corr.mean_value_when_occupied,
+                        "mean_value_when_unoccupied": corr.mean_value_when_unoccupied,
+                        "std_dev_when_occupied": corr.std_dev_when_occupied,
+                        "std_dev_when_unoccupied": corr.std_dev_when_unoccupied,
+                        "threshold_active": corr.threshold_active,
+                        "threshold_inactive": corr.threshold_inactive,
+                        "calculation_date": corr.calculation_date,
+                    }
+
             if entities:
                 # Get the area's entity manager to check if entities exist
                 # Area is guaranteed to exist when area_name comes from get_area_names()
@@ -107,7 +135,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
                         current_entity_ids = set(area_data.entities.entity_ids)
                         if entity_obj.entity_id not in current_entity_ids:
                             stale_entity_ids.append(entity_obj.entity_id)
-        return area, entities, stale_entity_ids
+        return area, entities, stale_entity_ids, correlations
 
     def _delete_stale_operation(area_name: str, stale_ids: list[str]) -> None:
         """Delete stale entities (requires lock to prevent race conditions)."""
@@ -129,9 +157,12 @@ async def load_data(db: AreaOccupancyDB) -> None:
             area_data = db.coordinator.get_area(area_name)
 
             # Phase 1: Read without lock (all instances in parallel)
-            _area, entities, stale_ids = await db.hass.async_add_executor_job(
-                _read_data_operation, area_name
-            )
+            (
+                _area,
+                entities,
+                stale_ids,
+                correlations,
+            ) = await db.hass.async_add_executor_job(_read_data_operation, area_name)
 
             # Update prior from GlobalPriors table
             global_prior_data = db.get_global_prior(area_name)
@@ -171,6 +202,12 @@ async def load_data(db: AreaOccupancyDB) -> None:
                                 pass
                         existing_entity.last_updated = entity_obj.last_updated
                         existing_entity.previous_evidence = entity_obj.evidence
+
+                        # Update correlation data if available
+                        if entity_obj.entity_id in correlations:
+                            existing_entity.update_correlation(
+                                correlations[entity_obj.entity_id]
+                            )
                     except ValueError:
                         # Entity should exist but doesn't - create it from database
                         # (This handles cases where we can't determine current config, like in tests)
@@ -180,6 +217,10 @@ async def load_data(db: AreaOccupancyDB) -> None:
                             area_name,
                         )
                         new_entity = area_data.factory.create_from_db(entity_obj)
+                        if entity_obj.entity_id in correlations:
+                            new_entity.update_correlation(
+                                correlations[entity_obj.entity_id]
+                            )
                         area_data.entities.add_entity(new_entity)
 
             # Phase 2: Only lock if cleanup needed (rare)
