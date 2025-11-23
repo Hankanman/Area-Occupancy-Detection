@@ -50,7 +50,6 @@ from .const import (
     CONF_ACTION_ADD_AREA,
     CONF_ACTION_CANCEL,
     CONF_ACTION_EDIT,
-    CONF_ACTION_FINISH_SETUP,
     CONF_ACTION_GLOBAL_SETTINGS,
     CONF_ACTION_REMOVE,
     CONF_AIR_QUALITY_SENSORS,
@@ -1082,14 +1081,13 @@ def _handle_step_error(err: Exception) -> str:
     return "unknown"
 
 
-def _create_area_selection_schema(
-    areas: list[dict[str, Any]], is_initial: bool, hass: HomeAssistant | None = None
+def _create_area_selector_schema(
+    areas: list[dict[str, Any]], hass: HomeAssistant | None = None
 ) -> vol.Schema:
     """Create schema for area selection step.
 
     Args:
         areas: List of configured areas
-        is_initial: Whether this is the initial config flow (vs options flow)
         hass: Home Assistant instance (optional, for resolving area names)
 
     Returns:
@@ -1100,23 +1098,6 @@ def _create_area_selection_schema(
         areas = []
 
     options: list[SelectOptionDict] = []
-
-    # Add Global Settings Option (only for Options Flow)
-    if not is_initial:
-        options.append(
-            {
-                "value": CONF_ACTION_GLOBAL_SETTINGS,
-                "label": "Global Settings",
-            }
-        )
-
-    # Always add "Add New Area" option
-    options.append(
-        {
-            "value": CONF_ACTION_ADD_AREA,
-            "label": "Add New Area",
-        }
-    )
 
     # Add each area as an option
     for area in areas:
@@ -1156,15 +1137,6 @@ def _create_area_selection_schema(
             {
                 "value": f"{CONF_OPTION_PREFIX_AREA}{sanitized_id}",
                 "label": f"{area_name} - {summary}",
-            }
-        )
-
-    # Add "Finish Setup" option only for initial config flow if areas exist
-    if is_initial and areas:
-        options.append(
-            {
-                "value": CONF_ACTION_FINISH_SETUP,
-                "label": "Finish Setup",
             }
         )
 
@@ -1414,8 +1386,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step - show area selection form or auto-start first area."""
-        errors: dict[str, str] = {}
-
         # Check if a config entry already exists (e.g., user clicked "Add device" button)
         # In single-instance architecture, only one config entry should exist
         # Users should use Options Flow to add more areas
@@ -1440,14 +1410,26 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
             self._area_being_edited = None
             return await self.async_step_area_config()
 
-        if user_input is not None:
-            # Form step returns the selected option from the form field
-            selected_option = user_input.get("selected_option", "")
+        # Hybrid approach: Static menu for main actions if areas exist
+        # "Finish Setup" maps to async_step_finish_setup
+        menu_options = [CONF_ACTION_ADD_AREA]
+        if self._areas:
+            menu_options.append("manage_areas")
+            menu_options.append("finish_setup")
 
-            if selected_option == CONF_ACTION_ADD_AREA:
-                # User wants to add a new area
-                self._area_being_edited = None
-                return await self.async_step_area_config()
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=menu_options,
+        )
+
+    async def async_step_manage_areas(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show list of areas to manage during initial setup."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            selected_option = user_input.get("selected_option", "")
             if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
                 # User selected an area - extract area ID and go to action step
                 sanitized_id = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
@@ -1458,58 +1440,71 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                     return await self.async_step_area_action()
                 # If we couldn't find the area, show error
                 errors["base"] = "Selected area could not be found"
-            if selected_option == CONF_ACTION_FINISH_SETUP:
-                # User wants to finish setup and create the entry
-                if not self._areas:
-                    errors["base"] = (
-                        "At least one area must be configured before finishing setup"
-                    )
-                else:
-                    try:
-                        # Validate all areas before creating entry
-                        for area in self._areas:
-                            self._validate_config(area, self.hass)
 
-                        # Store in new multi-area format
-                        # Use a fixed title for the integration entry
-                        await self.async_set_unique_id(DOMAIN)
-                        try:
-                            self._abort_if_unique_id_configured()
-                        except AbortFlow as err:
-                            if err.reason == "already_configured":
-                                # Guide user to use Options Flow instead
-                                raise AbortFlow(
-                                    "already_configured",
-                                    description_placeholders={
-                                        "title": "Area Occupancy Detection",
-                                        "hint": "To add more areas, please use the Options Flow from Settings > Devices & Services > Area Occupancy Detection > Configure.",
-                                    },
-                                ) from err
-                            raise
-
-                        config_data = {CONF_AREAS: self._areas}
-                        return self.async_create_entry(
-                            title="Area Occupancy Detection", data=config_data
-                        )
-                    except HomeAssistantError as err:
-                        _LOGGER.error("Validation error: %s", err)
-                        errors["base"] = str(err)
-                    except vol.Invalid as err:
-                        _LOGGER.error("Validation error: %s", err)
-                        errors["base"] = str(err)
-                    except (ValueError, KeyError, TypeError) as err:
-                        _LOGGER.error("Unexpected error: %s", err)
-                        errors["base"] = "An unexpected error occurred"
-
-        # Show area selection form with selectable options
-        schema = _create_area_selection_schema(
-            self._areas, is_initial=True, hass=self.hass
-        )
         return self.async_show_form(
-            step_id="user",
-            data_schema=schema,
+            step_id="manage_areas",
+            data_schema=_create_area_selector_schema(self._areas, hass=self.hass),
             errors=errors,
         )
+
+    async def async_step_add_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add a new area."""
+        self._area_being_edited = None
+        return await self.async_step_area_config(user_input)
+
+    async def async_step_finish_setup(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Finish setup and create the config entry."""
+        errors: dict[str, str] = {}
+
+        if not self._areas:
+            errors["base"] = (
+                "At least one area must be configured before finishing setup"
+            )
+            return await self.async_step_user()
+
+        try:
+            # Validate all areas before creating entry
+            for area in self._areas:
+                self._validate_config(area, self.hass)
+
+            # Store in new multi-area format
+            # Use a fixed title for the integration entry
+            await self.async_set_unique_id(DOMAIN)
+            try:
+                self._abort_if_unique_id_configured()
+            except AbortFlow as err:
+                if err.reason == "already_configured":
+                    # Guide user to use Options Flow instead
+                    raise AbortFlow(
+                        "already_configured",
+                        description_placeholders={
+                            "title": "Area Occupancy Detection",
+                            "hint": "To add more areas, please use the Options Flow from Settings > Devices & Services > Area Occupancy Detection > Configure.",
+                        },
+                    ) from err
+                raise
+
+            config_data = {CONF_AREAS: self._areas}
+            return self.async_create_entry(
+                title="Area Occupancy Detection", data=config_data
+            )
+        except AbortFlow:
+            raise
+        except HomeAssistantError as err:
+            _LOGGER.error("Validation error: %s", err)
+            errors["base"] = str(err)
+        except vol.Invalid as err:
+            _LOGGER.error("Validation error: %s", err)
+            errors["base"] = str(err)
+        except Exception:
+            _LOGGER.exception("Unexpected error creating entry")
+            errors["base"] = "unknown"
+
+        return await self.async_step_user()
 
     async def async_step_area_config(
         self, user_input: dict[str, Any] | None = None
@@ -1743,8 +1738,6 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show area management menu."""
-        errors: dict[str, str] = {}
-
         # If called from device registry, resolve device_id and set area being edited
         if self._device_id:
             device_registry = dr.async_get(self.hass)
@@ -1761,22 +1754,25 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if self._area_being_edited:
             return await self.async_step_area_config()
 
-        # Get current areas
+        # Hybrid approach: Static menu for main actions, dedicated step for dynamic area selection
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=[
+                CONF_ACTION_GLOBAL_SETTINGS,
+                CONF_ACTION_ADD_AREA,
+                "manage_areas",
+            ],
+        )
+
+    async def async_step_manage_areas(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show list of areas to manage."""
+        errors: dict[str, str] = {}
         areas = self._get_areas_from_config()
 
         if user_input is not None:
-            # Form step returns the selected option from the form field
             selected_option = user_input.get("selected_option", "")
-
-            if selected_option == CONF_ACTION_ADD_AREA:
-                # User wants to add a new area
-                self._area_being_edited = None
-                return await self.async_step_area_config()
-
-            if selected_option == CONF_ACTION_GLOBAL_SETTINGS:
-                # User wants to edit global settings
-                return await self.async_step_global_settings()
-
             if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
                 # User selected an area - extract area ID and go to action step
                 sanitized_id = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
@@ -1788,13 +1784,18 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 # If we couldn't find the area, show error
                 errors["base"] = "Selected area could not be found"
 
-        # Show area selection form with selectable options (no "Finish Setup" for options flow)
-        schema = _create_area_selection_schema(areas, is_initial=False, hass=self.hass)
         return self.async_show_form(
-            step_id="init",
-            data_schema=schema,
+            step_id="manage_areas",
+            data_schema=_create_area_selector_schema(areas, hass=self.hass),
             errors=errors,
         )
+
+    async def async_step_add_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add a new area."""
+        self._area_being_edited = None
+        return await self.async_step_area_config(user_input)
 
     async def async_step_global_settings(
         self, user_input: dict[str, Any] | None = None
