@@ -7,11 +7,23 @@
             "user": {
                 "title": "Area Occupancy Detection",
                 "description": "Select an area to manage or choose an action. At least one area must be configured before finishing setup.",
+                "menu_options": {
+                    "add_area": "Add New Area",
+                    "manage_areas": "Manage Areas",
+                    "finish_setup": "Finish Setup"
+                },
                 "data": {
                     "selected_option": "Select an area or action"
                 },
                 "data_description": {
                     "selected_option": "Choose an area to edit or remove, add a new area, or finish setup"
+                }
+            },
+            "manage_areas": {
+                "title": "Manage Areas",
+                "description": "Select an area to edit or remove.",
+                "data": {
+                    "selected_option": "Select an area"
                 }
             },
             "area_action": {
@@ -191,11 +203,23 @@
             "init": {
                 "title": "Area Occupancy Detection Options",
                 "description": "Select an area to manage or add a new area",
+                "menu_options": {
+                    "global_settings": "Global Settings",
+                    "add_area": "Add New Area",
+                    "manage_areas": "Manage Areas"
+                },
                 "data": {
                     "selected_option": "Select an area or action"
                 },
                 "data_description": {
                     "selected_option": "Choose an area to edit or remove, or add a new area"
+                }
+            },
+            "manage_areas": {
+                "title": "Manage Areas",
+                "description": "Select an area to edit or remove.",
+                "data": {
+                    "selected_option": "Select an area"
                 }
             },
             "area_action": {
