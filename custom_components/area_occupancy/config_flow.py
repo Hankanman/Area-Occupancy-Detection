@@ -43,6 +43,7 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TimeSelector,
 )
 
 from .const import (
@@ -50,6 +51,7 @@ from .const import (
     CONF_ACTION_CANCEL,
     CONF_ACTION_EDIT,
     CONF_ACTION_FINISH_SETUP,
+    CONF_ACTION_GLOBAL_SETTINGS,
     CONF_ACTION_REMOVE,
     CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
@@ -76,6 +78,8 @@ from .const import (
     CONF_PM25_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -104,6 +108,8 @@ from .const import (
     DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SLEEP_END,
+    DEFAULT_SLEEP_START,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -1087,13 +1093,30 @@ def _create_area_selection_schema(
         hass: Home Assistant instance (optional, for resolving area names)
 
     Returns:
-        Schema with SelectSelector in DROPDOWN mode for area selection
+        Schema with SelectSelector in LIST mode (radio buttons) for area selection
     """
     # Ensure areas is a list
     if not isinstance(areas, list):
         areas = []
 
     options: list[SelectOptionDict] = []
+
+    # Add Global Settings Option (only for Options Flow)
+    if not is_initial:
+        options.append(
+            {
+                "value": CONF_ACTION_GLOBAL_SETTINGS,
+                "label": "Global Settings",
+            }
+        )
+
+    # Always add "Add New Area" option
+    options.append(
+        {
+            "value": CONF_ACTION_ADD_AREA,
+            "label": "Add New Area",
+        }
+    )
 
     # Add each area as an option
     for area in areas:
@@ -1136,14 +1159,6 @@ def _create_area_selection_schema(
             }
         )
 
-    # Always add "Add New Area" option
-    options.append(
-        {
-            "value": CONF_ACTION_ADD_AREA,
-            "label": "Add New Area",
-        }
-    )
-
     # Add "Finish Setup" option only for initial config flow if areas exist
     if is_initial and areas:
         options.append(
@@ -1156,7 +1171,10 @@ def _create_area_selection_schema(
     return vol.Schema(
         {
             vol.Required("selected_option"): SelectSelector(
-                SelectSelectorConfig(options=options)
+                SelectSelectorConfig(
+                    options=options,
+                    mode=SelectSelectorMode.LIST,
+                )
             )
         }
     )
@@ -1166,7 +1184,7 @@ def _create_action_selection_schema() -> vol.Schema:
     """Create schema for action selection step.
 
     Returns:
-        Schema with SelectSelector in DROPDOWN mode for action selection
+        Schema with SelectSelector in LIST mode (radio buttons) for action selection
     """
     return vol.Schema(
         {
@@ -1176,9 +1194,26 @@ def _create_action_selection_schema() -> vol.Schema:
                         {"value": CONF_ACTION_EDIT, "label": "Edit"},
                         {"value": CONF_ACTION_REMOVE, "label": "Remove"},
                         {"value": CONF_ACTION_CANCEL, "label": "Cancel"},
-                    ]
+                    ],
+                    mode=SelectSelectorMode.LIST,
                 )
             )
+        }
+    )
+
+
+def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for global settings."""
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_SLEEP_START,
+                default=defaults.get(CONF_SLEEP_START, DEFAULT_SLEEP_START),
+            ): TimeSelector(),
+            vol.Required(
+                CONF_SLEEP_END,
+                default=defaults.get(CONF_SLEEP_END, DEFAULT_SLEEP_END),
+            ): TimeSelector(),
         }
     )
 
@@ -1737,6 +1772,11 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 # User wants to add a new area
                 self._area_being_edited = None
                 return await self.async_step_area_config()
+
+            if selected_option == CONF_ACTION_GLOBAL_SETTINGS:
+                # User wants to edit global settings
+                return await self.async_step_global_settings()
+
             if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
                 # User selected an area - extract area ID and go to action step
                 sanitized_id = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
@@ -1754,6 +1794,32 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             step_id="init",
             data_schema=schema,
             errors=errors,
+        )
+
+    async def async_step_global_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage global settings."""
+        if user_input is not None:
+            # Update the config entry options directly
+            new_options = dict(self.config_entry.options)
+            new_options.update(user_input)
+
+            return self.async_create_entry(title="", data=new_options)
+
+        # Get current values
+        defaults = {
+            CONF_SLEEP_START: self.config_entry.options.get(
+                CONF_SLEEP_START, DEFAULT_SLEEP_START
+            ),
+            CONF_SLEEP_END: self.config_entry.options.get(
+                CONF_SLEEP_END, DEFAULT_SLEEP_END
+            ),
+        }
+
+        return self.async_show_form(
+            step_id="global_settings",
+            data_schema=_create_global_settings_schema(defaults),
         )
 
     async def async_step_area_config(

@@ -367,6 +367,18 @@
                 "data_description": {
                     "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
                 }
+            },
+            "global_settings": {
+                "title": "Global Settings",
+                "description": "Configure global settings that apply to all areas",
+                "data": {
+                    "sleep_start": "Sleep Start Time",
+                    "sleep_end": "Sleep End Time"
+                },
+                "data_description": {
+                    "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
+                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas (900s half-life) outside of sleep hours."
+                }
             }
         }
     },

@@ -2,11 +2,11 @@
 alwaysApply: true
 ---
 
-Documentation is written in the `docs` directory.
+Documentation is written in the `docs/docs` directory.
 
 The documentation is hosted on a mkdocs site at https://hankanman.github.io/Area-Occupancy-Detection/.
 
-The mkdocs.yml file is in the docs directory.
+The `mkdocs.yml` file is in the `docs` directory.
 
 Ensure that documentation is not duplicated and is in the appropriate navigation path in mkdocs.yml.
 
