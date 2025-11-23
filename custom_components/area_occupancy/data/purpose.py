@@ -107,7 +107,7 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
     ),
     AreaPurpose.BATHROOM: Purpose(
         purpose=AreaPurpose.BATHROOM,
-        _name="Bathroom / Personal Care",
+        _name="Bathroom",
         _description="Showers, baths, getting ready. Motion can be obstructed or minimal; a moderate memory prevents darkness during a shower.",
         _half_life=600.0,
     ),
@@ -125,7 +125,7 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
     ),
     AreaPurpose.WORKING: Purpose(
         purpose=AreaPurpose.WORKING,
-        _name="Working / Studying",
+        _name="Working",
         _description='Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".',
         _half_life=600.0,
     ),

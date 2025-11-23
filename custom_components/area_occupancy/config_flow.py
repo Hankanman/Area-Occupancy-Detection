@@ -1869,7 +1869,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 )
 
                 # Save updated configuration
-                config_data = {CONF_AREAS: updated_areas}
+                # Preserve existing global options (e.g., sleep schedule)
+                config_data = dict(self.config_entry.options)
+                config_data[CONF_AREAS] = updated_areas
                 return self.async_create_entry(title="", data=config_data)
 
             except (
@@ -1984,7 +1986,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                         errors={"base": "Cannot remove the last area"},
                     )
 
-                config_data = {CONF_AREAS: updated_areas}
+                # Preserve existing global options (e.g., sleep schedule)
+                config_data = dict(self.config_entry.options)
+                config_data[CONF_AREAS] = updated_areas
                 result = self.async_create_entry(title="", data=config_data)
                 # Trigger integration reload to properly clean up all entities and devices
                 self.hass.async_create_task(
