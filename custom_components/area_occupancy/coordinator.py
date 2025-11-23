@@ -13,7 +13,11 @@ from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
-from homeassistant.helpers import area_registry as ar, entity_registry as er
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -23,7 +27,7 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
-from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, SAVE_INTERVAL
+from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
 
@@ -519,6 +523,33 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             "Removed %d entities from registry for removed area %s",
                             entities_removed,
                             area_name,
+                        )
+
+                    # Remove device from device registry
+                    device_registry = dr.async_get(self.hass)
+                    device_identifiers = {(DOMAIN, area.config.area_id)}
+                    device = device_registry.async_get_device(
+                        identifiers=device_identifiers
+                    )
+                    if device:
+                        try:
+                            device_registry.async_remove_device(device.id)
+                            _LOGGER.info(
+                                "Removed device %s from registry for removed area %s",
+                                device.id,
+                                area_name,
+                            )
+                        except (ValueError, KeyError, AttributeError) as remove_err:
+                            _LOGGER.warning(
+                                "Failed to remove device %s from registry: %s",
+                                device.id,
+                                remove_err,
+                            )
+                    else:
+                        _LOGGER.debug(
+                            "No device found for removed area %s (area_id: %s)",
+                            area_name,
+                            area.config.area_id,
                         )
 
                     # Delete all database records for this area

@@ -1984,7 +1984,12 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                     )
 
                 config_data = {CONF_AREAS: updated_areas}
-                return self.async_create_entry(title="", data=config_data)
+                result = self.async_create_entry(title="", data=config_data)
+                # Trigger integration reload to properly clean up all entities and devices
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
+                return result
 
             # User cancelled
             return await self.async_step_init()
