@@ -10,6 +10,7 @@ class AreaPurpose(StrEnum):
 
     PASSAGEWAY = "passageway"
     UTILITY = "utility"
+    BATHROOM = "bathroom"
     FOOD_PREP = "food_prep"
     EATING = "eating"
     WORKING = "working"
@@ -104,6 +105,12 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         _description="Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.",
         _half_life=120.0,
     ),
+    AreaPurpose.BATHROOM: Purpose(
+        purpose=AreaPurpose.BATHROOM,
+        _name="Bathroom",
+        _description="Showers, baths, getting ready. Motion can be obstructed or minimal; a moderate memory prevents darkness during a shower.",
+        _half_life=600.0,
+    ),
     AreaPurpose.FOOD_PREP: Purpose(
         purpose=AreaPurpose.FOOD_PREP,
         _name="Food-Prep",
@@ -118,7 +125,7 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
     ),
     AreaPurpose.WORKING: Purpose(
         purpose=AreaPurpose.WORKING,
-        _name="Working / Studying",
+        _name="Working",
         _description='Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".',
         _half_life=600.0,
     ),

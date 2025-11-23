@@ -38,6 +38,8 @@ from ..const import (
     CONF_PM25_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -66,6 +68,8 @@ from ..const import (
     DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SLEEP_END,
+    DEFAULT_SLEEP_START,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -127,10 +131,23 @@ class IntegrationConfig:
         # self.database_retention_days = RETENTION_DAYS
         # self.enable_backups = True
 
+        # Global Settings
+        # self.sleep_start and self.sleep_end are now properties
+
         # Future: Cross-area coordination settings
         # self.person_tracking_enabled = False
         # self.area_transition_detection = False
         # self.global_occupancy_threshold = 0.5
+
+    @property
+    def sleep_start(self) -> str:
+        """Get sleep start time from config entry options."""
+        return self.config_entry.options.get(CONF_SLEEP_START, DEFAULT_SLEEP_START)
+
+    @property
+    def sleep_end(self) -> str:
+        """Get sleep end time from config entry options."""
+        return self.config_entry.options.get(CONF_SLEEP_END, DEFAULT_SLEEP_END)
 
     def __repr__(self) -> str:
         """Return a string representation of the integration config."""

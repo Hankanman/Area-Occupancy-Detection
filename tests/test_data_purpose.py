@@ -77,7 +77,7 @@ class TestPurposeDefinitions:
     def test_get_purpose_options(self):
         """Test getting purpose options for UI."""
         options = get_purpose_options()
-        assert len(options) == 8
+        assert len(options) == 9
         assert all("value" in option and "label" in option for option in options)
 
         # Check specific options
@@ -137,7 +137,7 @@ class TestPurposeInitialization:
     def test_get_all_purposes(self):
         """Test getting all purposes."""
         purposes = Purpose.get_all_purposes()
-        assert len(purposes) == 8
+        assert len(purposes) == 9
         assert AreaPurpose.SOCIAL in purposes
 
     def test_cleanup(self):

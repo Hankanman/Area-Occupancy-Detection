@@ -416,11 +416,10 @@ class TestEntityPropertiesAndMethods:
         )
 
         # Create decay with specific behavior - set up for decay_factor < 1.0
-        decay = Decay(half_life=60.0)  # half_life is required
+        decay = Decay(half_life=30.0)  # 30 second half-life
         decay.is_decaying = True
         # Use timezone-aware datetime to match dt_util.utcnow() in Decay class
         decay.decay_start = dt_util.utcnow() - timedelta(seconds=60)  # 1 minute ago
-        decay.half_life = 30.0  # 30 second half-life
 
         entity = create_test_entity(
             entity_type=entity_type,

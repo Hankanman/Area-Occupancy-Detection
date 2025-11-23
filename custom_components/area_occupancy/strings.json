@@ -7,11 +7,23 @@
             "user": {
                 "title": "Area Occupancy Detection",
                 "description": "Select an area to manage or choose an action. At least one area must be configured before finishing setup.",
+                "menu_options": {
+                    "add_area": "Add New Area",
+                    "manage_areas": "Manage Areas",
+                    "finish_setup": "Finish Setup"
+                },
                 "data": {
                     "selected_option": "Select an area or action"
                 },
                 "data_description": {
                     "selected_option": "Choose an area to edit or remove, add a new area, or finish setup"
+                }
+            },
+            "manage_areas": {
+                "title": "Manage Areas",
+                "description": "Select an area to edit or remove.",
+                "data": {
+                    "selected_option": "Select an area"
                 }
             },
             "area_action": {
@@ -191,11 +203,23 @@
             "init": {
                 "title": "Area Occupancy Detection Options",
                 "description": "Select an area to manage or add a new area",
+                "menu_options": {
+                    "global_settings": "Global Settings",
+                    "add_area": "Add New Area",
+                    "manage_areas": "Manage Areas"
+                },
                 "data": {
                     "selected_option": "Select an area or action"
                 },
                 "data_description": {
                     "selected_option": "Choose an area to edit or remove, or add a new area"
+                }
+            },
+            "manage_areas": {
+                "title": "Manage Areas",
+                "description": "Select an area to edit or remove.",
+                "data": {
+                    "selected_option": "Select an area"
                 }
             },
             "area_action": {
@@ -366,6 +390,18 @@
                 },
                 "data_description": {
                     "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
+                }
+            },
+            "global_settings": {
+                "title": "Global Settings",
+                "description": "Configure global settings that apply to all areas",
+                "data": {
+                    "sleep_start": "Sleep Start Time",
+                    "sleep_end": "Sleep End Time"
+                },
+                "data_description": {
+                    "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
+                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas (900s half-life) outside of sleep hours."
                 }
             }
         }
