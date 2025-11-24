@@ -375,15 +375,15 @@ class TestDelegationCorrectness:
             )
             assert result is True
 
-    def test_analyze_numeric_correlation_delegates_to_correlation(self, test_db):
-        """Test that analyze_numeric_correlation delegates to correlation.analyze_numeric_correlation."""
+    def test_analyze_correlation_delegates_to_correlation(self, test_db):
+        """Test that analyze_correlation delegates to correlation.analyze_correlation."""
         db = test_db
 
         with patch(
-            "custom_components.area_occupancy.db.correlation.analyze_numeric_correlation"
+            "custom_components.area_occupancy.db.correlation.analyze_correlation"
         ) as mock_analyze:
             mock_analyze.return_value = {"correlation": 0.8}
-            result = db.analyze_numeric_correlation("Area1", "sensor.temp", 30)
+            result = db.analyze_correlation("Area1", "sensor.temp", 30)
             mock_analyze.assert_called_once_with(db, "Area1", "sensor.temp", 30)
             assert result == {"correlation": 0.8}
 

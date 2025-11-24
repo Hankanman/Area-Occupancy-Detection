@@ -791,7 +791,6 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator, "_run_interval_aggregation", new=AsyncMock()),
             patch.object(area, "run_prior_analysis", new=AsyncMock()),
             patch.object(coordinator, "_run_correlation_analysis", new=AsyncMock()),
-            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch(
@@ -811,8 +810,6 @@ class TestAreaOccupancyCoordinator:
             area.run_prior_analysis.assert_called_once()
             # Verify correlation analysis was called after prior analysis
             coordinator._run_correlation_analysis.assert_called_once()
-            # Verify likelihood analysis was called
-            area.run_likelihood_analysis.assert_called_once()
             # Verify save was called last
             coordinator.db.save_data.assert_called_once()
 
@@ -853,7 +850,6 @@ class TestAreaOccupancyCoordinator:
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(area, "run_prior_analysis", new=AsyncMock()),
-            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch(
@@ -1411,7 +1407,6 @@ class TestRunAnalysisWithPruning:
                 coordinator.db, "prune_old_intervals", return_value=10
             ) as mock_prune,
             patch.object(area, "run_prior_analysis", new=AsyncMock()),
-            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch(
@@ -1444,9 +1439,6 @@ class TestRunAnalysisWithPruning:
                 coordinator.db, "prune_old_intervals", return_value=0
             ),  # Pruning returns 0
             patch.object(area, "run_prior_analysis", new=AsyncMock()) as mock_prior,
-            patch.object(
-                area, "run_likelihood_analysis", new=AsyncMock()
-            ) as mock_likelihood,
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch(
@@ -1458,9 +1450,8 @@ class TestRunAnalysisWithPruning:
 
             # Verify pruning was called and analysis completed
             coordinator.db.prune_old_intervals.assert_called_once()
-            # run_analysis calls area.run_prior_analysis() and area.run_likelihood_analysis()
+            # run_analysis calls area.run_prior_analysis()
             mock_prior.assert_called_once()
-            mock_likelihood.assert_called_once()
             assert coordinator._analysis_timer is None
 
     async def test_run_analysis_pruning_error_handling(
@@ -1484,9 +1475,6 @@ class TestRunAnalysisWithPruning:
                 side_effect=RuntimeError("Pruning failed"),
             ),
             patch.object(area, "run_prior_analysis", new=AsyncMock()) as mock_prior,
-            patch.object(
-                area, "run_likelihood_analysis", new=AsyncMock()
-            ) as mock_likelihood,
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch(
@@ -1500,10 +1488,9 @@ class TestRunAnalysisWithPruning:
             # Verify pruning was called
             coordinator.db.prune_old_intervals.assert_called_once()
             # Verify other steps were NOT called due to exception handling
-            # run_analysis calls area.run_prior_analysis() and area.run_likelihood_analysis()
+            # run_analysis calls area.run_prior_analysis()
             # but these should not be called if pruning raises an exception
             mock_prior.assert_not_called()
-            mock_likelihood.assert_not_called()
             coordinator.async_refresh.assert_not_called()
             coordinator.db.save_data.assert_not_called()
             assert coordinator._analysis_timer is None
@@ -1584,7 +1571,6 @@ class TestCoordinatorTimerCallbacks:
             ),
             patch.object(coordinator.db, "periodic_health_check", return_value=True),
             patch.object(area, "run_prior_analysis", new=AsyncMock()),
-            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data"),
             patch(
@@ -1606,7 +1592,6 @@ class TestCoordinatorTimerCallbacks:
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(coordinator.db, "periodic_health_check", return_value=False),
             patch.object(area, "run_prior_analysis", new=AsyncMock()),
-            patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data"),
             patch(

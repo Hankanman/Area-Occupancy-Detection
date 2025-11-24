@@ -14,22 +14,22 @@ from custom_components.area_occupancy.const import (
     MIN_PROBABILITY,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.analysis import (
-    DAYS_PER_WEEK,
-    DEFAULT_OCCUPIED_SECONDS,
-    DEFAULT_SLOT_MINUTES,
-    HOURS_PER_DAY,
-    MINUTES_PER_DAY,
-    MINUTES_PER_HOUR,
-    SQLITE_TO_PYTHON_WEEKDAY_OFFSET,
-)
 from custom_components.area_occupancy.data.prior import (
     DEFAULT_PRIOR,
+    DEFAULT_SLOT_MINUTES,
     PRIOR_FACTOR,
     SIGNIFICANT_CHANGE_THRESHOLD,
     Prior,
 )
 from homeassistant.util import dt as dt_util
+
+# Constants used in tests
+DAYS_PER_WEEK = 7
+DEFAULT_OCCUPIED_SECONDS = 0.0
+HOURS_PER_DAY = 24
+MINUTES_PER_DAY = 1440
+MINUTES_PER_HOUR = 60
+SQLITE_TO_PYTHON_WEEKDAY_OFFSET = 6
 
 
 # ruff: noqa: SLF001

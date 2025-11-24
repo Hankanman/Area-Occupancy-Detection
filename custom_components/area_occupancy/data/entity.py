@@ -99,20 +99,38 @@ class Entity:
         """
         if self.learned_gaussian_params and self.state is not None:
             try:
-                val = float(self.state)
+                # Convert state to numeric value
+                if self.type.input_type in [
+                    InputType.MEDIA,
+                    InputType.APPLIANCE,
+                    InputType.DOOR,
+                    InputType.WINDOW,
+                ]:
+                    # Binary sensor: convert to 0.0 or 1.0
+                    val = 1.0 if self.evidence else 0.0
+                else:
+                    # Numeric sensor: use float value
+                    val = float(self.state)
+
+                # Clamp std dev to minimum 0.05 to prevent numerical issues (division by zero)
+                # We do NOT clamp maximum as numeric sensors (e.g. CO2) can have large variance
+                std_occupied = max(0.05, self.learned_gaussian_params["std_occupied"])
+                std_unoccupied = max(
+                    0.05, self.learned_gaussian_params["std_unoccupied"]
+                )
 
                 # Calculate density for occupied state
                 p_true = self._calculate_gaussian_density(
                     val,
                     self.learned_gaussian_params["mean_occupied"],
-                    self.learned_gaussian_params["std_occupied"],
+                    std_occupied,
                 )
 
                 # Calculate density for unoccupied state
                 p_false = self._calculate_gaussian_density(
                     val,
                     self.learned_gaussian_params["mean_unoccupied"],
-                    self.learned_gaussian_params["std_unoccupied"],
+                    std_unoccupied,
                 )
 
             except (ValueError, TypeError):
