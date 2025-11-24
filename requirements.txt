@@ -2,5 +2,6 @@ homeassistant
 pip
 ruff
 pre-commit
+filelock
 
-# Stay aligned with https://github.com/ludeeus/integration_blueprint/blob/main/requirements.txtp
+# Stay aligned with https://github.com/ludeeus/integration_blueprint/blob/main/requirements.txt

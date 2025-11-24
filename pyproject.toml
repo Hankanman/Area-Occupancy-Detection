@@ -27,6 +27,7 @@ dependencies = [
   # Home Assistant and its dependencies are managed by the homeassistant package
   "sqlalchemy>=2.0",
   "numpy>=1.24.0",
+  "filelock>=3.20.0",
 ]
 
 [project.optional-dependencies]

@@ -1,6 +1,6 @@
-# Numeric Sensor Correlation
+# Numeric Sensor Correlation & Continuous Likelihood
 
-The Area Occupancy Detection integration includes advanced capability to learn occupancy patterns from numeric sensors (Temperature, Humidity, CO2, etc.) that traditionally don't have binary "occupied/not occupied" states.
+The Area Occupancy Detection integration includes advanced capability to learn occupancy patterns from numeric sensors (Temperature, Humidity, CO2, etc.). Instead of a simple "Active/Inactive" switch, the system calculates a continuous probability of occupancy based on the exact value of the sensor using **Gaussian Probability Density Functions (PDFs)**.
 
 ## Overview
 
@@ -10,91 +10,94 @@ While motion sensors directly indicate presence, environmental sensors often sho
 - **CO2** levels often increase with occupancy.
 - **Humidity** might change when a shower is used.
 
-This integration automatically analyzes historical data to find these patterns and uses them to improve occupancy detection accuracy.
+Previously, systems might convert these values into binary states (e.g., "Temperature > 22°C = Active"). This approach loses valuable information. The **Continuous Likelihood** system solves this by dynamically calculating probability based on how well the current value matches historical "Occupied" vs "Unoccupied" patterns.
 
 ## How It Works
 
-The system performs a statistical analysis of your sensor data against known occupancy periods (determined by ground-truth sensors like motion detectors).
+The system performs a two-stage statistical analysis:
 
-### 1. Correlation Analysis
+### 1. Correlation Check (Qualification)
 
-Every 30 days (configurable), the system analyzes the relationship between the numeric sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
+Every 30 days, the system analyzes the relationship between the numeric sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
 
-- **Positive Correlation**: Value increases when occupied (e.g., Temperature).
+- **Positive Correlation**: Value increases when occupied.
 - **Negative Correlation**: Value decreases when occupied.
 - **No Correlation**: No clear pattern found.
 
-### 2. Learning Active Ranges
+If the correlation is too weak or the sample size is too small, the sensor is **rejected** for occupancy detection purposes to prevent false positives. You can see the `rejection_reason` in the analysis output.
 
-When a significant correlation is found (Confidence > 0), the system calculates a dynamic "Active Range" for that sensor.
+### 2. Learning Distributions
 
-It compares the statistics of the sensor when the room is **unoccupied** vs. when it is **occupied**.
+If a sensor qualifies, the system learns two statistical distributions:
 
-#### For Positive Correlation (e.g., Temperature rises)
+1.  **Occupied Distribution**: $(\mu_{occ}, \sigma_{occ})$ - The pattern when the room is _known_ to be occupied.
+2.  **Unoccupied Distribution**: $(\mu_{unocc}, \sigma_{unocc})$ - The pattern when the room is _known_ to be empty.
 
-- **Lower Threshold**: `Mean(Unoccupied) + 2 * StdDev(Unoccupied)`
-  - The value must be significantly higher than the normal unoccupied baseline to count as evidence.
-- **Upper Threshold**: `Mean(Occupied) + 2 * StdDev(Occupied)`
-  - If occupied statistics are available and distinct, a closed range is created.
-  - If not, the upper bound is open-ended (infinity), meaning "anything above the threshold".
+These parameters are stored in the `NumericCorrelations` database table.
 
-#### For Negative Correlation
+### 3. Calculating Dynamic Likelihood
 
-- **Upper Threshold**: `Mean(Unoccupied) - 2 * StdDev(Unoccupied)`
-  - The value must be significantly lower than the normal unoccupied baseline.
-- **Lower Threshold**: `Mean(Occupied) - 2 * StdDev(Occupied)`
-  - Similar logic for closed vs. open range.
+When the sensor reports a new value $x$, the system calculates two probability densities using the Gaussian PDF formula:
 
-### 3. Dynamic Likelihood Scaling
+$$ f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{1}{2}(\frac{x-\mu}{\sigma})^2} $$
 
-Instead of assigning a fixed probability (e.g., "Temperature active = 90% chance of occupancy"), the system scales the evidence based on the **Confidence** of the correlation.
+1.  **$P(x | Occupied)$**: Likelihood of $x$ given the "Occupied" distribution.
+2.  **$P(x | Unoccupied)$**: Likelihood of $x$ given the "Unoccupied" distribution.
 
-The confidence score ($C$) is derived from the correlation strength and the sample size.
+### 4. Bayesian Update
 
-- **Probability given True ($P(E|H)$)**: $0.5 + (C \times 0.4)$
-- **Probability given False ($P(E|\neg H)$)**: $0.5 - (C \times 0.4)$
+These densities are used directly in the Bayesian update formula.
 
-**Examples:**
+- If $x$ is closer to the Occupied Mean, the likelihood ratio favors occupancy.
+- If $x$ is closer to the Unoccupied Mean, it favors vacancy.
+- The strength of the evidence scales with how extreme the value is relative to the distributions.
 
-- **Weak Correlation ($C=0.2$)**:
-  - $P(E|H) = 0.58$
-  - $P(E|\neg H) = 0.42$
-  - _Result_: Contributes a **tiny nudge** to the probability.
-- **Strong Correlation ($C=0.8$)**:
-  - $P(E|H) = 0.82$
-  - $P(E|\neg H) = 0.18$
-  - _Result_: Contributes **strong evidence** of occupancy.
+### Example
 
-### 4. Automatic Likelihood Assignment
+**Scenario**: Temperature Sensor
 
-For numeric sensors, likelihoods are **NOT** set by counting active/inactive intervals (standard learning), because "active" is a dynamic concept for these sensors.
+- **Unoccupied**: Mean = 20°C
+- **Occupied**: Mean = 24°C
 
-Instead, they are **set automatically** based on the statistical confidence of the correlation.
+| Current Temp ($x$) | Result                                                |
+| :----------------- | :---------------------------------------------------- |
+| **20°C**           | **Strong Vacancy Evidence** (Matches Unoccupied mean) |
+| **22°C**           | **Neutral** (Ambiguous overlap)                       |
+| **24°C**           | **Strong Occupancy Evidence** (Matches Occupied mean) |
 
-- **Standard Method (Binary Sensors)**: "This sensor was ON for 80% of the time the room was occupied."
-- **Correlation Method (Numeric Sensors)**: "We are 80% confident that Temperature correlates with Occupancy."
+## Benefits
 
-The system automatically applies the scaled likelihoods and **protects** them from being overwritten by the standard learning algorithm. This ensures that for numeric sensors, **Correlation Confidence** is the single source of truth for their reliability.
+1.  **No "Cliff Edge"**: Small changes in sensor values result in small changes in probability.
+2.  **True Evidence Weighting**: Extreme values provide stronger evidence.
+3.  **Automatic Calibration**: The system learns what is "normal" for each specific room.
 
 ## Data Flow
 
-1.  **Data Collection**: `NumericSamples` are recorded whenever a sensor state changes. `OccupiedIntervals` track when the area was occupied.
-2.  **Nightly Analysis**: The `analyze_numeric_correlation` job runs (via `run_nightly_tasks` service).
-3.  **Entity Update**: If a correlation is found, the live `Entity` object is updated with the new `learned_active_range` and scaled likelihood probabilities.
-4.  **Protection**: These learned values are "protected" from the standard likelihood learning process, ensuring that statistical correlation takes precedence over simple frequency counting for these sensor types.
+1.  **Data Collection**: `NumericSamples` are recorded on sensor changes. `OccupiedIntervals` track occupancy.
+2.  **Nightly Analysis**: The `analyze_numeric_correlation` job runs.
+3.  **Entity Update**: Live `Entity` objects are updated with `learned_gaussian_params`.
+4.  **Protection**: These learned parameters take precedence over standard binary presence counting.
 
 ## Viewing Results
 
-You can view the correlation results for your entities by calling the `area_occupancy.run_analysis` service. The output will show:
+Call the `area_occupancy.run_analysis` service to view results:
 
 ```yaml
 sensor.lounge_temperature:
   type: temperature
-  active_range:
-    - 19.94 # Lower bound (Mean + 2σ Unoccupied)
-    - 22.50 # Upper bound (Mean + 2σ Occupied)
-  prob_given_true: 0.65 # Scaled by confidence
-  prob_given_false: 0.35
+  is_active: false # (Binary abstraction for UI only)
+  gaussian_params:
+    mean_occupied: 24.0
+    std_occupied: 1.0
+    mean_unoccupied: 20.0
+    std_unoccupied: 1.0
+  rejection_reason: null
 ```
 
-If `active_range` shows `null` for one bound (e.g., `[19.94, null]`), it means the system is using an open-ended range (e.g., "Active if > 19.94").
+If a sensor is not correlated, you might see:
+
+```yaml
+sensor.random_noise:
+  rejection_reason: "no_correlation"
+  gaussian_params: null
+```
