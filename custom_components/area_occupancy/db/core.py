@@ -337,10 +337,12 @@ class AreaOccupancyDB:
         area_name: str,
         entity_id: str,
         analysis_period_days: int = 30,
+        is_binary: bool = False,
+        active_states: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Analyze correlation between sensor values and occupancy."""
         return correlation.analyze_correlation(
-            self, area_name, entity_id, analysis_period_days
+            self, area_name, entity_id, analysis_period_days, is_binary, active_states
         )
 
     def save_correlation_result(self, correlation_data: dict[str, Any]) -> bool:
@@ -352,10 +354,24 @@ class AreaOccupancyDB:
         area_name: str,
         entity_id: str,
         analysis_period_days: int = 30,
+        is_binary: bool = False,
+        active_states: list[str] | None = None,
     ) -> dict[str, Any] | None:
-        """Analyze and save correlation for a numeric sensor."""
+        """Analyze and save correlation for a sensor (numeric or binary)."""
         return correlation.analyze_and_save_correlation(
-            self, area_name, entity_id, analysis_period_days
+            self, area_name, entity_id, analysis_period_days, is_binary, active_states
+        )
+
+    def analyze_binary_likelihoods(
+        self,
+        area_name: str,
+        entity_id: str,
+        analysis_period_days: int = 30,
+        active_states: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Analyze binary sensor likelihoods using duration-based calculation."""
+        return correlation.analyze_binary_likelihoods(
+            self, area_name, entity_id, analysis_period_days, active_states
         )
 
     def get_correlation_for_entity(

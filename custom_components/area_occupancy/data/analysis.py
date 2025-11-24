@@ -109,24 +109,50 @@ class PriorAnalyzer:
                 )
                 return
 
-            # 2. Calculate global prior (total occupied time / total time)
-            total_duration = timedelta(days=days).total_seconds()
+            # 2. Calculate global prior using actual data period
+            # Determine actual data period from intervals (not fixed lookback)
+            # Ensure all datetime objects are timezone-aware UTC
+            first_interval_start = min(
+                dt_util.as_utc(start) for start, end in occupied_intervals
+            )
+            last_interval_end = max(
+                dt_util.as_utc(end) for start, end in occupied_intervals
+            )
+            now = dt_util.utcnow()
+
+            # Use actual period: from first interval to now (or last interval if very recent)
+            # If last interval is more than 1 hour old, use it; otherwise use now
+            if (now - last_interval_end).total_seconds() > 3600:
+                actual_period_end = last_interval_end
+            else:
+                actual_period_end = now
+
+            actual_period_duration = (
+                actual_period_end - first_interval_start
+            ).total_seconds()
+
+            # Calculate occupied duration (ensure timezone-aware)
             occupied_duration = sum(
-                (end - start).total_seconds() for start, end in occupied_intervals
+                (dt_util.as_utc(end) - dt_util.as_utc(start)).total_seconds()
+                for start, end in occupied_intervals
             )
 
+            # Use actual period for prior calculation
             # Ensure valid probability (0.01 to 0.99)
-            global_prior = max(0.01, min(0.99, occupied_duration / total_duration))
+            global_prior = max(
+                0.01, min(0.99, occupied_duration / actual_period_duration)
+            )
 
             # 3. Update the Prior object
             # Note: Time-based priors (hourly) could be calculated here in the future
             self.area.prior.set_global_prior(global_prior)
 
             _LOGGER.info(
-                "Prior analysis completed for area %s: global_prior=%.3f (occupied: %.1f hours)",
+                "Prior analysis completed for area %s: global_prior=%.3f (occupied: %.1f hours over %.1f days)",
                 self.area_name,
                 global_prior,
                 occupied_duration / 3600,
+                actual_period_duration / 86400,
             )
 
         except (ValueError, TypeError, RuntimeError) as e:

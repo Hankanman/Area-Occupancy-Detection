@@ -198,7 +198,7 @@ graph TB
 
         subgraph "Analysis"
             PriorAnalysis[PriorAnalyzer]
-            LikelihoodAnalysis[LikelihoodAnalyzer]
+            CorrelationAnalysis[Correlation Analysis]
         end
 
         subgraph "Database"
@@ -350,4 +350,3 @@ flowchart TD
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - Likelihood learning details
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - Calculation details
 - [Entity Evidence Collection](entity-evidence.md) - Evidence collection details
-

@@ -888,49 +888,92 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Don't raise - allow analysis to continue even if aggregation fails
 
     async def _run_correlation_analysis(self) -> None:
-        """Run numeric correlation analysis.
+        """Run correlation analysis for numeric sensors and binary likelihood analysis.
 
-        This method analyzes correlations between numeric sensor values and
-        occupancy. It requires OccupiedIntervalsCache to be populated.
+        Numeric sensors use correlation analysis (Gaussian PDF).
+        Binary sensors use duration-based probability calculation (static values).
+        Requires OccupiedIntervalsCache to be populated.
         """
-        numeric_entities = self._get_numeric_entities_by_area()
-        if numeric_entities:
+        correlatable_entities = self._get_correlatable_entities_by_area()
+        if correlatable_entities:
             _LOGGER.info(
-                "Starting numeric correlation analysis for %d area(s)",
-                len(numeric_entities),
+                "Starting sensor analysis for %d area(s)",
+                len(correlatable_entities),
             )
-            for area_name, entity_ids in numeric_entities.items():
-                for entity_id in entity_ids:
+            for area_name, entities in correlatable_entities.items():
+                for entity_id, entity_info in entities.items():
                     try:
-                        correlation_result = await self.hass.async_add_executor_job(
-                            self.db.analyze_and_save_correlation,
-                            area_name,
-                            entity_id,
-                        )
+                        if entity_info["is_binary"]:
+                            # Binary sensors: Use duration-based likelihood analysis
+                            likelihood_result = await self.hass.async_add_executor_job(
+                                self.db.analyze_binary_likelihoods,
+                                area_name,
+                                entity_id,
+                                30,  # analysis_period_days
+                                entity_info["active_states"],
+                            )
 
-                        # Apply analysis results to live entities immediately
-                        if correlation_result and area_name in self.areas:
-                            area = self.areas[area_name]
-                            try:
-                                entity = area.entities.get_entity(entity_id)
-                                entity.update_correlation(correlation_result)
-                            except ValueError:
-                                # Entity might have been removed during analysis
-                                pass
+                            # Apply analysis results to live entities immediately
+                            if likelihood_result and area_name in self.areas:
+                                area = self.areas[area_name]
+                                try:
+                                    entity = area.entities.get_entity(entity_id)
+                                    entity.update_binary_likelihoods(likelihood_result)
+                                except ValueError:
+                                    # Entity might have been removed during analysis
+                                    pass
+                        else:
+                            # Numeric sensors: Use correlation analysis
+                            correlation_result = await self.hass.async_add_executor_job(
+                                self.db.analyze_and_save_correlation,
+                                area_name,
+                                entity_id,
+                                30,  # analysis_period_days
+                                False,  # is_binary
+                                None,  # active_states (not used for numeric)
+                            )
+
+                            # Apply analysis results to live entities immediately
+                            if correlation_result and area_name in self.areas:
+                                area = self.areas[area_name]
+                                try:
+                                    entity = area.entities.get_entity(entity_id)
+                                    entity.update_correlation(correlation_result)
+                                except ValueError:
+                                    # Entity might have been removed during analysis
+                                    pass
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.error(
-                            "Correlation analysis failed for %s (%s): %s",
+                            "Sensor analysis failed for %s (%s): %s",
                             area_name,
                             entity_id,
                             err,
                         )
         else:
             _LOGGER.debug(
-                "Skipping numeric correlation analysis - no numeric entities configured"
+                "Skipping sensor analysis - no correlatable entities configured"
             )
 
-    def _get_numeric_entities_by_area(self) -> dict[str, list[str]]:
-        """Return mapping of area_name to numeric entity IDs."""
+    def _get_correlatable_entities_by_area(
+        self,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """Return mapping of area_name to correlatable entities with metadata.
+
+        Returns:
+            Dict mapping area_name to dict of entity_id -> {
+                'is_binary': bool,
+                'active_states': list[str] | None
+            }
+        """
+        # Binary sensors that should be analyzed (excluding MOTION)
+        binary_inputs = {
+            InputType.MEDIA,
+            InputType.APPLIANCE,
+            InputType.DOOR,
+            InputType.WINDOW,
+        }
+
+        # Numeric sensors
         numeric_inputs = {
             InputType.TEMPERATURE,
             InputType.HUMIDITY,
@@ -945,20 +988,36 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             InputType.PM25,
             InputType.PM10,
         }
-        numeric_entities: dict[str, list[str]] = {}
+
+        correlatable_entities: dict[str, dict[str, dict[str, Any]]] = {}
 
         for area_name, area in self.areas.items():
             entities_container = getattr(area.entities, "entities", {})
-            area_numeric: list[str] = []
+            area_entities: dict[str, dict[str, Any]] = {}
+
             for entity_id, entity in entities_container.items():
                 entity_type = getattr(entity, "type", None)
                 input_type = getattr(entity_type, "input_type", None)
-                if input_type in numeric_inputs:
-                    area_numeric.append(entity_id)
-            if area_numeric:
-                numeric_entities[area_name] = area_numeric
 
-        return numeric_entities
+                if input_type in binary_inputs:
+                    # Binary sensor - get active_states
+                    active_states = getattr(entity_type, "active_states", None)
+                    if active_states:
+                        area_entities[entity_id] = {
+                            "is_binary": True,
+                            "active_states": active_states,
+                        }
+                elif input_type in numeric_inputs:
+                    # Numeric sensor
+                    area_entities[entity_id] = {
+                        "is_binary": False,
+                        "active_states": None,
+                    }
+
+            if area_entities:
+                correlatable_entities[area_name] = area_entities
+
+        return correlatable_entities
 
     async def run_interval_aggregation_job(
         self, _now: datetime | None = None
@@ -995,39 +1054,68 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 results,
             )
 
-            # Run numeric correlation analysis
-            numeric_entities = self._get_numeric_entities_by_area()
-            if numeric_entities:
+            # Run correlation analysis for numeric and binary sensors
+            correlatable_entities = self._get_correlatable_entities_by_area()
+            if correlatable_entities:
                 _LOGGER.info(
-                    "Starting numeric correlation analysis for %d area(s)",
-                    len(numeric_entities),
+                    "Starting correlation analysis for %d area(s)",
+                    len(correlatable_entities),
                 )
-                for area_name, entity_ids in numeric_entities.items():
-                    for entity_id in entity_ids:
+                for area_name, entities in correlatable_entities.items():
+                    for entity_id, entity_info in entities.items():
                         try:
-                            correlation_result = await self.hass.async_add_executor_job(
-                                self.db.analyze_and_save_correlation,
-                                area_name,
-                                entity_id,
-                            )
+                            if entity_info["is_binary"]:
+                                # Binary sensors: Use duration-based likelihood analysis
+                                likelihood_result = (
+                                    await self.hass.async_add_executor_job(
+                                        self.db.analyze_binary_likelihoods,
+                                        area_name,
+                                        entity_id,
+                                        30,  # analysis_period_days
+                                        entity_info["active_states"],
+                                    )
+                                )
+                                # Apply results (if needed)
+                                if likelihood_result and area_name in self.areas:
+                                    area = self.areas[area_name]
+                                    try:
+                                        entity = area.entities.get_entity(entity_id)
+                                        entity.update_binary_likelihoods(
+                                            likelihood_result
+                                        )
+                                    except ValueError:
+                                        pass
+                            else:
+                                # Numeric sensors: Use correlation analysis
+                                correlation_result = (
+                                    await self.hass.async_add_executor_job(
+                                        self.db.analyze_and_save_correlation,
+                                        area_name,
+                                        entity_id,
+                                        30,  # analysis_period_days
+                                        False,  # is_binary
+                                        None,  # active_states
+                                    )
+                                )
 
-                            # Apply analysis results to live entities immediately
-                            if correlation_result and area_name in self.areas:
-                                area = self.areas[area_name]
-                                try:
-                                    entity = area.entities.get_entity(entity_id)
-                                    entity.update_correlation(correlation_result)
-                                except ValueError:
-                                    # Entity might have been removed during analysis
-                                    pass
+                                # Apply analysis results to live entities immediately
+                                if correlation_result and area_name in self.areas:
+                                    area = self.areas[area_name]
+                                    try:
+                                        entity = area.entities.get_entity(entity_id)
+                                        entity.update_correlation(correlation_result)
+                                    except ValueError:
+                                        # Entity might have been removed during analysis
+                                        pass
 
-                            summary["correlations"].append(
-                                {
-                                    "area": area_name,
-                                    "entity_id": entity_id,
-                                    "success": bool(correlation_result),
-                                }
-                            )
+                                summary["correlations"].append(
+                                    {
+                                        "area": area_name,
+                                        "entity_id": entity_id,
+                                        "type": "correlation",
+                                        "success": bool(correlation_result),
+                                    }
+                                )
                         except Exception as err:  # noqa: BLE001
                             _LOGGER.error(
                                 "Correlation analysis failed for %s (%s): %s",
@@ -1045,7 +1133,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
             else:
                 _LOGGER.debug(
-                    "Skipping numeric correlation analysis - no numeric entities configured"
+                    "Skipping correlation analysis - no correlatable entities configured"
                 )
 
         except Exception as err:  # noqa: BLE001
