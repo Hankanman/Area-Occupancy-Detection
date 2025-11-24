@@ -38,7 +38,7 @@ class Entity:
     previous_evidence: bool | None = None
     learned_active_range: tuple[float, float] | None = None
     learned_gaussian_params: dict[str, float] | None = None
-    rejection_reason: str | None = None
+    analysis_error: str | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -253,7 +253,7 @@ class Entity:
         std_unoccupied = correlation_data.get("std_dev_when_unoccupied")
 
         # Store rejection reason if present
-        self.rejection_reason = correlation_data.get("rejection_reason")
+        self.analysis_error = correlation_data.get("analysis_error")
 
         # Get occupied stats
         mean_occupied = correlation_data.get("mean_value_when_occupied")

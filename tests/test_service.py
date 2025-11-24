@@ -6,11 +6,7 @@ import pytest
 
 from custom_components.area_occupancy.const import DOMAIN
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.service import (
-    _run_analysis,
-    _run_nightly_tasks,
-    async_setup_services,
-)
+from custom_components.area_occupancy.service import _run_analysis, async_setup_services
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 
@@ -21,7 +17,7 @@ def _setup_coordinator_test(
     hass: HomeAssistant,
     mock_config_entry: Mock,
     coordinator: AreaOccupancyCoordinator,
-    entry_id: str = "test_entry_id",
+    _entry_id: str = "test_entry_id",
 ) -> None:
     """Set up common coordinator test configuration."""
     mock_config_entry.runtime_data = coordinator
@@ -73,7 +69,7 @@ class TestRunAnalysis:
         )  # Should result in [None, None]
         mock_entity.active_states = ["on"]
         mock_entity.learned_gaussian_params = None
-        mock_entity.rejection_reason = None
+        mock_entity.analysis_error = None
         area._entities = type(
             "obj", (object,), {"entities": {"binary_sensor.motion1": mock_entity}}
         )()
@@ -111,7 +107,7 @@ class TestRunAnalysis:
 
         # Verify keys with None values are filtered out
         assert "gaussian_params" not in entity_data
-        assert "rejection_reason" not in entity_data
+        assert "analysis_error" not in entity_data
 
     async def test_run_analysis_missing_entry_id(self, hass: HomeAssistant) -> None:
         """Test analysis run with missing entry_id (backward compatibility)."""
@@ -145,56 +141,6 @@ class TestRunAnalysis:
             await _run_analysis(hass, mock_service_call)
 
 
-class TestRunNightlyTasks:
-    """Test _run_nightly_tasks service function."""
-
-    async def test_run_nightly_tasks_success(
-        self,
-        hass: HomeAssistant,
-        mock_config_entry: Mock,
-        coordinator: AreaOccupancyCoordinator,
-    ) -> None:
-        """Test successful nightly tasks run."""
-        summary = {
-            "aggregation": {"daily": 1, "weekly": 0, "monthly": 0},
-            "correlations": [
-                {"area": "Test", "entity_id": "sensor.numeric", "success": True}
-            ],
-            "errors": [],
-        }
-
-        coordinator.run_interval_aggregation_job = AsyncMock(return_value=summary)
-
-        _setup_coordinator_test(hass, mock_config_entry, coordinator)
-        mock_service_call = _create_service_call()
-
-        result = await _run_nightly_tasks(hass, mock_service_call)
-
-        assert result["results"] == summary
-        coordinator.run_interval_aggregation_job.assert_called_once()
-
-    async def test_run_nightly_tasks_error(
-        self,
-        hass: HomeAssistant,
-        mock_config_entry: Mock,
-        coordinator: AreaOccupancyCoordinator,
-    ) -> None:
-        """Test nightly tasks error handling."""
-
-        coordinator.run_interval_aggregation_job = AsyncMock(
-            side_effect=RuntimeError("Nightly failed")
-        )
-
-        _setup_coordinator_test(hass, mock_config_entry, coordinator)
-        mock_service_call = _create_service_call()
-
-        with pytest.raises(
-            HomeAssistantError,
-            match="Failed to run nightly tasks.*Nightly failed",
-        ):
-            await _run_nightly_tasks(hass, mock_service_call)
-
-
 class TestAsyncSetupServices:
     """Test async_setup_services function."""
 
@@ -209,7 +155,6 @@ class TestAsyncSetupServices:
         # Verify services are registered
         services = hass.services.async_services().get(DOMAIN, {})
         assert "run_analysis" in services
-        assert "run_nightly_tasks" in services
         assert "reset_entities" not in services
         assert "get_entity_metrics" not in services
         assert "get_problematic_entities" not in services
@@ -218,5 +163,3 @@ class TestAsyncSetupServices:
         # Verify service has no schema (no parameters)
         service = services["run_analysis"]
         assert service.schema is None
-        nightly_service = services["run_nightly_tasks"]
-        assert nightly_service.schema is None
