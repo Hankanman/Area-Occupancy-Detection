@@ -95,6 +95,8 @@ flowchart TD
 
 **Trigger**: Scheduled timer fires every hour
 
+**Note**: The coordinator's `run_analysis()` method delegates to `run_full_analysis()` in `data/analysis.py`, which orchestrates the complete analysis chain.
+
 #### Step 2.1: Sync States
 
 Imports latest data from Home Assistant recorder into local database.
@@ -105,9 +107,13 @@ Ensures database integrity and removes old data beyond retention period.
 
 #### Step 2.3: Populate OccupiedIntervalsCache
 
+**Location**: `custom_components/area_occupancy/data/analysis.py::ensure_occupied_intervals_cache()`
+
 Calculates occupied intervals from motion sensors (ground truth) and caches them.
 
 #### Step 2.4: Interval Aggregation
+
+**Location**: `custom_components/area_occupancy/data/analysis.py::run_interval_aggregation()`
 
 Aggregates raw intervals into daily/weekly/monthly aggregates for trend analysis.
 
@@ -116,6 +122,8 @@ Aggregates raw intervals into daily/weekly/monthly aggregates for trend analysis
 Calculates global prior probability and time-based priors for each area.
 
 #### Step 2.6: Correlation Analysis
+
+**Location**: `custom_components/area_occupancy/db/correlation.py::run_correlation_analysis()`
 
 **Main analysis path** - Runs correlation analysis for all configured sensors (excluding motion sensors).
 
@@ -127,11 +135,13 @@ Updates coordinator state and persists all changes to database.
 
 ### Phase 3: Correlation Analysis (Step 6 Detail)
 
-**Location**: `custom_components/area_occupancy/coordinator.py::_run_correlation_analysis()`
+**Location**: `custom_components/area_occupancy/db/correlation.py::run_correlation_analysis()`
 
 #### Step 3.1: Get Correlatable Entities
 
-**Method**: `_get_correlatable_entities_by_area()`
+**Location**: `custom_components/area_occupancy/db/correlation.py::get_correlatable_entities_by_area()`
+
+**Method**: `get_correlatable_entities_by_area()`
 
 **What Happens**:
 
@@ -177,6 +187,8 @@ For each entity:
    - Returns static probability values.
 
 #### Step 3.3b: Numeric Sensor Analysis
+
+**Location**: `custom_components/area_occupancy/db/correlation.py`
 
 **Method**: `analyze_correlation()`
 
