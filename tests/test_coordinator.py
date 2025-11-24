@@ -784,15 +784,22 @@ class TestAreaOccupancyCoordinator:
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(
                 coordinator.db, "prune_old_intervals", return_value=5
-            ),  # Mock pruning
-            patch.object(
-                coordinator, "_ensure_occupied_intervals_cache", new=AsyncMock()
-            ),
-            patch.object(coordinator, "_run_interval_aggregation", new=AsyncMock()),
-            patch.object(area, "run_prior_analysis", new=AsyncMock()),
-            patch.object(coordinator, "_run_correlation_analysis", new=AsyncMock()),
+            ) as mock_prune,  # Mock pruning
+            patch(
+                "custom_components.area_occupancy.data.analysis.ensure_occupied_intervals_cache",
+                new=AsyncMock(),
+            ) as mock_cache,
+            patch(
+                "custom_components.area_occupancy.data.analysis.run_interval_aggregation",
+                new=AsyncMock(),
+            ) as mock_aggregation,
+            patch.object(area, "run_prior_analysis", new=AsyncMock()) as mock_prior,
+            patch(
+                "custom_components.area_occupancy.db.correlation.run_correlation_analysis",
+                new=AsyncMock(),
+            ) as mock_correlation,
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
-            patch.object(coordinator.db, "save_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()) as mock_save,
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=None,
@@ -801,17 +808,17 @@ class TestAreaOccupancyCoordinator:
             await coordinator.run_analysis()
             assert coordinator._analysis_timer is None
             # Verify pruning was called (master-only)
-            coordinator.db.prune_old_intervals.assert_called_once()
+            mock_prune.assert_called_once()
             # Verify cache ensure was called before aggregation
-            coordinator._ensure_occupied_intervals_cache.assert_called_once()
+            mock_cache.assert_called_once()
             # Verify interval aggregation was called before prior analysis
-            coordinator._run_interval_aggregation.assert_called_once()
+            mock_aggregation.assert_called_once()
             # Verify prior analysis was called
-            area.run_prior_analysis.assert_called_once()
+            mock_prior.assert_called_once()
             # Verify correlation analysis was called after prior analysis
-            coordinator._run_correlation_analysis.assert_called_once()
+            mock_correlation.assert_called_once()
             # Verify save was called last
-            coordinator.db.save_data.assert_called_once()
+            mock_save.assert_called_once()
 
     async def test_run_analysis_with_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

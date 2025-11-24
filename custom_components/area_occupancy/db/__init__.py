@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .constants import (
+from ..const import (
     DB_NAME,
     DB_VERSION,
     DEFAULT_AREA_PRIOR,

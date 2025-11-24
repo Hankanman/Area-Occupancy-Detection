@@ -46,9 +46,22 @@ def format_percentage(value: float) -> str:
     return f"{value * 100:.2f}%"
 
 
-def clamp_probability(value: float) -> float:
-    """Clamp probability value to valid range [MIN_PROBABILITY, MAX_PROBABILITY]."""
-    return max(MIN_PROBABILITY, min(MAX_PROBABILITY, value))
+def clamp_probability(
+    value: float, min_val: float | None = None, max_val: float | None = None
+) -> float:
+    """Clamp probability value to valid range.
+
+    Args:
+        value: Probability value to clamp
+        min_val: Minimum value (default: MIN_PROBABILITY from const)
+        max_val: Maximum value (default: MAX_PROBABILITY from const)
+
+    Returns:
+        Clamped probability value
+    """
+    min_bound = min_val if min_val is not None else MIN_PROBABILITY
+    max_bound = max_val if max_val is not None else MAX_PROBABILITY
+    return max(min_bound, min(max_bound, value))
 
 
 # ────────────────────────────────────── Core Bayes ───────────────────────────
@@ -268,9 +281,16 @@ def format_area_names(coordinator: AreaOccupancyCoordinator) -> str:
         coordinator: The coordinator instance containing areas
 
     Returns:
-        Comma-separated string of area names
+        Comma-separated string of area names, or "no areas" if empty
     """
-    return ", ".join(coordinator.get_area_names())
+    try:
+        if not hasattr(coordinator, "get_area_names"):
+            return "no areas"
+        area_names = coordinator.get_area_names()
+        return ", ".join(area_names) if area_names else "no areas"
+    except Exception:  # noqa: BLE001
+        # Handle case where coordinator isn't fully initialized or get_area_names fails
+        return "no areas"
 
 
 def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:

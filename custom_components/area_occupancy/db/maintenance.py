@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from .constants import DB_VERSION
+from ..const import DB_VERSION
 from .schema import Base
 
 if TYPE_CHECKING:

@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_VERSION,
+    DB_NAME,
     DEFAULT_BACKUP_INTERVAL_HOURS,
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
@@ -34,7 +35,6 @@ from . import (
     sync,
     utils,
 )
-from .constants import DB_NAME
 from .schema import (
     AreaRelationships,
     Areas,
