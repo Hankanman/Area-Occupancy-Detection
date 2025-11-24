@@ -134,7 +134,7 @@ class TestAnalyzeNumericCorrelation:
             db, area_name, "sensor.nonexistent", analysis_period_days=30
         )
         assert result is not None
-        assert result["rejection_reason"] == "too_few_samples"
+        assert result["analysis_error"] == "too_few_samples"
 
 
 class TestSaveCorrelationResult:
@@ -298,7 +298,7 @@ class TestAnalyzeAndSaveCorrelation:
         )
         # Should now return rejection result
         assert result is not None
-        assert result["rejection_reason"] == "too_few_samples"
+        assert result["analysis_error"] == "too_few_samples"
 
 
 class TestCalculatePearsonCorrelationEdgeCases:
@@ -389,7 +389,7 @@ class TestAnalyzeNumericCorrelationEdgeCases:
             db, area_name, entity_id, analysis_period_days=30
         )
         assert result is not None
-        assert result["rejection_reason"] == "no_occupancy_data"
+        assert result["analysis_error"] == "no_occupancy_data"
 
     def test_analyze_numeric_correlation_insufficient_samples(self, test_db):
         """Test analysis with insufficient samples."""
@@ -432,7 +432,7 @@ class TestAnalyzeNumericCorrelationEdgeCases:
             db, area_name, entity_id, analysis_period_days=30
         )
         assert result is not None
-        assert result["rejection_reason"] == "too_few_samples"
+        assert result["analysis_error"] == "too_few_samples"
 
     def test_analyze_numeric_correlation_negative_correlation(self, test_db):
         """Test analysis with negative correlation."""

@@ -681,45 +681,10 @@ class TestAreaOccupancyCoordinator:
             await coordinator._start_analysis_timer()  # Now async
             mock_track.assert_not_called()
 
-    async def test_nightly_timer_start(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test nightly interval aggregation timer start."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-
-        with (
-            patch.object(
-                coordinator,
-                "_next_interval_aggregation_run",
-                return_value=dt_util.utcnow(),
-            ) as mock_next,
-            patch(
-                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-                return_value=Mock(),
-            ) as mock_track,
-        ):
-            coordinator._start_nightly_timer()
-            mock_next.assert_called_once()
-            mock_track.assert_called_once()
-            assert coordinator._nightly_timer is not None
-
-    async def test_nightly_timer_not_started_when_exists(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test nightly timer is not started when already scheduled."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-        coordinator._nightly_timer = Mock()
-
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time"
-        ) as mock_track:
-            coordinator._start_nightly_timer()
-            mock_track.assert_not_called()
-
     async def test_run_interval_aggregation_job_success(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test successful execution of nightly interval aggregation job."""
+        """Test successful execution of interval aggregation job."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
 
@@ -728,21 +693,15 @@ class TestAreaOccupancyCoordinator:
 
         hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
 
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-            return_value=Mock(),
-        ) as mock_track:
-            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-            coordinator.db.run_interval_aggregation.assert_called_once()
-            mock_track.assert_called_once()
-            assert coordinator._nightly_timer == mock_track.return_value
-            assert summary["aggregation"] == {"daily": 1}
-            assert summary["errors"] == []
+        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+        coordinator.db.run_interval_aggregation.assert_called_once()
+        assert summary["aggregation"] == {"daily": 1}
+        assert summary["errors"] == []
 
     async def test_run_interval_aggregation_job_triggers_correlation(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Ensure nightly job runs correlation for numeric entities."""
+        """Ensure interval aggregation job runs correlation for numeric entities."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
@@ -759,21 +718,17 @@ class TestAreaOccupancyCoordinator:
 
         hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
 
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-            return_value=Mock(),
-        ):
-            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-            coordinator.db.analyze_and_save_correlation.assert_called_once_with(
-                area_name, "sensor.numeric"
-            )
-            assert summary["correlations"]
-            assert summary["correlations"][0]["success"] is True
+        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+        coordinator.db.analyze_and_save_correlation.assert_called_once_with(
+            area_name, "sensor.numeric"
+        )
+        assert summary["correlations"]
+        assert summary["correlations"][0]["success"] is True
 
     async def test_run_interval_aggregation_job_skips_when_no_numeric(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Ensure nightly job skips correlation when no numeric entities."""
+        """Ensure interval aggregation job skips correlation when no numeric entities."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         area_name = "Test Area"
         area = create_test_area(coordinator, area_name=area_name)
@@ -789,18 +744,14 @@ class TestAreaOccupancyCoordinator:
 
         hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
 
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-            return_value=Mock(),
-        ):
-            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-            coordinator.db.analyze_and_save_correlation.assert_not_called()
-            assert summary["correlations"] == []
+        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+        coordinator.db.analyze_and_save_correlation.assert_not_called()
+        assert summary["correlations"] == []
 
     async def test_run_interval_aggregation_job_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test error handling for nightly interval aggregation job."""
+        """Test error handling for interval aggregation job."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         def _raise_error():
@@ -813,13 +764,8 @@ class TestAreaOccupancyCoordinator:
 
         hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
 
-        with patch(
-            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
-            return_value=Mock(),
-        ) as mock_track:
-            summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-            mock_track.assert_called_once()
-            assert summary["errors"]
+        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
+        assert summary["errors"]
 
     async def test_run_analysis(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
@@ -839,7 +785,12 @@ class TestAreaOccupancyCoordinator:
             patch.object(
                 coordinator.db, "prune_old_intervals", return_value=5
             ),  # Mock pruning
+            patch.object(
+                coordinator, "_ensure_occupied_intervals_cache", new=AsyncMock()
+            ),
+            patch.object(coordinator, "_run_interval_aggregation", new=AsyncMock()),
             patch.object(area, "run_prior_analysis", new=AsyncMock()),
+            patch.object(coordinator, "_run_correlation_analysis", new=AsyncMock()),
             patch.object(area, "run_likelihood_analysis", new=AsyncMock()),
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", new=AsyncMock()),
@@ -852,6 +803,18 @@ class TestAreaOccupancyCoordinator:
             assert coordinator._analysis_timer is None
             # Verify pruning was called (master-only)
             coordinator.db.prune_old_intervals.assert_called_once()
+            # Verify cache ensure was called before aggregation
+            coordinator._ensure_occupied_intervals_cache.assert_called_once()
+            # Verify interval aggregation was called before prior analysis
+            coordinator._run_interval_aggregation.assert_called_once()
+            # Verify prior analysis was called
+            area.run_prior_analysis.assert_called_once()
+            # Verify correlation analysis was called after prior analysis
+            coordinator._run_correlation_analysis.assert_called_once()
+            # Verify likelihood analysis was called
+            area.run_likelihood_analysis.assert_called_once()
+            # Verify save was called last
+            coordinator.db.save_data.assert_called_once()
 
     async def test_run_analysis_with_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

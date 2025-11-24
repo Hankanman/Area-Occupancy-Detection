@@ -18,20 +18,20 @@ The system performs a two-stage statistical analysis:
 
 ### 1. Correlation Check (Qualification)
 
-Every 30 days, the system analyzes the relationship between the numeric sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
+Every hour as part of the analysis cycle, the system analyzes the relationship between the numeric sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
 
 - **Positive Correlation**: Value increases when occupied.
 - **Negative Correlation**: Value decreases when occupied.
 - **No Correlation**: No clear pattern found.
 
-If the correlation is too weak or the sample size is too small, the sensor is **rejected** for occupancy detection purposes to prevent false positives. You can see the `rejection_reason` in the analysis output.
+If the correlation is too weak or the sample size is too small, the sensor is **rejected** for occupancy detection purposes to prevent false positives. You can see the `analysis_error` in the analysis output.
 
 ### 2. Learning Distributions
 
 If a sensor qualifies, the system learns two statistical distributions:
 
-1.  **Occupied Distribution**: $(\mu_{occ}, \sigma_{occ})$ - The pattern when the room is _known_ to be occupied.
-2.  **Unoccupied Distribution**: $(\mu_{unocc}, \sigma_{unocc})$ - The pattern when the room is _known_ to be empty.
+1. **Occupied Distribution**: $(\mu_{occ}, \sigma_{occ})$ - The pattern when the room is _known_ to be occupied.
+2. **Unoccupied Distribution**: $(\mu_{unocc}, \sigma_{unocc})$ - The pattern when the room is _known_ to be empty.
 
 These parameters are stored in the `NumericCorrelations` database table.
 
@@ -41,8 +41,8 @@ When the sensor reports a new value $x$, the system calculates two probability d
 
 $$ f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{1}{2}(\frac{x-\mu}{\sigma})^2} $$
 
-1.  **$P(x | Occupied)$**: Likelihood of $x$ given the "Occupied" distribution.
-2.  **$P(x | Unoccupied)$**: Likelihood of $x$ given the "Unoccupied" distribution.
+1. **$P(x | Occupied)$**: Likelihood of $x$ given the "Occupied" distribution.
+2. **$P(x | Unoccupied)$**: Likelihood of $x$ given the "Unoccupied" distribution.
 
 ### 4. Bayesian Update
 
@@ -67,16 +67,16 @@ These densities are used directly in the Bayesian update formula.
 
 ## Benefits
 
-1.  **No "Cliff Edge"**: Small changes in sensor values result in small changes in probability.
-2.  **True Evidence Weighting**: Extreme values provide stronger evidence.
-3.  **Automatic Calibration**: The system learns what is "normal" for each specific room.
+1. **No "Cliff Edge"**: Small changes in sensor values result in small changes in probability.
+2. **True Evidence Weighting**: Extreme values provide stronger evidence.
+3. **Automatic Calibration**: The system learns what is "normal" for each specific room.
 
 ## Data Flow
 
-1.  **Data Collection**: `NumericSamples` are recorded on sensor changes. `OccupiedIntervals` track occupancy.
-2.  **Nightly Analysis**: The `analyze_numeric_correlation` job runs.
-3.  **Entity Update**: Live `Entity` objects are updated with `learned_gaussian_params`.
-4.  **Protection**: These learned parameters take precedence over standard binary presence counting.
+1. **Data Collection**: `NumericSamples` are recorded on sensor changes. `OccupiedIntervals` track occupancy.
+2. **Hourly Analysis**: The `analyze_numeric_correlation` job runs as part of the analysis cycle (every hour).
+3. **Entity Update**: Live `Entity` objects are updated with `learned_gaussian_params`.
+4. **Protection**: These learned parameters take precedence over standard binary presence counting.
 
 ## Viewing Results
 
@@ -91,13 +91,13 @@ sensor.lounge_temperature:
     std_occupied: 1.0
     mean_unoccupied: 20.0
     std_unoccupied: 1.0
-  rejection_reason: null
+  analysis_error: null
 ```
 
 If a sensor is not correlated, you might see:
 
 ```yaml
 sensor.random_noise:
-  rejection_reason: "no_correlation"
+  analysis_error: "no_correlation"
   gaussian_params: null
 ```
