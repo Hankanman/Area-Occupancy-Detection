@@ -6,7 +6,7 @@ To make the Bayesian calculations more accurate and specific to your environment
 
 Simply put the prior is the probability that the area is occupied at any given time. For example "I spend about 30% of my time in the living room" so the prior for the living room is 0.30. This sets the "ground truth" for the living room.
 
-Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behavior of your **motion sensors**, reflecting how often that area is typically occupied. This is done by analyzing the history of your sensors over a lookback period (default: 90 days).
+Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behavior of your **motion sensors**, reflecting how often that area is typically occupied. This is done by analyzing the history of your sensors over a lookback period (default: 60 days).
 
 In the context of Bayesian probability, the **prior probability** (often denoted as `P(Occupied)` or simply `prior`) represents our initial belief about the likelihood of an event _before_ considering any new evidence. For this integration, it's the baseline probability that the area is occupied, independent of the _current_ state of the sensors.
 
@@ -14,14 +14,14 @@ In the context of Bayesian probability, the **prior probability** (often denoted
 
 The system calculates two types of priors to provide a robust baseline:
 
-1.  **Global Prior**: A single value representing the overall "busyness" of a room (e.g., a living room is occupied 30% of the time, a guest room 1% of the time).
-2.  **Time-Based Prior**: A time-specific probability based on the day of week and time of day (e.g., "Mondays at 09:00").
+1. **Global Prior**: A single value representing the overall "busyness" of a room (e.g., a living room is occupied 30% of the time, a guest room 1% of the time).
+2. **Time-Based Prior**: A time-specific probability based on the day of week and time of day (e.g., "Mondays at 09:00").
 
 The final prior used for real-time detection is a combination of these two, giving weight to the specific time of day while using the global prior as a stable anchor.
 
 ### 1. Global Prior Calculation
 
-The Global Prior is determined by analyzing the history of your sensors over a lookback period (default: 90 days).
+The Global Prior is determined by analyzing the history of your sensors over a lookback period (default: 60 days).
 
 - **Motion Analysis**: First, it calculates the percentage of time motion sensors were active.
 - **Fallback for Low Activity**: If motion sensors show very low activity (less than 10% of the time), the system assumes people might be sitting still (e.g., watching TV or working). It then checks **Media Players** and **Appliances** to supplement the occupancy data.
@@ -48,9 +48,9 @@ To learn from history, the system needs to know when the room was _actually_ occ
 
 When the integration runs in real-time, it determines the current Prior Probability dynamically:
 
-1.  **Combine Priors**: It starts by mixing the **Global Prior** and the specific **Time-Based Prior** for the current hour. This balances the general busyness of the room with the specific expectation for the current time.
-2.  **Bias Towards Safety**: The system slightly biases the prior towards assuming occupancy (multiplying by a small factor). This is a "better safe than sorry" heuristic to prevent lights from turning off on you.
-3.  **Apply Minimum Floor**: Finally, it applies the **Minimum Prior Override** (if configured). This ensures that even in very rarely used rooms, the probability never drops so low that the system becomes unresponsive to new sensor activity.
+1. **Combine Priors**: It starts by mixing the **Global Prior** and the specific **Time-Based Prior** for the current hour. This balances the general busyness of the room with the specific expectation for the current time.
+2. **Bias Towards Safety**: The system slightly biases the prior towards assuming occupancy (multiplying by a small factor). This is a "better safe than sorry" heuristic to prevent lights from turning off on you.
+3. **Apply Minimum Floor**: Finally, it applies the **Minimum Prior Override** (if configured). This ensures that even in very rarely used rooms, the probability never drops so low that the system becomes unresponsive to new sensor activity.
 
 ## Handling Special Situations
 

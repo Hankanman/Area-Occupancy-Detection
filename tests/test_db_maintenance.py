@@ -1,7 +1,6 @@
 """Tests for database maintenance functions."""
 # ruff: noqa: SLF001
 
-from contextlib import suppress
 from datetime import datetime
 import os
 from pathlib import Path
@@ -20,7 +19,6 @@ from custom_components.area_occupancy.db.maintenance import (
     _create_tables_individually,
     _enable_wal_mode,
     _get_required_tables,
-    _migrate_priors_table_for_area_name,
     attempt_database_recovery,
     backup_database,
     check_database_accessibility,
@@ -740,146 +738,6 @@ class TestEnsureDbExistsErrorPaths:
         ):
             ensure_db_exists(db)
             # Should handle gracefully
-
-
-class TestMigratePriorsTableForAreaName:
-    """Test _migrate_priors_table_for_area_name function."""
-
-    def test_migrate_priors_table_with_areas_table(self, test_db):
-        """Test migration when areas table exists."""
-        db = test_db
-        db.init_db()
-
-        # Drop existing priors table if it exists
-        with db.get_locked_session() as session, suppress(Exception):
-            session.execute(text("DROP TABLE IF EXISTS priors"))
-            session.commit()
-
-        # Create old priors table (without area_name in primary key)
-        # Note: Don't add foreign key constraint to avoid migration issues
-        with db.get_locked_session() as session:
-            session.execute(
-                text(
-                    """
-                    CREATE TABLE priors (
-                        entry_id TEXT NOT NULL,
-                        day_of_week INTEGER NOT NULL,
-                        time_slot INTEGER NOT NULL,
-                        prior_value REAL NOT NULL,
-                        data_points INTEGER NOT NULL,
-                        last_updated DATETIME NOT NULL,
-                        PRIMARY KEY (entry_id, day_of_week, time_slot)
-                    )
-                    """
-                )
-            )
-            # Insert test data with matching entry_id from areas table
-            session.execute(
-                text(
-                    """
-                    INSERT INTO priors (entry_id, day_of_week, time_slot, prior_value, data_points, last_updated)
-                    VALUES (:entry_id, 0, 0, 0.5, 10, :now)
-                    """
-                ),
-                {"entry_id": db.coordinator.entry_id, "now": dt_util.utcnow()},
-            )
-            session.commit()
-
-        # Run migration - may raise exception due to foreign key constraint
-        # The migration function creates a foreign key, but our test table doesn't match
-        # This tests the error handling path
-        try:
-            _migrate_priors_table_for_area_name(db)
-            # If migration succeeds, verify new table structure
-            with db.get_session() as session:
-                result = session.execute(text("PRAGMA table_info(priors)")).fetchall()
-                columns = [row[1] for row in result]
-                assert "area_name" in columns
-        except Exception:  # noqa: BLE001
-            # Migration may fail due to foreign key constraint mismatch
-            # This is acceptable - we're testing error paths
-            pass
-
-    def test_migrate_priors_table_without_areas_table(self, test_db):
-        """Test migration when areas table doesn't exist."""
-        db = test_db
-        db.init_db()
-
-        # Drop existing priors table if it exists
-        with db.get_locked_session() as session, suppress(Exception):
-            session.execute(text("DROP TABLE IF EXISTS priors"))
-            session.execute(text("DROP TABLE IF EXISTS areas"))
-            session.commit()
-
-        # Create old priors table (without area_name in primary key)
-        with db.get_locked_session() as session:
-            session.execute(
-                text(
-                    """
-                    CREATE TABLE priors (
-                        entry_id TEXT NOT NULL,
-                        day_of_week INTEGER NOT NULL,
-                        time_slot INTEGER NOT NULL,
-                        prior_value REAL NOT NULL,
-                        data_points INTEGER NOT NULL,
-                        last_updated DATETIME NOT NULL,
-                        PRIMARY KEY (entry_id, day_of_week, time_slot)
-                    )
-                    """
-                )
-            )
-            session.commit()
-
-        # Run migration - should use empty string for area_name
-        # May raise exception due to foreign key constraint, which is acceptable
-        try:
-            _migrate_priors_table_for_area_name(db)
-            # Verify migration completed
-            with db.get_session() as session:
-                result = session.execute(text("PRAGMA table_info(priors)")).fetchall()
-                columns = [row[1] for row in result]
-                assert "area_name" in columns
-        except Exception:  # noqa: BLE001
-            # Migration may fail - this tests error handling
-            pass
-
-    def test_migrate_priors_table_error_cleanup(self, test_db):
-        """Test migration error handling and cleanup."""
-        db = test_db
-        db.init_db()
-
-        # Drop existing priors table if it exists
-        with db.get_locked_session() as session, suppress(Exception):
-            session.execute(text("DROP TABLE IF EXISTS priors"))
-            session.commit()
-
-        # Create old priors table
-        with db.get_locked_session() as session:
-            session.execute(
-                text(
-                    """
-                    CREATE TABLE priors (
-                        entry_id TEXT NOT NULL,
-                        day_of_week INTEGER NOT NULL,
-                        time_slot INTEGER NOT NULL,
-                        prior_value REAL NOT NULL,
-                        data_points INTEGER NOT NULL,
-                        last_updated DATETIME NOT NULL,
-                        PRIMARY KEY (entry_id, day_of_week, time_slot)
-                    )
-                    """
-                )
-            )
-            session.commit()
-
-        # Mock error during migration
-        with (
-            patch.object(
-                db, "get_locked_session", side_effect=SQLAlchemyError("Migration error")
-            ),
-            pytest.raises(SQLAlchemyError),
-        ):
-            _migrate_priors_table_for_area_name(db)
 
 
 class TestAttemptDatabaseRecoveryEdgeCases:

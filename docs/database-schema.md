@@ -32,10 +32,12 @@ Stores area configuration and metadata.
 | `updated_at` | DateTime | Last update timestamp |
 
 **Indexes:**
+
 - Primary key on `area_name`
 - Index on `entry_id`
 
 **Relationships:**
+
 - One-to-many with `entities`
 - One-to-many with `priors`
 
@@ -61,11 +63,13 @@ Stores entity (sensor) configuration and Bayesian parameters.
 | `evidence` | Boolean | Current evidence state |
 
 **Indexes:**
+
 - Composite primary key on `(area_name, entity_id)`
 - Indexes on `entry_id`, `area_name`, `entity_type`, `is_shared`
 - Composite index on `(entry_id, area_name, entity_type)`
 
 **Relationships:**
+
 - Many-to-one with `areas`
 - One-to-many with `intervals`
 
@@ -87,16 +91,19 @@ Stores state change intervals for all sensors.
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**
+
 - Primary key on `id`
 - Unique constraint on `(entity_id, start_time, end_time, aggregation_level)`
 - Indexes on `entry_id`, `area_name`, `entity_id`, `start_time`, `end_time`, `aggregation_level`
 - Composite indexes for common query patterns
 
 **Relationships:**
+
 - Many-to-one with `entities`
 
 **Retention Policy:**
-- Raw intervals: 30 days
+
+- Raw intervals: 60 days
 - Daily aggregates: 90 days
 - Weekly aggregates: 365 days
 - Monthly aggregates: 5 years
@@ -121,10 +128,12 @@ Stores time-slot priors (day of week × time slot).
 | `last_updated` | DateTime | Last update timestamp |
 
 **Indexes:**
+
 - Composite primary key on `(area_name, day_of_week, time_slot)`
 - Indexes on `entry_id`, `area_name`, `(day_of_week, time_slot)`
 
 **Relationships:**
+
 - Many-to-one with `areas`
 
 ## New Tables for Advanced Features
@@ -153,6 +162,7 @@ Stores aggregated interval statistics for efficient querying.
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(entity_id, aggregation_period, period_start, state)`
 - Composite indexes for area-based and entity-based queries
 
@@ -175,6 +185,7 @@ Stores precomputed occupied intervals for fast prior calculations.
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(area_name, start_time, end_time)`
 - Composite indexes for time-range queries
 
@@ -203,6 +214,7 @@ Stores global prior values with calculation metadata and history. **This is the 
 | `updated_at` | DateTime | Last update timestamp |
 
 **Indexes:**
+
 - Unique constraint on `area_name`
 - Index on `calculation_date`
 
@@ -227,6 +239,7 @@ Stores raw numeric sensor samples for correlation analysis.
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(entity_id, timestamp)`
 - Composite indexes for time-range queries
 
@@ -258,10 +271,12 @@ Stores aggregated numeric sensor data for trend analysis.
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(entity_id, aggregation_period, period_start)`
 - Composite indexes for area-based and entity-based queries
 
 **Retention:**
+
 - Hourly aggregates: 30 days
 - Weekly aggregates: 3 years (for seasonal analysis)
 
@@ -294,6 +309,7 @@ Stores calculated correlations between numeric sensor values and occupancy.
 | `updated_at` | DateTime | Last update timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(area_name, entity_id, analysis_period_start)`
 - Composite indexes for querying by correlation type and confidence
 
@@ -319,6 +335,7 @@ Stores per-entity operational and Bayesian statistics.
 | `updated_at` | DateTime | Last update timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(entity_id, statistic_type, statistic_name, period_start)`
 - Composite indexes for area-based and entity-based queries
 
@@ -341,6 +358,7 @@ Defines and tracks relationships between areas.
 | `updated_at` | DateTime | Last update timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(area_name, related_area_name)`
 - Indexes for bidirectional queries
 
@@ -365,6 +383,7 @@ Stores aggregated statistics that span multiple areas.
 | `created_at` | DateTime | Creation timestamp |
 
 **Indexes:**
+
 - Unique constraint on `(statistic_type, statistic_name, aggregation_period, period_start)`
 - Composite indexes for type and period queries
 
@@ -380,6 +399,7 @@ Stores database metadata (version, last prune time, etc.).
 | `value` | String | Metadata value |
 
 **Common Keys:**
+
 - `db_version`: Database schema version
 - `last_prune_time`: Timestamp of last interval prune operation
 
@@ -389,7 +409,7 @@ Stores database metadata (version, last prune time, etc.).
 
 1. **Raw Intervals**: State changes from Home Assistant recorder are converted to intervals and stored in `intervals` table with `aggregation_level="raw"`.
 2. **Aggregation**: Periodically, raw intervals are aggregated:
-   - Raw → Daily: After 30 days
+   - Raw → Daily: After 60 days
    - Daily → Weekly: After 90 days
    - Weekly → Monthly: After 365 days
    - Monthly aggregates are retained indefinitely
@@ -410,7 +430,7 @@ Stores database metadata (version, last prune time, etc.).
 
 | Data Type | Retention Period | Aggregation |
 |-----------|------------------|-------------|
-| Raw intervals | 30 days | None |
+| Raw intervals | 60 days | None |
 | Raw numeric samples | 14 days | None |
 | Daily interval aggregates | 90 days | From raw |
 | Weekly interval aggregates | 365 days | From daily |
@@ -438,4 +458,3 @@ When the database schema version changes:
 3. All previous data is cleared (no migration scripts for major version changes)
 
 This approach is used for DB_VERSION 5+ due to the fundamental architectural change from multiple integrations to a single integration with multiple areas.
-

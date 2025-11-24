@@ -1,6 +1,3 @@
 run_analysis:
   name: Run Analysis
   description: "Run the analysis for all areas in the area occupancy instance."
-run_nightly_tasks:
-  name: Run Nightly Tasks
-  description: "Run the nightly tasks for all areas in the area occupancy instance."

@@ -27,9 +27,18 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
-from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
+    DEFAULT_LOOKBACK_DAYS,
+    DEFAULT_NAME,
+    DOMAIN,
+    SAVE_INTERVAL,
+)
+from .data.analysis import PriorAnalyzer
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
+from .db.queries import is_occupied_intervals_cache_valid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,7 +75,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
-        self._nightly_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
 
     async def async_init_database(self) -> None:
@@ -299,7 +307,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_save_timer()
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
-            self._start_nightly_timer()
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
@@ -328,7 +335,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._start_save_timer()
                 # Analysis timer is async and runs in background
                 await self._start_analysis_timer()
-                self._start_nightly_timer()
 
                 self._setup_complete = True
 
@@ -424,10 +430,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._analysis_timer is not None:
             self._analysis_timer()
             self._analysis_timer = None
-
-        if self._nightly_timer is not None:
-            self._nightly_timer()
-            self._nightly_timer = None
 
         # Step 6: Clean up periodic save timer (defensive check)
         if self._save_timer is not None:
@@ -756,10 +758,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer = None
 
         try:
-            # Import recent data from recorder
+            # Step 1: Import recent data from recorder
             await self.db.sync_states()
 
-            # Prune old intervals and run health check (no master check needed)
+            # Step 2: Prune old intervals and run health check
             health_ok = await self.hass.async_add_executor_job(
                 self.db.periodic_health_check
             )
@@ -775,15 +777,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if pruned_count > 0:
                 _LOGGER.info("Pruned %d old intervals during analysis", pruned_count)
 
-            # Recalculate priors and likelihoods with new data for all areas
+            # Step 3: Ensure OccupiedIntervalsCache is populated before aggregation
+            await self._ensure_occupied_intervals_cache()
+
+            # Step 4: Run interval aggregation (safe now that cache exists)
+            await self._run_interval_aggregation(_now)
+
+            # Step 5: Recalculate priors with new data for all areas
             for area in self.areas.values():
                 await area.run_prior_analysis()
+
+            # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
+            await self._run_correlation_analysis()
+
+            # Step 7: Recalculate likelihoods with new data for all areas
+            for area in self.areas.values():
                 await area.run_likelihood_analysis()
 
-            # Refresh the coordinator
+            # Step 8: Refresh the coordinator
             await self.async_refresh()
 
-            # Save data (always save - no master check)
+            # Step 9: Save data (always save - no master check)
             await self.hass.async_add_executor_job(self.db.save_data)
 
             # Schedule next run (1 hour interval)
@@ -802,29 +816,122 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.run_analysis, next_update
             )
 
-    # --- Nightly Timer Handling ---
-    def _start_nightly_timer(self) -> None:
-        """Start nightly interval aggregation timer (02:00 local time)."""
-        if self._nightly_timer is not None or not self.hass:
-            return
+    async def _ensure_occupied_intervals_cache(self) -> None:
+        """Ensure OccupiedIntervalsCache is populated for all areas.
 
-        next_run = self._next_interval_aggregation_run()
-        self._nightly_timer = async_track_point_in_time(
-            self.hass, self.run_interval_aggregation_job, next_run
-        )
+        This method checks cache validity and populates it from raw intervals
+        if needed. This ensures the cache exists before interval aggregation
+        deletes raw intervals older than the retention period.
+        """
+        for area_name in self.areas:
+            # Check if cache is valid
+            cache_valid = await self.hass.async_add_executor_job(
+                is_occupied_intervals_cache_valid, self.db, area_name
+            )
 
-    def _next_interval_aggregation_run(
-        self, reference_local: datetime | None = None
-    ) -> datetime:
-        """Return the next 02:00 local time run expressed in UTC."""
-        if reference_local is None:
-            reference_local = dt_util.now()
+            if not cache_valid:
+                _LOGGER.debug(
+                    "OccupiedIntervalsCache invalid or missing for %s, populating from raw intervals",
+                    area_name,
+                )
+                # Calculate occupied intervals from raw intervals
+                analyzer = PriorAnalyzer(self, area_name)
+                intervals = await self.hass.async_add_executor_job(
+                    analyzer.get_occupied_intervals,
+                    DEFAULT_LOOKBACK_DAYS,
+                    False,  # include_media
+                    False,  # include_appliance
+                )
 
-        target_time = reference_local.replace(hour=2, minute=0, second=0, microsecond=0)
-        if target_time <= reference_local:
-            target_time += timedelta(days=1)
+                # Save to cache
+                if intervals:
+                    success = await self.hass.async_add_executor_job(
+                        self.db.save_occupied_intervals_cache,
+                        area_name,
+                        intervals,
+                        "motion_sensors",
+                    )
+                    if success:
+                        _LOGGER.debug(
+                            "Populated OccupiedIntervalsCache for %s with %d intervals",
+                            area_name,
+                            len(intervals),
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Failed to save OccupiedIntervalsCache for %s", area_name
+                        )
 
-        return dt_util.as_utc(target_time)
+    async def _run_interval_aggregation(self, _now: datetime | None = None) -> None:
+        """Run interval aggregation.
+
+        This method aggregates raw intervals older than the retention period
+        into daily/weekly/monthly aggregates.
+
+        Args:
+            _now: Optional timestamp for the aggregation run
+        """
+        if _now is None:
+            _now = dt_util.utcnow()
+
+        try:
+            results = await self.hass.async_add_executor_job(
+                self.db.run_interval_aggregation
+            )
+            _LOGGER.info(
+                "Interval aggregation completed for areas %s: %s",
+                self._format_area_names_for_logging(),
+                results,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error(
+                "Interval aggregation failed for areas %s: %s",
+                self._format_area_names_for_logging(),
+                err,
+            )
+            # Don't raise - allow analysis to continue even if aggregation fails
+
+    async def _run_correlation_analysis(self) -> None:
+        """Run numeric correlation analysis.
+
+        This method analyzes correlations between numeric sensor values and
+        occupancy. It requires OccupiedIntervalsCache to be populated.
+        """
+        numeric_entities = self._get_numeric_entities_by_area()
+        if numeric_entities:
+            _LOGGER.info(
+                "Starting numeric correlation analysis for %d area(s)",
+                len(numeric_entities),
+            )
+            for area_name, entity_ids in numeric_entities.items():
+                for entity_id in entity_ids:
+                    try:
+                        correlation_result = await self.hass.async_add_executor_job(
+                            self.db.analyze_and_save_correlation,
+                            area_name,
+                            entity_id,
+                        )
+
+                        # Apply analysis results to live entities immediately
+                        if correlation_result and area_name in self.areas:
+                            area = self.areas[area_name]
+                            try:
+                                entity = area.entities.get_entity(entity_id)
+                                entity.update_correlation(correlation_result)
+                            except ValueError:
+                                # Entity might have been removed during analysis
+                                pass
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.error(
+                            "Correlation analysis failed for %s (%s): %s",
+                            area_name,
+                            entity_id,
+                            err,
+                        )
+        else:
+            _LOGGER.debug(
+                "Skipping numeric correlation analysis - no numeric entities configured"
+            )
 
     def _get_numeric_entities_by_area(self) -> dict[str, list[str]]:
         """Return mapping of area_name to numeric entity IDs."""
@@ -860,8 +967,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def run_interval_aggregation_job(
         self, _now: datetime | None = None
     ) -> dict[str, Any]:
-        """Handle nightly interval aggregation timer firing."""
-        self._nightly_timer = None
+        """Run interval aggregation and correlation analysis.
+
+        This method is kept for backward compatibility. It now delegates to
+        the internal helper method that's also called by the analysis timer.
+
+        Args:
+            _now: Optional timestamp for the aggregation run
+
+        Returns:
+            Dictionary with aggregation results, correlations, and errors
+        """
         if _now is None:
             _now = dt_util.utcnow()
 
@@ -872,6 +988,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         try:
+            # Run interval aggregation
             results = await self.hass.async_add_executor_job(
                 self.db.run_interval_aggregation
             )
@@ -882,6 +999,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 results,
             )
 
+            # Run numeric correlation analysis
             numeric_entities = self._get_numeric_entities_by_area()
             if numeric_entities:
                 _LOGGER.info(
@@ -942,9 +1060,4 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             summary["errors"].append(str(err))
 
-        next_reference_local = dt_util.as_local(_now)
-        next_run = self._next_interval_aggregation_run(next_reference_local)
-        self._nightly_timer = async_track_point_in_time(
-            self.hass, self.run_interval_aggregation_job, next_run
-        )
         return summary

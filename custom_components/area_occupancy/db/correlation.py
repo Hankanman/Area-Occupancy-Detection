@@ -164,7 +164,7 @@ def analyze_numeric_correlation(
                 base_result.update(
                     {
                         "sample_count": len(samples),
-                        "rejection_reason": "too_few_samples",
+                        "analysis_error": "too_few_samples",
                     }
                 )
                 return base_result
@@ -185,7 +185,7 @@ def analyze_numeric_correlation(
                 base_result.update(
                     {
                         "sample_count": len(samples),
-                        "rejection_reason": "no_occupancy_data",
+                        "analysis_error": "no_occupancy_data",
                     }
                 )
                 return base_result
@@ -214,7 +214,7 @@ def analyze_numeric_correlation(
                 base_result.update(
                     {
                         "sample_count": len(sample_values),
-                        "rejection_reason": "too_few_samples_after_filtering",
+                        "analysis_error": "too_few_samples_after_filtering",
                     }
                 )
                 return base_result
@@ -240,7 +240,7 @@ def analyze_numeric_correlation(
                 base_result.update(
                     {
                         "sample_count": len(sample_values),
-                        "rejection_reason": "no_occupied_samples",
+                        "analysis_error": "no_occupied_samples",
                     }
                 )
                 return base_result
@@ -248,7 +248,7 @@ def analyze_numeric_correlation(
                 base_result.update(
                     {
                         "sample_count": len(sample_values),
-                        "rejection_reason": "no_unoccupied_samples",
+                        "analysis_error": "no_unoccupied_samples",
                     }
                 )
                 return base_result
@@ -265,7 +265,7 @@ def analyze_numeric_correlation(
             # Determine correlation type
             abs_correlation = abs(correlation)
             correlation_type = "none"
-            rejection_reason = None
+            analysis_error = None
 
             if (
                 abs_correlation >= CORRELATION_STRONG_THRESHOLD
@@ -277,7 +277,7 @@ def analyze_numeric_correlation(
                     correlation_type = "occupancy_negative"
             else:
                 correlation_type = "none"
-                rejection_reason = "no_correlation"
+                analysis_error = "no_correlation"
 
             # Calculate confidence (based on correlation strength and sample size)
             # Confidence increases with stronger correlation and more samples
@@ -305,7 +305,7 @@ def analyze_numeric_correlation(
                 "entity_id": entity_id,
                 "correlation_coefficient": correlation,
                 "correlation_type": correlation_type,
-                "rejection_reason": rejection_reason,
+                "analysis_error": analysis_error,
                 "analysis_period_start": period_start,
                 "analysis_period_end": period_end,
                 "sample_count": sample_count,
