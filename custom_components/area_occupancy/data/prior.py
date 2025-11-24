@@ -23,7 +23,6 @@ from ..const import (
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
-from ..data.analysis import PriorAnalyzer
 from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
@@ -260,6 +259,9 @@ class Prior:
             return self._cached_occupied_intervals
 
         # Delegate to analyzer for calculation
+        # Import here to avoid circular dependency (analysis.py imports Prior)
+        from .analysis import PriorAnalyzer  # noqa: PLC0415
+
         analyzer = PriorAnalyzer(self.coordinator, self.area_name)
         intervals = analyzer.get_occupied_intervals(
             lookback_days=lookback_days,

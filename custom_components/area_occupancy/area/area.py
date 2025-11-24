@@ -19,7 +19,7 @@ from ..const import (
     DOMAIN,
     MIN_PROBABILITY,
 )
-from ..data.analysis import start_likelihood_analysis, start_prior_analysis
+from ..data.analysis import start_prior_analysis
 from ..utils import bayesian_probability
 
 if TYPE_CHECKING:
@@ -151,10 +151,6 @@ class Area:
     async def run_prior_analysis(self) -> None:
         """Run prior analysis for this area."""
         await start_prior_analysis(self.coordinator, self.area_name, self.prior)
-
-    async def run_likelihood_analysis(self) -> None:
-        """Run likelihood analysis for this area."""
-        await start_likelihood_analysis(self.coordinator, self.area_name, self.entities)
 
     async def async_cleanup(self) -> None:
         """Clean up the area's resources.

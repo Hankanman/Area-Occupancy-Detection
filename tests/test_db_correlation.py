@@ -9,7 +9,7 @@ from custom_components.area_occupancy.const import NUMERIC_CORRELATION_HISTORY_C
 from custom_components.area_occupancy.db.correlation import (
     _prune_old_correlations,
     analyze_and_save_correlation,
-    analyze_numeric_correlation,
+    analyze_correlation,
     calculate_pearson_correlation,
     get_correlation_for_entity,
     save_correlation_result,
@@ -77,11 +77,11 @@ class TestCalculatePearsonCorrelation:
         assert p_value == 1.0
 
 
-class TestAnalyzeNumericCorrelation:
-    """Test analyze_numeric_correlation function."""
+class TestAnalyzeCorrelation:
+    """Test analyze_correlation function."""
 
-    def test_analyze_numeric_correlation_success(self, test_db):
-        """Test successful correlation analysis."""
+    def test_analyze_correlation_success(self, test_db):
+        """Test successful correlation analysis for numeric sensors."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
@@ -120,21 +120,100 @@ class TestAnalyzeNumericCorrelation:
         ]
         db.save_occupied_intervals_cache(area_name, intervals)
 
-        result = analyze_numeric_correlation(
-            db, area_name, entity_id, analysis_period_days=30
-        )
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
         # Result may be None if insufficient data
         assert result is None or isinstance(result, dict)
 
-    def test_analyze_numeric_correlation_no_data(self, test_db):
+    def test_analyze_correlation_no_data(self, test_db):
         """Test correlation analysis with no data."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
-        result = analyze_numeric_correlation(
+        result = analyze_correlation(
             db, area_name, "sensor.nonexistent", analysis_period_days=30
         )
         assert result is not None
         assert result["analysis_error"] == "too_few_samples"
+
+    def test_analyze_binary_correlation_success(self, test_db):
+        """Test successful binary correlation analysis."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.door"
+        now = dt_util.utcnow()
+
+        # Ensure area exists first
+        db.save_area_data(area_name)
+
+        # Create binary sensor entity
+        with db.get_locked_session() as session:
+            entity = db.Entities(
+                entity_id=entity_id,
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="door",
+            )
+            session.add(entity)
+
+            # Create intervals for binary sensor
+            # Alternating on/off every hour
+            for i in range(100):
+                start = now - timedelta(hours=100 - i)
+                end = now - timedelta(hours=99 - i)
+                state = "on" if i % 2 == 0 else "off"
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    start_time=start,
+                    end_time=end,
+                    duration_seconds=(end - start).total_seconds(),
+                    state=state,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Create occupied intervals cache
+        # Occupied during "on" states (even indices)
+        intervals = []
+        for i in range(0, 100, 2):
+            start = now - timedelta(hours=100 - i)
+            end = now - timedelta(hours=99 - i)
+            intervals.append((start, end))
+
+        db.save_occupied_intervals_cache(area_name, intervals)
+
+        # Analyze with binary flag
+        result = analyze_correlation(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=30,
+            is_binary=True,
+            active_states=["on"],
+        )
+
+        assert isinstance(result, dict)
+        assert result["correlation_coefficient"] > 0.9  # Should be perfect correlation
+        assert result["sample_count"] > 0
+        assert result["mean_value_when_occupied"] > 0.9  # Should be ~1.0
+        assert result["mean_value_when_unoccupied"] < 0.1  # Should be ~0.0
+
+    def test_analyze_binary_correlation_no_active_states(self, test_db):
+        """Test binary correlation without active states."""
+        db = test_db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.door"
+
+        result = analyze_correlation(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=30,
+            is_binary=True,
+            active_states=None,
+        )
+
+        assert result is None
 
 
 class TestSaveCorrelationResult:
@@ -352,10 +431,10 @@ class TestCalculatePearsonCorrelationEdgeCases:
         assert p_value == 1.0
 
 
-class TestAnalyzeNumericCorrelationEdgeCases:
-    """Test analyze_numeric_correlation edge cases."""
+class TestAnalyzeCorrelationEdgeCases:
+    """Test analyze_correlation edge cases."""
 
-    def test_analyze_numeric_correlation_no_occupied_intervals(self, test_db):
+    def test_analyze_correlation_no_occupied_intervals(self, test_db):
         """Test analysis when no occupied intervals exist."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
@@ -385,13 +464,11 @@ class TestAnalyzeNumericCorrelationEdgeCases:
                 session.add(sample)
             session.commit()
 
-        result = analyze_numeric_correlation(
-            db, area_name, entity_id, analysis_period_days=30
-        )
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
         assert result is not None
         assert result["analysis_error"] == "no_occupancy_data"
 
-    def test_analyze_numeric_correlation_insufficient_samples(self, test_db):
+    def test_analyze_correlation_insufficient_samples(self, test_db):
         """Test analysis with insufficient samples."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
@@ -428,13 +505,11 @@ class TestAnalyzeNumericCorrelationEdgeCases:
         ]
         db.save_occupied_intervals_cache(area_name, intervals)
 
-        result = analyze_numeric_correlation(
-            db, area_name, entity_id, analysis_period_days=30
-        )
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
         assert result is not None
         assert result["analysis_error"] == "too_few_samples"
 
-    def test_analyze_numeric_correlation_negative_correlation(self, test_db):
+    def test_analyze_correlation_negative_correlation(self, test_db):
         """Test analysis with negative correlation."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
@@ -471,19 +546,17 @@ class TestAnalyzeNumericCorrelationEdgeCases:
         ]
         db.save_occupied_intervals_cache(area_name, intervals)
 
-        result = analyze_numeric_correlation(
-            db, area_name, entity_id, analysis_period_days=30
-        )
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
         # May return None if insufficient correlation
         assert result is None or isinstance(result, dict)
 
-    def test_analyze_numeric_correlation_database_error(self, test_db):
+    def test_analyze_correlation_database_error(self, test_db):
         """Test analysis with database error."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
 
         with patch.object(db, "get_session", side_effect=SQLAlchemyError("DB error")):
-            result = analyze_numeric_correlation(
+            result = analyze_correlation(
                 db, area_name, "sensor.temperature", analysis_period_days=30
             )
             assert result is None
