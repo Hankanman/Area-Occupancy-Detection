@@ -20,6 +20,7 @@ from ..const import (
     MIN_CORRELATION_SAMPLES,
     NUMERIC_CORRELATION_HISTORY_COUNT,
 )
+from ..data.entity_type import InputType
 from .utils import (
     get_occupied_intervals_for_analysis,
     is_timestamp_occupied,
@@ -44,6 +45,7 @@ def clamp_probability(
 
 
 if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
@@ -1029,3 +1031,147 @@ def get_correlation_for_entity(
     ) as e:
         _LOGGER.error("Error getting correlation: %s", e)
         return None
+
+
+def get_correlatable_entities_by_area(
+    coordinator: AreaOccupancyCoordinator,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Return mapping of area_name to correlatable entities with metadata.
+
+    Args:
+        coordinator: The coordinator instance containing areas
+
+    Returns:
+        Dict mapping area_name to dict of entity_id -> {
+            'is_binary': bool,
+            'active_states': list[str] | None
+        }
+    """
+    # Binary sensors that should be analyzed (excluding MOTION)
+    binary_inputs = {
+        InputType.MEDIA,
+        InputType.APPLIANCE,
+        InputType.DOOR,
+        InputType.WINDOW,
+    }
+
+    # Numeric sensors
+    numeric_inputs = {
+        InputType.TEMPERATURE,
+        InputType.HUMIDITY,
+        InputType.ILLUMINANCE,
+        InputType.ENVIRONMENTAL,
+        InputType.CO2,
+        InputType.ENERGY,
+        InputType.SOUND_PRESSURE,
+        InputType.PRESSURE,
+        InputType.AIR_QUALITY,
+        InputType.VOC,
+        InputType.PM25,
+        InputType.PM10,
+    }
+
+    correlatable_entities: dict[str, dict[str, dict[str, Any]]] = {}
+
+    for area_name, area in coordinator.areas.items():
+        entities_container = getattr(area.entities, "entities", {})
+        area_entities: dict[str, dict[str, Any]] = {}
+
+        for entity_id, entity in entities_container.items():
+            entity_type = getattr(entity, "type", None)
+            input_type = getattr(entity_type, "input_type", None)
+
+            if input_type in binary_inputs:
+                # Binary sensor - get active_states
+                active_states = getattr(entity_type, "active_states", None)
+                if active_states:
+                    area_entities[entity_id] = {
+                        "is_binary": True,
+                        "active_states": active_states,
+                    }
+            elif input_type in numeric_inputs:
+                # Numeric sensor
+                area_entities[entity_id] = {
+                    "is_binary": False,
+                    "active_states": None,
+                }
+
+        if area_entities:
+            correlatable_entities[area_name] = area_entities
+
+    return correlatable_entities
+
+
+async def run_correlation_analysis(
+    coordinator: AreaOccupancyCoordinator,
+) -> None:
+    """Run correlation analysis for numeric sensors and binary likelihood analysis.
+
+    Numeric sensors use correlation analysis (Gaussian PDF).
+    Binary sensors use duration-based probability calculation (static values).
+    Requires OccupiedIntervalsCache to be populated.
+
+    Args:
+        coordinator: The coordinator instance containing areas and database
+    """
+    correlatable_entities = get_correlatable_entities_by_area(coordinator)
+    if correlatable_entities:
+        _LOGGER.info(
+            "Starting sensor analysis for %d area(s)",
+            len(correlatable_entities),
+        )
+        for area_name, entities in correlatable_entities.items():
+            for entity_id, entity_info in entities.items():
+                try:
+                    if entity_info["is_binary"]:
+                        # Binary sensors: Use duration-based likelihood analysis
+                        likelihood_result = (
+                            await coordinator.hass.async_add_executor_job(
+                                coordinator.db.analyze_binary_likelihoods,
+                                area_name,
+                                entity_id,
+                                30,  # analysis_period_days
+                                entity_info["active_states"],
+                            )
+                        )
+
+                        # Apply analysis results to live entities immediately
+                        if likelihood_result and area_name in coordinator.areas:
+                            area = coordinator.areas[area_name]
+                            try:
+                                entity = area.entities.get_entity(entity_id)
+                                entity.update_binary_likelihoods(likelihood_result)
+                            except ValueError:
+                                # Entity might have been removed during analysis
+                                pass
+                    else:
+                        # Numeric sensors: Use correlation analysis
+                        correlation_result = (
+                            await coordinator.hass.async_add_executor_job(
+                                coordinator.db.analyze_and_save_correlation,
+                                area_name,
+                                entity_id,
+                                30,  # analysis_period_days
+                                False,  # is_binary
+                                None,  # active_states (not used for numeric)
+                            )
+                        )
+
+                        # Apply analysis results to live entities immediately
+                        if correlation_result and area_name in coordinator.areas:
+                            area = coordinator.areas[area_name]
+                            try:
+                                entity = area.entities.get_entity(entity_id)
+                                entity.update_correlation(correlation_result)
+                            except ValueError:
+                                # Entity might have been removed during analysis
+                                pass
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.error(
+                        "Sensor analysis failed for %s (%s): %s",
+                        area_name,
+                        entity_id,
+                        err,
+                    )
+    else:
+        _LOGGER.debug("Skipping sensor analysis - no correlatable entities configured")

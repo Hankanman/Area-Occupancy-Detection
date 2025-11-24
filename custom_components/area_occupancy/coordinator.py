@@ -7,8 +7,6 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any
 
-from custom_components.area_occupancy.data.entity_type import InputType
-
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -27,18 +25,11 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
-from .const import (
-    CONF_AREA_ID,
-    CONF_AREAS,
-    DEFAULT_LOOKBACK_DAYS,
-    DEFAULT_NAME,
-    DOMAIN,
-    SAVE_INTERVAL,
-)
-from .data.analysis import PriorAnalyzer
+from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
-from .db.queries import is_occupied_intervals_cache_valid
+from .db.correlation import get_correlatable_entities_by_area
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -758,43 +749,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer = None
 
         try:
-            # Step 1: Import recent data from recorder
-            await self.db.sync_states()
-
-            # Step 2: Prune old intervals and run health check
-            health_ok = await self.hass.async_add_executor_job(
-                self.db.periodic_health_check
-            )
-            if not health_ok:
-                _LOGGER.warning(
-                    "Database health check found issues for areas: %s",
-                    self._format_area_names_for_logging(),
-                )
-
-            pruned_count = await self.hass.async_add_executor_job(
-                self.db.prune_old_intervals
-            )
-            if pruned_count > 0:
-                _LOGGER.info("Pruned %d old intervals during analysis", pruned_count)
-
-            # Step 3: Ensure OccupiedIntervalsCache is populated before aggregation
-            await self._ensure_occupied_intervals_cache()
-
-            # Step 4: Run interval aggregation (safe now that cache exists)
-            await self._run_interval_aggregation(_now)
-
-            # Step 5: Recalculate priors with new data for all areas
-            for area in self.areas.values():
-                await area.run_prior_analysis()
-
-            # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
-            await self._run_correlation_analysis()
-
-            # Step 7: Refresh the coordinator
-            await self.async_refresh()
-
-            # Step 8: Save data (always save - no master check)
-            await self.hass.async_add_executor_job(self.db.save_data)
+            # Run the full analysis chain
+            await run_full_analysis(self, _now)
 
             # Schedule next run (1 hour interval)
             next_update = _now + timedelta(
@@ -812,220 +768,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.run_analysis, next_update
             )
 
-    async def _ensure_occupied_intervals_cache(self) -> None:
-        """Ensure OccupiedIntervalsCache is populated for all areas.
-
-        This method checks cache validity and populates it from raw intervals
-        if needed. This ensures the cache exists before interval aggregation
-        deletes raw intervals older than the retention period.
-        """
-        for area_name in self.areas:
-            # Check if cache is valid
-            cache_valid = await self.hass.async_add_executor_job(
-                is_occupied_intervals_cache_valid, self.db, area_name
-            )
-
-            if not cache_valid:
-                _LOGGER.debug(
-                    "OccupiedIntervalsCache invalid or missing for %s, populating from raw intervals",
-                    area_name,
-                )
-                # Calculate occupied intervals from raw intervals
-                analyzer = PriorAnalyzer(self, area_name)
-                intervals = await self.hass.async_add_executor_job(
-                    analyzer.get_occupied_intervals,
-                    DEFAULT_LOOKBACK_DAYS,
-                    False,  # include_media
-                    False,  # include_appliance
-                )
-
-                # Save to cache
-                if intervals:
-                    success = await self.hass.async_add_executor_job(
-                        self.db.save_occupied_intervals_cache,
-                        area_name,
-                        intervals,
-                        "motion_sensors",
-                    )
-                    if success:
-                        _LOGGER.debug(
-                            "Populated OccupiedIntervalsCache for %s with %d intervals",
-                            area_name,
-                            len(intervals),
-                        )
-                    else:
-                        _LOGGER.warning(
-                            "Failed to save OccupiedIntervalsCache for %s", area_name
-                        )
-
-    async def _run_interval_aggregation(self, _now: datetime | None = None) -> None:
-        """Run interval aggregation.
-
-        This method aggregates raw intervals older than the retention period
-        into daily/weekly/monthly aggregates.
-
-        Args:
-            _now: Optional timestamp for the aggregation run
-        """
-        if _now is None:
-            _now = dt_util.utcnow()
-
-        try:
-            results = await self.hass.async_add_executor_job(
-                self.db.run_interval_aggregation
-            )
-            _LOGGER.info(
-                "Interval aggregation completed for areas %s: %s",
-                self._format_area_names_for_logging(),
-                results,
-            )
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error(
-                "Interval aggregation failed for areas %s: %s",
-                self._format_area_names_for_logging(),
-                err,
-            )
-            # Don't raise - allow analysis to continue even if aggregation fails
-
-    async def _run_correlation_analysis(self) -> None:
-        """Run correlation analysis for numeric sensors and binary likelihood analysis.
-
-        Numeric sensors use correlation analysis (Gaussian PDF).
-        Binary sensors use duration-based probability calculation (static values).
-        Requires OccupiedIntervalsCache to be populated.
-        """
-        correlatable_entities = self._get_correlatable_entities_by_area()
-        if correlatable_entities:
-            _LOGGER.info(
-                "Starting sensor analysis for %d area(s)",
-                len(correlatable_entities),
-            )
-            for area_name, entities in correlatable_entities.items():
-                for entity_id, entity_info in entities.items():
-                    try:
-                        if entity_info["is_binary"]:
-                            # Binary sensors: Use duration-based likelihood analysis
-                            likelihood_result = await self.hass.async_add_executor_job(
-                                self.db.analyze_binary_likelihoods,
-                                area_name,
-                                entity_id,
-                                30,  # analysis_period_days
-                                entity_info["active_states"],
-                            )
-
-                            # Apply analysis results to live entities immediately
-                            if likelihood_result and area_name in self.areas:
-                                area = self.areas[area_name]
-                                try:
-                                    entity = area.entities.get_entity(entity_id)
-                                    entity.update_binary_likelihoods(likelihood_result)
-                                except ValueError:
-                                    # Entity might have been removed during analysis
-                                    pass
-                        else:
-                            # Numeric sensors: Use correlation analysis
-                            correlation_result = await self.hass.async_add_executor_job(
-                                self.db.analyze_and_save_correlation,
-                                area_name,
-                                entity_id,
-                                30,  # analysis_period_days
-                                False,  # is_binary
-                                None,  # active_states (not used for numeric)
-                            )
-
-                            # Apply analysis results to live entities immediately
-                            if correlation_result and area_name in self.areas:
-                                area = self.areas[area_name]
-                                try:
-                                    entity = area.entities.get_entity(entity_id)
-                                    entity.update_correlation(correlation_result)
-                                except ValueError:
-                                    # Entity might have been removed during analysis
-                                    pass
-                    except Exception as err:  # noqa: BLE001
-                        _LOGGER.error(
-                            "Sensor analysis failed for %s (%s): %s",
-                            area_name,
-                            entity_id,
-                            err,
-                        )
-        else:
-            _LOGGER.debug(
-                "Skipping sensor analysis - no correlatable entities configured"
-            )
-
-    def _get_correlatable_entities_by_area(
-        self,
-    ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Return mapping of area_name to correlatable entities with metadata.
-
-        Returns:
-            Dict mapping area_name to dict of entity_id -> {
-                'is_binary': bool,
-                'active_states': list[str] | None
-            }
-        """
-        # Binary sensors that should be analyzed (excluding MOTION)
-        binary_inputs = {
-            InputType.MEDIA,
-            InputType.APPLIANCE,
-            InputType.DOOR,
-            InputType.WINDOW,
-        }
-
-        # Numeric sensors
-        numeric_inputs = {
-            InputType.TEMPERATURE,
-            InputType.HUMIDITY,
-            InputType.ILLUMINANCE,
-            InputType.ENVIRONMENTAL,
-            InputType.CO2,
-            InputType.ENERGY,
-            InputType.SOUND_PRESSURE,
-            InputType.PRESSURE,
-            InputType.AIR_QUALITY,
-            InputType.VOC,
-            InputType.PM25,
-            InputType.PM10,
-        }
-
-        correlatable_entities: dict[str, dict[str, dict[str, Any]]] = {}
-
-        for area_name, area in self.areas.items():
-            entities_container = getattr(area.entities, "entities", {})
-            area_entities: dict[str, dict[str, Any]] = {}
-
-            for entity_id, entity in entities_container.items():
-                entity_type = getattr(entity, "type", None)
-                input_type = getattr(entity_type, "input_type", None)
-
-                if input_type in binary_inputs:
-                    # Binary sensor - get active_states
-                    active_states = getattr(entity_type, "active_states", None)
-                    if active_states:
-                        area_entities[entity_id] = {
-                            "is_binary": True,
-                            "active_states": active_states,
-                        }
-                elif input_type in numeric_inputs:
-                    # Numeric sensor
-                    area_entities[entity_id] = {
-                        "is_binary": False,
-                        "active_states": None,
-                    }
-
-            if area_entities:
-                correlatable_entities[area_name] = area_entities
-
-        return correlatable_entities
-
     async def run_interval_aggregation_job(
         self, _now: datetime | None = None
     ) -> dict[str, Any]:
         """Run interval aggregation and correlation analysis.
 
         This method is kept for backward compatibility. It now delegates to
-        the internal helper method that's also called by the analysis timer.
+        the analysis functions in data/analysis.py and db/correlation.py.
 
         Args:
             _now: Optional timestamp for the aggregation run
@@ -1055,7 +804,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             # Run correlation analysis for numeric and binary sensors
-            correlatable_entities = self._get_correlatable_entities_by_area()
+            correlatable_entities = get_correlatable_entities_by_area(self)
             if correlatable_entities:
                 _LOGGER.info(
                     "Starting correlation analysis for %d area(s)",
