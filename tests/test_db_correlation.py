@@ -133,7 +133,8 @@ class TestAnalyzeNumericCorrelation:
         result = analyze_numeric_correlation(
             db, area_name, "sensor.nonexistent", analysis_period_days=30
         )
-        assert result is None
+        assert result is not None
+        assert result["rejection_reason"] == "too_few_samples"
 
 
 class TestSaveCorrelationResult:
@@ -282,8 +283,10 @@ class TestAnalyzeAndSaveCorrelation:
         result = analyze_and_save_correlation(
             db, area_name, entity_id, analysis_period_days=30
         )
-        # May return False if insufficient data
-        assert isinstance(result, bool)
+        # Should return correlation data (dict) if successful
+        assert isinstance(result, dict)
+        assert result["area_name"] == area_name
+        assert result["entity_id"] == entity_id
 
     def test_analyze_and_save_correlation_no_data(self, test_db):
         """Test analyze_and_save when no correlation data is generated."""
@@ -293,7 +296,9 @@ class TestAnalyzeAndSaveCorrelation:
         result = analyze_and_save_correlation(
             db, area_name, "sensor.nonexistent", analysis_period_days=30
         )
-        assert result is False
+        # Should now return rejection result
+        assert result is not None
+        assert result["rejection_reason"] == "too_few_samples"
 
 
 class TestCalculatePearsonCorrelationEdgeCases:
@@ -383,7 +388,8 @@ class TestAnalyzeNumericCorrelationEdgeCases:
         result = analyze_numeric_correlation(
             db, area_name, entity_id, analysis_period_days=30
         )
-        assert result is None
+        assert result is not None
+        assert result["rejection_reason"] == "no_occupancy_data"
 
     def test_analyze_numeric_correlation_insufficient_samples(self, test_db):
         """Test analysis with insufficient samples."""
@@ -425,7 +431,8 @@ class TestAnalyzeNumericCorrelationEdgeCases:
         result = analyze_numeric_correlation(
             db, area_name, entity_id, analysis_period_days=30
         )
-        assert result is None
+        assert result is not None
+        assert result["rejection_reason"] == "too_few_samples"
 
     def test_analyze_numeric_correlation_negative_correlation(self, test_db):
         """Test analysis with negative correlation."""

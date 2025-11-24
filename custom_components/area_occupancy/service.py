@@ -47,11 +47,44 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
     """
     likelihood_data = {}
     for entity_id, entity in area.entities.entities.items():
-        likelihood_data[entity_id] = {
+        # Prepare active_range for JSON serialization
+        active_range_val = None
+        if entity.active_range:
+            try:
+                active_range_val = []
+                # Ensure active_range is iterable (tuple or list)
+                # Mock objects might report having active_range but fail iteration if not configured
+                range_iter = entity.active_range
+                if not isinstance(range_iter, (tuple, list)) and not hasattr(
+                    range_iter, "__iter__"
+                ):
+                    # Fallback for unconfigured mocks
+                    active_range_val = None
+                else:
+                    for val in range_iter:
+                        # JSON doesn't support infinity, use None for open bounds
+                        if val == float("inf") or val == float("-inf"):
+                            active_range_val.append(None)
+                        else:
+                            active_range_val.append(val)
+            except TypeError:
+                # Handle case where iteration fails (e.g. non-iterable Mock)
+                active_range_val = None
+
+        raw_data = {
             "type": entity.type.input_type.value,
             "weight": entity.type.weight,
             "prob_given_true": entity.prob_given_true,
             "prob_given_false": entity.prob_given_false,
+            "active_states": entity.active_states,
+            "active_range": active_range_val,
+            "gaussian_params": getattr(entity, "learned_gaussian_params", None),
+            "rejection_reason": getattr(entity, "rejection_reason", None),
+            "is_active": entity.active,
+        }
+        # Filter out keys with None values to keep output clean
+        likelihood_data[entity_id] = {
+            k: v for k, v in raw_data.items() if v is not None
         }
     return likelihood_data
 
@@ -72,7 +105,7 @@ def _build_analysis_data(
     entity_states = _collect_entity_states(hass, area)
     likelihood_data = _collect_likelihood_data(area)
 
-    return {
+    data = {
         "area_name": area_name,
         "current_probability": area.probability(),
         "current_occupied": area.occupied(),
@@ -85,6 +118,8 @@ def _build_analysis_data(
         "entity_states": entity_states,
         "likelihoods": likelihood_data,
     }
+    # Filter out keys with None values
+    return {k: v for k, v in data.items() if v is not None}
 
 
 async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:

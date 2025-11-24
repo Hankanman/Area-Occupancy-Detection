@@ -833,6 +833,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             InputType.HUMIDITY,
             InputType.ILLUMINANCE,
             InputType.ENVIRONMENTAL,
+            InputType.CO2,
+            InputType.ENERGY,
+            InputType.SOUND_PRESSURE,
+            InputType.PRESSURE,
+            InputType.AIR_QUALITY,
+            InputType.VOC,
+            InputType.PM25,
+            InputType.PM10,
         }
         numeric_entities: dict[str, list[str]] = {}
 
@@ -888,6 +896,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 area_name,
                                 entity_id,
                             )
+
+                            # Apply analysis results to live entities immediately
+                            if correlation_result and area_name in self.areas:
+                                area = self.areas[area_name]
+                                try:
+                                    entity = area.entities.get_entity(entity_id)
+                                    entity.update_correlation(correlation_result)
+                                except ValueError:
+                                    # Entity might have been removed during analysis
+                                    pass
+
                             summary["correlations"].append(
                                 {
                                     "area": area_name,
