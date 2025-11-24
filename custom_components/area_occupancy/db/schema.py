@@ -557,6 +557,9 @@ class NumericCorrelations(Base):
     std_dev_when_unoccupied = Column(Float, nullable=True)
     threshold_active = Column(Float, nullable=True)
     threshold_inactive = Column(Float, nullable=True)
+    rejection_reason = Column(
+        String, nullable=True
+    )  # Reason why correlation was rejected (e.g., 'no_correlation', 'too_few_samples')
     calculation_date = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
     updated_at = Column(

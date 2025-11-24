@@ -67,6 +67,13 @@ class TestRunAnalysis:
         mock_entity.type.weight = 0.85
         mock_entity.prob_given_true = 0.8
         mock_entity.prob_given_false = 0.1
+        mock_entity.active_range = (
+            float("inf"),
+            float("-inf"),
+        )  # Should result in [None, None]
+        mock_entity.active_states = ["on"]
+        mock_entity.learned_gaussian_params = None
+        mock_entity.rejection_reason = None
         area._entities = type(
             "obj", (object,), {"entities": {"binary_sensor.motion1": mock_entity}}
         )()
@@ -96,6 +103,15 @@ class TestRunAnalysis:
         assert "areas" in result
         assert "update_timestamp" in result
         assert isinstance(result["areas"], dict)
+
+        # Verify infinity handling in output
+        area_data = result["areas"][area_name]
+        entity_data = area_data["likelihoods"]["binary_sensor.motion1"]
+        assert entity_data["active_range"] == [None, None]
+
+        # Verify keys with None values are filtered out
+        assert "gaussian_params" not in entity_data
+        assert "rejection_reason" not in entity_data
 
     async def test_run_analysis_missing_entry_id(self, hass: HomeAssistant) -> None:
         """Test analysis run with missing entry_id (backward compatibility)."""

@@ -351,7 +351,7 @@ class AreaOccupancyDB:
         area_name: str,
         entity_id: str,
         analysis_period_days: int = 30,
-    ) -> bool:
+    ) -> dict[str, Any] | None:
         """Analyze and save correlation for a numeric sensor."""
         return correlation.analyze_and_save_correlation(
             self, area_name, entity_id, analysis_period_days

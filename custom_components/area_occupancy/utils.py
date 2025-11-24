@@ -115,14 +115,33 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
         # Determine effective evidence: True if evidence is True OR if decaying
         effective_evidence = value or is_decaying
 
+        # Check if entity supports continuous likelihood (Gaussian density)
+        # Continuous likelihoods are probability densities and can be > 1.0
+        # Use simple getattr to be safe with Mocks
+        is_continuous = getattr(entity, "is_continuous_likelihood", False)
+        # Verify it's actually a boolean and True (Mocks can return Mocks for attributes)
+        if not isinstance(is_continuous, bool):
+            is_continuous = False
+
         if effective_evidence:
             # Evidence is present (either current or decaying) - use likelihoods with decay applied
-            p_t = entity.prob_given_true
-            p_f = entity.prob_given_false
+
+            # Use dynamic likelihoods if available (for Gaussian sensors)
+            if is_continuous and hasattr(entity, "get_likelihoods"):
+                # Ensure get_likelihoods is callable (Mocks make everything callable but check anyway)
+                if callable(entity.get_likelihoods):
+                    p_t, p_f = entity.get_likelihoods()
+                else:
+                    p_t = entity.prob_given_true
+                    p_f = entity.prob_given_false
+            else:
+                p_t = entity.prob_given_true
+                p_f = entity.prob_given_false
 
             # Apply decay factor to reduce the strength of the evidence
             if is_decaying and decay_factor < 1.0:
                 # When decaying, interpolate between neutral (0.5) and full evidence based on decay factor
+                # This works for densities too: if p_t=2.0, neutral=0.5, factor=0.5 -> 0.5 + 1.5*0.5 = 1.25
                 neutral_prob = 0.5
                 p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
                 p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
@@ -130,12 +149,24 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
             # No evidence present - use inverse likelihoods
             # P(Inactive | Occupied) = 1 - P(Active | Occupied)
             # P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
+
+            # Note: For continuous likelihood sensors, "no evidence" usually means
+            # the sensor is unavailable or excluded. If it provides a value, it's "evidence".
+            # So this branch is mostly for binary sensors.
             p_t = 1.0 - entity.prob_given_true
             p_f = 1.0 - entity.prob_given_false
 
         # Clamp probabilities to avoid log(0) or log(1)
-        p_t = clamp_probability(p_t)
-        p_f = clamp_probability(p_f)
+        # For continuous likelihoods (densities), we only clamp the lower bound > 0
+        # For standard probabilities, we clamp to [MIN_PROBABILITY, MAX_PROBABILITY]
+        if is_continuous:
+            # Ensure strictly positive for log()
+            # Don't clamp upper bound as densities can be > 1
+            p_t = max(1e-9, p_t)
+            p_f = max(1e-9, p_f)
+        else:
+            p_t = clamp_probability(p_t)
+            p_f = clamp_probability(p_f)
 
         log_p_t = math.log(p_t)
         log_p_f = math.log(p_f)

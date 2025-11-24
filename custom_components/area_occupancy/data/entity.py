@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
@@ -35,6 +36,9 @@ class Entity:
     state_provider: Callable[[str], Any] | None = None
     last_updated: datetime | None = None
     previous_evidence: bool | None = None
+    learned_active_range: tuple[float, float] | None = None
+    learned_gaussian_params: dict[str, float] | None = None
+    rejection_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -60,6 +64,74 @@ class Entity:
             raise ValueError("Cannot provide both hass and state_provider")
         if self.last_updated is None:
             self.last_updated = dt_util.utcnow()
+
+        # Store the static probability values in protected attributes
+        # These are used as fallbacks when Gaussian calculation is not available
+        self._prob_given_true = self.prob_given_true
+        self._prob_given_false = self.prob_given_false
+
+    def _calculate_gaussian_density(
+        self, value: float, mean: float, std: float
+    ) -> float:
+        """Calculate Gaussian probability density function.
+
+        Args:
+            value: The current sensor value
+            mean: The mean of the distribution
+            std: The standard deviation of the distribution
+
+        Returns:
+            The probability density at the given value
+        """
+        if std <= 0:
+            return 0.0
+        exponent = -0.5 * ((value - mean) / std) ** 2
+        return (1.0 / (std * math.sqrt(2 * math.pi))) * math.exp(exponent)
+
+    def get_likelihoods(self) -> tuple[float, float]:
+        """Get dynamic likelihoods based on current state.
+
+        If learned Gaussian parameters are available and state is valid,
+        returns calculated densities. Otherwise returns static probabilities.
+
+        Returns:
+            Tuple of (prob_given_true, prob_given_false)
+        """
+        if self.learned_gaussian_params and self.state is not None:
+            try:
+                val = float(self.state)
+
+                # Calculate density for occupied state
+                p_true = self._calculate_gaussian_density(
+                    val,
+                    self.learned_gaussian_params["mean_occupied"],
+                    self.learned_gaussian_params["std_occupied"],
+                )
+
+                # Calculate density for unoccupied state
+                p_false = self._calculate_gaussian_density(
+                    val,
+                    self.learned_gaussian_params["mean_unoccupied"],
+                    self.learned_gaussian_params["std_unoccupied"],
+                )
+
+            except (ValueError, TypeError):
+                # Fall back to static values if calculation fails
+                pass
+            else:
+                return (p_true, p_false)
+        else:
+            # Fallback when no gaussian params but state is available
+            # Or fallback when no state
+            pass
+
+        # Return static probabilities if dynamic calculation failed or not applicable
+        return (self.prob_given_true, self.prob_given_false)
+
+    @property
+    def is_continuous_likelihood(self) -> bool:
+        """Check if entity uses continuous likelihood calculation."""
+        return self.learned_gaussian_params is not None
 
     @property
     def name(self) -> str | None:
@@ -146,6 +218,8 @@ class Entity:
     @property
     def active_range(self) -> tuple[float, float] | None:
         """Get the active range for the entity."""
+        if self.learned_active_range is not None:
+            return self.learned_active_range
         return self.type.active_range
 
     @property
@@ -166,6 +240,100 @@ class Entity:
         self.prob_given_true = clamp_probability(prob_given_true)
         self.prob_given_false = clamp_probability(prob_given_false)
         self.last_updated = dt_util.utcnow()
+
+    def update_correlation(self, correlation_data: dict[str, Any]) -> None:
+        """Update the learned active range based on correlation data."""
+        if not correlation_data:
+            return
+
+        # Get correlation details
+        confidence = correlation_data.get("confidence", 0.0)
+        correlation_type = correlation_data.get("correlation_type")
+        mean_unoccupied = correlation_data.get("mean_value_when_unoccupied")
+        std_unoccupied = correlation_data.get("std_dev_when_unoccupied")
+
+        # Store rejection reason if present
+        self.rejection_reason = correlation_data.get("rejection_reason")
+
+        # Get occupied stats
+        mean_occupied = correlation_data.get("mean_value_when_occupied")
+        std_occupied = correlation_data.get("std_dev_when_occupied")
+
+        # If any required data is missing or type is none, reset learned range
+        if (
+            mean_unoccupied is None
+            or std_unoccupied is None
+            or correlation_type == "none"
+        ):
+            self.learned_active_range = None
+            self.learned_gaussian_params = None
+            return
+
+        # Store Gaussian parameters if available
+        if mean_occupied is not None and std_occupied is not None:
+            self.learned_gaussian_params = {
+                "mean_occupied": mean_occupied,
+                "std_occupied": std_occupied,
+                "mean_unoccupied": mean_unoccupied,
+                "std_unoccupied": std_unoccupied,
+            }
+            # When using Gaussian params, we don't update static likelihoods
+            # because they are calculated dynamically
+        else:
+            self.learned_gaussian_params = None
+            # Fallback to static scaling if full Gaussian params aren't available
+            scaled_prob_true = 0.5 + (confidence * 0.4)
+            scaled_prob_false = 0.5 - (confidence * 0.4)
+            self.update_likelihood(scaled_prob_true, scaled_prob_false)
+
+        # Calculate thresholds (mean ± 2σ) - Still useful for "Active" binary state in UI
+        k_factor = 2.0
+
+        if correlation_type == "occupancy_positive":
+            # Active > mean_unoccupied + K*std_unoccupied
+            lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
+
+            # Try to determine upper bound from occupied stats
+            if mean_occupied is not None and std_occupied is not None:
+                # Cap at mean_occupied + K*std_occupied
+                upper_bound = mean_occupied + (k_factor * std_occupied)
+                # Ensure logical consistency (upper > lower)
+                if upper_bound <= lower_bound:
+                    # Fallback to open-ended if stats overlap significantly
+                    upper_bound = float("inf")
+            else:
+                upper_bound = float("inf")
+
+            self.learned_active_range = (lower_bound, upper_bound)
+
+        elif correlation_type == "occupancy_negative":
+            # Active < mean_unoccupied - K*std_unoccupied
+            upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
+
+            # Try to determine lower bound from occupied stats
+            if mean_occupied is not None and std_occupied is not None:
+                # Floor at mean_occupied - K*std_occupied
+                lower_bound = mean_occupied - (k_factor * std_occupied)
+                # Ensure logical consistency (lower < upper)
+                if lower_bound >= upper_bound:
+                    # Fallback to open-ended if stats overlap significantly
+                    lower_bound = float("-inf")
+            else:
+                lower_bound = float("-inf")
+
+            self.learned_active_range = (lower_bound, upper_bound)
+        else:
+            self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated learned active range for %s: %s (type=%s, conf=%.2f, p_true=%.2f, p_false=%.2f)",
+            self.entity_id,
+            self.learned_active_range,
+            correlation_type,
+            confidence,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
 
     def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
         """Update the decay of the entity."""
