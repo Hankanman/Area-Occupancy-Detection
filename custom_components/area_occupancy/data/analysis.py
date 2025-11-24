@@ -131,6 +131,23 @@ class PriorAnalyzer:
                 actual_period_end - first_interval_start
             ).total_seconds()
 
+            # Guard against zero or negative duration (bad timestamps or clock skew)
+            if actual_period_duration <= 0:
+                _LOGGER.warning(
+                    "Invalid period duration (%.2f seconds) for area %s. "
+                    "This may indicate bad timestamps or clock skew. "
+                    "Using safe fallback prior of 0.01.",
+                    actual_period_duration,
+                    self.area_name,
+                )
+                # Set safe fallback prior and return early
+                self.area.prior.set_global_prior(0.01)
+                _LOGGER.info(
+                    "Prior analysis completed for area %s: global_prior=0.010 (fallback due to invalid period)",
+                    self.area_name,
+                )
+                return
+
             # Calculate occupied duration (ensure timezone-aware)
             occupied_duration = sum(
                 (dt_util.as_utc(end) - dt_util.as_utc(start)).total_seconds()
