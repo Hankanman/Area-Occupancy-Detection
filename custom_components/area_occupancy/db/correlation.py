@@ -1104,7 +1104,8 @@ def get_correlatable_entities_by_area(
 
 async def run_correlation_analysis(
     coordinator: AreaOccupancyCoordinator,
-) -> None:
+    return_results: bool = False,
+) -> list[dict[str, Any]] | None:
     """Run correlation analysis for numeric sensors and binary likelihood analysis.
 
     Numeric sensors use correlation analysis (Gaussian PDF).
@@ -1113,8 +1114,15 @@ async def run_correlation_analysis(
 
     Args:
         coordinator: The coordinator instance containing areas and database
+        return_results: If True, returns a list of correlation results for summary
+
+    Returns:
+        List of correlation result dictionaries if return_results is True, None otherwise.
+        Each dictionary contains: area, entity_id, type, success, and optionally error.
     """
     correlatable_entities = get_correlatable_entities_by_area(coordinator)
+    results: list[dict[str, Any]] = []
+
     if correlatable_entities:
         _LOGGER.info(
             "Starting sensor analysis for %d area(s)",
@@ -1144,6 +1152,17 @@ async def run_correlation_analysis(
                             except ValueError:
                                 # Entity might have been removed during analysis
                                 pass
+
+                        # Track result if requested
+                        if return_results:
+                            results.append(
+                                {
+                                    "area": area_name,
+                                    "entity_id": entity_id,
+                                    "type": "binary_likelihood",
+                                    "success": bool(likelihood_result),
+                                }
+                            )
                     else:
                         # Numeric sensors: Use correlation analysis
                         correlation_result = (
@@ -1166,6 +1185,17 @@ async def run_correlation_analysis(
                             except ValueError:
                                 # Entity might have been removed during analysis
                                 pass
+
+                        # Track result if requested
+                        if return_results:
+                            results.append(
+                                {
+                                    "area": area_name,
+                                    "entity_id": entity_id,
+                                    "type": "correlation",
+                                    "success": bool(correlation_result),
+                                }
+                            )
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.error(
                         "Sensor analysis failed for %s (%s): %s",
@@ -1173,5 +1203,17 @@ async def run_correlation_analysis(
                         entity_id,
                         err,
                     )
+                    # Track error result if requested
+                    if return_results:
+                        results.append(
+                            {
+                                "area": area_name,
+                                "entity_id": entity_id,
+                                "success": False,
+                                "error": str(err),
+                            }
+                        )
     else:
         _LOGGER.debug("Skipping sensor analysis - no correlatable entities configured")
+
+    return results if return_results else None

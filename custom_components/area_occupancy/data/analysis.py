@@ -12,6 +12,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DEFAULT_LOOKBACK_DAYS
 from ..data.entity_type import InputType
 from ..db.queries import is_occupied_intervals_cache_valid
+from ..utils import format_area_names
 from .prior import Prior
 
 if TYPE_CHECKING:
@@ -238,8 +239,10 @@ async def ensure_occupied_intervals_cache(
 
 
 async def run_interval_aggregation(
-    coordinator: AreaOccupancyCoordinator, _now: datetime | None = None
-) -> None:
+    coordinator: AreaOccupancyCoordinator,
+    _now: datetime | None = None,
+    return_results: bool = False,
+) -> dict[str, int] | None:
     """Run interval aggregation.
 
     This function aggregates raw intervals older than the retention period
@@ -248,6 +251,11 @@ async def run_interval_aggregation(
     Args:
         coordinator: The coordinator instance containing areas and database
         _now: Optional timestamp for the aggregation run
+        return_results: If True, returns aggregation results dictionary
+
+    Returns:
+        Dictionary with aggregation results (daily, weekly, monthly counts) if
+        return_results is True, None otherwise.
     """
     if _now is None:
         _now = dt_util.utcnow()
@@ -256,20 +264,23 @@ async def run_interval_aggregation(
         results = await coordinator.hass.async_add_executor_job(
             coordinator.db.run_interval_aggregation
         )
-        area_names = ", ".join(coordinator.get_area_names())
+        area_names = format_area_names(coordinator)
         _LOGGER.info(
             "Interval aggregation completed for areas %s: %s",
             area_names,
             results,
         )
     except Exception as err:  # noqa: BLE001
-        area_names = ", ".join(coordinator.get_area_names())
+        area_names = format_area_names(coordinator)
         _LOGGER.error(
             "Interval aggregation failed for areas %s: %s",
             area_names,
             err,
         )
         # Don't raise - allow analysis to continue even if aggregation fails
+        return None
+    else:
+        return results if return_results else None
 
 
 async def run_full_analysis(
@@ -304,7 +315,7 @@ async def run_full_analysis(
             coordinator.db.periodic_health_check
         )
         if not health_ok:
-            area_names = ", ".join(coordinator.get_area_names())
+            area_names = format_area_names(coordinator)
             _LOGGER.warning(
                 "Database health check found issues for areas: %s",
                 area_names,
