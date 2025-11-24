@@ -1,11 +1,10 @@
 # Sensor Likelihoods
 
-Each sensor has two learned values that describe how reliable it is as evidence of occupancy:
+Each sensor has learned characteristics that describe how reliable it is as evidence of occupancy.
 
-* **P(Active \| Occupied)** – how often the sensor is active when the area really is occupied.
-* **P(Active \| Not Occupied)** – how often the sensor is active when the area is not occupied.
+For non-motion sensors, the system learns the statistical distribution of the sensor's state (or value) when the room is occupied vs. unoccupied. This allows for a continuous, dynamic calculation of likelihood based on the exact current state.
 
-These values are called *likelihoods* and are calculated from your history data during the [Prior Learning](prior-learning.md) process. They are weighted according to the sensor type and used by the Bayesian calculation to update the occupancy probability whenever that sensor is active.
+See **[Sensor Correlation & Continuous Likelihood](sensor-correlation.md)** for detailed information on how this works.
 
 ## Motion Sensors
 
@@ -20,6 +19,8 @@ You can adjust these values in the integration's configuration for each area. Hi
 ## Other Sensors
 
 For all other sensor types (media, appliances, doors, windows, environmental sensors), likelihoods are learned from historical data by correlating their activity with the occupied intervals determined by motion sensors.
+
+This is done via the **[Unified Correlation Analysis](sensor-correlation.md)** process, which handles both numeric sensors (like temperature) and binary sensors (like media players) using the same statistical engine.
 
 If history based learning is disabled, or insufficient history is available, default likelihoods from the integration are used instead.
 

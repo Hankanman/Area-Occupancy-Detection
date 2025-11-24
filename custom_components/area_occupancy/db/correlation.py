@@ -1,13 +1,12 @@
 """Numeric sensor correlation analysis.
 
-This module calculates correlations between numeric sensor values (temperature,
-humidity, CO2, etc.) and area occupancy to identify sensors that can be used
-as occupancy indicators.
+This module calculates correlations between sensor values (numeric and binary)
+and area occupancy to identify sensors that can be used as occupancy indicators.
 """
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +20,12 @@ from ..const import (
     CORRELATION_STRONG_THRESHOLD,
     MIN_CORRELATION_SAMPLES,
     NUMERIC_CORRELATION_HISTORY_COUNT,
+)
+from .utils import (
+    get_occupied_intervals_for_analysis,
+    is_timestamp_occupied,
+    validate_occupied_intervals,
+    validate_sample_count,
 )
 
 if TYPE_CHECKING:
@@ -98,28 +103,96 @@ def calculate_pearson_correlation(
         return (0.0, 1.0)
 
 
-def analyze_numeric_correlation(
+def convert_intervals_to_samples(
     db: AreaOccupancyDB,
     area_name: str,
     entity_id: str,
-    analysis_period_days: int = 30,
-) -> dict[str, Any] | None:
-    """Analyze correlation between numeric sensor values and occupancy.
+    period_start: datetime,
+    period_end: datetime,
+    active_states: list[str] | None,
+    session: Any,
+) -> list[Any]:
+    """Convert binary sensor intervals to numeric samples.
+
+    For binary sensors, creates samples with value 1.0 for active intervals
+    and 0.0 for inactive intervals. One sample is created per interval at
+    the interval midpoint.
 
     Args:
         db: Database instance
         area_name: Area name
-        entity_id: Numeric sensor entity ID
+        entity_id: Entity ID
+        period_start: Analysis period start
+        period_end: Analysis period end
+        active_states: List of active states for the binary sensor
+        session: Database session
+
+    Returns:
+        List of sample objects (similar to NumericSamples)
+    """
+    if not active_states:
+        return []
+
+    # Query intervals for the entity within the period
+    intervals = (
+        session.query(db.Intervals)
+        .filter(
+            db.Intervals.entity_id == entity_id,
+            db.Intervals.start_time >= period_start,
+            db.Intervals.start_time <= period_end,
+        )
+        .order_by(db.Intervals.start_time)
+        .all()
+    )
+
+    samples = []
+    for interval in intervals:
+        # Calculate midpoint
+        midpoint = interval.start_time + (interval.end_time - interval.start_time) / 2
+
+        # Determine value based on state
+        is_active = interval.state in active_states
+        value = 1.0 if is_active else 0.0
+
+        # Create a simple object mimicking NumericSamples
+        # We use a simple class or dict to be compatible with the analysis code
+        class SimpleSample:
+            def __init__(self, timestamp: datetime, value: float) -> None:
+                self.timestamp = timestamp
+                self.value = value
+
+        samples.append(SimpleSample(midpoint, value))
+
+    return samples
+
+
+def analyze_correlation(
+    db: AreaOccupancyDB,
+    area_name: str,
+    entity_id: str,
+    analysis_period_days: int = 30,
+    is_binary: bool = False,
+    active_states: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """Analyze correlation between sensor values and occupancy.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        entity_id: Sensor entity ID
         analysis_period_days: Number of days to analyze
+        is_binary: Whether the entity is a binary sensor
+        active_states: List of active states (required if is_binary is True)
 
     Returns:
         Dictionary with correlation results, or None if insufficient data
     """
     _LOGGER.debug(
-        "Analyzing correlation for %s in area %s over %d days",
+        "Analyzing correlation for %s in area %s over %d days (binary=%s)",
         entity_id,
         area_name,
         analysis_period_days,
+        is_binary,
     )
 
     try:
@@ -142,52 +215,47 @@ def analyze_numeric_correlation(
                 "confidence": 0.0,
             }
 
-            # Get numeric samples for the entity
-            samples = (
-                session.query(db.NumericSamples)
-                .filter(
-                    db.NumericSamples.area_name == area_name,
-                    db.NumericSamples.entity_id == entity_id,
-                    db.NumericSamples.timestamp >= period_start,
-                    db.NumericSamples.timestamp <= period_end,
+            if is_binary:
+                if not active_states:
+                    _LOGGER.warning(
+                        "Cannot analyze binary correlation for %s: no active states provided",
+                        entity_id,
+                    )
+                    return None
+                samples = convert_intervals_to_samples(
+                    db,
+                    area_name,
+                    entity_id,
+                    period_start,
+                    period_end,
+                    active_states,
+                    session,
                 )
-                .order_by(db.NumericSamples.timestamp)
-                .all()
-            )
+            else:
+                # Get numeric samples for the entity
+                samples = (
+                    session.query(db.NumericSamples)
+                    .filter(
+                        db.NumericSamples.area_name == area_name,
+                        db.NumericSamples.entity_id == entity_id,
+                        db.NumericSamples.timestamp >= period_start,
+                        db.NumericSamples.timestamp <= period_end,
+                    )
+                    .order_by(db.NumericSamples.timestamp)
+                    .all()
+                )
 
-            if len(samples) < MIN_CORRELATION_SAMPLES:
-                _LOGGER.debug(
-                    "Insufficient samples for correlation: %d < %d",
-                    len(samples),
-                    MIN_CORRELATION_SAMPLES,
-                )
-                base_result.update(
-                    {
-                        "sample_count": len(samples),
-                        "analysis_error": "too_few_samples",
-                    }
-                )
+            if error := validate_sample_count(samples):
+                base_result.update(error)
                 return base_result
 
             # Get occupied intervals for the area
-            occupied_intervals = (
-                session.query(db.OccupiedIntervalsCache)
-                .filter(
-                    db.OccupiedIntervalsCache.area_name == area_name,
-                    db.OccupiedIntervalsCache.start_time >= period_start,
-                    db.OccupiedIntervalsCache.end_time <= period_end,
-                )
-                .all()
+            occupied_intervals = get_occupied_intervals_for_analysis(
+                db, area_name, period_start, period_end
             )
 
-            if not occupied_intervals:
-                _LOGGER.debug("No occupied intervals found for correlation analysis")
-                base_result.update(
-                    {
-                        "sample_count": len(samples),
-                        "analysis_error": "no_occupancy_data",
-                    }
-                )
+            if error := validate_occupied_intervals(occupied_intervals, len(samples)):
+                base_result.update(error)
                 return base_result
 
             # Create occupancy flags for each sample
@@ -196,27 +264,17 @@ def analyze_numeric_correlation(
 
             for sample in samples:
                 # Check if sample timestamp falls within any occupied interval
-                is_occupied = False
-                for interval in occupied_intervals:
-                    if interval.start_time <= sample.timestamp <= interval.end_time:
-                        is_occupied = True
-                        break
+                is_occupied = is_timestamp_occupied(
+                    sample.timestamp, occupied_intervals
+                )
 
                 sample_values.append(float(sample.value))
                 occupancy_flags.append(1.0 if is_occupied else 0.0)
 
-            if len(sample_values) < MIN_CORRELATION_SAMPLES:
-                _LOGGER.debug(
-                    "Insufficient samples after filtering: %d < %d",
-                    len(sample_values),
-                    MIN_CORRELATION_SAMPLES,
-                )
-                base_result.update(
-                    {
-                        "sample_count": len(sample_values),
-                        "analysis_error": "too_few_samples_after_filtering",
-                    }
-                )
+            if error := validate_sample_count(
+                sample_values, error_type="too_few_samples_after_filtering"
+            ):
+                base_result.update(error)
                 return base_result
 
             # Calculate correlation
@@ -261,6 +319,13 @@ def analyze_numeric_correlation(
             std_unoccupied = (
                 float(np.std(unoccupied_values)) if unoccupied_values else None
             )
+
+            # Clamp std dev for binary sensors to avoid numerical issues
+            if is_binary:
+                if std_occupied is not None:
+                    std_occupied = max(0.05, min(0.95, std_occupied))
+                if std_unoccupied is not None:
+                    std_unoccupied = max(0.05, min(0.95, std_unoccupied))
 
             # Determine correlation type
             abs_correlation = abs(correlation)
@@ -468,20 +533,24 @@ def analyze_and_save_correlation(
     area_name: str,
     entity_id: str,
     analysis_period_days: int = 30,
+    is_binary: bool = False,
+    active_states: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Analyze and save correlation for a numeric sensor.
+    """Analyze and save correlation for a sensor (numeric or binary).
 
     Args:
         db: Database instance
         area_name: Area name
-        entity_id: Numeric sensor entity ID
+        entity_id: Sensor entity ID
         analysis_period_days: Number of days to analyze
+        is_binary: Whether the entity is a binary sensor
+        active_states: List of active states (required if is_binary is True)
 
     Returns:
         Correlation data if analysis completed and saved, None otherwise
     """
-    correlation_data = analyze_numeric_correlation(
-        db, area_name, entity_id, analysis_period_days
+    correlation_data = analyze_correlation(
+        db, area_name, entity_id, analysis_period_days, is_binary, active_states
     )
 
     if correlation_data is None:

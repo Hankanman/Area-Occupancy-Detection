@@ -7,9 +7,11 @@ import logging
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.exceptions import HomeAssistantError
 
+from ..const import MIN_CORRELATION_SAMPLES
 from . import maintenance
 from .constants import INVALID_STATES
 
@@ -180,3 +182,103 @@ def apply_motion_timeout(
         extended_intervals.extend(segments)
 
     return merge_overlapping_intervals(extended_intervals)
+
+
+def get_occupied_intervals_for_analysis(
+    db: Any,
+    area_name: str,
+    start_time: datetime,
+    end_time: datetime,
+) -> list[tuple[datetime, datetime]]:
+    """Get occupied intervals from cache for analysis.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        start_time: Start of period
+        end_time: End of period
+
+    Returns:
+        List of (start, end) tuples of occupied intervals
+    """
+    try:
+        with db.get_session() as session:
+            intervals = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter(
+                    db.OccupiedIntervalsCache.area_name == area_name,
+                    db.OccupiedIntervalsCache.start_time >= start_time,
+                    db.OccupiedIntervalsCache.end_time <= end_time,
+                )
+                .all()
+            )
+            return [(i.start_time, i.end_time) for i in intervals]
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting occupied intervals for analysis: %s", e)
+        return []
+
+
+def is_timestamp_occupied(
+    timestamp: datetime,
+    occupied_intervals: list[tuple[datetime, datetime]],
+) -> bool:
+    """Check if timestamp falls within any occupied interval.
+
+    Args:
+        timestamp: Timestamp to check
+        occupied_intervals: List of (start, end) tuples. End time is exclusive.
+
+    Returns:
+        True if timestamp is within an interval, False otherwise
+    """
+    return any(start <= timestamp < end for start, end in occupied_intervals)
+
+
+def validate_sample_count(
+    samples: list[Any],
+    min_samples: int = MIN_CORRELATION_SAMPLES,
+    error_type: str = "too_few_samples",
+) -> dict[str, Any] | None:
+    """Validate sample count and return error dict if insufficient.
+
+    Args:
+        samples: List of samples
+        min_samples: Minimum required samples
+        error_type: Error string to return
+
+    Returns:
+        Error dict if invalid, None if valid
+    """
+    if len(samples) < min_samples:
+        _LOGGER.debug(
+            "Insufficient samples: %d < %d",
+            len(samples),
+            min_samples,
+        )
+        return {
+            "sample_count": len(samples),
+            "analysis_error": error_type,
+        }
+    return None
+
+
+def validate_occupied_intervals(
+    intervals: list[Any],
+    sample_count: int,
+) -> dict[str, Any] | None:
+    """Validate occupied intervals exist.
+
+    Args:
+        intervals: List of occupied intervals
+        sample_count: Number of samples (for reporting in error)
+
+    Returns:
+        Error dict if invalid, None if valid
+    """
+    if not intervals:
+        _LOGGER.debug("No occupied intervals found for analysis")
+        return {
+            "sample_count": sample_count,
+            "analysis_error": "no_occupancy_data",
+        }
+    return None
