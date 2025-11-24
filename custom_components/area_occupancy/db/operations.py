@@ -118,6 +118,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
                         "std_dev_when_unoccupied": corr.std_dev_when_unoccupied,
                         "threshold_active": corr.threshold_active,
                         "threshold_inactive": corr.threshold_inactive,
+                        "analysis_error": corr.analysis_error,
                         "calculation_date": corr.calculation_date,
                     }
 
@@ -185,10 +186,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                         existing_entity.update_decay(
                             entity_obj.decay_start,
                             entity_obj.is_decaying,
-                        )
-                        existing_entity.update_likelihood(
-                            entity_obj.prob_given_true,
-                            entity_obj.prob_given_false,
                         )
                         # DB weight takes priority over configured defaults when valid
                         if hasattr(existing_entity, "type") and hasattr(

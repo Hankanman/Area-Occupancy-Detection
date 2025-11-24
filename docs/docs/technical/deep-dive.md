@@ -75,7 +75,6 @@ For in-depth explanations of specific aspects of the calculation:
 - `coordinator.py:setup()` - Lines 241-321: Coordinator initialization and area setup
 - `area/area.py:__init__()` - Lines 90-150: Area component initialization
 - `data/analysis.py:start_prior_analysis()` - Lines 911-967: Prior learning orchestration
-- `data/analysis.py:start_likelihood_analysis()` - Lines 970-1060: Likelihood learning orchestration
 
 ### Real-Time Calculation
 
@@ -93,8 +92,8 @@ For in-depth explanations of specific aspects of the calculation:
 
 ### Likelihood Calculation
 
-- `data/analysis.py:LikelihoodAnalyzer.analyze_likelihoods()` - Lines 642-749: Likelihood analysis orchestration
-- `data/analysis.py:LikelihoodAnalyzer._analyze_entity_likelihood()` - Lines 791-848: Individual entity likelihood calculation
+- `db/correlation.py:analyze_correlation()` - Unified correlation analysis for all sensors (numeric and binary)
+- `data/entity.py:Entity.get_likelihoods()` - Dynamic PDF-based likelihood calculation at runtime
 
 ### Decay
 

@@ -720,7 +720,7 @@ class TestAreaOccupancyCoordinator:
 
         summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
         coordinator.db.analyze_and_save_correlation.assert_called_once_with(
-            area_name, "sensor.numeric"
+            area_name, "sensor.numeric", 30, False, None
         )
         assert summary["correlations"]
         assert summary["correlations"][0]["success"] is True
