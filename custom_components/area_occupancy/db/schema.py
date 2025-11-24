@@ -20,7 +20,7 @@ from sqlalchemy.orm import declarative_base, relationship
 
 from homeassistant.util import dt as dt_util
 
-from .constants import (
+from ..const import (
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
     DEFAULT_ENTITY_WEIGHT,

@@ -125,9 +125,10 @@ from .const import (
     DOMAIN,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
+    get_default_state,
+    get_state_options,
 )
 from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
-from .state_mapping import get_default_state, get_state_options
 
 _LOGGER = logging.getLogger(__name__)
 

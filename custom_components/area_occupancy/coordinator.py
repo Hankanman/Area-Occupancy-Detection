@@ -30,6 +30,7 @@ from .data.analysis import run_full_analysis, run_interval_aggregation
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
 from .db.correlation import run_correlation_analysis
+from .utils import format_area_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,14 +224,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return whether setup is complete."""
         return self._setup_complete
 
-    def _format_area_names_for_logging(self) -> str:
-        """Format area names for logging purposes.
-
-        Returns:
-            Comma-separated string of area names, or "no areas" if empty
-        """
-        return ", ".join(self.get_area_names()) if self.areas else "no areas"
-
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
         """Validate that at least one area is configured.
@@ -332,7 +325,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except (HomeAssistantError, OSError, RuntimeError) as timer_err:
                 _LOGGER.error(
                     "Failed to start basic timers for areas: %s: %s",
-                    self._format_area_names_for_logging(),
+                    format_area_names(self),
                     timer_err,
                 )
                 # Don't set _setup_complete if timers completely failed
@@ -385,7 +378,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         _LOGGER.info(
             "Starting coordinator shutdown for areas: %s",
-            self._format_area_names_for_logging(),
+            format_area_names(self),
         )
 
         # Step 1: Cancel periodic save timer before cleanup and perform final save
@@ -398,12 +391,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.hass.async_add_executor_job(self.db.save_data)
             _LOGGER.info(
                 "Final database save completed for areas: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
             )
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error(
                 "Failed final save for areas: %s: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
                 err,
             )
 
@@ -446,7 +439,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Step 10: Clear areas dict to release all area references
         # This helps break any remaining circular references
         # Format area names before clearing (since we need them for logging)
-        area_names_str = self._format_area_names_for_logging()
+        area_names_str = format_area_names(self)
         self.areas.clear()
 
         _LOGGER.info("Coordinator shutdown completed for areas: %s", area_names_str)
@@ -469,15 +462,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await area.async_cleanup()
         self.get_area_handle(area_name).attach(None)
 
-        # Remove entities from entity registry
+        # Look up device for this area (used for both entity and device removal)
+        device_registry = dr.async_get(self.hass)
+        device_identifiers = {(DOMAIN, area.config.area_id)}
+        device = device_registry.async_get_device(identifiers=device_identifiers)
+
+        # Remove entities from entity registry that belong to this device
         entity_registry = er.async_get(self.hass)
         entities_removed = 0
-        area_prefix = f"{area_name}_"
+        target_device_id = device.id if device else None
         for entity_id, entity_entry in list(entity_registry.entities.items()):
             if (
                 entity_entry.config_entry_id == self.entry_id
-                and entity_entry.unique_id
-                and str(entity_entry.unique_id).startswith(area_prefix)
+                and target_device_id is not None
+                and entity_entry.device_id == target_device_id
             ):
                 try:
                     entity_registry.async_remove(entity_id)
@@ -501,10 +499,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name,
             )
 
-        # Remove device from device registry
-        device_registry = dr.async_get(self.hass)
-        device_identifiers = {(DOMAIN, area.config.area_id)}
-        device = device_registry.async_get_device(identifiers=device_identifiers)
+        # Remove device from device registry (reusing device object from above)
         if device:
             try:
                 device_registry.async_remove_device(device.id)
@@ -685,12 +680,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.hass.async_add_executor_job(self.db.save_data)
             _LOGGER.debug(
                 "Periodic database save completed for areas: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
             )
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error(
                 "Failed periodic save for areas: %s: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
                 err,
             )
 
@@ -738,7 +733,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.info(
             "Starting analysis timer for areas: %s",
-            self._format_area_names_for_logging(),
+            format_area_names(self),
         )
 
         self._analysis_timer = async_track_point_in_time(
@@ -806,6 +801,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self, _now, return_results=True
             )
             summary["aggregation"] = aggregation_results
+            # If aggregation_results is None, it means aggregation failed
+            if aggregation_results is None:
+                summary["errors"].append("Interval aggregation failed")
 
             # Run correlation analysis (with results for summary)
             correlation_results = await run_correlation_analysis(
@@ -817,7 +815,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:  # noqa: BLE001
             _LOGGER.error(
                 "Interval aggregation job failed for areas %s: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
                 err,
             )
             summary["errors"].append(str(err))

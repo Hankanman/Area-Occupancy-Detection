@@ -19,6 +19,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    DEFAULT_ENTITY_PROB_GIVEN_FALSE,
+    DEFAULT_ENTITY_PROB_GIVEN_TRUE,
+    DEFAULT_ENTITY_WEIGHT,
     GLOBAL_PRIOR_HISTORY_COUNT,
     MAX_PROBABILITY,
     MAX_WEIGHT,
@@ -27,11 +30,6 @@ from ..const import (
     RETENTION_DAYS,
 )
 from . import maintenance, queries
-from .constants import (
-    DEFAULT_ENTITY_PROB_GIVEN_FALSE,
-    DEFAULT_ENTITY_PROB_GIVEN_TRUE,
-    DEFAULT_ENTITY_WEIGHT,
-)
 
 ar = helpers.area_registry
 

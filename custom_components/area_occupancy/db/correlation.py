@@ -21,28 +21,12 @@ from ..const import (
     NUMERIC_CORRELATION_HISTORY_COUNT,
 )
 from ..data.entity_type import InputType
+from ..utils import clamp_probability
 from .utils import (
     get_occupied_intervals_for_analysis,
     is_timestamp_occupied,
     validate_sample_count,
 )
-
-
-def clamp_probability(
-    value: float, min_val: float = 0.05, max_val: float = 0.95
-) -> float:
-    """Clamp probability value between min and max.
-
-    Args:
-        value: Probability value to clamp
-        min_val: Minimum value (default: 0.05)
-        max_val: Maximum value (default: 0.95)
-
-    Returns:
-        Clamped probability value
-    """
-    return max(min_val, min(max_val, value))
-
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -393,8 +377,12 @@ def analyze_binary_likelihoods(
             )
 
             # Clamp probabilities to avoid "black hole" values
-            prob_given_true = clamp_probability(prob_given_true)
-            prob_given_false = clamp_probability(prob_given_false)
+            prob_given_true = clamp_probability(
+                prob_given_true, min_val=0.05, max_val=0.95
+            )
+            prob_given_false = clamp_probability(
+                prob_given_false, min_val=0.05, max_val=0.95
+            )
 
             _LOGGER.debug(
                 "Binary likelihood analysis for %s in area %s: "
@@ -1149,9 +1137,14 @@ async def run_correlation_analysis(
                             try:
                                 entity = area.entities.get_entity(entity_id)
                                 entity.update_binary_likelihoods(likelihood_result)
-                            except ValueError:
+                            except ValueError as e:
                                 # Entity might have been removed during analysis
-                                pass
+                                _LOGGER.debug(
+                                    "Entity %s in area %s no longer exists: %s",
+                                    entity_id,
+                                    area_name,
+                                    e,
+                                )
 
                         # Track result if requested
                         if return_results:
@@ -1182,9 +1175,14 @@ async def run_correlation_analysis(
                             try:
                                 entity = area.entities.get_entity(entity_id)
                                 entity.update_correlation(correlation_result)
-                            except ValueError:
+                            except ValueError as e:
                                 # Entity might have been removed during analysis
-                                pass
+                                _LOGGER.debug(
+                                    "Entity %s in area %s no longer exists: %s",
+                                    entity_id,
+                                    area_name,
+                                    e,
+                                )
 
                         # Track result if requested
                         if return_results:
@@ -1196,7 +1194,13 @@ async def run_correlation_analysis(
                                     "success": bool(correlation_result),
                                 }
                             )
-                except Exception as err:  # noqa: BLE001
+                except (
+                    SQLAlchemyError,
+                    ValueError,
+                    TypeError,
+                    RuntimeError,
+                    OSError,
+                ) as err:
                     _LOGGER.error(
                         "Sensor analysis failed for %s (%s): %s",
                         area_name,

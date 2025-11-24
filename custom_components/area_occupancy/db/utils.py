@@ -12,9 +12,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from ..const import MIN_CORRELATION_SAMPLES
+from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
 from . import maintenance
-from .constants import INVALID_STATES
 
 _LOGGER = logging.getLogger(__name__)
 
