@@ -13,7 +13,7 @@ class TestPerformanceConstants:
     def test_performance_constants_defined(self):
         """Test that performance constants are properly defined."""
         # Test DEFAULT_LOOKBACK_DAYS
-        assert DEFAULT_LOOKBACK_DAYS == 90
+        assert DEFAULT_LOOKBACK_DAYS == 60
         assert isinstance(DEFAULT_LOOKBACK_DAYS, int)
         assert DEFAULT_LOOKBACK_DAYS > 0
 
@@ -35,8 +35,8 @@ class TestPerformanceConstants:
         # Cache TTL should be reasonable (1 hour)
         assert DEFAULT_CACHE_TTL_SECONDS == 3600  # 1 hour
 
-        # Lookback should be reasonable (3 months)
-        assert DEFAULT_LOOKBACK_DAYS == 90  # 3 months
+        # Lookback should be reasonable (2 months)
+        assert DEFAULT_LOOKBACK_DAYS == 60  # 2 months
 
         # Retention should be reasonable (1 year)
         assert RETENTION_DAYS == 365  # 1 year

@@ -18,12 +18,13 @@ The process begins when Home Assistant loads the integration. The coordinator in
 **Code Reference:** ```241:321:custom_components/area_occupancy/coordinator.py```
 
 Key steps:
+
 1. Load areas from configuration (`_load_areas_from_config()`)
 2. Validate at least one area exists
 3. Initialize each area's components
 4. Load stored data from database
 5. Track entity state changes
-6. Start periodic timers (decay, save, analysis, nightly)
+6. Start periodic timers (decay, save, analysis)
 
 ### Area Initialization
 
@@ -32,6 +33,7 @@ Each area is initialized with its configuration and components.
 **Code Reference:** ```90:150:custom_components/area_occupancy/area/area.py```
 
 Components created:
+
 - **Config**: Area-specific configuration (sensors, thresholds, weights)
 - **EntityManager**: Manages all sensor entities for the area
 - **Prior**: Handles prior probability calculations and caching
@@ -44,6 +46,7 @@ Historical data is loaded from the database to restore learned priors and likeli
 **Code Reference:** ```68:87:custom_components/area_occupancy/coordinator.py``` (async_init_database)
 
 The database stores:
+
 - Global priors for each area
 - Time-based priors (day of week × time slot)
 - Entity likelihoods (`P(Active|Occupied)` and `P(Active|Not Occupied)`)
@@ -56,6 +59,7 @@ The system learns baseline occupancy probabilities from historical sensor data.
 **Code Reference:** ```911:967:custom_components/area_occupancy/data/analysis.py```
 
 Process:
+
 1. **Global Prior Calculation**: Analyzes motion sensor history to determine overall occupancy rate
    - Calculates total occupied time vs. total time period
    - If motion prior < 0.10, supplements with media/appliance sensors
@@ -75,6 +79,7 @@ The system learns how reliable each sensor is as evidence of occupancy.
 **Code Reference:** ```970:1060:custom_components/area_occupancy/data/analysis.py```
 
 Process:
+
 1. Gets occupied intervals from prior analysis
 2. For each entity, correlates its activity intervals with occupied intervals
 3. Calculates:
@@ -93,6 +98,7 @@ When any monitored sensor changes state, the coordinator detects the change and 
 **Code Reference:** ```585:620:custom_components/area_occupancy/coordinator.py```
 
 Flow:
+
 1. Home Assistant fires state change event
 2. Coordinator's `_refresh_on_state_change` callback receives event
 3. Finds which area(s) contain the changed entity
@@ -106,6 +112,7 @@ Each entity determines its current evidence state (active/inactive/unavailable).
 **Code Reference:** ```115:134:custom_components/area_occupancy/data/entity.py```
 
 Process:
+
 1. **State Retrieval**: Gets current state from Home Assistant
 2. **Evidence Determination**: Checks if state indicates activity
    - For binary sensors: checks if state is in `active_states` list
@@ -122,6 +129,7 @@ When evidence transitions from active to inactive, decay gradually reduces its i
 **Code Reference:** ```37:50:custom_components/area_occupancy/data/decay.py```
 
 Process:
+
 1. Decay starts when evidence transitions from `True` to `False`
 2. Decay factor calculated using exponential decay: `0.5^(age/half_life)`
 3. Decay stops when:
@@ -141,6 +149,7 @@ The system combines the global prior with the time-based prior for the current t
 **Code Reference:** ```160:225:custom_components/area_occupancy/utils.py``` (combine_priors)
 
 Process:
+
 1. Gets global prior from database (learned from history)
 2. Gets time-based prior for current day-of-week and time-slot
 3. Combines using weighted average in logit space
@@ -148,6 +157,7 @@ Process:
 5. Clamps to valid range [MIN_PROBABILITY, MAX_PROBABILITY]
 
 The combination uses logit space for better interpolation:
+
 - Converts probabilities to logits: `logit(p) = log(p / (1-p))`
 - Weighted combination: `combined_logit = area_weight * area_logit + time_weight * time_logit`
 - Converts back: `combined_prior = 1 / (1 + exp(-combined_logit))`
@@ -161,6 +171,7 @@ The core calculation combines all entity evidence with the prior using Bayesian 
 **Code Reference:** ```188:201:custom_components/area_occupancy/area/area.py``` (Area.probability)
 
 Process:
+
 1. **Entity Filtering**: Removes entities with zero weight or invalid likelihoods
 2. **Prior Clamping**: Ensures prior is in valid range
 3. **Log-Space Initialization**: Starts with log probabilities for occupied and not-occupied hypotheses
@@ -184,6 +195,7 @@ The calculated probability is exposed through Home Assistant sensors.
 **Code Reference:** ```339:372:custom_components/area_occupancy/coordinator.py``` (update method)
 
 Outputs:
+
 - **Occupancy Probability Sensor**: Shows the calculated probability (0.0-1.0)
 - **Occupancy Status Binary Sensor**: `on` if probability >= threshold, `off` otherwise
 - **Prior Probability Sensor**: Shows the combined prior value
@@ -222,4 +234,3 @@ The prior is multiplied by 1.05 before use, slightly increasing the baseline pro
 - [Calculation Feature](../features/calculation.md) - User-facing documentation
 - [Prior Learning Feature](../features/prior-learning.md) - Prior learning overview
 - [Decay Feature](../features/decay.md) - Decay mechanism overview
-

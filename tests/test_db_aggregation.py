@@ -22,7 +22,7 @@ class TestAggregateRawToDaily:
         """Test successful aggregation from raw to daily."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
-        old_date = dt_util.utcnow() - timedelta(days=35)
+        old_date = dt_util.utcnow() - timedelta(days=65)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)

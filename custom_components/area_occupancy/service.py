@@ -78,8 +78,8 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
             "prob_given_false": entity.prob_given_false,
             "active_states": entity.active_states,
             "active_range": active_range_val,
-            "gaussian_params": getattr(entity, "learned_gaussian_params", None),
-            "rejection_reason": getattr(entity, "rejection_reason", None),
+            "analysis_data": getattr(entity, "learned_gaussian_params", None),
+            "analysis_error": getattr(entity, "analysis_error", None),
             "is_active": entity.active,
         }
         # Filter out keys with None values to keep output clean
@@ -151,33 +151,12 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         raise HomeAssistantError(error_msg) from err
 
 
-async def _run_nightly_tasks(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Manually trigger nightly aggregation + correlation tasks."""
-    try:
-        coordinator = get_coordinator(hass)
-
-        _LOGGER.info("Running nightly aggregation + correlation tasks for all areas")
-        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-
-        return {
-            "results": summary,
-            "update_timestamp": dt_util.utcnow().isoformat(),
-        }
-    except Exception as err:
-        error_msg = f"Failed to run nightly tasks: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-
-
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
     # Create async wrapper function to properly handle the service call
     async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
         return await _run_analysis(hass, call)
-
-    async def handle_run_nightly_tasks(call: ServiceCall) -> dict[str, Any]:
-        return await _run_nightly_tasks(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -188,12 +167,4 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    hass.services.async_register(
-        DOMAIN,
-        "run_nightly_tasks",
-        handle_run_nightly_tasks,
-        schema=None,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    _LOGGER.info("Registered %d service for %s integration", 2, DOMAIN)
+    _LOGGER.info("Registered %d service for %s integration", 1, DOMAIN)

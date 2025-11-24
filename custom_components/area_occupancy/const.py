@@ -174,7 +174,7 @@ WASP_DEFAULT_PRIOR: Final[float] = 0.60
 ROUNDING_PRECISION: Final = 2
 
 # Performance optimization constants
-DEFAULT_LOOKBACK_DAYS: Final = 90  # Days of interval data to load for analysis
+DEFAULT_LOOKBACK_DAYS: Final = 60  # Days of interval data to load for analysis
 DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
 RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
 
@@ -186,7 +186,7 @@ MAX_INTERVAL_SECONDS: Final = (
 
 # Database retention and aggregation constants
 # Raw data retention (before aggregation)
-RETENTION_RAW_INTERVALS_DAYS: Final = 30  # Days to keep raw intervals
+RETENTION_RAW_INTERVALS_DAYS: Final = 60  # Days to keep raw intervals
 RETENTION_RAW_NUMERIC_SAMPLES_DAYS: Final = 14  # Days to keep raw numeric samples
 
 # Aggregation retention periods
@@ -209,26 +209,22 @@ AGGREGATION_PERIOD_YEARLY: Final = "yearly"
 AGGREGATION_LEVEL_RAW: Final = "raw"
 
 # Correlation analysis constants
-MIN_CORRELATION_SAMPLES: Final = 50  # Minimum samples needed for reliable correlation
-CORRELATION_CONFIDENCE_THRESHOLD: Final = (
-    0.7  # Minimum confidence for correlation to be considered significant
-)
-CORRELATION_STRONG_THRESHOLD: Final = (
-    0.7  # Strong correlation threshold (absolute value)
-)
-CORRELATION_MODERATE_THRESHOLD: Final = (
-    0.4  # Moderate correlation threshold (absolute value)
-)
+# Minimum samples needed for reliable correlation
+MIN_CORRELATION_SAMPLES: Final = 50
+# Minimum confidence for correlation to be considered significant
+CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
+# Strong correlation threshold (absolute value)
+CORRELATION_STRONG_THRESHOLD: Final = 0.7
+# Moderate correlation threshold (absolute value)
+CORRELATION_MODERATE_THRESHOLD: Final = 0.4
 
 # Global prior retention
-GLOBAL_PRIOR_HISTORY_COUNT: Final = (
-    15  # Number of historical global prior calculations to keep
-)
+# Number of historical global prior calculations to keep
+GLOBAL_PRIOR_HISTORY_COUNT: Final = 15
 
 # Numeric correlation retention
-NUMERIC_CORRELATION_HISTORY_COUNT: Final = (
-    10  # Number of correlation analyses to keep per sensor
-)
+# Number of correlation analyses to keep per sensor
+NUMERIC_CORRELATION_HISTORY_COUNT: Final = 10
 
 # Coordinator timer intervals
 DECAY_INTERVAL: Final = 10  # seconds
