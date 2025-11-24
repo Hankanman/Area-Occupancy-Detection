@@ -1343,7 +1343,9 @@ class TestAreaOccupancyOptionsFlow:
             flow.config_entry.data[CONF_AREAS][-1][CONF_AREA_ID] = kitchen_area_id
 
         user_input = {"confirm": confirm} if user_input_provided else None
-        result = await flow.async_step_remove_area(user_input)
+
+        with patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock):
+            result = await flow.async_step_remove_area(user_input)
 
         assert result["type"] == expected_type
         if expected_step_id:

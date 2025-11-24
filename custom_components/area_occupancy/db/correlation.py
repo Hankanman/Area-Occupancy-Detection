@@ -128,6 +128,20 @@ def analyze_numeric_correlation(
             period_end = dt_util.utcnow()
             period_start = period_end - timedelta(days=analysis_period_days)
 
+            # Base result structure with defaults for required fields
+            base_result = {
+                "entry_id": db.coordinator.entry_id,
+                "area_name": area_name,
+                "entity_id": entity_id,
+                "analysis_period_start": period_start,
+                "analysis_period_end": period_end,
+                "calculation_date": dt_util.utcnow(),
+                "correlation_coefficient": 0.0,
+                "sample_count": 0,
+                "correlation_type": "none",
+                "confidence": 0.0,
+            }
+
             # Get numeric samples for the entity
             samples = (
                 session.query(db.NumericSamples)
@@ -147,7 +161,13 @@ def analyze_numeric_correlation(
                     len(samples),
                     MIN_CORRELATION_SAMPLES,
                 )
-                return None
+                base_result.update(
+                    {
+                        "sample_count": len(samples),
+                        "rejection_reason": "too_few_samples",
+                    }
+                )
+                return base_result
 
             # Get occupied intervals for the area
             occupied_intervals = (
@@ -162,7 +182,13 @@ def analyze_numeric_correlation(
 
             if not occupied_intervals:
                 _LOGGER.debug("No occupied intervals found for correlation analysis")
-                return None
+                base_result.update(
+                    {
+                        "sample_count": len(samples),
+                        "rejection_reason": "no_occupancy_data",
+                    }
+                )
+                return base_result
 
             # Create occupancy flags for each sample
             sample_values: list[float] = []
@@ -185,7 +211,13 @@ def analyze_numeric_correlation(
                     len(sample_values),
                     MIN_CORRELATION_SAMPLES,
                 )
-                return None
+                base_result.update(
+                    {
+                        "sample_count": len(sample_values),
+                        "rejection_reason": "too_few_samples_after_filtering",
+                    }
+                )
+                return base_result
 
             # Calculate correlation
             correlation, _p_value = calculate_pearson_correlation(
@@ -204,6 +236,23 @@ def analyze_numeric_correlation(
                 if occ == 0.0
             ]
 
+            if not occupied_values:
+                base_result.update(
+                    {
+                        "sample_count": len(sample_values),
+                        "rejection_reason": "no_occupied_samples",
+                    }
+                )
+                return base_result
+            if not unoccupied_values:
+                base_result.update(
+                    {
+                        "sample_count": len(sample_values),
+                        "rejection_reason": "no_unoccupied_samples",
+                    }
+                )
+                return base_result
+
             mean_occupied = float(np.mean(occupied_values)) if occupied_values else None
             mean_unoccupied = (
                 float(np.mean(unoccupied_values)) if unoccupied_values else None
@@ -215,6 +264,9 @@ def analyze_numeric_correlation(
 
             # Determine correlation type
             abs_correlation = abs(correlation)
+            correlation_type = "none"
+            rejection_reason = None
+
             if (
                 abs_correlation >= CORRELATION_STRONG_THRESHOLD
                 or abs_correlation >= CORRELATION_MODERATE_THRESHOLD
@@ -225,6 +277,7 @@ def analyze_numeric_correlation(
                     correlation_type = "occupancy_negative"
             else:
                 correlation_type = "none"
+                rejection_reason = "no_correlation"
 
             # Calculate confidence (based on correlation strength and sample size)
             # Confidence increases with stronger correlation and more samples
@@ -252,6 +305,7 @@ def analyze_numeric_correlation(
                 "entity_id": entity_id,
                 "correlation_coefficient": correlation,
                 "correlation_type": correlation_type,
+                "rejection_reason": rejection_reason,
                 "analysis_period_start": period_start,
                 "analysis_period_end": period_end,
                 "sample_count": sample_count,
