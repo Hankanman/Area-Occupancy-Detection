@@ -230,6 +230,10 @@ class Prior:
         intervals that can be used by both prior and likelihood calculations.
         Delegates to PriorAnalyzer for the actual calculation but maintains caching.
 
+        Note: For prior calculations, include_media and include_appliance should
+        always be False. Prior calculations are exclusively based on motion/presence
+        sensors to ensure consistent ground truth.
+
         Args:
             lookback_days: Number of days to look back for interval data (default: 90)
             include_media: If True, include media player intervals (playing state only)

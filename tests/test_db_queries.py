@@ -227,8 +227,8 @@ class TestGetOccupiedIntervals:
         )
         assert result == []
 
-    def test_get_occupied_intervals_with_media_and_appliance(self, test_db):
-        """Test retrieval including media/appliance union path."""
+    def test_get_occupied_intervals_motion_only(self, test_db):
+        """Test retrieval with motion sensors only (prior calculations use motion-only)."""
         db = test_db
         area_name = db.coordinator.get_area_names()[0]
         db.save_area_data(area_name)
@@ -293,19 +293,19 @@ class TestGetOccupiedIntervals:
             session.add_all(intervals)
             session.commit()
 
+        # Test motion-only retrieval (prior calculations use motion-only)
         result = get_occupied_intervals(
             db,
             db.coordinator.entry_id,
             area_name,
             lookback_days=1,
             motion_timeout_seconds=0,
-            include_media=True,
-            include_appliance=True,
-            media_sensor_ids=["media_player.tv"],
-            appliance_sensor_ids=["switch.appliance1"],
+            include_media=False,
+            include_appliance=False,
         )
 
-        assert len(result) == 3
+        # Should only return motion sensor intervals
+        assert len(result) == 1
 
 
 class TestGetTimeBounds:
