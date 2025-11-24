@@ -26,10 +26,10 @@ from homeassistant.util import dt as dt_util
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
-from .data.analysis import run_full_analysis
+from .data.analysis import run_full_analysis, run_interval_aggregation
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
-from .db.correlation import get_correlatable_entities_by_area
+from .db.correlation import run_correlation_analysis
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -452,6 +452,99 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Coordinator shutdown completed for areas: %s", area_names_str)
         await super().async_shutdown()
 
+    async def _cleanup_removed_area(self, area_name: str, area: Area) -> None:
+        """Clean up a removed area from registries and database.
+
+        Handles cleanup of:
+        - Area async cleanup
+        - Entity registry entries
+        - Device registry entries
+        - Database records
+
+        Args:
+            area_name: Name of the area to clean up
+            area: Area instance to clean up
+        """
+        # Clean up removed area
+        await area.async_cleanup()
+        self.get_area_handle(area_name).attach(None)
+
+        # Remove entities from entity registry
+        entity_registry = er.async_get(self.hass)
+        entities_removed = 0
+        area_prefix = f"{area_name}_"
+        for entity_id, entity_entry in list(entity_registry.entities.items()):
+            if (
+                entity_entry.config_entry_id == self.entry_id
+                and entity_entry.unique_id
+                and str(entity_entry.unique_id).startswith(area_prefix)
+            ):
+                try:
+                    entity_registry.async_remove(entity_id)
+                    entities_removed += 1
+                    _LOGGER.debug(
+                        "Removed entity %s from registry for removed area %s",
+                        entity_id,
+                        area_name,
+                    )
+                except (ValueError, KeyError, AttributeError) as remove_err:
+                    _LOGGER.warning(
+                        "Failed to remove entity %s from registry: %s",
+                        entity_id,
+                        remove_err,
+                    )
+
+        if entities_removed > 0:
+            _LOGGER.info(
+                "Removed %d entities from registry for removed area %s",
+                entities_removed,
+                area_name,
+            )
+
+        # Remove device from device registry
+        device_registry = dr.async_get(self.hass)
+        device_identifiers = {(DOMAIN, area.config.area_id)}
+        device = device_registry.async_get_device(identifiers=device_identifiers)
+        if device:
+            try:
+                device_registry.async_remove_device(device.id)
+                _LOGGER.info(
+                    "Removed device %s from registry for removed area %s",
+                    device.id,
+                    area_name,
+                )
+            except (ValueError, KeyError, AttributeError) as remove_err:
+                _LOGGER.warning(
+                    "Failed to remove device %s from registry: %s",
+                    device.id,
+                    remove_err,
+                )
+        else:
+            _LOGGER.debug(
+                "No device found for removed area %s (area_id: %s)",
+                area_name,
+                area.config.area_id,
+            )
+
+        # Delete all database records for this area
+        try:
+            deleted_count = await self.hass.async_add_executor_job(
+                self.db.delete_area_data, area_name
+            )
+            _LOGGER.debug(
+                "Deleted %d database records for removed area %s",
+                deleted_count,
+                area_name,
+            )
+        except (HomeAssistantError, OSError, RuntimeError) as db_err:
+            _LOGGER.error(
+                "Failed to delete database records for removed area %s: %s",
+                area_name,
+                db_err,
+            )
+
+        _LOGGER.info("Cleaned up removed area: %s", area_name)
+
     async def async_update_options(self, options: dict[str, Any]) -> None:
         """Update coordinator options.
 
@@ -475,94 +568,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(removed_area_names),
             )
 
-            # Get entity registry for cleanup
-            entity_registry = er.async_get(self.hass)
-
             for area_name in removed_area_names:
                 area = self.areas.get(area_name)
                 if area:
-                    # Clean up removed area
-                    await area.async_cleanup()
-                    self.get_area_handle(area_name).attach(None)
-
-                    # Remove entities from entity registry
-                    entities_removed = 0
-                    area_prefix = f"{area_name}_"
-                    for entity_id, entity_entry in list(
-                        entity_registry.entities.items()
-                    ):
-                        if (
-                            entity_entry.config_entry_id == self.entry_id
-                            and entity_entry.unique_id
-                            and str(entity_entry.unique_id).startswith(area_prefix)
-                        ):
-                            try:
-                                entity_registry.async_remove(entity_id)
-                                entities_removed += 1
-                                _LOGGER.debug(
-                                    "Removed entity %s from registry for removed area %s",
-                                    entity_id,
-                                    area_name,
-                                )
-                            except (ValueError, KeyError, AttributeError) as remove_err:
-                                _LOGGER.warning(
-                                    "Failed to remove entity %s from registry: %s",
-                                    entity_id,
-                                    remove_err,
-                                )
-
-                    if entities_removed > 0:
-                        _LOGGER.info(
-                            "Removed %d entities from registry for removed area %s",
-                            entities_removed,
-                            area_name,
-                        )
-
-                    # Remove device from device registry
-                    device_registry = dr.async_get(self.hass)
-                    device_identifiers = {(DOMAIN, area.config.area_id)}
-                    device = device_registry.async_get_device(
-                        identifiers=device_identifiers
-                    )
-                    if device:
-                        try:
-                            device_registry.async_remove_device(device.id)
-                            _LOGGER.info(
-                                "Removed device %s from registry for removed area %s",
-                                device.id,
-                                area_name,
-                            )
-                        except (ValueError, KeyError, AttributeError) as remove_err:
-                            _LOGGER.warning(
-                                "Failed to remove device %s from registry: %s",
-                                device.id,
-                                remove_err,
-                            )
-                    else:
-                        _LOGGER.debug(
-                            "No device found for removed area %s (area_id: %s)",
-                            area_name,
-                            area.config.area_id,
-                        )
-
-                    # Delete all database records for this area
-                    try:
-                        deleted_count = await self.hass.async_add_executor_job(
-                            self.db.delete_area_data, area_name
-                        )
-                        _LOGGER.debug(
-                            "Deleted %d database records for removed area %s",
-                            deleted_count,
-                            area_name,
-                        )
-                    except (HomeAssistantError, OSError, RuntimeError) as db_err:
-                        _LOGGER.error(
-                            "Failed to delete database records for removed area %s: %s",
-                            area_name,
-                            db_err,
-                        )
-
-                    _LOGGER.info("Cleaned up removed area: %s", area_name)
+                    await self._cleanup_removed_area(area_name, area)
 
         # Cancel existing entity state listeners (will be recreated with new entity lists)
         for listener in self._area_state_listeners.values():
@@ -792,102 +801,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         try:
-            # Run interval aggregation
-            results = await self.hass.async_add_executor_job(
-                self.db.run_interval_aggregation
+            # Run interval aggregation (with results for summary)
+            aggregation_results = await run_interval_aggregation(
+                self, _now, return_results=True
             )
-            summary["aggregation"] = results
-            _LOGGER.info(
-                "Interval aggregation completed for areas %s: %s",
-                self._format_area_names_for_logging(),
-                results,
+            summary["aggregation"] = aggregation_results
+
+            # Run correlation analysis (with results for summary)
+            correlation_results = await run_correlation_analysis(
+                self, return_results=True
             )
-
-            # Run correlation analysis for numeric and binary sensors
-            correlatable_entities = get_correlatable_entities_by_area(self)
-            if correlatable_entities:
-                _LOGGER.info(
-                    "Starting correlation analysis for %d area(s)",
-                    len(correlatable_entities),
-                )
-                for area_name, entities in correlatable_entities.items():
-                    for entity_id, entity_info in entities.items():
-                        try:
-                            if entity_info["is_binary"]:
-                                # Binary sensors: Use duration-based likelihood analysis
-                                likelihood_result = (
-                                    await self.hass.async_add_executor_job(
-                                        self.db.analyze_binary_likelihoods,
-                                        area_name,
-                                        entity_id,
-                                        30,  # analysis_period_days
-                                        entity_info["active_states"],
-                                    )
-                                )
-                                # Apply results (if needed)
-                                if likelihood_result and area_name in self.areas:
-                                    area = self.areas[area_name]
-                                    try:
-                                        entity = area.entities.get_entity(entity_id)
-                                        entity.update_binary_likelihoods(
-                                            likelihood_result
-                                        )
-                                    except ValueError:
-                                        pass
-                            else:
-                                # Numeric sensors: Use correlation analysis
-                                correlation_result = (
-                                    await self.hass.async_add_executor_job(
-                                        self.db.analyze_and_save_correlation,
-                                        area_name,
-                                        entity_id,
-                                        30,  # analysis_period_days
-                                        False,  # is_binary
-                                        None,  # active_states
-                                    )
-                                )
-
-                                # Apply analysis results to live entities immediately
-                                if correlation_result and area_name in self.areas:
-                                    area = self.areas[area_name]
-                                    try:
-                                        entity = area.entities.get_entity(entity_id)
-                                        entity.update_correlation(correlation_result)
-                                    except ValueError:
-                                        # Entity might have been removed during analysis
-                                        pass
-
-                                summary["correlations"].append(
-                                    {
-                                        "area": area_name,
-                                        "entity_id": entity_id,
-                                        "type": "correlation",
-                                        "success": bool(correlation_result),
-                                    }
-                                )
-                        except Exception as err:  # noqa: BLE001
-                            _LOGGER.error(
-                                "Correlation analysis failed for %s (%s): %s",
-                                area_name,
-                                entity_id,
-                                err,
-                            )
-                            summary["correlations"].append(
-                                {
-                                    "area": area_name,
-                                    "entity_id": entity_id,
-                                    "success": False,
-                                    "error": str(err),
-                                }
-                            )
-            else:
-                _LOGGER.debug(
-                    "Skipping correlation analysis - no correlatable entities configured"
-                )
+            if correlation_results:
+                summary["correlations"] = correlation_results
 
         except Exception as err:  # noqa: BLE001
             _LOGGER.error(
-                "Interval aggregation failed for areas %s: %s",
+                "Interval aggregation job failed for areas %s: %s",
                 self._format_area_names_for_logging(),
                 err,
             )

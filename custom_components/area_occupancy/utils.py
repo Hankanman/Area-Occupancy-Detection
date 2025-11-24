@@ -261,6 +261,18 @@ def combine_priors(
 # ────────────────────────────────────── Coordinator Utilities ───────────────────────────
 
 
+def format_area_names(coordinator: AreaOccupancyCoordinator) -> str:
+    """Format area names as a comma-separated string.
+
+    Args:
+        coordinator: The coordinator instance containing areas
+
+    Returns:
+        Comma-separated string of area names
+    """
+    return ", ".join(coordinator.get_area_names())
+
+
 def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
     """Get global coordinator from hass.data with error handling.
 
