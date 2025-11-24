@@ -171,16 +171,11 @@ class PriorAnalyzer:
         self.appliance_sensor_ids = self.config.sensors.appliance
         self.entry_id = coordinator.entry_id
 
-        # Track which supplemental sensors were used in global prior calculation
-        # This ensures time prior calculation uses consistent logic
-        self._used_media = False
-        self._used_appliance = False
-
     def analyze_area_prior(self, entity_ids: list[str]) -> float:
         """Calculate the overall occupancy prior for an area based on historical sensor data.
 
-        First calculates from motion sensors only. If the result is below 0.10 (10%),
-        supplements with media players (playing state only) and appliances (on state only).
+        Calculates from motion sensors only. Priors are exclusively based on motion/presence
+        sensors to ensure consistent ground truth for occupancy detection.
 
         Args:
             entity_ids: List of entity IDs to calculate prior for (motion sensors).
@@ -189,10 +184,6 @@ class PriorAnalyzer:
             float: Prior probability of occupancy (0.0 to 1.0)
         """
         _LOGGER.debug("Calculating area prior")
-
-        # Reset sensor usage flags
-        self._used_media = False
-        self._used_appliance = False
 
         # Validate input
         if not entity_ids:
@@ -245,89 +236,15 @@ class PriorAnalyzer:
             )
             total_occupied_seconds = total_seconds
 
-        motion_prior = (
-            total_occupied_seconds / total_seconds if total_seconds > 0 else 0.0
-        )
-        motion_prior = clamp_probability(motion_prior)
+        prior = total_occupied_seconds / total_seconds if total_seconds > 0 else 0.0
+        prior = clamp_probability(prior)
 
         _LOGGER.debug(
             "Motion-only prior: %.4f (occupied: %.2fs, total: %.2fs)",
-            motion_prior,
+            prior,
             total_occupied_seconds,
             total_seconds,
         )
-
-        # Step 2: If motion prior < 0.10, supplement with media/appliance sensors
-        LOW_PRIOR_THRESHOLD = 0.10
-        all_intervals = None
-        total_all_occupied = total_occupied_seconds  # Default to motion-only
-
-        if motion_prior >= LOW_PRIOR_THRESHOLD:
-            # Motion prior is sufficient, use it
-            prior = motion_prior
-            _LOGGER.debug(
-                "Motion prior %.4f >= %.2f, using motion-only prior",
-                motion_prior,
-                LOW_PRIOR_THRESHOLD,
-            )
-        else:
-            # Motion prior is too low, supplement with media/appliance sensors
-            _LOGGER.debug(
-                "Motion prior %.4f < %.2f, supplementing with media/appliance sensors",
-                motion_prior,
-                LOW_PRIOR_THRESHOLD,
-            )
-
-            # Get intervals including media and appliances
-            include_media = bool(self.media_sensor_ids)
-            include_appliance = bool(self.appliance_sensor_ids)
-
-            if not include_media and not include_appliance:
-                # No additional sensors available, use motion prior
-                prior = motion_prior
-                _LOGGER.debug(
-                    "No media or appliance sensors configured, using motion prior"
-                )
-            else:
-                # Get total occupied time from all sensor types
-                all_intervals = self.get_occupied_intervals(
-                    lookback_days=DEFAULT_LOOKBACK_DAYS,
-                    include_media=include_media,
-                    include_appliance=include_appliance,
-                )
-
-                if not all_intervals:
-                    prior = motion_prior
-                    _LOGGER.debug(
-                        "No intervals found when including media/appliances, using motion prior"
-                    )
-                else:
-                    # Update flags to indicate we used supplemental sensors
-                    self._used_media = include_media
-                    self._used_appliance = include_appliance
-
-                    # Calculate total occupied seconds from all intervals
-                    total_all_occupied = sum(
-                        (end - start).total_seconds() for start, end in all_intervals
-                    )
-
-                    # Get time bounds from all sensor types if needed
-                    # For simplicity, use the same time bounds (from motion sensors)
-                    # since we're just supplementing the occupied time
-                    prior = (
-                        total_all_occupied / total_seconds if total_seconds > 0 else 0.0
-                    )
-
-                    # Ensure result is within valid probability bounds
-                    prior = clamp_probability(prior)
-
-                    _LOGGER.debug(
-                        "Prior with media/appliances: %.4f (occupied: %.2fs, total: %.2fs, motion: %.4f)",
-                        prior,
-                        total_all_occupied,
-                        total_seconds,
-                        motion_prior,
-                    )
 
         # Note: min_prior_override is NOT applied here - it's applied at runtime
         # in Prior.value. We save the actual calculated prior to the database.
@@ -336,28 +253,13 @@ class PriorAnalyzer:
 
         # Save to GlobalPriors table with metadata
         try:
-            # Determine which intervals were used
-            # Use instance flags instead of recalculating conditions
-            used_media = self._used_media
-            used_appliance = self._used_appliance
-
-            # Get all intervals used for calculation (if we haven't already)
-            if used_media or used_appliance:
-                # We already have all_intervals from above
-                interval_count = len(all_intervals) if all_intervals else 0
-                final_occupied_seconds = total_all_occupied
-                data_source = "merged"
-            else:
-                # Motion-only, get intervals for cache
-                if all_intervals is None:
-                    all_intervals = self.get_occupied_intervals(
-                        lookback_days=DEFAULT_LOOKBACK_DAYS,
-                        include_media=False,
-                        include_appliance=False,
-                    )
-                interval_count = len(all_intervals) if all_intervals else 0
-                final_occupied_seconds = total_occupied_seconds
-                data_source = "motion_sensors"
+            # Get motion-only intervals for cache
+            all_intervals = self.get_occupied_intervals(
+                lookback_days=DEFAULT_LOOKBACK_DAYS,
+                include_media=False,
+                include_appliance=False,
+            )
+            interval_count = len(all_intervals) if all_intervals else 0
 
             # Save global prior to database
             self.db.save_global_prior(
@@ -365,19 +267,19 @@ class PriorAnalyzer:
                 prior_value=prior,
                 data_period_start=window_start,
                 data_period_end=last_time,
-                total_occupied_seconds=final_occupied_seconds,
+                total_occupied_seconds=total_occupied_seconds,
                 total_period_seconds=total_seconds,
                 interval_count=interval_count,
                 calculation_method="interval_analysis",
                 confidence=None,  # Could calculate confidence based on sample size
             )
 
-            # Save occupied intervals to cache (motion-only for cache efficiency)
-            if all_intervals and not used_media and not used_appliance:
+            # Save occupied intervals to cache (motion-only)
+            if all_intervals:
                 self.db.save_occupied_intervals_cache(
                     area_name=self.area_name,
                     intervals=all_intervals,
-                    data_source=data_source,
+                    data_source="motion_sensors",
                 )
 
         except (ValueError, TypeError, RuntimeError, AttributeError) as e:
@@ -435,20 +337,14 @@ class PriorAnalyzer:
 
         # Step 2: Get aggregated interval data using cached intervals
         # We use get_occupied_intervals_with_cache to ensure we use the EXACT SAME logic
-        # as global prior (including motion timeout, merged intervals and fallback logic).
+        # as global prior (including motion timeout, merged intervals).
         # This ensures time priors are calculated from the same "ground truth" as global prior.
+        # Both use motion-only sensors for consistent occupancy detection.
         intervals = self.get_occupied_intervals(
             lookback_days=DEFAULT_LOOKBACK_DAYS,
-            include_media=self._used_media,
-            include_appliance=self._used_appliance,
+            include_media=False,
+            include_appliance=False,
         )
-
-        if self._used_media or self._used_appliance:
-            _LOGGER.debug(
-                "Using supplemental sensors for time priors: media=%s, appliance=%s",
-                self._used_media,
-                self._used_appliance,
-            )
 
         # Step 3: Aggregate occupied seconds per slot (Python side)
         # Initialize buckets for (day_of_week, slot_idx) -> total_seconds
