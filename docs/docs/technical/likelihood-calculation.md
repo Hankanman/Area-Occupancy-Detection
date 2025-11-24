@@ -1,139 +1,64 @@
 # Likelihood Calculation
 
-This document explains how the system learns and uses likelihood probabilities for each sensor entity.
+This document explains how the system learns and uses likelihood probabilities for each sensor entity, leveraging the Unified Correlation Analysis.
 
 ## Overview
 
-Likelihoods represent how reliable each sensor is as evidence of occupancy. For each entity, the system learns:
+Likelihoods represent how reliable each sensor is as evidence of occupancy. For each entity (both numeric and binary), the system learns statistical distributions:
 
-- **`P(Active | Occupied)`**: How often the sensor is active when the area is genuinely occupied
-- **`P(Active | Not Occupied)`**: How often the sensor is active when the area is not occupied
+- **Occupied Distribution**: $(\mu_{occ}, \sigma_{occ})$ - The pattern of the sensor state when the room is *known* to be occupied.
+- **Unoccupied Distribution**: $(\mu_{unocc}, \sigma_{unocc})$ - The pattern of the sensor state when the room is *known* to be empty.
 
 These values are learned from historical data by correlating each sensor's activity with the area's occupancy state (determined by motion sensors).
 
-**Important:** Motion sensors do **not** have learned likelihoods. Instead, they use **user-configurable likelihoods** that can be set per area during configuration (defaults: `prob_given_true=0.95`, `prob_given_false=0.02`). This is because motion sensors are used as ground truth to determine occupied intervals. Learning motion sensor likelihoods would create a circular dependency where motion sensors determine occupied intervals and then calculate their own likelihoods from those same intervals.
-
-Motion sensor likelihoods are configured per area in the integration's configuration flow, allowing you to fine-tune the reliability values based on your specific motion sensor setup.
+**Important:** Motion sensors do **not** have learned likelihoods. Instead, they use **user-configurable likelihoods** that can be set per area during configuration (defaults: `prob_given_true=0.95`, `prob_given_false=0.02`). This is because motion sensors are used as ground truth to determine occupied intervals. Learning motion sensor likelihoods would create a circular dependency.
 
 ## Likelihood Analysis Process
 
-The likelihood analysis process runs periodically (typically hourly) or on-demand via the `run_analysis` service.
+The analysis process runs periodically (typically hourly) as part of the Unified Correlation Analysis.
 
-**Code Reference:** ```970:1060:custom_components/area_occupancy/data/analysis.py``` (start_likelihood_analysis)
+See **[Sensor Correlation Analysis Chain](analysis-chain.md)** for the detailed flow.
 
-### Step 1: Get Occupied Intervals
+### Key differences from previous versions:
 
-The system first determines when the area was occupied based on motion sensor history:
-
-**Code Reference:** ```1004:1004:custom_components/area_occupancy/data/analysis.py```
-
-```python
-occupied_times = area.prior.get_occupied_intervals()
-```
-
-This returns a list of `(start_time, end_time)` tuples representing periods when motion sensors indicated the area was occupied.
-
-**Code Reference:** ```201:251:custom_components/area_occupancy/data/prior.py``` (Prior.get_occupied_intervals)
-
-The occupied intervals are calculated using:
-- Motion sensor state changes
-- Motion timeout to extend intervals after last motion
-- Optional media/appliance sensors for supplementation
-
-### Step 2: Get Entity Intervals
-
-For each entity being analyzed, the system retrieves its activity intervals from the database:
-
-**Code Reference:** ```759:789:custom_components/area_occupancy/data/analysis.py``` (_get_intervals_by_entity)
-
-The intervals are stored in the `Intervals` table, which contains:
-- `entity_id`: The sensor entity
-- `start_time`: When the interval started
-- `duration_seconds`: How long the interval lasted
-- `state`: The state value during this interval
-
-Intervals are grouped by entity_id for efficient processing.
-
-### Step 3: Analyze Each Entity
-
-For each entity, the system correlates its activity intervals with the occupied intervals:
-
-**Code Reference:** ```791:848:custom_components/area_occupancy/data/analysis.py``` (_analyze_entity_likelihood)
-
-The analysis process:
-
-1. **Get Entity Intervals**: Retrieves all intervals for this entity from the grouped data
-
-2. **Count Overlaps**: For each entity interval, determines if it overlaps with any occupied interval:
-   - If interval overlaps with occupied time: counts toward `true_occ` or `true_empty`
-   - If interval doesn't overlap: counts toward `false_occ` or `false_empty`
-
-3. **Determine Activity**: Checks if the interval state indicates activity:
-   - For binary sensors: checks if state is in `active_states` list
-   - For numeric sensors: checks if value is in `active_range`
-
-4. **Accumulate Durations**: Sums the duration (in seconds) for each category:
-   - `true_occ`: Entity active AND area occupied
-   - `false_occ`: Entity inactive AND area occupied
-   - `true_empty`: Entity active AND area not occupied
-   - `false_empty`: Entity inactive AND area not occupied
-
-### Step 4: Calculate Probabilities
-
-From the accumulated durations, the system calculates the likelihoods:
-
-**Code Reference:** ```838:848:custom_components/area_occupancy/data/analysis.py```
-
-```
-P(Active | Occupied) = true_occ / (true_occ + false_occ)
-P(Active | Not Occupied) = true_empty / (true_empty + false_empty)
-```
-
-If either denominator is zero (no data for that condition), the probability defaults to 0.5 (neutral).
-
-### Step 5: Update Database and Memory
-
-The calculated likelihoods are stored in the database and updated in memory:
-
-**Code Reference:** ```1020:1043:custom_components/area_occupancy/data/analysis.py```
-
-1. **Database Update**: Updates `Entities` table with new `prob_given_true` and `prob_given_false` values
-2. **Memory Update**: Updates the corresponding `Entity` object in the `EntityManager`
-
-**Code Reference:** ```871:908:custom_components/area_occupancy/data/analysis.py``` (_update_likelihoods_in_db)
+- **Binary Sensors**: Instead of duration-weighted counting, binary sensors are now analyzed using the same correlation engine as numeric sensors. Intervals are converted to numeric samples (0.0 for OFF, 1.0 for ON).
+- **Statistical Learning**: The system learns Mean and Standard Deviation for both states (Occupied/Unoccupied).
+- **Continuous Likelihood**: Likelihoods are no longer static values (e.g., 0.8) but are calculated dynamically based on the current sensor state using Gaussian PDFs.
 
 ## How Likelihoods Are Used in Real-Time Calculation
 
-During real-time probability calculation, likelihoods are used to update the probability based on current sensor evidence.
+During real-time probability calculation, likelihoods are calculated dynamically.
 
-**Code Reference:** ```118:132:custom_components/area_occupancy/utils.py```
+**Code Reference:** `custom_components/area_occupancy/data/entity.py::get_likelihoods()`
 
-### Evidence Evaluation
+### 1. Dynamic PDF Calculation
 
-When an entity provides evidence (is active or decaying), the system uses the appropriate likelihood:
+When an entity provides a state value (numeric or binary), the system calculates two probability densities:
 
-- If entity is active: Uses `prob_given_true` and `prob_given_false` directly
-- If entity is inactive: Uses inverse probabilities (1 - prob_given_true, 1 - prob_given_false)
-- If entity is unavailable: Skips the entity (unless decaying)
+$$ f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{1}{2}(\frac{x-\mu}{\sigma})^2} $$
 
-### Decay-Adjusted Likelihoods
+1. **$P(x | Occupied)$**: Likelihood of current value $x$ given the "Occupied" distribution.
+2. **$P(x | Unoccupied)$**: Likelihood of current value $x$ given the "Unoccupied" distribution.
 
-When an entity is decaying, its likelihoods are interpolated toward neutral (0.5):
+For binary sensors:
+- **ON**: $x = 1.0$
+- **OFF**: $x = 0.0$
 
-**Code Reference:** ```123:128:custom_components/area_occupancy/utils.py```
+### 2. Bayesian Update
 
-```
-p_t_adjusted = 0.5 + (p_t_learned - 0.5) * decay_factor
-p_f_adjusted = 0.5 + (p_f_learned - 0.5) * decay_factor
-```
+These densities are used directly in the Bayesian update formula.
+
+### 3. Decay-Adjusted Likelihoods
+
+When an entity is decaying (e.g., motion sensor that just turned off), its likelihoods are interpolated toward neutral (0.5).
+
+**Code Reference:** `custom_components/area_occupancy/utils.py`
 
 This gradually reduces the influence of stale evidence as decay progresses.
 
-### Weight Application
+### 4. Weight Application
 
 The likelihoods are weighted by the entity's configured weight:
-
-**Code Reference:** ```140:144:custom_components/area_occupancy/utils.py```
 
 ```
 contribution_true = log(p_t) * entity.weight
@@ -142,89 +67,27 @@ contribution_false = log(p_f) * entity.weight
 
 Higher weights mean the entity's evidence has more influence on the final probability.
 
-## Example Calculation
-
-Consider a media player entity with the following historical data:
-
-### Historical Analysis Period
-
-- Total time analyzed: 7 days = 604,800 seconds
-- Occupied time: 100,800 seconds (16.7% of time)
-- Not occupied time: 504,000 seconds (83.3% of time)
-
-### Entity Activity
-
-- Media player was "playing" for 50,400 seconds total
-- During occupied time: 40,320 seconds playing, 60,480 seconds not playing
-- During not occupied time: 10,080 seconds playing, 493,920 seconds not playing
-
-### Likelihood Calculation
-
-```
-P(Active | Occupied) = 40,320 / (40,320 + 60,480) = 40,320 / 100,800 = 0.40 (40%)
-P(Active | Not Occupied) = 10,080 / (10,080 + 493,920) = 10,080 / 504,000 = 0.02 (2%)
-```
-
-Interpretation:
-- When the area is occupied, the media player is playing 40% of the time
-- When the area is not occupied, the media player is playing only 2% of the time
-
-This indicates the media player is a good indicator of occupancy (much more likely to be active when occupied).
-
-### Real-Time Usage
-
-When the media player is currently playing:
-
-1. Entity evidence: `True` (active)
-2. Likelihoods used: `p_t = 0.40`, `p_f = 0.02`
-3. Log contributions (weight = 0.70):
-   ```
-   contribution_true = log(0.40) * 0.70 = -0.916 * 0.70 = -0.641
-   contribution_false = log(0.02) * 0.70 = -3.912 * 0.70 = -2.738
-   ```
-
-The large negative contribution to `log_false` (compared to `log_true`) means this evidence strongly supports the "occupied" hypothesis.
-
 ## Database Schema
 
-### Entities Table
+### NumericCorrelations Table
 
-Stores likelihoods for each entity:
-- `entity_id`: The sensor entity ID
-- `area_name`: Area this entity belongs to
-- `prob_given_true`: `P(Active | Occupied)`
-- `prob_given_false`: `P(Active | Not Occupied)`
-- `last_updated`: Timestamp of last likelihood update
+Stores learned parameters for each entity:
+- `area_name`, `entity_id`
+- `mean_occupied`, `std_occupied`
+- `mean_unoccupied`, `std_unoccupied`
+- `correlation_coefficient`, `confidence`
+
+### NumericSamples Table
+Stores raw numeric values.
 
 ### Intervals Table
+Stores binary sensor states (converted to samples during analysis).
 
-Stores activity intervals for each entity:
-- `entity_id`: The sensor entity ID
-- `start_time`: When the interval started
-- `duration_seconds`: How long the interval lasted
-- `state`: The state value during this interval
+## Default Likelihoods (Fallback)
 
-Intervals are created by the database sync process, which imports state history from Home Assistant's recorder.
+If history-based learning is disabled, insufficient data is available, or correlation fails, the system falls back to default static likelihoods based on entity type:
 
-## Likelihood Quality Indicators
-
-The quality of learned likelihoods depends on:
-
-1. **Data Volume**: More historical data provides more reliable statistics
-2. **Occupied Time Coverage**: Need sufficient occupied and not-occupied periods
-3. **Entity Activity**: Entities that are rarely active may have less reliable likelihoods
-4. **Sensor Reliability**: Sensors with frequent false positives/negatives will have less useful likelihoods
-
-The system handles edge cases:
-- **No data for condition**: Defaults to 0.5 (neutral)
-- **All active during condition**: `P(Active | Condition) = 1.0` (clamped to MAX_PROBABILITY)
-- **Never active during condition**: `P(Active | Condition) = 0.0` (clamped to MIN_PROBABILITY)
-
-## Default Likelihoods
-
-If history-based learning is disabled or insufficient data is available, the system uses default likelihoods based on entity type:
-
-**Code Reference:** ```custom_components/area_occupancy/data/entity_type.py```
+**Code Reference:** `custom_components/area_occupancy/data/entity_type.py`
 
 Default values vary by entity type:
 - Motion sensors: High `P(Active | Occupied)`, low `P(Active | Not Occupied)`
@@ -235,9 +98,7 @@ For non-motion sensors, these defaults are replaced by learned values once suffi
 
 ## See Also
 
-- [Complete Calculation Flow](calculation-flow.md) - End-to-end process
-- [Likelihood Feature](../features/likelihood.md) - User-facing documentation
+- [Sensor Correlation Analysis Chain](analysis-chain.md) - End-to-end process
+- [Sensor Correlation Feature](../features/sensor-correlation.md) - User-facing documentation
 - [Prior Calculation Deep Dive](prior-calculation.md) - Related learning process
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - How likelihoods are used
-- [Entity Evidence Collection](entity-evidence.md) - How evidence is determined
-

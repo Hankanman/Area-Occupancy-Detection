@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from custom_components.area_occupancy.data.analysis import is_timestamp_occupied
 from custom_components.area_occupancy.db.utils import (
     apply_motion_timeout,
     find_overlapping_motion_intervals,
+    is_timestamp_occupied,
     merge_overlapping_intervals,
     segment_interval_with_motion,
 )

@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker as create_sessionmaker
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_VERSION,
@@ -331,14 +332,14 @@ class AreaOccupancyDB:
         return aggregation.prune_old_numeric_samples(self, area_name)
 
     # Attach correlation methods
-    def analyze_numeric_correlation(
+    def analyze_correlation(
         self,
         area_name: str,
         entity_id: str,
         analysis_period_days: int = 30,
     ) -> dict[str, Any] | None:
-        """Analyze correlation between numeric sensor values and occupancy."""
-        return correlation.analyze_numeric_correlation(
+        """Analyze correlation between sensor values and occupancy."""
+        return correlation.analyze_correlation(
             self, area_name, entity_id, analysis_period_days
         )
 
@@ -453,6 +454,40 @@ class AreaOccupancyDB:
         """Get occupied intervals from OccupiedIntervalsCache table."""
         return queries.get_occupied_intervals_cache(
             self, area_name, period_start, period_end
+        )
+
+    def get_occupied_intervals(
+        self,
+        area_name: str,
+        motion_sensor_ids: list[str],
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        include_media: bool = False,
+        include_appliance: bool = False,
+        media_sensor_ids: list[str] | None = None,
+        appliance_sensor_ids: list[str] | None = None,
+        motion_timeout: int = 300,  # Default 5 min if not specified
+    ) -> list[tuple[datetime, datetime]]:
+        """Get raw occupied intervals without using cache.
+
+        This delegates to queries.get_occupied_intervals but adapts arguments
+        to match what PriorAnalyzer expects.
+        """
+        # Determine lookback days if start_time provided
+        lookback_days = 90  # default
+        if start_time:
+            lookback_days = (dt_util.utcnow() - start_time).days + 1
+
+        return queries.get_occupied_intervals(
+            self,
+            self.coordinator.entry_id,
+            area_name,
+            lookback_days,
+            motion_timeout,
+            include_media,
+            include_appliance,
+            media_sensor_ids,
+            appliance_sensor_ids,
         )
 
     def is_occupied_intervals_cache_valid(

@@ -790,14 +790,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
             await self._run_correlation_analysis()
 
-            # Step 7: Recalculate likelihoods with new data for all areas
-            for area in self.areas.values():
-                await area.run_likelihood_analysis()
-
-            # Step 8: Refresh the coordinator
+            # Step 7: Refresh the coordinator
             await self.async_refresh()
 
-            # Step 9: Save data (always save - no master check)
+            # Step 8: Save data (always save - no master check)
             await self.hass.async_add_executor_job(self.db.save_data)
 
             # Schedule next run (1 hour interval)
