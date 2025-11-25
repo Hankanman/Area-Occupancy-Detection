@@ -271,7 +271,9 @@ async def run_full_analysis(
     4. Run interval aggregation
     5. Recalculate priors for all areas
     6. Run correlation analysis
-    7. Refresh coordinator and save data
+    7. Save data (preserve decay state before refresh)
+    8. Refresh coordinator
+    9. Save data (persist all changes)
 
     Args:
         coordinator: The coordinator instance containing areas and database
@@ -316,10 +318,14 @@ async def run_full_analysis(
         # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
         await run_correlation_analysis(coordinator)
 
-        # Step 7: Refresh the coordinator
+        # Step 7: Save data (preserve decay state before refresh)
+        # This ensures decay state is saved before async_refresh() potentially resets it
+        await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
+
+        # Step 8: Refresh the coordinator
         await coordinator.async_refresh()
 
-        # Step 8: Save data (always save - no master check)
+        # Step 9: Save data (persist all changes after refresh)
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
 
     except (HomeAssistantError, OSError, RuntimeError) as err:
