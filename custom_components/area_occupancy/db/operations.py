@@ -898,9 +898,8 @@ def save_global_prior(
         "Saving global prior for area: %s, value: %.4f", area_name, prior_value
     )
 
-    session = None
-    try:
-        with db.get_locked_session() as session:
+    with db.get_locked_session() as session:
+        try:
             # Create hash of underlying data for validation
             data_hash = _create_data_hash(
                 area_name,
@@ -952,13 +951,13 @@ def save_global_prior(
             _prune_old_global_priors(db, session, area_name)
 
             _LOGGER.debug("Global prior saved successfully")
-            return True
 
-    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Error saving global prior: %s", e)
-        if session is not None and session.is_active:
+        except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Error saving global prior: %s", e)
             session.rollback()
-        return False
+            return False
+        else:
+            return True
 
 
 def save_occupied_intervals_cache(
@@ -984,9 +983,8 @@ def save_occupied_intervals_cache(
         area_name,
     )
 
-    session = None
-    try:
-        with db.get_locked_session() as session:
+    with db.get_locked_session() as session:
+        try:
             calculation_date = dt_util.utcnow()
 
             # Delete existing cached intervals for this area
@@ -1011,10 +1009,10 @@ def save_occupied_intervals_cache(
 
             session.commit()
             _LOGGER.debug("Occupied intervals cache saved successfully")
-            return True
 
-    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Error saving occupied intervals cache: %s", e)
-        if session is not None and session.is_active:
+        except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Error saving occupied intervals cache: %s", e)
             session.rollback()
-        return False
+            return False
+        else:
+            return True
