@@ -132,9 +132,6 @@ class TestSensors:
         mock_area_data.wasp_entity_id = wasp_entity_id
         mock_coordinator.areas = {"Test Area": mock_area_data}
 
-        # Also set legacy wasp_entity_id for backward compatibility test
-        mock_coordinator.wasp_entity_id = wasp_entity_id
-
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == expected_result
 
@@ -157,7 +154,6 @@ class TestSensors:
         mock_area_data = Mock()
         mock_area_data.wasp_entity_id = "binary_sensor.wasp"
         mock_coordinator.areas = {"Test Area": mock_area_data}
-        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
 
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == ["binary_sensor.wasp"]
@@ -177,7 +173,6 @@ class TestSensors:
         mock_area_data = Mock()
         mock_area_data.wasp_entity_id = "binary_sensor.wasp"
         mock_coordinator.areas = {"Test Area": mock_area_data}
-        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
 
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == ["binary_sensor.motion1"]
