@@ -84,7 +84,5 @@ class TestPriorAnalyzerWithRealDB:
 
         # Get occupied intervals
         # Note: Using raw calculation path since cache might not be populated
-        intervals = analyzer.get_occupied_intervals(
-            include_media=False, include_appliance=False
-        )
+        intervals = analyzer.get_occupied_intervals()
         assert len(intervals) > 0

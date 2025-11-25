@@ -54,40 +54,21 @@ class PriorAnalyzer:
     def get_occupied_intervals(
         self,
         days: int = DEFAULT_LOOKBACK_DAYS,
-        include_media: bool = False,
-        include_appliance: bool = False,
     ) -> list[tuple[datetime, datetime]]:
-        """Get intervals where the area was occupied based on motion/device activity."""
-        # Get active motion sensors for this area
-        motion_sensors = self._get_entity_ids_by_type(InputType.MOTION)
+        """Get intervals where the area was occupied based on motion sensors only.
 
-        if not motion_sensors:
-            _LOGGER.debug("No motion sensors found for area %s", self.area_name)
-            return []
-
+        Occupied intervals are determined exclusively by motion sensors to ensure
+        consistent ground truth for prior calculations.
+        """
         # Calculate time range
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=days)
 
-        # Get media/appliance sensor IDs if needed
-        media_sensor_ids = None
-        if include_media:
-            media_sensor_ids = self._get_entity_ids_by_type(InputType.MEDIA)
-
-        appliance_sensor_ids = None
-        if include_appliance:
-            appliance_sensor_ids = self._get_entity_ids_by_type(InputType.APPLIANCE)
-
-        # Get occupied intervals from database (raw calculation)
+        # Get occupied intervals from database (motion sensors only)
+        # The query automatically includes all motion sensors for the area
         return self.db.get_occupied_intervals(
             area_name=self.area_name,
-            motion_sensor_ids=motion_sensors,
             start_time=start_time,
-            end_time=end_time,
-            include_media=include_media,
-            include_appliance=include_appliance,
-            media_sensor_ids=media_sensor_ids,
-            appliance_sensor_ids=appliance_sensor_ids,
         )
 
     def calculate_and_update_prior(self, days: int = DEFAULT_LOOKBACK_DAYS) -> None:
@@ -100,10 +81,7 @@ class PriorAnalyzer:
 
         try:
             # 1. Get occupied intervals based on motion sensors (ground truth)
-            # We don't include media/appliance for prior calculation to avoid circular dependencies
-            occupied_intervals = self.get_occupied_intervals(
-                days, include_media=False, include_appliance=False
-            )
+            occupied_intervals = self.get_occupied_intervals(days)
 
             if not occupied_intervals:
                 _LOGGER.debug(
@@ -209,13 +187,11 @@ async def ensure_occupied_intervals_cache(
                 "OccupiedIntervalsCache invalid or missing for %s, populating from raw intervals",
                 area_name,
             )
-            # Calculate occupied intervals from raw intervals
+            # Calculate occupied intervals from raw intervals (motion sensors only)
             analyzer = PriorAnalyzer(coordinator, area_name)
             intervals = await coordinator.hass.async_add_executor_job(
                 analyzer.get_occupied_intervals,
                 DEFAULT_LOOKBACK_DAYS,
-                False,  # include_media
-                False,  # include_appliance
             )
 
             # Save to cache

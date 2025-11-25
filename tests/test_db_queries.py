@@ -9,9 +9,7 @@ from custom_components.area_occupancy.db.operations import (
     save_occupied_intervals_cache,
 )
 from custom_components.area_occupancy.db.queries import (
-    build_appliance_query,
     build_base_filters,
-    build_media_query,
     build_motion_query,
     get_area_data,
     get_global_prior,
@@ -293,15 +291,13 @@ class TestGetOccupiedIntervals:
             session.add_all(intervals)
             session.commit()
 
-        # Test motion-only retrieval (prior calculations use motion-only)
+        # Test motion-only retrieval (occupied intervals are motion-only)
         result = get_occupied_intervals(
             db,
             db.coordinator.entry_id,
             area_name,
             lookback_days=1,
             motion_timeout_seconds=0,
-            include_media=False,
-            include_appliance=False,
         )
 
         # Should only return motion sensor intervals
@@ -383,34 +379,6 @@ class TestBuildFilters:
 
         with db.get_session() as session:
             query = build_motion_query(session, db, base_filters)
-            assert query is not None
-
-    def test_build_media_query(self, test_db):
-        """Test build_media_query function."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        lookback_date = dt_util.utcnow() - timedelta(days=90)
-        base_filters = build_base_filters(
-            db, db.coordinator.entry_id, lookback_date, area_name
-        )
-
-        with db.get_session() as session:
-            query = build_media_query(session, db, base_filters, ["media.player"])
-            assert query is not None
-
-    def test_build_appliance_query(self, test_db):
-        """Test build_appliance_query function."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        lookback_date = dt_util.utcnow() - timedelta(days=90)
-        base_filters = build_base_filters(
-            db, db.coordinator.entry_id, lookback_date, area_name
-        )
-
-        with db.get_session() as session:
-            query = build_appliance_query(
-                session, db, base_filters, ["switch.appliance"]
-            )
             assert query is not None
 
 

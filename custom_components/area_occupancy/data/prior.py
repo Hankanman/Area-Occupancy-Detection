@@ -220,34 +220,27 @@ class Prior:
     def get_occupied_intervals(
         self,
         lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-        include_media: bool = False,
-        include_appliance: bool = False,
     ) -> list[tuple[datetime, datetime]]:
-        """Get occupied time intervals from motion sensors using unified logic.
+        """Get occupied time intervals from motion sensors only.
 
         This method provides a single source of truth for determining occupancy
         intervals that can be used by both prior and likelihood calculations.
         Delegates to PriorAnalyzer for the actual calculation but maintains caching.
 
-        Note: For prior calculations, include_media and include_appliance should
-        always be False. Prior calculations are exclusively based on motion/presence
-        sensors to ensure consistent ground truth.
+        Occupied intervals are determined exclusively by motion sensors to ensure
+        consistent ground truth for prior calculations.
 
         Args:
             lookback_days: Number of days to look back for interval data (default: 90)
-            include_media: If True, include media player intervals (playing state only)
-            include_appliance: If True, include appliance intervals (on state only)
 
         Returns:
             List of (start_time, end_time) tuples representing occupied periods
 
         """
-        # Check cache first (only for motion-only queries to keep cache simple)
+        # Check cache first
         now = dt_util.utcnow()
         if (
-            not include_media
-            and not include_appliance
-            and self._cached_occupied_intervals is not None
+            self._cached_occupied_intervals is not None
             and self._cached_intervals_timestamp is not None
             and (now - self._cached_intervals_timestamp).total_seconds()
             < DEFAULT_CACHE_TTL_SECONDS
@@ -263,16 +256,11 @@ class Prior:
         from .analysis import PriorAnalyzer  # noqa: PLC0415
 
         analyzer = PriorAnalyzer(self.coordinator, self.area_name)
-        intervals = analyzer.get_occupied_intervals(
-            lookback_days,
-            include_media=include_media,
-            include_appliance=include_appliance,
-        )
+        intervals = analyzer.get_occupied_intervals(lookback_days)
 
-        # Cache the result only if motion-only
-        if not include_media and not include_appliance:
-            self._cached_occupied_intervals = intervals
-            self._cached_intervals_timestamp = now
+        # Cache the result
+        self._cached_occupied_intervals = intervals
+        self._cached_intervals_timestamp = now
 
         return intervals
 
