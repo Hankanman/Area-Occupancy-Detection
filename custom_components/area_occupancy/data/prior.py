@@ -264,7 +264,7 @@ class Prior:
 
         analyzer = PriorAnalyzer(self.coordinator, self.area_name)
         intervals = analyzer.get_occupied_intervals(
-            lookback_days=lookback_days,
+            lookback_days,
             include_media=include_media,
             include_appliance=include_appliance,
         )

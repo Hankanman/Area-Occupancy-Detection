@@ -1,5 +1,14 @@
 """Tests for database constants."""
 
+from custom_components.area_occupancy.const import (
+    DB_NAME,
+    DB_VERSION,
+    DEFAULT_AREA_PRIOR,
+    DEFAULT_ENTITY_PROB_GIVEN_FALSE,
+    DEFAULT_ENTITY_PROB_GIVEN_TRUE,
+    DEFAULT_ENTITY_WEIGHT,
+    INVALID_STATES,
+)
 from custom_components.area_occupancy.db import (
     DB_NAME as EXPORTED_DB_NAME,
     DB_VERSION as EXPORTED_DB_VERSION,
@@ -8,15 +17,6 @@ from custom_components.area_occupancy.db import (
     DEFAULT_ENTITY_PROB_GIVEN_TRUE as EXPORTED_DEFAULT_ENTITY_PROB_GIVEN_TRUE,
     DEFAULT_ENTITY_WEIGHT as EXPORTED_DEFAULT_ENTITY_WEIGHT,
     INVALID_STATES as EXPORTED_INVALID_STATES,
-)
-from custom_components.area_occupancy.db.constants import (
-    DB_NAME,
-    DB_VERSION,
-    DEFAULT_AREA_PRIOR,
-    DEFAULT_ENTITY_PROB_GIVEN_FALSE,
-    DEFAULT_ENTITY_PROB_GIVEN_TRUE,
-    DEFAULT_ENTITY_WEIGHT,
-    INVALID_STATES,
 )
 
 

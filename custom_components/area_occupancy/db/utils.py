@@ -10,10 +10,10 @@ import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
-from ..const import MIN_CORRELATION_SAMPLES
+from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
 from . import maintenance
-from .constants import INVALID_STATES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -192,6 +192,10 @@ def get_occupied_intervals_for_analysis(
 ) -> list[tuple[datetime, datetime]]:
     """Get occupied intervals from cache for analysis.
 
+    Results are scoped by the current config entry_id and use overlap semantics:
+    intervals that partially overlap the requested time range are included.
+    An interval overlaps if: interval.start_time <= end_time AND interval.end_time >= start_time.
+
     Args:
         db: Database instance
         area_name: Area name
@@ -199,20 +203,29 @@ def get_occupied_intervals_for_analysis(
         end_time: End of period
 
     Returns:
-        List of (start, end) tuples of occupied intervals
+        List of (start, end) tuples of occupied intervals (timezone-aware UTC)
     """
     try:
+        # Ensure timezone-aware UTC for query
+        start_time_utc = dt_util.as_utc(start_time)
+        end_time_utc = dt_util.as_utc(end_time)
+
         with db.get_session() as session:
             intervals = (
                 session.query(db.OccupiedIntervalsCache)
                 .filter(
+                    db.OccupiedIntervalsCache.entry_id == db.coordinator.entry_id,
                     db.OccupiedIntervalsCache.area_name == area_name,
-                    db.OccupiedIntervalsCache.start_time >= start_time,
-                    db.OccupiedIntervalsCache.end_time <= end_time,
+                    db.OccupiedIntervalsCache.start_time <= end_time_utc,
+                    db.OccupiedIntervalsCache.end_time >= start_time_utc,
                 )
                 .all()
             )
-            return [(i.start_time, i.end_time) for i in intervals]
+            # Ensure all returned intervals are timezone-aware UTC
+            return [
+                (dt_util.as_utc(i.start_time), dt_util.as_utc(i.end_time))
+                for i in intervals
+            ]
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Error getting occupied intervals for analysis: %s", e)
         return []
@@ -231,7 +244,12 @@ def is_timestamp_occupied(
     Returns:
         True if timestamp is within an interval, False otherwise
     """
-    return any(start <= timestamp < end for start, end in occupied_intervals)
+    # Ensure timestamp is timezone-aware UTC for comparison
+    timestamp_utc = dt_util.as_utc(timestamp)
+    return any(
+        dt_util.as_utc(start) <= timestamp_utc < dt_util.as_utc(end)
+        for start, end in occupied_intervals
+    )
 
 
 def validate_sample_count(

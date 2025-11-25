@@ -464,9 +464,16 @@ class TestAnalyzeCorrelationEdgeCases:
                 session.add(sample)
             session.commit()
 
-        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        result = analyze_correlation(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=30,
+            is_binary=False,
+            active_states=None,
+        )
         assert result is not None
-        assert result["analysis_error"] == "no_occupancy_data"
+        assert result["analysis_error"] == "no_occupied_samples"
 
     def test_analyze_correlation_insufficient_samples(self, test_db):
         """Test analysis with insufficient samples."""
