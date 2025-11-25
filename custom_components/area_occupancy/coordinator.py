@@ -26,10 +26,9 @@ from homeassistant.util import dt as dt_util
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
-from .data.analysis import run_full_analysis, run_interval_aggregation
+from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
-from .db.correlation import run_correlation_analysis
 from .utils import format_area_names
 
 _LOGGER = logging.getLogger(__name__)
@@ -347,22 +346,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "decay": area.decay(),
                 "last_updated": dt_util.utcnow(),
             }
-
-        # For backward compatibility, also include first area at root level
-        # Only copy keys that won't overwrite area entries (i.e., keys that don't
-        # already exist in result as a dict, which would indicate an area entry)
-        if self.areas:
-            first_area = next(iter(self.areas.keys()))
-            first_area_data = result[first_area]
-            for key, value in first_area_data.items():
-                # Only copy if key doesn't already exist as an area entry (dict)
-                # This prevents overwriting area dicts when area name equals a reserved key
-                if not (key in result and isinstance(result[key], dict)):
-                    result[key] = value
-
-        # Only set root-level last_updated if it won't overwrite an area dict
-        if not ("last_updated" in result and isinstance(result["last_updated"], dict)):
-            result["last_updated"] = dt_util.utcnow()
         return result
 
     async def async_shutdown(self) -> None:
@@ -771,53 +754,3 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
-
-    async def run_interval_aggregation_job(
-        self, _now: datetime | None = None
-    ) -> dict[str, Any]:
-        """Run interval aggregation and correlation analysis.
-
-        This method is kept for backward compatibility. It now delegates to
-        the analysis functions in data/analysis.py and db/correlation.py.
-
-        Args:
-            _now: Optional timestamp for the aggregation run
-
-        Returns:
-            Dictionary with aggregation results, correlations, and errors
-        """
-        if _now is None:
-            _now = dt_util.utcnow()
-
-        summary: dict[str, Any] = {
-            "aggregation": None,
-            "correlations": [],
-            "errors": [],
-        }
-
-        try:
-            # Run interval aggregation (with results for summary)
-            aggregation_results = await run_interval_aggregation(
-                self, _now, return_results=True
-            )
-            summary["aggregation"] = aggregation_results
-            # If aggregation_results is None, it means aggregation failed
-            if aggregation_results is None:
-                summary["errors"].append("Interval aggregation failed")
-
-            # Run correlation analysis (with results for summary)
-            correlation_results = await run_correlation_analysis(
-                self, return_results=True
-            )
-            if correlation_results:
-                summary["correlations"] = correlation_results
-
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error(
-                "Interval aggregation job failed for areas %s: %s",
-                format_area_names(self),
-                err,
-            )
-            summary["errors"].append(str(err))
-
-        return summary

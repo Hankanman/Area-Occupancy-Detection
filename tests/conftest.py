@@ -1261,7 +1261,7 @@ def mock_config() -> Mock:
         side_effect=lambda key, default=None: getattr(config, key, default)
     )
 
-    # Add purpose manager mock (for backward compatibility)
+    # Add purpose manager mock
     config.purpose_manager = Mock(spec=Purpose)
     config.purpose_manager.purpose = AreaPurpose.SOCIAL
     config.purpose_manager.name = "Social"
@@ -1817,33 +1817,6 @@ def config_flow_mock_config_entry_with_areas(
                 CONF_THRESHOLD: 60.0,
             }
         ]
-    }
-    entry.options = {}
-    return entry
-
-
-@pytest.fixture
-def config_flow_mock_config_entry_legacy() -> Mock:
-    """Create a mock config entry with legacy single-area format."""
-    entry = Mock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_id"
-    entry.state = ConfigEntryState.LOADED
-    entry.data = {
-        CONF_AREA_ID: "legacy_area",
-        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-    }
-    entry.options = {}
-    return entry
-
-
-@pytest.fixture
-def config_flow_mock_config_entry_legacy_no_name() -> Mock:
-    """Create a mock config entry with legacy format but no name."""
-    entry = Mock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_id"
-    entry.state = ConfigEntryState.LOADED
-    entry.data = {
-        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
     }
     entry.options = {}
     return entry

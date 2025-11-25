@@ -182,29 +182,6 @@ class TestSensors:
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == ["binary_sensor.motion1"]
 
-    def test_get_motion_sensors_legacy_mode(self) -> None:
-        """Test get_motion_sensors with legacy coordinator.wasp_entity_id fallback."""
-        # Create mock parent config with wasp enabled but no area_name
-        # (simulating legacy single-area mode)
-        mock_parent_config = Mock()
-        mock_parent_config.wasp_in_box = Mock()
-        mock_parent_config.wasp_in_box.enabled = True
-        mock_parent_config.area_name = None  # Legacy mode - no area_name
-
-        sensors = Sensors(
-            motion=["binary_sensor.motion1"], _parent_config=mock_parent_config
-        )
-        mock_coordinator = Mock()
-        # Legacy mode: coordinator has wasp_entity_id directly
-        mock_coordinator.wasp_entity_id = "binary_sensor.wasp"
-        # No areas dict (legacy mode)
-        mock_coordinator.areas = {}
-
-        result = sensors.get_motion_sensors(mock_coordinator)
-        # In legacy mode without area_name, wasp is not included
-        # because wasp_entity_id is stored per-area, not on coordinator
-        assert result == ["binary_sensor.motion1"]
-
     def test_get_motion_sensors_multi_area_mode(self) -> None:
         """Test get_motion_sensors with multi-area architecture."""
         # Create mock parent config with wasp enabled and area_name
@@ -697,6 +674,14 @@ class TestConfig:
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
         options = {CONF_THRESHOLD: 70}
+
+        # Ensure config entry options has CONF_AREAS format (required for update_config)
+        if CONF_AREAS not in coordinator.config_entry.options:
+            # Get current area config from data and copy to options
+            areas_list = coordinator.config_entry.data.get(CONF_AREAS, [])
+            coordinator.config_entry.options = {
+                CONF_AREAS: [area.copy() for area in areas_list]
+            }
 
         # Mock all the required methods
         with (
