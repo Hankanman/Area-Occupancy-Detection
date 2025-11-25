@@ -171,7 +171,8 @@ def _states_to_intervals(
 
     """
     intervals = []
-    retention_time = dt_util.now() - timedelta(days=RETENTION_DAYS)
+    retention_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
+    created_at = dt_util.utcnow()
 
     for entity_id, state_list in states.items():
         if not state_list:
@@ -207,7 +208,7 @@ def _states_to_intervals(
                             "start_time": state.last_changed,
                             "end_time": interval_end,
                             "duration_seconds": duration_seconds,
-                            "created_at": dt_util.utcnow(),
+                            "created_at": created_at,
                         }
                     )
             elif (
@@ -221,7 +222,7 @@ def _states_to_intervals(
                         "start_time": state.last_changed,
                         "end_time": interval_end,
                         "duration_seconds": duration_seconds,
-                        "created_at": dt_util.utcnow(),
+                        "created_at": created_at,
                     }
                 )
 
@@ -233,7 +234,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
     hass = db.coordinator.hass
     recorder = get_instance(hass)
     start_time = queries.get_latest_interval(db)
-    end_time = dt_util.now()
+    end_time = dt_util.utcnow()
 
     # Collect all entity IDs from all areas
     all_entity_ids = []
