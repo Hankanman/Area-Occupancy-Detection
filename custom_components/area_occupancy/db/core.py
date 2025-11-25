@@ -60,6 +60,71 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _create_delegated_methods() -> dict[str, Any]:
+    """Create the delegation mapping for pure wrapper methods.
+
+    Returns:
+        Dictionary mapping method names to their module functions.
+    """
+    return {
+        # Maintenance methods
+        "check_database_integrity": maintenance.check_database_integrity,
+        "check_database_accessibility": maintenance.check_database_accessibility,
+        "is_database_corrupted": maintenance.is_database_corrupted,
+        "attempt_database_recovery": maintenance.attempt_database_recovery,
+        "backup_database": maintenance.backup_database,
+        "restore_database_from_backup": maintenance.restore_database_from_backup,
+        "handle_database_corruption": maintenance.handle_database_corruption,
+        "periodic_health_check": maintenance.periodic_health_check,
+        "set_db_version": maintenance.set_db_version,
+        "get_db_version": maintenance.get_db_version,
+        "delete_db": maintenance.delete_db,
+        "force_reinitialize": maintenance.force_reinitialize,
+        "init_db": maintenance.init_db,
+        # Operations methods
+        "load_data": operations.load_data,
+        "save_area_data": operations.save_area_data,
+        "save_entity_data": operations.save_entity_data,
+        "save_data": operations.save_data,
+        "cleanup_orphaned_entities": operations.cleanup_orphaned_entities,
+        "delete_area_data": operations.delete_area_data,
+        "ensure_area_exists": operations.ensure_area_exists,
+        "prune_old_intervals": operations.prune_old_intervals,
+        "save_global_prior": operations.save_global_prior,
+        "save_occupied_intervals_cache": operations.save_occupied_intervals_cache,
+        # Utility methods
+        "is_intervals_empty": utils.is_intervals_empty,
+        "safe_is_intervals_empty": utils.safe_is_intervals_empty,
+        # Query methods (except get_time_prior which adds logic)
+        "get_area_data": queries.get_area_data,
+        "get_latest_interval": queries.get_latest_interval,
+        "get_global_prior": queries.get_global_prior,
+        "get_occupied_intervals_cache": queries.get_occupied_intervals_cache,
+        "is_occupied_intervals_cache_valid": queries.is_occupied_intervals_cache_valid,
+        # Sync methods
+        "sync_states": sync.sync_states,
+        # Aggregation methods
+        "aggregate_raw_to_daily": aggregation.aggregate_raw_to_daily,
+        "aggregate_daily_to_weekly": aggregation.aggregate_daily_to_weekly,
+        "aggregate_weekly_to_monthly": aggregation.aggregate_weekly_to_monthly,
+        "run_interval_aggregation": aggregation.run_interval_aggregation,
+        "prune_old_aggregates": aggregation.prune_old_aggregates,
+        "prune_old_numeric_samples": aggregation.prune_old_numeric_samples,
+        # Correlation methods
+        "analyze_correlation": correlation.analyze_correlation,
+        "save_correlation_result": correlation.save_correlation_result,
+        "analyze_and_save_correlation": correlation.analyze_and_save_correlation,
+        "analyze_binary_likelihoods": correlation.analyze_binary_likelihoods,
+        "get_correlation_for_entity": correlation.get_correlation_for_entity,
+        # Relationship methods
+        "save_area_relationship": relationships.save_area_relationship,
+        "get_adjacent_areas": relationships.get_adjacent_areas,
+        "get_influence_weight": relationships.get_influence_weight,
+        "calculate_adjacent_influence": relationships.calculate_adjacent_influence,
+        "sync_adjacent_areas_from_config": relationships.sync_adjacent_areas_from_config,
+    }
+
+
 class AreaOccupancyDB:
     """A class to manage area occupancy database operations."""
 
@@ -89,22 +154,34 @@ class AreaOccupancyDB:
             coordinator: AreaOccupancyCoordinator instance
         """
         self.coordinator = coordinator
-        # config_entry is always present in a properly initialized coordinator
         if coordinator.config_entry is None:
             raise ValueError("Coordinator config_entry cannot be None")
         self.conf_version = coordinator.config_entry.data.get("version", CONF_VERSION)
         self.hass = coordinator.hass
+
+        self._setup_paths()
+        self._setup_engine()
+        self._setup_delegation()
+        self._setup_model_classes()
+
+        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
+            self.initialize_database()
+
+    def _setup_paths(self) -> None:
+        """Set up storage and database paths."""
         self.storage_path = (
             Path(self.hass.config.config_dir) / ".storage" if self.hass else None
         )
         self.db_path = self.storage_path / DB_NAME if self.storage_path else None
+        self._lock_path = (
+            self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
+        )
 
-        # Database recovery configuration - use standard constants
-        self.enable_auto_recovery = DEFAULT_ENABLE_AUTO_RECOVERY
-        self.max_recovery_attempts = DEFAULT_MAX_RECOVERY_ATTEMPTS
-        self.enable_periodic_backups = DEFAULT_ENABLE_PERIODIC_BACKUPS
-        self.backup_interval_hours = DEFAULT_BACKUP_INTERVAL_HOURS
+        if self.storage_path:
+            self.storage_path.mkdir(exist_ok=True)
 
+    def _setup_engine(self) -> None:
+        """Set up database engine and session maker."""
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
             echo=False,
@@ -115,104 +192,40 @@ class AreaOccupancyDB:
                 "timeout": 10,
             },
         )
-
-        # Ensure storage directory exists
-        if self.storage_path:
-            self.storage_path.mkdir(exist_ok=True)
-
-        # Create session maker
         self._session_maker = create_sessionmaker(bind=self.engine)
-        # Debounce timestamps
+
+        self.enable_auto_recovery = DEFAULT_ENABLE_AUTO_RECOVERY
+        self.max_recovery_attempts = DEFAULT_MAX_RECOVERY_ATTEMPTS
+        self.enable_periodic_backups = DEFAULT_ENABLE_PERIODIC_BACKUPS
+        self.backup_interval_hours = DEFAULT_BACKUP_INTERVAL_HOURS
+
         self.last_area_save_ts: float = 0.0
         self.last_entities_save_ts: float = 0.0
         self._save_debounce_seconds: float = 1.5
 
-        # Create model classes dictionary for ORM
-        self.model_classes = {
-            "Areas": self.Areas,
-            "Entities": self.Entities,
-            "Priors": self.Priors,
-            "Intervals": self.Intervals,
-            "Metadata": self.Metadata,
-            "IntervalAggregates": self.IntervalAggregates,
-            "OccupiedIntervalsCache": self.OccupiedIntervalsCache,
-            "GlobalPriors": self.GlobalPriors,
-            "NumericSamples": self.NumericSamples,
-            "NumericAggregates": self.NumericAggregates,
-            "NumericCorrelations": self.NumericCorrelations,
-            "EntityStatistics": self.EntityStatistics,
-            "AreaRelationships": self.AreaRelationships,
-            "CrossAreaStats": self.CrossAreaStats,
-        }
+    def _setup_delegation(self) -> None:
+        """Set up delegation mapping for pure wrapper methods."""
+        self._delegated_methods = _create_delegated_methods()
 
-        # Initialize database lock path
-        self._lock_path = (
-            self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
-        )
-
-        # Create delegation mapping for pure wrapper methods
-        # Methods that add logic (get_occupied_intervals, get_time_prior) are kept as explicit methods
-        self._delegated_methods: dict[str, Any] = {
-            # Maintenance methods
-            "check_database_integrity": maintenance.check_database_integrity,
-            "check_database_accessibility": maintenance.check_database_accessibility,
-            "is_database_corrupted": maintenance.is_database_corrupted,
-            "attempt_database_recovery": maintenance.attempt_database_recovery,
-            "backup_database": maintenance.backup_database,
-            "restore_database_from_backup": maintenance.restore_database_from_backup,
-            "handle_database_corruption": maintenance.handle_database_corruption,
-            "periodic_health_check": maintenance.periodic_health_check,
-            "set_db_version": maintenance.set_db_version,
-            "get_db_version": maintenance.get_db_version,
-            "delete_db": maintenance.delete_db,
-            "force_reinitialize": maintenance.force_reinitialize,
-            "init_db": maintenance.init_db,
-            # Operations methods
-            "load_data": operations.load_data,
-            "save_area_data": operations.save_area_data,
-            "save_entity_data": operations.save_entity_data,
-            "save_data": operations.save_data,
-            "cleanup_orphaned_entities": operations.cleanup_orphaned_entities,
-            "delete_area_data": operations.delete_area_data,
-            "ensure_area_exists": operations.ensure_area_exists,
-            "prune_old_intervals": operations.prune_old_intervals,
-            "save_global_prior": operations.save_global_prior,
-            "save_occupied_intervals_cache": operations.save_occupied_intervals_cache,
-            # Utility methods
-            "is_intervals_empty": utils.is_intervals_empty,
-            "safe_is_intervals_empty": utils.safe_is_intervals_empty,
-            # Query methods (except get_time_prior which adds logic)
-            "get_area_data": queries.get_area_data,
-            "get_latest_interval": queries.get_latest_interval,
-            "get_global_prior": queries.get_global_prior,
-            "get_occupied_intervals_cache": queries.get_occupied_intervals_cache,
-            "is_occupied_intervals_cache_valid": queries.is_occupied_intervals_cache_valid,
-            # Sync methods
-            "sync_states": sync.sync_states,
-            # Aggregation methods
-            "aggregate_raw_to_daily": aggregation.aggregate_raw_to_daily,
-            "aggregate_daily_to_weekly": aggregation.aggregate_daily_to_weekly,
-            "aggregate_weekly_to_monthly": aggregation.aggregate_weekly_to_monthly,
-            "run_interval_aggregation": aggregation.run_interval_aggregation,
-            "prune_old_aggregates": aggregation.prune_old_aggregates,
-            "prune_old_numeric_samples": aggregation.prune_old_numeric_samples,
-            # Correlation methods
-            "analyze_correlation": correlation.analyze_correlation,
-            "save_correlation_result": correlation.save_correlation_result,
-            "analyze_and_save_correlation": correlation.analyze_and_save_correlation,
-            "analyze_binary_likelihoods": correlation.analyze_binary_likelihoods,
-            "get_correlation_for_entity": correlation.get_correlation_for_entity,
-            # Relationship methods
-            "save_area_relationship": relationships.save_area_relationship,
-            "get_adjacent_areas": relationships.get_adjacent_areas,
-            "get_influence_weight": relationships.get_influence_weight,
-            "calculate_adjacent_influence": relationships.calculate_adjacent_influence,
-            "sync_adjacent_areas_from_config": relationships.sync_adjacent_areas_from_config,
-        }
-
-        # Auto-initialize database in test environments
-        if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
-            self.initialize_database()
+    def _setup_model_classes(self) -> None:
+        """Generate model_classes dictionary from schema model class attributes."""
+        schema_model_names = [
+            "Areas",
+            "Entities",
+            "Priors",
+            "Intervals",
+            "Metadata",
+            "IntervalAggregates",
+            "OccupiedIntervalsCache",
+            "GlobalPriors",
+            "NumericSamples",
+            "NumericAggregates",
+            "NumericCorrelations",
+            "EntityStatistics",
+            "AreaRelationships",
+            "CrossAreaStats",
+        ]
+        self.model_classes = {name: getattr(self, name) for name in schema_model_names}
 
     def initialize_database(self) -> None:
         """Initialize the database by checking if it exists and creating it if needed.
@@ -223,7 +236,6 @@ class AreaOccupancyDB:
         In test environments (when AREA_OCCUPANCY_AUTO_INIT_DB=1 is set),
         this method may be called directly.
         """
-        # Check if database exists and initialize if needed
         maintenance.ensure_db_exists(self)
 
     def __getattr__(self, name: str) -> Any:
@@ -244,33 +256,22 @@ class AreaOccupancyDB:
             AttributeError: If the method name is not in the delegation mapping
         """
         if name in self._delegated_methods:
-            # Get the function reference - this allows patching to work correctly
-            # since we look up the function each time the wrapper is called
-            func_ref = self._delegated_methods[name]
-            # Return a bound method that calls func(self, ...)
-            # Handle both sync and async functions
-            if inspect.iscoroutinefunction(func_ref):
-                # For async functions, return an async wrapper
+            func = self._delegated_methods[name]
+            if inspect.iscoroutinefunction(func):
+
                 async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                    # Look up function dynamically to support patching in tests
-                    func = self._delegated_methods[name]
                     return await func(self, *args, **kwargs)
 
                 return async_wrapper
 
-            # For sync functions, return a sync wrapper
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # Look up function dynamically to support patching in tests
-                func = self._delegated_methods[name]
                 return func(self, *args, **kwargs)
 
             return sync_wrapper
+
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )
-
-    # Methods with added logic are kept as explicit methods below
-    # All pure wrapper methods are handled via __getattr__ delegation
 
     def is_valid_state(self, state: Any) -> bool:
         """Check if a state is valid."""
@@ -383,7 +384,6 @@ class AreaOccupancyDB:
                 f"Database is busy, please try again later: {e}"
             ) from e
 
-    # Table properties for cleaner access
     @property
     def areas(self) -> Any:
         """Get the areas table."""
