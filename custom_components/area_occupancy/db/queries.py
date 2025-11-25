@@ -46,7 +46,7 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
             ).scalar()
             if result:
                 return result - timedelta(hours=1)
-            return dt_util.now() - timedelta(days=10)
+            return dt_util.utcnow() - timedelta(days=10)
     except (
         SQLAlchemyError,
         ValueError,
@@ -60,7 +60,7 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
             _LOGGER.debug("Intervals table doesn't exist yet, using default time")
         else:
             _LOGGER.warning("Failed to get latest interval, using default time: %s", e)
-        return dt_util.now() - timedelta(days=10)
+        return dt_util.utcnow() - timedelta(days=10)
 
 
 def get_time_prior(

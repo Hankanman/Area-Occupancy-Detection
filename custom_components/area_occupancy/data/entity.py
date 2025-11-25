@@ -430,7 +430,11 @@ class Entity:
 
     def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
         """Update the decay of the entity."""
-        self.decay.decay_start = decay_start
+        self.decay.decay_start = (
+            ensure_timezone_aware(decay_start)
+            if decay_start is not None
+            else decay_start
+        )
         self.decay.is_decaying = is_decaying
 
     def has_new_evidence(self) -> bool:

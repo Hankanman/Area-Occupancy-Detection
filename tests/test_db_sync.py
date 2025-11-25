@@ -186,7 +186,7 @@ class TestSyncStates:
 
             # end_time validation: duration check is sufficient
             # Note: We don't compare absolute end_time or check end_time >= start_time
-            # due to potential timezone differences between dt_util.now() (used in sync_states)
+            # due to potential timezone differences between dt_util.utcnow() (used in sync_states)
             # and dt_util.utcnow() (used for start_time). The duration_seconds check below
             # validates that the interval is approximately 5 minutes, which is the key validation.
 

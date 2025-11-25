@@ -107,7 +107,7 @@ class TestGetLatestInterval:
         assert isinstance(result, datetime)
         # Should return default (now - 10 days)
         # Both result and expected are timezone-aware, so compare directly
-        expected = dt_util.now() - timedelta(days=10)
+        expected = dt_util.utcnow() - timedelta(days=10)
         # Compare as naive datetimes to avoid timezone issues
         result_naive = result.replace(tzinfo=None) if result.tzinfo else result
         expected_naive = expected.replace(tzinfo=None) if expected.tzinfo else expected
