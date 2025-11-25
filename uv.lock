@@ -8,9 +8,10 @@ resolution-markers = [
 
 [[package]]
 name = "area-occupancy-detection"
-version = "2025.11.3rc8"
+version = "2025.11.3rc9"
 source = { editable = "." }
 dependencies = [
+    { name = "filelock" },
     { name = "numpy" },
     { name = "sqlalchemy" },
 ]
@@ -22,6 +23,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "filelock", specifier = ">=3.20.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = "==4.3.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
