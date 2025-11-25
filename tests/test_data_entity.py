@@ -61,6 +61,13 @@ def create_test_entity(
         else:
             hass = Mock()
 
+    # Set default analysis_error based on entity type
+    if "analysis_error" not in kwargs:
+        if entity_type.input_type == InputType.MOTION:
+            kwargs["analysis_error"] = "motion_sensor_excluded"
+        else:
+            kwargs["analysis_error"] = "not_analyzed"
+
     return Entity(
         entity_id=entity_id,
         type=entity_type,
@@ -70,6 +77,7 @@ def create_test_entity(
         hass=hass,
         last_updated=dt_util.utcnow(),
         previous_evidence=kwargs.get("previous_evidence"),
+        analysis_error=kwargs.get("analysis_error"),
     )
 
 
@@ -456,18 +464,11 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
-    def test_entity_methods_update_likelihood_and_decay(
+    def test_entity_methods_update_decay(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_likelihood and update_decay methods."""
+        """Test update_decay method."""
         entity = create_test_entity(coordinator=coordinator)
-        original_updated = entity.last_updated
-
-        # Test update_likelihood
-        entity.update_likelihood(0.9, 0.1)
-        assert entity.prob_given_true == 0.9
-        assert entity.prob_given_false == 0.1
-        assert entity.last_updated > original_updated
 
         # Test update_decay
         decay_start = dt_util.utcnow()
@@ -704,13 +705,19 @@ class TestEntityPropertiesAndMethods:
             "mean_value_when_unoccupied": 10.0,
             "std_dev_when_unoccupied": 2.0,
         }
+        # Store original values before update
+        original_prob_true = entity.prob_given_true
+        original_prob_false = entity.prob_given_false
+
         entity.update_correlation(correlation_data)
         # Active > 10 + 2*2 = 14
         assert entity.learned_active_range == (14.0, float("inf"))
         assert entity.active_range == (14.0, float("inf"))
-        # Check dynamic likelihoods: 0.5 ± (0.8 * 0.4) = 0.82, 0.18
-        assert abs(entity.prob_given_true - 0.82) < 0.001
-        assert abs(entity.prob_given_false - 0.18) < 0.001
+        # Since occupied stats are missing, Gaussian params should not be set
+        assert entity.learned_gaussian_params is None
+        # prob_given_true/false should NOT be updated (no fallback)
+        assert entity.prob_given_true == original_prob_true
+        assert entity.prob_given_false == original_prob_false
 
         # Test with valid negative correlation
         correlation_data = {
@@ -723,11 +730,13 @@ class TestEntityPropertiesAndMethods:
         # Active < 10 - 2*2 = 6
         assert entity.learned_active_range == (float("-inf"), 6.0)
         assert entity.active_range == (float("-inf"), 6.0)
-        # Check dynamic likelihoods: 0.5 ± (0.8 * 0.4) = 0.82, 0.18
-        assert abs(entity.prob_given_true - 0.82) < 0.001
-        assert abs(entity.prob_given_false - 0.18) < 0.001
+        # Since occupied stats are missing, Gaussian params should not be set
+        assert entity.learned_gaussian_params is None
+        # prob_given_true/false should NOT be updated (no fallback)
+        assert entity.prob_given_true == original_prob_true
+        assert entity.prob_given_false == original_prob_false
 
-        # Test with low confidence - should now set range AND weak probabilities
+        # Test with low confidence - should set range but NOT update probabilities
         correlation_data = {
             "confidence": 0.2,
             "correlation_type": "occupancy_positive",
@@ -737,9 +746,11 @@ class TestEntityPropertiesAndMethods:
         entity.update_correlation(correlation_data)
         # Range should be set even with low confidence
         assert entity.learned_active_range == (14.0, float("inf"))
-        # Check weak probabilities: 0.5 ± (0.2 * 0.4) = 0.58, 0.42
-        assert abs(entity.prob_given_true - 0.58) < 0.001
-        assert abs(entity.prob_given_false - 0.42) < 0.001
+        # Since occupied stats are missing, Gaussian params should not be set
+        assert entity.learned_gaussian_params is None
+        # prob_given_true/false should NOT be updated (no fallback)
+        assert entity.prob_given_true == original_prob_true
+        assert entity.prob_given_false == original_prob_false
 
         # Test with invalid data (missing keys)
         correlation_data = {
@@ -763,6 +774,89 @@ class TestEntityPropertiesAndMethods:
         # Test with None data
         entity.update_correlation(None)
         assert entity.learned_active_range is None
+
+    def test_update_binary_likelihoods(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test update_binary_likelihoods method."""
+        # Create a binary sensor entity (light)
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.APPLIANCE),
+        )
+
+        # Test with valid likelihood data
+        likelihood_data = {
+            "prob_given_true": 0.75,
+            "prob_given_false": 0.15,
+            "analysis_error": None,
+        }
+
+        entity.update_binary_likelihoods(likelihood_data)
+
+        assert entity.prob_given_true == 0.75
+        assert entity.prob_given_false == 0.15
+        assert entity.analysis_error is None
+        assert entity.learned_gaussian_params is None
+        assert entity.learned_active_range is None
+
+        # Test with error
+        likelihood_data = {
+            "prob_given_true": None,
+            "prob_given_false": None,
+            "analysis_error": "no_occupied_intervals",
+        }
+
+        entity.update_binary_likelihoods(likelihood_data)
+
+        # Should reset to EntityType defaults
+        assert entity.prob_given_true == entity.type.prob_given_true
+        assert entity.prob_given_false == entity.type.prob_given_false
+        assert entity.analysis_error == "no_occupied_intervals"
+        assert entity.learned_gaussian_params is None
+        assert entity.learned_active_range is None
+
+    def test_get_likelihoods_binary_sensor(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods for binary sensors."""
+        # Create a binary sensor entity (light)
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.APPLIANCE),
+        )
+
+        # Initially not analyzed - should use EntityType defaults
+        assert entity.analysis_error == "not_analyzed"
+        prob_true, prob_false = entity.get_likelihoods()
+        assert prob_true == entity.type.prob_given_true
+        assert prob_false == entity.type.prob_given_false
+
+        # After analysis - should use learned probabilities
+        entity.update_binary_likelihoods(
+            {
+                "prob_given_true": 0.8,
+                "prob_given_false": 0.1,
+                "analysis_error": None,
+            }
+        )
+
+        prob_true, prob_false = entity.get_likelihoods()
+        assert prob_true == 0.8
+        assert prob_false == 0.1
+
+        # After failed analysis - should use EntityType defaults
+        entity.update_binary_likelihoods(
+            {
+                "prob_given_true": None,
+                "prob_given_false": None,
+                "analysis_error": "no_occupied_intervals",
+            }
+        )
+
+        prob_true, prob_false = entity.get_likelihoods()
+        assert prob_true == entity.type.prob_given_true
+        assert prob_false == entity.type.prob_given_false
 
     @pytest.mark.asyncio
     async def test_entity_manager_cleanup(

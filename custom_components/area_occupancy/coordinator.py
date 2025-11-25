@@ -7,8 +7,6 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any
 
-from custom_components.area_occupancy.data.entity_type import InputType
-
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -27,18 +25,12 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
-from .const import (
-    CONF_AREA_ID,
-    CONF_AREAS,
-    DEFAULT_LOOKBACK_DAYS,
-    DEFAULT_NAME,
-    DOMAIN,
-    SAVE_INTERVAL,
-)
-from .data.analysis import PriorAnalyzer
+from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .data.analysis import run_full_analysis, run_interval_aggregation
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
-from .db.queries import is_occupied_intervals_cache_valid
+from .db.correlation import run_correlation_analysis
+from .utils import format_area_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -232,14 +224,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return whether setup is complete."""
         return self._setup_complete
 
-    def _format_area_names_for_logging(self) -> str:
-        """Format area names for logging purposes.
-
-        Returns:
-            Comma-separated string of area names, or "no areas" if empty
-        """
-        return ", ".join(self.get_area_names()) if self.areas else "no areas"
-
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
         """Validate that at least one area is configured.
@@ -341,7 +325,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except (HomeAssistantError, OSError, RuntimeError) as timer_err:
                 _LOGGER.error(
                     "Failed to start basic timers for areas: %s: %s",
-                    self._format_area_names_for_logging(),
+                    format_area_names(self),
                     timer_err,
                 )
                 # Don't set _setup_complete if timers completely failed
@@ -394,7 +378,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         _LOGGER.info(
             "Starting coordinator shutdown for areas: %s",
-            self._format_area_names_for_logging(),
+            format_area_names(self),
         )
 
         # Step 1: Cancel periodic save timer before cleanup and perform final save
@@ -407,12 +391,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.hass.async_add_executor_job(self.db.save_data)
             _LOGGER.info(
                 "Final database save completed for areas: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
             )
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error(
                 "Failed final save for areas: %s: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
                 err,
             )
 
@@ -455,11 +439,106 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Step 10: Clear areas dict to release all area references
         # This helps break any remaining circular references
         # Format area names before clearing (since we need them for logging)
-        area_names_str = self._format_area_names_for_logging()
+        area_names_str = format_area_names(self)
         self.areas.clear()
 
         _LOGGER.info("Coordinator shutdown completed for areas: %s", area_names_str)
         await super().async_shutdown()
+
+    async def _cleanup_removed_area(self, area_name: str, area: Area) -> None:
+        """Clean up a removed area from registries and database.
+
+        Handles cleanup of:
+        - Area async cleanup
+        - Entity registry entries
+        - Device registry entries
+        - Database records
+
+        Args:
+            area_name: Name of the area to clean up
+            area: Area instance to clean up
+        """
+        # Clean up removed area
+        await area.async_cleanup()
+        self.get_area_handle(area_name).attach(None)
+
+        # Look up device for this area (used for both entity and device removal)
+        device_registry = dr.async_get(self.hass)
+        device_identifiers = {(DOMAIN, area.config.area_id)}
+        device = device_registry.async_get_device(identifiers=device_identifiers)
+
+        # Remove entities from entity registry that belong to this device
+        entity_registry = er.async_get(self.hass)
+        entities_removed = 0
+        target_device_id = device.id if device else None
+        for entity_id, entity_entry in list(entity_registry.entities.items()):
+            if (
+                entity_entry.config_entry_id == self.entry_id
+                and target_device_id is not None
+                and entity_entry.device_id == target_device_id
+            ):
+                try:
+                    entity_registry.async_remove(entity_id)
+                    entities_removed += 1
+                    _LOGGER.debug(
+                        "Removed entity %s from registry for removed area %s",
+                        entity_id,
+                        area_name,
+                    )
+                except (ValueError, KeyError, AttributeError) as remove_err:
+                    _LOGGER.warning(
+                        "Failed to remove entity %s from registry: %s",
+                        entity_id,
+                        remove_err,
+                    )
+
+        if entities_removed > 0:
+            _LOGGER.info(
+                "Removed %d entities from registry for removed area %s",
+                entities_removed,
+                area_name,
+            )
+
+        # Remove device from device registry (reusing device object from above)
+        if device:
+            try:
+                device_registry.async_remove_device(device.id)
+                _LOGGER.info(
+                    "Removed device %s from registry for removed area %s",
+                    device.id,
+                    area_name,
+                )
+            except (ValueError, KeyError, AttributeError) as remove_err:
+                _LOGGER.warning(
+                    "Failed to remove device %s from registry: %s",
+                    device.id,
+                    remove_err,
+                )
+        else:
+            _LOGGER.debug(
+                "No device found for removed area %s (area_id: %s)",
+                area_name,
+                area.config.area_id,
+            )
+
+        # Delete all database records for this area
+        try:
+            deleted_count = await self.hass.async_add_executor_job(
+                self.db.delete_area_data, area_name
+            )
+            _LOGGER.debug(
+                "Deleted %d database records for removed area %s",
+                deleted_count,
+                area_name,
+            )
+        except (HomeAssistantError, OSError, RuntimeError) as db_err:
+            _LOGGER.error(
+                "Failed to delete database records for removed area %s: %s",
+                area_name,
+                db_err,
+            )
+
+        _LOGGER.info("Cleaned up removed area: %s", area_name)
 
     async def async_update_options(self, options: dict[str, Any]) -> None:
         """Update coordinator options.
@@ -484,94 +563,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(removed_area_names),
             )
 
-            # Get entity registry for cleanup
-            entity_registry = er.async_get(self.hass)
-
             for area_name in removed_area_names:
                 area = self.areas.get(area_name)
                 if area:
-                    # Clean up removed area
-                    await area.async_cleanup()
-                    self.get_area_handle(area_name).attach(None)
-
-                    # Remove entities from entity registry
-                    entities_removed = 0
-                    area_prefix = f"{area_name}_"
-                    for entity_id, entity_entry in list(
-                        entity_registry.entities.items()
-                    ):
-                        if (
-                            entity_entry.config_entry_id == self.entry_id
-                            and entity_entry.unique_id
-                            and str(entity_entry.unique_id).startswith(area_prefix)
-                        ):
-                            try:
-                                entity_registry.async_remove(entity_id)
-                                entities_removed += 1
-                                _LOGGER.debug(
-                                    "Removed entity %s from registry for removed area %s",
-                                    entity_id,
-                                    area_name,
-                                )
-                            except (ValueError, KeyError, AttributeError) as remove_err:
-                                _LOGGER.warning(
-                                    "Failed to remove entity %s from registry: %s",
-                                    entity_id,
-                                    remove_err,
-                                )
-
-                    if entities_removed > 0:
-                        _LOGGER.info(
-                            "Removed %d entities from registry for removed area %s",
-                            entities_removed,
-                            area_name,
-                        )
-
-                    # Remove device from device registry
-                    device_registry = dr.async_get(self.hass)
-                    device_identifiers = {(DOMAIN, area.config.area_id)}
-                    device = device_registry.async_get_device(
-                        identifiers=device_identifiers
-                    )
-                    if device:
-                        try:
-                            device_registry.async_remove_device(device.id)
-                            _LOGGER.info(
-                                "Removed device %s from registry for removed area %s",
-                                device.id,
-                                area_name,
-                            )
-                        except (ValueError, KeyError, AttributeError) as remove_err:
-                            _LOGGER.warning(
-                                "Failed to remove device %s from registry: %s",
-                                device.id,
-                                remove_err,
-                            )
-                    else:
-                        _LOGGER.debug(
-                            "No device found for removed area %s (area_id: %s)",
-                            area_name,
-                            area.config.area_id,
-                        )
-
-                    # Delete all database records for this area
-                    try:
-                        deleted_count = await self.hass.async_add_executor_job(
-                            self.db.delete_area_data, area_name
-                        )
-                        _LOGGER.debug(
-                            "Deleted %d database records for removed area %s",
-                            deleted_count,
-                            area_name,
-                        )
-                    except (HomeAssistantError, OSError, RuntimeError) as db_err:
-                        _LOGGER.error(
-                            "Failed to delete database records for removed area %s: %s",
-                            area_name,
-                            db_err,
-                        )
-
-                    _LOGGER.info("Cleaned up removed area: %s", area_name)
+                    await self._cleanup_removed_area(area_name, area)
 
         # Cancel existing entity state listeners (will be recreated with new entity lists)
         for listener in self._area_state_listeners.values():
@@ -685,12 +680,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.hass.async_add_executor_job(self.db.save_data)
             _LOGGER.debug(
                 "Periodic database save completed for areas: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
             )
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error(
                 "Failed periodic save for areas: %s: %s",
-                self._format_area_names_for_logging(),
+                format_area_names(self),
                 err,
             )
 
@@ -738,7 +733,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.info(
             "Starting analysis timer for areas: %s",
-            self._format_area_names_for_logging(),
+            format_area_names(self),
         )
 
         self._analysis_timer = async_track_point_in_time(
@@ -758,43 +753,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer = None
 
         try:
-            # Step 1: Import recent data from recorder
-            await self.db.sync_states()
-
-            # Step 2: Prune old intervals and run health check
-            health_ok = await self.hass.async_add_executor_job(
-                self.db.periodic_health_check
-            )
-            if not health_ok:
-                _LOGGER.warning(
-                    "Database health check found issues for areas: %s",
-                    self._format_area_names_for_logging(),
-                )
-
-            pruned_count = await self.hass.async_add_executor_job(
-                self.db.prune_old_intervals
-            )
-            if pruned_count > 0:
-                _LOGGER.info("Pruned %d old intervals during analysis", pruned_count)
-
-            # Step 3: Ensure OccupiedIntervalsCache is populated before aggregation
-            await self._ensure_occupied_intervals_cache()
-
-            # Step 4: Run interval aggregation (safe now that cache exists)
-            await self._run_interval_aggregation(_now)
-
-            # Step 5: Recalculate priors with new data for all areas
-            for area in self.areas.values():
-                await area.run_prior_analysis()
-
-            # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
-            await self._run_correlation_analysis()
-
-            # Step 7: Refresh the coordinator
-            await self.async_refresh()
-
-            # Step 8: Save data (always save - no master check)
-            await self.hass.async_add_executor_job(self.db.save_data)
+            # Run the full analysis chain
+            await run_full_analysis(self, _now)
 
             # Schedule next run (1 hour interval)
             next_update = _now + timedelta(
@@ -812,161 +772,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.run_analysis, next_update
             )
 
-    async def _ensure_occupied_intervals_cache(self) -> None:
-        """Ensure OccupiedIntervalsCache is populated for all areas.
-
-        This method checks cache validity and populates it from raw intervals
-        if needed. This ensures the cache exists before interval aggregation
-        deletes raw intervals older than the retention period.
-        """
-        for area_name in self.areas:
-            # Check if cache is valid
-            cache_valid = await self.hass.async_add_executor_job(
-                is_occupied_intervals_cache_valid, self.db, area_name
-            )
-
-            if not cache_valid:
-                _LOGGER.debug(
-                    "OccupiedIntervalsCache invalid or missing for %s, populating from raw intervals",
-                    area_name,
-                )
-                # Calculate occupied intervals from raw intervals
-                analyzer = PriorAnalyzer(self, area_name)
-                intervals = await self.hass.async_add_executor_job(
-                    analyzer.get_occupied_intervals,
-                    DEFAULT_LOOKBACK_DAYS,
-                    False,  # include_media
-                    False,  # include_appliance
-                )
-
-                # Save to cache
-                if intervals:
-                    success = await self.hass.async_add_executor_job(
-                        self.db.save_occupied_intervals_cache,
-                        area_name,
-                        intervals,
-                        "motion_sensors",
-                    )
-                    if success:
-                        _LOGGER.debug(
-                            "Populated OccupiedIntervalsCache for %s with %d intervals",
-                            area_name,
-                            len(intervals),
-                        )
-                    else:
-                        _LOGGER.warning(
-                            "Failed to save OccupiedIntervalsCache for %s", area_name
-                        )
-
-    async def _run_interval_aggregation(self, _now: datetime | None = None) -> None:
-        """Run interval aggregation.
-
-        This method aggregates raw intervals older than the retention period
-        into daily/weekly/monthly aggregates.
-
-        Args:
-            _now: Optional timestamp for the aggregation run
-        """
-        if _now is None:
-            _now = dt_util.utcnow()
-
-        try:
-            results = await self.hass.async_add_executor_job(
-                self.db.run_interval_aggregation
-            )
-            _LOGGER.info(
-                "Interval aggregation completed for areas %s: %s",
-                self._format_area_names_for_logging(),
-                results,
-            )
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error(
-                "Interval aggregation failed for areas %s: %s",
-                self._format_area_names_for_logging(),
-                err,
-            )
-            # Don't raise - allow analysis to continue even if aggregation fails
-
-    async def _run_correlation_analysis(self) -> None:
-        """Run numeric correlation analysis.
-
-        This method analyzes correlations between numeric sensor values and
-        occupancy. It requires OccupiedIntervalsCache to be populated.
-        """
-        numeric_entities = self._get_numeric_entities_by_area()
-        if numeric_entities:
-            _LOGGER.info(
-                "Starting numeric correlation analysis for %d area(s)",
-                len(numeric_entities),
-            )
-            for area_name, entity_ids in numeric_entities.items():
-                for entity_id in entity_ids:
-                    try:
-                        correlation_result = await self.hass.async_add_executor_job(
-                            self.db.analyze_and_save_correlation,
-                            area_name,
-                            entity_id,
-                        )
-
-                        # Apply analysis results to live entities immediately
-                        if correlation_result and area_name in self.areas:
-                            area = self.areas[area_name]
-                            try:
-                                entity = area.entities.get_entity(entity_id)
-                                entity.update_correlation(correlation_result)
-                            except ValueError:
-                                # Entity might have been removed during analysis
-                                pass
-                    except Exception as err:  # noqa: BLE001
-                        _LOGGER.error(
-                            "Correlation analysis failed for %s (%s): %s",
-                            area_name,
-                            entity_id,
-                            err,
-                        )
-        else:
-            _LOGGER.debug(
-                "Skipping numeric correlation analysis - no numeric entities configured"
-            )
-
-    def _get_numeric_entities_by_area(self) -> dict[str, list[str]]:
-        """Return mapping of area_name to numeric entity IDs."""
-        numeric_inputs = {
-            InputType.TEMPERATURE,
-            InputType.HUMIDITY,
-            InputType.ILLUMINANCE,
-            InputType.ENVIRONMENTAL,
-            InputType.CO2,
-            InputType.ENERGY,
-            InputType.SOUND_PRESSURE,
-            InputType.PRESSURE,
-            InputType.AIR_QUALITY,
-            InputType.VOC,
-            InputType.PM25,
-            InputType.PM10,
-        }
-        numeric_entities: dict[str, list[str]] = {}
-
-        for area_name, area in self.areas.items():
-            entities_container = getattr(area.entities, "entities", {})
-            area_numeric: list[str] = []
-            for entity_id, entity in entities_container.items():
-                entity_type = getattr(entity, "type", None)
-                input_type = getattr(entity_type, "input_type", None)
-                if input_type in numeric_inputs:
-                    area_numeric.append(entity_id)
-            if area_numeric:
-                numeric_entities[area_name] = area_numeric
-
-        return numeric_entities
-
     async def run_interval_aggregation_job(
         self, _now: datetime | None = None
     ) -> dict[str, Any]:
         """Run interval aggregation and correlation analysis.
 
         This method is kept for backward compatibility. It now delegates to
-        the internal helper method that's also called by the analysis timer.
+        the analysis functions in data/analysis.py and db/correlation.py.
 
         Args:
             _now: Optional timestamp for the aggregation run
@@ -984,74 +796,26 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         try:
-            # Run interval aggregation
-            results = await self.hass.async_add_executor_job(
-                self.db.run_interval_aggregation
+            # Run interval aggregation (with results for summary)
+            aggregation_results = await run_interval_aggregation(
+                self, _now, return_results=True
             )
-            summary["aggregation"] = results
-            _LOGGER.info(
-                "Interval aggregation completed for areas %s: %s",
-                self._format_area_names_for_logging(),
-                results,
+            summary["aggregation"] = aggregation_results
+            # If aggregation_results is None, it means aggregation failed
+            if aggregation_results is None:
+                summary["errors"].append("Interval aggregation failed")
+
+            # Run correlation analysis (with results for summary)
+            correlation_results = await run_correlation_analysis(
+                self, return_results=True
             )
-
-            # Run numeric correlation analysis
-            numeric_entities = self._get_numeric_entities_by_area()
-            if numeric_entities:
-                _LOGGER.info(
-                    "Starting numeric correlation analysis for %d area(s)",
-                    len(numeric_entities),
-                )
-                for area_name, entity_ids in numeric_entities.items():
-                    for entity_id in entity_ids:
-                        try:
-                            correlation_result = await self.hass.async_add_executor_job(
-                                self.db.analyze_and_save_correlation,
-                                area_name,
-                                entity_id,
-                            )
-
-                            # Apply analysis results to live entities immediately
-                            if correlation_result and area_name in self.areas:
-                                area = self.areas[area_name]
-                                try:
-                                    entity = area.entities.get_entity(entity_id)
-                                    entity.update_correlation(correlation_result)
-                                except ValueError:
-                                    # Entity might have been removed during analysis
-                                    pass
-
-                            summary["correlations"].append(
-                                {
-                                    "area": area_name,
-                                    "entity_id": entity_id,
-                                    "success": bool(correlation_result),
-                                }
-                            )
-                        except Exception as err:  # noqa: BLE001
-                            _LOGGER.error(
-                                "Correlation analysis failed for %s (%s): %s",
-                                area_name,
-                                entity_id,
-                                err,
-                            )
-                            summary["correlations"].append(
-                                {
-                                    "area": area_name,
-                                    "entity_id": entity_id,
-                                    "success": False,
-                                    "error": str(err),
-                                }
-                            )
-            else:
-                _LOGGER.debug(
-                    "Skipping numeric correlation analysis - no numeric entities configured"
-                )
+            if correlation_results:
+                summary["correlations"] = correlation_results
 
         except Exception as err:  # noqa: BLE001
             _LOGGER.error(
-                "Interval aggregation failed for areas %s: %s",
-                self._format_area_names_for_logging(),
+                "Interval aggregation job failed for areas %s: %s",
+                format_area_names(self),
                 err,
             )
             summary["errors"].append(str(err))

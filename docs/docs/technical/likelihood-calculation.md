@@ -1,54 +1,62 @@
 # Likelihood Calculation
 
-This document explains how the system learns and uses likelihood probabilities for each sensor entity, leveraging the Unified Correlation Analysis.
+This document explains how the system learns and uses likelihood probabilities for each sensor entity.
 
 ## Overview
 
-Likelihoods represent how reliable each sensor is as evidence of occupancy. For each entity (both numeric and binary), the system learns statistical distributions:
+Likelihoods represent how reliable each sensor is as evidence of occupancy. The system uses different analysis methods depending on sensor type:
 
-- **Occupied Distribution**: $(\mu_{occ}, \sigma_{occ})$ - The pattern of the sensor state when the room is *known* to be occupied.
-- **Unoccupied Distribution**: $(\mu_{unocc}, \sigma_{unocc})$ - The pattern of the sensor state when the room is *known* to be empty.
-
-These values are learned from historical data by correlating each sensor's activity with the area's occupancy state (determined by motion sensors).
+- **Numeric Sensors** (temperature, humidity, CO2, etc.): Learn statistical distributions using correlation analysis with Gaussian PDFs.
+- **Binary Sensors** (media players, appliances, doors, windows): Calculate static probabilities from duration-based interval overlap analysis.
+- **Motion Sensors**: Use user-configurable static probabilities (not learned).
 
 **Important:** Motion sensors do **not** have learned likelihoods. Instead, they use **user-configurable likelihoods** that can be set per area during configuration (defaults: `prob_given_true=0.95`, `prob_given_false=0.02`). This is because motion sensors are used as ground truth to determine occupied intervals. Learning motion sensor likelihoods would create a circular dependency.
 
 ## Likelihood Analysis Process
 
-The analysis process runs periodically (typically hourly) as part of the Unified Correlation Analysis.
+The analysis process runs periodically (typically hourly) as part of the analysis cycle.
 
 See **[Sensor Correlation Analysis Chain](analysis-chain.md)** for the detailed flow.
 
-### Key differences from previous versions:
+### Analysis Methods by Sensor Type:
 
-- **Binary Sensors**: Instead of duration-weighted counting, binary sensors are now analyzed using the same correlation engine as numeric sensors. Intervals are converted to numeric samples (0.0 for OFF, 1.0 for ON).
-- **Statistical Learning**: The system learns Mean and Standard Deviation for both states (Occupied/Unoccupied).
-- **Continuous Likelihood**: Likelihoods are no longer static values (e.g., 0.8) but are calculated dynamically based on the current sensor state using Gaussian PDFs.
+1. **Numeric Sensors**: Use correlation analysis to learn Gaussian distributions (Mean and Standard Deviation) for occupied and unoccupied states. Likelihoods are calculated dynamically at runtime using Gaussian PDFs.
+
+2. **Binary Sensors**: Use duration-based analysis to calculate static probabilities directly from interval overlap durations. These are stored as `prob_given_true` and `prob_given_false` values.
+
+3. **Motion Sensors**: Use configured static probabilities (not analyzed).
 
 ## How Likelihoods Are Used in Real-Time Calculation
 
-During real-time probability calculation, likelihoods are calculated dynamically.
+During real-time probability calculation, likelihoods are retrieved differently based on sensor type.
 
 **Code Reference:** `custom_components/area_occupancy/data/entity.py::get_likelihoods()`
 
-### 1. Dynamic PDF Calculation
+### Numeric Sensors: Dynamic PDF Calculation
 
-When an entity provides a state value (numeric or binary), the system calculates two probability densities:
+For numeric sensors with learned Gaussian parameters, the system calculates two probability densities dynamically:
 
 $$ f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{1}{2}(\frac{x-\mu}{\sigma})^2} $$
 
 1. **$P(x | Occupied)$**: Likelihood of current value $x$ given the "Occupied" distribution.
 2. **$P(x | Unoccupied)$**: Likelihood of current value $x$ given the "Unoccupied" distribution.
 
-For binary sensors:
-- **ON**: $x = 1.0$
-- **OFF**: $x = 0.0$
+If the sensor state is unavailable (e.g., "unknown"), the system uses a representative value (average of occupied and unoccupied means) to calculate probabilities.
 
-### 2. Bayesian Update
+### Binary Sensors: Static Probabilities
 
-These densities are used directly in the Bayesian update formula.
+For binary sensors (media, appliances, doors, windows), the system uses static probabilities calculated from duration-based analysis:
 
-### 3. Decay-Adjusted Likelihoods
+- **$P(Active | Occupied)$**: Probability that the sensor is active when the area is occupied.
+- **$P(Active | Unoccupied)$**: Probability that the sensor is active when the area is unoccupied.
+
+These values are stored directly and used regardless of the current sensor state.
+
+### Motion Sensors: Configured Probabilities
+
+Motion sensors use the user-configured static probabilities set during area configuration.
+
+### Decay-Adjusted Likelihoods
 
 When an entity is decaying (e.g., motion sensor that just turned off), its likelihoods are interpolated toward neutral (0.5).
 
@@ -56,7 +64,7 @@ When an entity is decaying (e.g., motion sensor that just turned off), its likel
 
 This gradually reduces the influence of stale evidence as decay progresses.
 
-### 4. Weight Application
+### Weight Application
 
 The likelihoods are weighted by the entity's configured weight:
 
@@ -71,28 +79,43 @@ Higher weights mean the entity's evidence has more influence on the final probab
 
 ### NumericCorrelations Table
 
-Stores learned parameters for each entity:
+Stores learned Gaussian parameters for numeric sensors:
+
 - `area_name`, `entity_id`
 - `mean_occupied`, `std_occupied`
 - `mean_unoccupied`, `std_unoccupied`
 - `correlation_coefficient`, `confidence`
 
+### Entities Table
+
+Stores static probabilities for binary sensors:
+
+- `prob_given_true`: Probability sensor is active when occupied (for binary sensors)
+- `prob_given_false`: Probability sensor is active when unoccupied (for binary sensors)
+- `learned_gaussian_params`: JSON field storing Gaussian parameters (for numeric sensors)
+- `analysis_error`: Reason why analysis failed or was not performed
+
 ### NumericSamples Table
-Stores raw numeric values.
+
+Stores raw numeric sensor values with timestamps.
 
 ### Intervals Table
-Stores binary sensor states (converted to samples during analysis).
 
-## Default Likelihoods (Fallback)
+Stores binary sensor state intervals (on/off periods) used for duration-based analysis.
 
-If history-based learning is disabled, insufficient data is available, or correlation fails, the system falls back to default static likelihoods based on entity type:
+## Default Likelihoods
+
+If history-based learning is disabled, insufficient data is available, or correlation fails, the system uses default static likelihoods from the entity type definition:
 
 **Code Reference:** `custom_components/area_occupancy/data/entity_type.py`
 
 Default values vary by entity type:
-- Motion sensors: High `P(Active | Occupied)`, low `P(Active | Not Occupied)`
+
+- Motion sensors: High `P(Active | Occupied)`, low `P(Active | Not Occupied)` (configured per area)
 - Media players: Medium `P(Active | Occupied)`, very low `P(Active | Not Occupied)`
 - Environmental sensors: Low `P(Active | Occupied)`, low `P(Active | Not Occupied)`
+
+**Note:** These defaults are used directly from `EntityType` when Gaussian parameters are unavailable. The system does not store fallback values in the database for non-motion sensors.
 
 For non-motion sensors, these defaults are replaced by learned values once sufficient historical data is available.
 

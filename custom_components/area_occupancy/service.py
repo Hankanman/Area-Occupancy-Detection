@@ -47,9 +47,14 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
     """
     likelihood_data = {}
     for entity_id, entity in area.entities.entities.items():
-        # Prepare active_range for JSON serialization
+        # Get runtime likelihood values (uses Gaussian params if available, falls back to defaults)
+        prob_given_true, prob_given_false = entity.get_likelihoods()
+
+        # Prepare active_range for JSON serialization (only for numeric sensors)
+        # Binary sensors shouldn't show active_range
         active_range_val = None
-        if entity.active_range:
+        if entity.active_range and not entity.active_states:
+            # Only include active_range for numeric sensors (those without active_states)
             try:
                 active_range_val = []
                 # Ensure active_range is iterable (tuple or list)
@@ -74,18 +79,28 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
         raw_data = {
             "type": entity.type.input_type.value,
             "weight": entity.type.weight,
-            "prob_given_true": entity.prob_given_true,
-            "prob_given_false": entity.prob_given_false,
+            "prob_given_true": prob_given_true,  # Runtime calculated value
+            "prob_given_false": prob_given_false,  # Runtime calculated value
             "active_states": entity.active_states,
             "active_range": active_range_val,
-            "analysis_data": getattr(entity, "learned_gaussian_params", None),
-            "analysis_error": getattr(entity, "analysis_error", None),
             "is_active": entity.active,
         }
-        # Filter out keys with None values to keep output clean
-        likelihood_data[entity_id] = {
-            k: v for k, v in raw_data.items() if v is not None
+
+        # Always include analysis data and errors (even if None) for visibility
+        analysis_data = getattr(entity, "learned_gaussian_params", None)
+        analysis_error = getattr(entity, "analysis_error", None)
+
+        raw_data["analysis_data"] = analysis_data
+        raw_data["analysis_error"] = analysis_error
+
+        # Filter out keys with None values, but keep analysis_data and analysis_error
+        # even if None so users can see which entities have been analyzed
+        filtered_data = {
+            k: v
+            for k, v in raw_data.items()
+            if k in ("analysis_data", "analysis_error") or v is not None
         }
+        likelihood_data[entity_id] = filtered_data
     return likelihood_data
 
 

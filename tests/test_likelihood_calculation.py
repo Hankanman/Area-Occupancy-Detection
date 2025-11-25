@@ -140,53 +140,47 @@ class TestGaussianLikelihood:
         assert abs(p_t - p_f) < 0.0001
         assert abs(p_t - 0.2420) < 0.001
 
-    def test_get_likelihoods_continuous_binary(self, mock_binary_entity):
-        """Test get_likelihoods with continuous parameters for binary sensor."""
-        # Setup:
-        # Binary sensors are converted to 0.0 (off) and 1.0 (on)
-        # Let's say when occupied, it's mostly ON (mean ~0.9, std ~0.3)
-        # When unoccupied, it's mostly OFF (mean ~0.1, std ~0.3)
-        mock_binary_entity.learned_gaussian_params = {
-            "mean_occupied": 0.9,
-            "std_occupied": 0.3,
-            "mean_unoccupied": 0.1,
-            "std_unoccupied": 0.3,
-        }
+    def test_get_likelihoods_binary_sensor_static(self, mock_binary_entity):
+        """Test get_likelihoods for binary sensor using static probabilities."""
+        # Binary sensors now use static probabilities, not Gaussian PDF
+        # Set up learned probabilities from duration-based analysis
+        mock_binary_entity.prob_given_true = 0.8
+        mock_binary_entity.prob_given_false = 0.1
+        mock_binary_entity.analysis_error = None  # Analysis succeeded
+        mock_binary_entity.learned_gaussian_params = (
+            None  # Binary sensors don't use Gaussian
+        )
 
-        # Case 1: State = ON (Value 1.0)
-        # P(1.0|Occ) -> Gaussian(1.0, mean=0.9, std=0.3)
-        #   diff = 0.1, exp(-0.5 * (0.1/0.3)^2) = exp(-0.055) ≈ 0.946
-        #   coeff = 1 / (sqrt(2*pi) * 0.3) ≈ 1.33
-        #   density ≈ 1.258
-        # P(1.0|Unocc) -> Gaussian(1.0, mean=0.1, std=0.3)
-        #   diff = 0.9, exp(-0.5 * (0.9/0.3)^2) = exp(-4.5) ≈ 0.011
-        #   density ≈ 0.014
+        # Should return static probabilities regardless of state
         mock_binary_entity.state_provider = lambda x: STATE_ON
         p_t, p_f = mock_binary_entity.get_likelihoods()
+        assert p_t == 0.8
+        assert p_f == 0.1
 
-        assert p_t > 1.0  # Densities can be > 1
-        assert p_f < 0.1
-        assert p_t > p_f
-
-        # Case 2: State = OFF (Value 0.0)
-        # P(0.0|Occ) -> Gaussian(0.0, mean=0.9, std=0.3) -> Same as P(1.0|Unocc)
-        # P(0.0|Unocc) -> Gaussian(0.0, mean=0.1, std=0.3) -> Same as P(1.0|Occ)
         mock_binary_entity.state_provider = lambda x: STATE_OFF
         p_t, p_f = mock_binary_entity.get_likelihoods()
+        assert p_t == 0.8  # Still same static values
+        assert p_f == 0.1
 
-        assert p_t < 0.1
-        assert p_f > 1.0
-        assert p_f > p_t
+        # If not analyzed yet, should use EntityType defaults
+        mock_binary_entity.analysis_error = "not_analyzed"
+        p_t, p_f = mock_binary_entity.get_likelihoods()
+        assert p_t == mock_binary_entity.type.prob_given_true
+        assert p_f == mock_binary_entity.type.prob_given_false
 
     def test_get_likelihoods_fallback(self, mock_numeric_entity):
-        """Test get_likelihoods fallback behavior."""
-        # No params -> returns static probabilities
+        """Test get_likelihoods fallback behavior uses EntityType defaults."""
+        # No params -> returns EntityType defaults (not stored prob_given_true/false)
         mock_numeric_entity.learned_gaussian_params = None
+        # Change stored values to verify we use EntityType defaults
+        mock_numeric_entity.prob_given_true = 0.9
+        mock_numeric_entity.prob_given_false = 0.1
         p_t, p_f = mock_numeric_entity.get_likelihoods()
+        # Should use EntityType defaults (0.5, 0.5), not stored values
         assert p_t == 0.5
         assert p_f == 0.5
 
-        # With params but invalid state -> returns static probabilities
+        # With params but invalid state -> uses representative value (average of means)
         mock_numeric_entity.learned_gaussian_params = {
             "mean_occupied": 22.0,
             "std_occupied": 1.0,
@@ -195,8 +189,12 @@ class TestGaussianLikelihood:
         }
         mock_numeric_entity.state_provider = lambda x: "unavailable"
         p_t, p_f = mock_numeric_entity.get_likelihoods()
-        assert p_t == 0.5
-        assert p_f == 0.5
+        # Should use representative value (average of means = 21.0) to calculate probabilities
+        # This will give non-zero probabilities based on Gaussian PDF
+        assert p_t > 0.0
+        assert p_f > 0.0
+        assert p_t != 0.5  # Should be calculated, not default
+        assert p_f != 0.5  # Should be calculated, not default
 
     def test_update_correlation_populates_params(self, mock_numeric_entity):
         """Test update_correlation populates Gaussian params."""
@@ -237,5 +235,39 @@ class TestGaussianLikelihood:
         # Should still populate active range (open-ended)
         assert mock_numeric_entity.learned_active_range is not None
         assert mock_numeric_entity.learned_active_range[1] == float("inf")
-        # Should update static likelihoods
-        assert mock_numeric_entity.prob_given_true != 0.5
+        # Should NOT update stored prob_given_true/false (no fallback)
+
+    def test_get_likelihoods_motion_sensor_uses_configured_values(self):
+        """Test that motion sensors always use configured prob_given_true/false."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.85,
+            prob_given_true=0.95,  # EntityType default
+            prob_given_false=0.02,  # EntityType default
+            active_states=[STATE_ON],
+        )
+        decay = Decay(half_life=60.0)
+
+        # Create motion sensor with different configured values
+        motion_entity = Entity(
+            entity_id="binary_sensor.motion",
+            type=entity_type,
+            prob_given_true=0.9,  # Configured value (different from EntityType)
+            prob_given_false=0.05,  # Configured value (different from EntityType)
+            decay=decay,
+            state_provider=lambda x: STATE_ON,
+            last_updated=dt_util.utcnow(),
+        )
+
+        # Even with Gaussian params, motion sensors should use configured values
+        motion_entity.learned_gaussian_params = {
+            "mean_occupied": 0.9,
+            "std_occupied": 0.3,
+            "mean_unoccupied": 0.1,
+            "std_unoccupied": 0.3,
+        }
+
+        p_t, p_f = motion_entity.get_likelihoods()
+        # Should use configured values, not Gaussian params or EntityType defaults
+        assert p_t == 0.9
+        assert p_f == 0.05

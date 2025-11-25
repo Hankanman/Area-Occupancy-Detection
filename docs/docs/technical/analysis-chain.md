@@ -1,6 +1,6 @@
 # Sensor Correlation Analysis Chain
 
-This document provides a comprehensive breakdown of the unified sensor correlation analysis chain, from data collection through likelihood calculation. It details how both numeric and binary sensors are processed using a single consistent statistical engine.
+This document provides a comprehensive breakdown of the sensor analysis chain, from data collection through likelihood calculation. It details how numeric sensors use correlation analysis with Gaussian PDFs, while binary sensors use duration-based static probability calculation.
 
 ## Table of Contents
 
@@ -15,8 +15,10 @@ The analysis chain consists of four main phases:
 
 1. **Data Collection** (Continuous) - Raw sensor data is continuously synced from Home Assistant
 2. **Hourly Analysis Cycle** (Scheduled) - Periodic analysis runs every hour
-3. **Correlation Analysis** (Within Analysis Cycle) - Calculates correlations for ALL sensors (numeric and binary)
-4. **Likelihood Calculation** (Runtime) - Dynamic likelihood calculation using Gaussian PDFs
+3. **Sensor Analysis** (Within Analysis Cycle) - Analyzes sensors using appropriate method:
+   - **Numeric Sensors**: Correlation analysis with Gaussian PDFs
+   - **Binary Sensors**: Duration-based static probability calculation
+4. **Likelihood Calculation** (Runtime) - Retrieves likelihoods using appropriate method based on sensor type
 
 ```mermaid
 flowchart TD
@@ -31,24 +33,34 @@ flowchart TD
     Refresh --> Save[Save to Database]
     Save --> End([Complete])
 
-    CorrAnalysis --> CorrDetail[For Each Entity (Numeric & Binary)]
-    CorrDetail --> CheckType{Is Binary?}
-    CheckType -- Yes --> Convert[Convert Intervals to Samples]
-    CheckType -- No --> GetSamples[Get NumericSamples]
+    CorrAnalysis --> SensorDetail[For Each Entity]
+    SensorDetail --> CheckType{Is Binary?}
 
-    Convert --> GetIntervals
-    GetSamples --> GetIntervals[Get OccupiedIntervalsCache]
+    CheckType -- Yes --> BinaryAnalysis[Binary Likelihood Analysis]
+    CheckType -- No --> NumericAnalysis[Numeric Correlation Analysis]
 
-    GetIntervals --> MapOccupancy[Map Samples to Occupancy]
+    BinaryAnalysis --> GetBinaryIntervals[Get Binary Intervals]
+    GetBinaryIntervals --> GetOccIntervals[Get OccupiedIntervalsCache]
+    GetOccIntervals --> CalcOverlap[Calculate Interval Overlaps]
+    CalcOverlap --> CalcProbs[Calculate Static Probabilities]
+    CalcProbs --> UpdateBinary[Update Entity with Static Probs]
+
+    NumericAnalysis --> GetSamples[Get NumericSamples]
+    GetSamples --> GetOccIntervals2[Get OccupiedIntervalsCache]
+    GetOccIntervals2 --> MapOccupancy[Map Samples to Occupancy]
     MapOccupancy --> CalcCorr[Calculate Pearson Correlation]
     CalcCorr --> CalcStats[Calculate Mean/Std]
     CalcStats --> SaveCorr[Save to NumericCorrelations]
-    SaveCorr --> UpdateEntity[Update Entity with Gaussian Params]
+    SaveCorr --> UpdateNumeric[Update Entity with Gaussian Params]
 
-    UpdateEntity --> Runtime[Runtime Likelihood Calculation]
+    UpdateBinary --> Runtime[Runtime Likelihood Calculation]
+    UpdateNumeric --> Runtime
     Runtime --> GetState[Get Current Sensor State]
-    GetState --> CalcGaussian[Calculate Gaussian Densities]
-    CalcGaussian --> Bayesian[Use in Bayesian Update]
+    GetState --> CheckType2{Is Binary?}
+    CheckType2 -- Yes --> UseStatic[Use Static Probabilities]
+    CheckType2 -- No --> CalcGaussian[Calculate Gaussian Densities]
+    UseStatic --> Bayesian[Use in Bayesian Update]
+    CalcGaussian --> Bayesian
 ```
 
 ## Phase-by-Phase Breakdown
@@ -83,6 +95,8 @@ flowchart TD
 
 **Trigger**: Scheduled timer fires every hour
 
+**Note**: The coordinator's `run_analysis()` method delegates to `run_full_analysis()` in `data/analysis.py`, which orchestrates the complete analysis chain.
+
 #### Step 2.1: Sync States
 
 Imports latest data from Home Assistant recorder into local database.
@@ -93,9 +107,13 @@ Ensures database integrity and removes old data beyond retention period.
 
 #### Step 2.3: Populate OccupiedIntervalsCache
 
+**Location**: `custom_components/area_occupancy/data/analysis.py::ensure_occupied_intervals_cache()`
+
 Calculates occupied intervals from motion sensors (ground truth) and caches them.
 
 #### Step 2.4: Interval Aggregation
+
+**Location**: `custom_components/area_occupancy/data/analysis.py::run_interval_aggregation()`
 
 Aggregates raw intervals into daily/weekly/monthly aggregates for trend analysis.
 
@@ -104,6 +122,8 @@ Aggregates raw intervals into daily/weekly/monthly aggregates for trend analysis
 Calculates global prior probability and time-based priors for each area.
 
 #### Step 2.6: Correlation Analysis
+
+**Location**: `custom_components/area_occupancy/db/correlation.py::run_correlation_analysis()`
 
 **Main analysis path** - Runs correlation analysis for all configured sensors (excluding motion sensors).
 
@@ -115,11 +135,13 @@ Updates coordinator state and persists all changes to database.
 
 ### Phase 3: Correlation Analysis (Step 6 Detail)
 
-**Location**: `custom_components/area_occupancy/coordinator.py::_run_correlation_analysis()`
+**Location**: `custom_components/area_occupancy/db/correlation.py::run_correlation_analysis()`
 
 #### Step 3.1: Get Correlatable Entities
 
-**Method**: `_get_correlatable_entities_by_area()`
+**Location**: `custom_components/area_occupancy/db/correlation.py::get_correlatable_entities_by_area()`
+
+**Method**: `get_correlatable_entities_by_area()`
 
 **What Happens**:
 
@@ -130,40 +152,59 @@ Updates coordinator state and persists all changes to database.
 
 For each entity:
 
-1. **Call Analysis**:
-   Calls `analyze_and_save_correlation()` with `is_binary` flag.
+1. **Route by Type**:
+   - **Binary Sensors**: Calls `analyze_binary_likelihoods()` for duration-based analysis.
+   - **Numeric Sensors**: Calls `analyze_and_save_correlation()` for correlation analysis.
 
 2. **Update Live Entity**:
-   Updates the live entity object with `learned_gaussian_params`.
+   - **Binary Sensors**: Updates entity with `prob_given_true` and `prob_given_false` via `update_binary_likelihoods()`.
+   - **Numeric Sensors**: Updates entity with `learned_gaussian_params` via `update_correlation()`.
 
 **Location**: `custom_components/area_occupancy/db/correlation.py`
 
-#### Step 3.3: Analyze Correlation
+#### Step 3.3a: Binary Sensor Analysis
+
+**Method**: `analyze_binary_likelihoods()`
+
+**Process**:
+
+1. **Get Occupied Intervals**:
+   - Retrieves occupied intervals from `OccupiedIntervalsCache` for the analysis period.
+
+2. **Get Binary Sensor Intervals**:
+   - Queries `Intervals` table for the binary sensor's state changes.
+
+3. **Calculate Overlaps**:
+   - For each binary sensor interval, calculates overlap duration with occupied periods.
+   - Calculates overlap duration with unoccupied periods.
+
+4. **Calculate Probabilities**:
+   - `prob_given_true = active_duration_occupied / total_occupied_duration`
+   - `prob_given_false = active_duration_unoccupied / total_unoccupied_duration`
+
+5. **Clamp and Return**:
+   - Clamps probabilities between 0.05 and 0.95.
+   - Returns static probability values.
+
+#### Step 3.3b: Numeric Sensor Analysis
+
+**Location**: `custom_components/area_occupancy/db/correlation.py`
 
 **Method**: `analyze_correlation()`
-
-**Parameters**:
-
-- `is_binary`: Boolean flag indicating if interval conversion is needed.
 
 **Process**:
 
 1. **Data Retrieval**:
-
-   - If `is_binary`: Calls `convert_intervals_to_samples()` to transform binary intervals into 0.0/1.0 samples.
-   - If numeric: Queries `NumericSamples` directly.
+   - Queries `NumericSamples` directly for the analysis period.
 
 2. **Map to Occupancy**:
-
    - Checks each sample timestamp against `OccupiedIntervalsCache`.
    - Creates parallel arrays of values and occupancy flags (0/1).
 
 3. **Calculate Pearson Correlation**:
-
-   - Determines relationship between value/state and occupancy.
+   - Determines relationship between value and occupancy.
 
 4. **Calculate Statistics**:
-
    - Learns Mean/Std for Occupied state.
    - Learns Mean/Std for Unoccupied state.
 
@@ -184,32 +225,39 @@ This phase occurs at runtime whenever the Bayesian probability calculation needs
 
 **What Happens**:
 
-1. **Convert State**:
+1. **Check Sensor Type**:
 
-   - Numeric sensors: Use float value.
-   - Binary sensors: Convert state "on" -> 1.0, "off" -> 0.0.
+   - **Binary Sensors** (media, appliances, doors, windows):
+     - If analysis has been run: Returns stored `prob_given_true` and `prob_given_false`.
+     - If not analyzed: Returns `EntityType` default probabilities.
 
-2. **Calculate Gaussian Densities**:
+   - **Numeric Sensors**:
+     - Gets current sensor state value.
+     - If state is unavailable: Uses representative value (average of occupied/unoccupied means).
+     - Calculates Gaussian densities using learned parameters.
 
-   - Calculates $P(value | Occupied)$ using learned Gaussian parameters.
-   - Calculates $P(value | Unoccupied)$ using learned Gaussian parameters.
+2. **Calculate Probabilities**:
+
+   - **Binary Sensors**: Returns static probabilities directly.
+   - **Numeric Sensors**: Calculates $P(value | Occupied)$ and $P(value | Unoccupied)$ using Gaussian PDF.
 
 3. **Return Probabilities**:
-   - Returns the two densities for Bayesian update.
+   - Returns the two probabilities for Bayesian update.
 
-## Unified Architecture
+## Architecture Overview
 
-The system has been unified to eliminate the separate "Likelihood Analysis" path that existed for binary sensors.
+The system uses different analysis methods optimized for each sensor type:
 
-### Key Changes:
+### Key Design Decisions:
 
-1. **Single Analysis Path**: Both numeric and binary sensors go through `analyze_correlation()`.
-2. **Data Transformation**: Binary intervals are converted to numeric samples (0.0/1.0) on the fly.
-3. **Unified Runtime**: All sensors use PDF-based likelihood calculation.
-4. **Deduplication**: Logic for occupied interval checking, validation, and error handling is now centralized.
+1. **Numeric Sensors**: Use correlation analysis with Gaussian PDFs for dynamic, continuous likelihood calculation.
+2. **Binary Sensors**: Use duration-based analysis for simple, reliable static probabilities.
+3. **Motion Sensors**: Use configured static probabilities (not analyzed).
 
 ### Benefits:
 
-- **Consistency**: All sensors are treated with the same statistical rigor.
-- **Maintainability**: Reduced code duplication and complexity.
-- **Flexibility**: Easier to add new sensor types or analysis methods in the future.
+- **Appropriate Methods**: Each sensor type uses the analysis method best suited to its data characteristics.
+- **Dynamic Likelihoods (Numeric)**: Continuous values benefit from Gaussian PDF calculation.
+- **Simple Reliability (Binary)**: Binary states benefit from straightforward duration-based probabilities.
+- **Maintainability**: Clear separation of concerns between analysis methods.
+- **Flexibility**: Easy to add new sensor types or analysis methods in the future.

@@ -19,6 +19,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    DEFAULT_ENTITY_PROB_GIVEN_FALSE,
+    DEFAULT_ENTITY_PROB_GIVEN_TRUE,
+    DEFAULT_ENTITY_WEIGHT,
     GLOBAL_PRIOR_HISTORY_COUNT,
     MAX_PROBABILITY,
     MAX_WEIGHT,
@@ -27,11 +30,6 @@ from ..const import (
     RETENTION_DAYS,
 )
 from . import maintenance, queries
-from .constants import (
-    DEFAULT_ENTITY_PROB_GIVEN_FALSE,
-    DEFAULT_ENTITY_PROB_GIVEN_TRUE,
-    DEFAULT_ENTITY_WEIGHT,
-)
 
 ar = helpers.area_registry
 
@@ -118,6 +116,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
                         "std_dev_when_unoccupied": corr.std_dev_when_unoccupied,
                         "threshold_active": corr.threshold_active,
                         "threshold_inactive": corr.threshold_inactive,
+                        "analysis_error": corr.analysis_error,
                         "calculation_date": corr.calculation_date,
                     }
 
@@ -185,10 +184,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                         existing_entity.update_decay(
                             entity_obj.decay_start,
                             entity_obj.is_decaying,
-                        )
-                        existing_entity.update_likelihood(
-                            entity_obj.prob_given_true,
-                            entity_obj.prob_given_false,
                         )
                         # DB weight takes priority over configured defaults when valid
                         if hasattr(existing_entity, "type") and hasattr(

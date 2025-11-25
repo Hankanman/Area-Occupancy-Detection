@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_VERSION,
+    DB_NAME,
     DEFAULT_BACKUP_INTERVAL_HOURS,
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
@@ -34,7 +35,6 @@ from . import (
     sync,
     utils,
 )
-from .constants import DB_NAME
 from .schema import (
     AreaRelationships,
     Areas,
@@ -337,10 +337,12 @@ class AreaOccupancyDB:
         area_name: str,
         entity_id: str,
         analysis_period_days: int = 30,
+        is_binary: bool = False,
+        active_states: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Analyze correlation between sensor values and occupancy."""
         return correlation.analyze_correlation(
-            self, area_name, entity_id, analysis_period_days
+            self, area_name, entity_id, analysis_period_days, is_binary, active_states
         )
 
     def save_correlation_result(self, correlation_data: dict[str, Any]) -> bool:
@@ -352,10 +354,24 @@ class AreaOccupancyDB:
         area_name: str,
         entity_id: str,
         analysis_period_days: int = 30,
+        is_binary: bool = False,
+        active_states: list[str] | None = None,
     ) -> dict[str, Any] | None:
-        """Analyze and save correlation for a numeric sensor."""
+        """Analyze and save correlation for a sensor (numeric or binary)."""
         return correlation.analyze_and_save_correlation(
-            self, area_name, entity_id, analysis_period_days
+            self, area_name, entity_id, analysis_period_days, is_binary, active_states
+        )
+
+    def analyze_binary_likelihoods(
+        self,
+        area_name: str,
+        entity_id: str,
+        analysis_period_days: int = 30,
+        active_states: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Analyze binary sensor likelihoods using duration-based calculation."""
+        return correlation.analyze_binary_likelihoods(
+            self, area_name, entity_id, analysis_period_days, active_states
         )
 
     def get_correlation_for_entity(

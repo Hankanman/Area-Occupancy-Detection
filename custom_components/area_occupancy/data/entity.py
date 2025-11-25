@@ -1,6 +1,7 @@
 """Entity model."""
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 import logging
@@ -11,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_WEIGHT, MIN_WEIGHT
-from ..utils import clamp_probability, ensure_timezone_aware
+from ..utils import ensure_timezone_aware
 from .decay import Decay
 from .entity_type import DEFAULT_TYPES, EntityType, InputType
 
@@ -91,27 +92,50 @@ class Entity:
     def get_likelihoods(self) -> tuple[float, float]:
         """Get dynamic likelihoods based on current state.
 
-        If learned Gaussian parameters are available and state is valid,
-        returns calculated densities. Otherwise returns static probabilities.
+        Motion sensors: Always use configured prob_given_true/prob_given_false.
+        Binary sensors: Use static probabilities if learned from analysis, otherwise EntityType defaults.
+        Numeric sensors: Use Gaussian PDF if available, otherwise EntityType defaults.
 
         Returns:
             Tuple of (prob_given_true, prob_given_false)
         """
-        if self.learned_gaussian_params and self.state is not None:
-            try:
-                # Convert state to numeric value
-                if self.type.input_type in [
-                    InputType.MEDIA,
-                    InputType.APPLIANCE,
-                    InputType.DOOR,
-                    InputType.WINDOW,
-                ]:
-                    # Binary sensor: convert to 0.0 or 1.0
-                    val = 1.0 if self.evidence else 0.0
-                else:
-                    # Numeric sensor: use float value
+        # Motion sensors: Always use configured values (not fallback)
+        if self.type.input_type == InputType.MOTION:
+            return (self.prob_given_true, self.prob_given_false)
+
+        # Binary sensors: Use static probabilities if learned, otherwise EntityType defaults
+        binary_input_types = {
+            InputType.MEDIA,
+            InputType.APPLIANCE,
+            InputType.DOOR,
+            InputType.WINDOW,
+        }
+        if self.type.input_type in binary_input_types:
+            # If analysis has been run (not "not_analyzed"), use learned probabilities
+            # Otherwise fall back to EntityType defaults
+            if self.analysis_error != "not_analyzed":
+                # Analysis has been run - use stored probabilities
+                return (self.prob_given_true, self.prob_given_false)
+            # Not analyzed yet - use EntityType defaults
+            return (self.type.prob_given_true, self.type.prob_given_false)
+
+        # Numeric sensors: Use Gaussian PDF if available
+        if self.learned_gaussian_params:
+            # Try to get current state value, fall back to mean if unavailable
+            val = None
+            if self.state is not None:
+                with suppress(ValueError, TypeError):
+                    # State is not a valid number (e.g., "unknown", "unavailable")
                     val = float(self.state)
 
+            # If state is unavailable, use mean of occupied and unoccupied as representative value
+            if val is None:
+                mean_occupied = self.learned_gaussian_params["mean_occupied"]
+                mean_unoccupied = self.learned_gaussian_params["mean_unoccupied"]
+                # Use average of means as representative value
+                val = (mean_occupied + mean_unoccupied) / 2.0
+
+            try:
                 # Clamp std dev to minimum 0.05 to prevent numerical issues (division by zero)
                 # We do NOT clamp maximum as numeric sensors (e.g. CO2) can have large variance
                 std_occupied = max(0.05, self.learned_gaussian_params["std_occupied"])
@@ -134,17 +158,13 @@ class Entity:
                 )
 
             except (ValueError, TypeError):
-                # Fall back to static values if calculation fails
+                # Fall back to EntityType defaults if calculation fails
                 pass
             else:
                 return (p_true, p_false)
-        else:
-            # Fallback when no gaussian params but state is available
-            # Or fallback when no state
-            pass
 
-        # Return static probabilities if dynamic calculation failed or not applicable
-        return (self.prob_given_true, self.prob_given_false)
+        # Fallback: Use EntityType defaults (not stored prob_given_true/false)
+        return (self.type.prob_given_true, self.type.prob_given_false)
 
     @property
     def is_continuous_likelihood(self) -> bool:
@@ -251,14 +271,6 @@ class Entity:
             return 1.0
         return self.decay.decay_factor
 
-    def update_likelihood(
-        self, prob_given_true: float, prob_given_false: float
-    ) -> None:
-        """Update the likelihood of the entity."""
-        self.prob_given_true = clamp_probability(prob_given_true)
-        self.prob_given_false = clamp_probability(prob_given_false)
-        self.last_updated = dt_util.utcnow()
-
     def update_correlation(self, correlation_data: dict[str, Any]) -> None:
         """Update the learned active range based on correlation data."""
         if not correlation_data:
@@ -270,7 +282,8 @@ class Entity:
         mean_unoccupied = correlation_data.get("mean_value_when_unoccupied")
         std_unoccupied = correlation_data.get("std_dev_when_unoccupied")
 
-        # Store rejection reason if present
+        # Store analysis error (None means no error, analysis succeeded)
+        # This will be None if analysis succeeded, or a string error reason if it failed
         self.analysis_error = correlation_data.get("analysis_error")
 
         # Get occupied stats
@@ -299,49 +312,58 @@ class Entity:
             # because they are calculated dynamically
         else:
             self.learned_gaussian_params = None
-            # Fallback to static scaling if full Gaussian params aren't available
-            scaled_prob_true = 0.5 + (confidence * 0.4)
-            scaled_prob_false = 0.5 - (confidence * 0.4)
-            self.update_likelihood(scaled_prob_true, scaled_prob_false)
 
-        # Calculate thresholds (mean ± 2σ) - Still useful for "Active" binary state in UI
-        k_factor = 2.0
+        # Only set learned_active_range for numeric sensors
+        # Binary sensors (MEDIA, APPLIANCE, DOOR, WINDOW) shouldn't have active_range
+        binary_input_types = {
+            InputType.MEDIA,
+            InputType.APPLIANCE,
+            InputType.DOOR,
+            InputType.WINDOW,
+        }
 
-        if correlation_type == "occupancy_positive":
-            # Active > mean_unoccupied + K*std_unoccupied
-            lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
-
-            # Try to determine upper bound from occupied stats
-            if mean_occupied is not None and std_occupied is not None:
-                # Cap at mean_occupied + K*std_occupied
-                upper_bound = mean_occupied + (k_factor * std_occupied)
-                # Ensure logical consistency (upper > lower)
-                if upper_bound <= lower_bound:
-                    # Fallback to open-ended if stats overlap significantly
-                    upper_bound = float("inf")
-            else:
-                upper_bound = float("inf")
-
-            self.learned_active_range = (lower_bound, upper_bound)
-
-        elif correlation_type == "occupancy_negative":
-            # Active < mean_unoccupied - K*std_unoccupied
-            upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
-
-            # Try to determine lower bound from occupied stats
-            if mean_occupied is not None and std_occupied is not None:
-                # Floor at mean_occupied - K*std_occupied
-                lower_bound = mean_occupied - (k_factor * std_occupied)
-                # Ensure logical consistency (lower < upper)
-                if lower_bound >= upper_bound:
-                    # Fallback to open-ended if stats overlap significantly
-                    lower_bound = float("-inf")
-            else:
-                lower_bound = float("-inf")
-
-            self.learned_active_range = (lower_bound, upper_bound)
-        else:
+        if self.type.input_type in binary_input_types:
+            # Binary sensors: don't set learned_active_range
             self.learned_active_range = None
+        else:
+            # Numeric sensors: calculate thresholds (mean ± 2σ)
+            k_factor = 2.0
+
+            if correlation_type == "occupancy_positive":
+                # Active > mean_unoccupied + K*std_unoccupied
+                lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
+
+                # Try to determine upper bound from occupied stats
+                if mean_occupied is not None and std_occupied is not None:
+                    # Cap at mean_occupied + K*std_occupied
+                    upper_bound = mean_occupied + (k_factor * std_occupied)
+                    # Ensure logical consistency (upper > lower)
+                    if upper_bound <= lower_bound:
+                        # Fallback to open-ended if stats overlap significantly
+                        upper_bound = float("inf")
+                else:
+                    upper_bound = float("inf")
+
+                self.learned_active_range = (lower_bound, upper_bound)
+
+            elif correlation_type == "occupancy_negative":
+                # Active < mean_unoccupied - K*std_unoccupied
+                upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
+
+                # Try to determine lower bound from occupied stats
+                if mean_occupied is not None and std_occupied is not None:
+                    # Floor at mean_occupied - K*std_occupied
+                    lower_bound = mean_occupied - (k_factor * std_occupied)
+                    # Ensure logical consistency (lower < upper)
+                    if lower_bound >= upper_bound:
+                        # Fallback to open-ended if stats overlap significantly
+                        lower_bound = float("-inf")
+                else:
+                    lower_bound = float("-inf")
+
+                self.learned_active_range = (lower_bound, upper_bound)
+            else:
+                self.learned_active_range = None
 
         _LOGGER.debug(
             "Updated learned active range for %s: %s (type=%s, conf=%.2f, p_true=%.2f, p_false=%.2f)",
@@ -349,6 +371,59 @@ class Entity:
             self.learned_active_range,
             correlation_type,
             confidence,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
+
+    def update_binary_likelihoods(self, likelihood_data: dict[str, Any]) -> None:
+        """Update binary sensor likelihoods from duration-based analysis.
+
+        Binary sensors use static probabilities calculated from interval overlap
+        durations, not Gaussian PDFs.
+
+        Args:
+            likelihood_data: Dictionary with prob_given_true, prob_given_false,
+                and analysis_error
+        """
+        if not likelihood_data:
+            return
+
+        # Store analysis error (None means no error, analysis succeeded)
+        self.analysis_error = likelihood_data.get("analysis_error")
+
+        # Get probability values
+        prob_given_true = likelihood_data.get("prob_given_true")
+        prob_given_false = likelihood_data.get("prob_given_false")
+
+        # If analysis failed or data is missing, reset to defaults
+        if (
+            self.analysis_error is not None
+            or prob_given_true is None
+            or prob_given_false is None
+        ):
+            # Reset to EntityType defaults
+            self.prob_given_true = self.type.prob_given_true
+            self.prob_given_false = self.type.prob_given_false
+            self.learned_gaussian_params = None
+            self.learned_active_range = None
+            _LOGGER.debug(
+                "Binary likelihood analysis failed for %s: %s, using defaults",
+                self.entity_id,
+                self.analysis_error or "missing data",
+            )
+            return
+
+        # Update static probabilities
+        self.prob_given_true = float(prob_given_true)
+        self.prob_given_false = float(prob_given_false)
+
+        # Binary sensors don't use Gaussian params or active ranges
+        self.learned_gaussian_params = None
+        self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated binary likelihoods for %s: prob_given_true=%.3f, prob_given_false=%.3f",
+            self.entity_id,
             self.prob_given_true,
             self.prob_given_false,
         )
@@ -570,6 +645,14 @@ class EntityFactory:
             sleep_end=sleep_end,
         )
 
+        # Set default analysis_error based on entity type
+        # Motion sensors are excluded from correlation analysis
+        analysis_error = (
+            "motion_sensor_excluded"
+            if input_type == InputType.MOTION
+            else "not_analyzed"
+        )
+
         return Entity(
             entity_id=entity_id,
             type=entity_type,
@@ -579,6 +662,7 @@ class EntityFactory:
             hass=self.coordinator.hass,
             last_updated=last_updated,
             previous_evidence=previous_evidence,
+            analysis_error=analysis_error,
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
@@ -663,6 +747,14 @@ class EntityFactory:
             prob_given_true = entity_type.prob_given_true
             prob_given_false = entity_type.prob_given_false
 
+        # Set default analysis_error based on entity type
+        # Motion sensors are excluded from correlation analysis
+        analysis_error = (
+            "motion_sensor_excluded"
+            if input_type_enum == InputType.MOTION
+            else "not_analyzed"
+        )
+
         return Entity(
             entity_id=entity_id,
             type=entity_type,
@@ -672,6 +764,7 @@ class EntityFactory:
             hass=self.coordinator.hass,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
+            analysis_error=analysis_error,
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:

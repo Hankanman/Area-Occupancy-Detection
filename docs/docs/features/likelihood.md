@@ -9,6 +9,7 @@ See **[Sensor Correlation & Continuous Likelihood](sensor-correlation.md)** for 
 ## Motion Sensors
 
 **Motion sensors do not have learned likelihoods.** Instead, they use **user-configurable likelihoods** that you can set per area during configuration:
+
 - `P(Active | Occupied)`: Configurable (default: 0.95 or 95%)
 - `P(Active | Not Occupied)`: Configurable (default: 0.02 or 2%)
 
@@ -18,10 +19,27 @@ You can adjust these values in the integration's configuration for each area. Hi
 
 ## Other Sensors
 
-For all other sensor types (media, appliances, doors, windows, environmental sensors), likelihoods are learned from historical data by correlating their activity with the occupied intervals determined by motion sensors.
+For all other sensor types, likelihoods are learned from historical data by analyzing their activity relative to the occupied intervals determined by motion sensors. The analysis method depends on sensor type:
 
-This is done via the **[Unified Correlation Analysis](sensor-correlation.md)** process, which handles both numeric sensors (like temperature) and binary sensors (like media players) using the same statistical engine.
+### Numeric Sensors (Temperature, Humidity, CO2, etc.)
 
-If history based learning is disabled, or insufficient history is available, default likelihoods from the integration are used instead.
+Numeric sensors use **correlation analysis** to learn statistical distributions (Gaussian PDFs) that allow for dynamic likelihood calculation based on the exact sensor value.
+
+See **[Sensor Correlation & Continuous Likelihood](sensor-correlation.md)** for detailed information.
+
+### Binary Sensors (Media Players, Appliances, Doors, Windows)
+
+Binary sensors use **duration-based analysis** to calculate static probabilities directly from how long they're active during occupied vs. unoccupied periods.
+
+The system calculates:
+
+- `P(Active | Occupied)`: Probability the sensor is active when the area is occupied
+- `P(Active | Unoccupied)`: Probability the sensor is active when the area is unoccupied
+
+These probabilities are stored as static values and used regardless of the current sensor state.
+
+### Default Likelihoods
+
+If history-based learning is disabled, insufficient history is available, or analysis fails, default likelihoods from the integration are used instead. These defaults come from the `EntityType` definition and vary by sensor type.
 
 You can manually refresh the stored likelihoods by calling the `area_occupancy.run_analysis` service.
