@@ -242,7 +242,6 @@ def is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
         "corrupted",
         "file is not a database",
         "database or disk is full",
-        "database is locked",
         "unable to open database file",
     ]
 

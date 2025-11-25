@@ -19,6 +19,8 @@ from homeassistant.const import (
     Platform,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 DOMAIN: Final = "area_occupancy"
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 
@@ -328,7 +330,6 @@ def validate_and_sanitize_area_name(area_name: str) -> str:
 
     # Warn if sanitization changed the name
     if sanitized != area_name.strip():
-        _LOGGER = logging.getLogger(__name__)
         _LOGGER.warning(
             "Area name sanitized: '%s' -> '%s' (special characters replaced)",
             area_name,

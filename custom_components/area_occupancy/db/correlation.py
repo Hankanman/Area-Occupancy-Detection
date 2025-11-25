@@ -884,8 +884,6 @@ def save_correlation_result(
         OSError,
     ) as e:
         _LOGGER.error("Error saving correlation result: %s", e)
-        if session is not None:
-            session.rollback()
         return False
 
 
