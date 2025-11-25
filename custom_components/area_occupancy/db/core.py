@@ -23,6 +23,7 @@ from ..const import (
     DEFAULT_BACKUP_INTERVAL_HOURS,
     DEFAULT_ENABLE_AUTO_RECOVERY,
     DEFAULT_ENABLE_PERIODIC_BACKUPS,
+    DEFAULT_LOOKBACK_DAYS,
     DEFAULT_MAX_RECOVERY_ATTEMPTS,
 )
 from . import (
@@ -475,22 +476,18 @@ class AreaOccupancyDB:
     def get_occupied_intervals(
         self,
         area_name: str,
-        motion_sensor_ids: list[str],
         start_time: datetime | None = None,
-        end_time: datetime | None = None,
-        include_media: bool = False,
-        include_appliance: bool = False,
-        media_sensor_ids: list[str] | None = None,
-        appliance_sensor_ids: list[str] | None = None,
         motion_timeout: int = 300,  # Default 5 min if not specified
     ) -> list[tuple[datetime, datetime]]:
-        """Get raw occupied intervals without using cache.
+        """Get raw occupied intervals from motion sensors only (without using cache).
 
         This delegates to queries.get_occupied_intervals but adapts arguments
-        to match what PriorAnalyzer expects.
+        to match what PriorAnalyzer expects. Occupied intervals are determined
+        exclusively by motion sensors. All motion sensors for the area are
+        automatically included in the query. The end time is always the current time.
         """
         # Determine lookback days if start_time provided
-        lookback_days = 90  # default
+        lookback_days = DEFAULT_LOOKBACK_DAYS  # default
         if start_time:
             lookback_days = (dt_util.utcnow() - start_time).days + 1
 
@@ -500,10 +497,6 @@ class AreaOccupancyDB:
             area_name,
             lookback_days,
             motion_timeout,
-            include_media,
-            include_appliance,
-            media_sensor_ids,
-            appliance_sensor_ids,
         )
 
     def is_occupied_intervals_cache_valid(
