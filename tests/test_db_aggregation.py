@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.aggregation import (
     aggregate_daily_to_weekly,
     aggregate_raw_to_daily,
@@ -18,9 +19,11 @@ from homeassistant.util import dt as dt_util
 class TestAggregateRawToDaily:
     """Test aggregate_raw_to_daily function."""
 
-    def test_aggregate_raw_to_daily_success(self, test_db):
+    def test_aggregate_raw_to_daily_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful aggregation from raw to daily."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=65)
 
@@ -63,9 +66,11 @@ class TestAggregateRawToDaily:
             )
             assert len(aggregates) > 0
 
-    def test_aggregate_raw_to_daily_no_data(self, test_db):
+    def test_aggregate_raw_to_daily_no_data(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test aggregation with no raw data."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = aggregate_raw_to_daily(db, area_name)
         assert result == 0
@@ -74,9 +79,11 @@ class TestAggregateRawToDaily:
 class TestAggregateDailyToWeekly:
     """Test aggregate_daily_to_weekly function."""
 
-    def test_aggregate_daily_to_weekly_success(self, test_db):
+    def test_aggregate_daily_to_weekly_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful aggregation from daily to weekly."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=95)
 
@@ -125,9 +132,11 @@ class TestAggregateWeeklyToMonthly:
     """Test aggregate_weekly_to_monthly function."""
 
     @pytest.mark.filterwarnings("ignore::sqlalchemy.exc.SAWarning")
-    def test_aggregate_weekly_to_monthly_success(self, test_db):
+    def test_aggregate_weekly_to_monthly_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful aggregation from weekly to monthly."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         # Use date older than RETENTION_WEEKLY_AGGREGATES_DAYS (365 days)
         # and ensure weeks span at least one full month
@@ -183,9 +192,11 @@ class TestAggregateWeeklyToMonthly:
 class TestRunIntervalAggregation:
     """Test run_interval_aggregation function."""
 
-    def test_run_interval_aggregation_success(self, test_db):
+    def test_run_interval_aggregation_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test running full tiered aggregation process."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=35)
 
@@ -225,9 +236,9 @@ class TestRunIntervalAggregation:
 class TestPruneOldAggregates:
     """Test prune_old_aggregates function."""
 
-    def test_prune_old_aggregates_success(self, test_db):
+    def test_prune_old_aggregates_success(self, coordinator: AreaOccupancyCoordinator):
         """Test pruning old aggregates successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=400)
 
@@ -278,9 +289,11 @@ class TestPruneOldAggregates:
 class TestPruneOldNumericSamples:
     """Test prune_old_numeric_samples function."""
 
-    def test_prune_old_numeric_samples_success(self, test_db):
+    def test_prune_old_numeric_samples_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test pruning old numeric samples successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=100)
 

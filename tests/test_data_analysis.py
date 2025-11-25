@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import PriorAnalyzer
-from custom_components.area_occupancy.db.core import AreaOccupancyDB
 from homeassistant.util import dt as dt_util
 
 
@@ -44,22 +44,22 @@ class TestPriorAnalyzerWithRealDB:
     """Integration tests for PriorAnalyzer with real database."""
 
     def test_get_occupied_intervals_with_real_data(
-        self, test_db: AreaOccupancyDB
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test get_occupied_intervals with real database data."""
-        coordinator = test_db.coordinator
+        db = coordinator.db
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         # Ensure area exists first (foreign key requirement)
-        test_db.save_area_data(area_name)
+        db.save_area_data(area_name)
 
         # Create test entity and interval
         end = dt_util.utcnow()
         start = end - timedelta(hours=1)
 
-        with test_db.get_locked_session() as session:
-            entity = test_db.Entities(
+        with db.get_locked_session() as session:
+            entity = db.Entities(
                 entry_id=coordinator.entry_id,
                 area_name=area_name,
                 entity_id="binary_sensor.motion",
@@ -68,8 +68,8 @@ class TestPriorAnalyzerWithRealDB:
             session.add(entity)
             session.commit()
 
-        with test_db.get_session() as session:
-            interval = test_db.Intervals(
+        with db.get_session() as session:
+            interval = db.Intervals(
                 entry_id=coordinator.entry_id,
                 area_name=area_name,
                 entity_id="binary_sensor.motion",
