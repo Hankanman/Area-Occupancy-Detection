@@ -308,23 +308,24 @@ def setup_area_registry(hass: HomeAssistant) -> dict[str, str]:
     return area_id_map
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def coordinator(
     hass: HomeAssistant,
     mock_realistic_config_entry: Mock,
     db_engine: Any,
 ) -> AreaOccupancyCoordinator:
-    """Primary fixture for coordinator testing.
+    """Primary fixture for coordinator testing (autouse).
 
-    Provides a real AreaOccupancyCoordinator instance with:
+    This fixture is automatically used for all tests. It provides a real
+    AreaOccupancyCoordinator instance with:
     - Real Home Assistant instance
     - Areas loaded from config entry
     - Real coordinator behavior
     - Proper initialization
     - In-memory SQLite database (via db_engine)
 
-    This is the recommended default for most coordinator tests.
-    Use mocks only when you need to test error paths or control behavior.
+    Tests can access the coordinator by including it in their function signature
+    if needed, but it's automatically available for all tests.
 
     Example:
         def test_coordinator_method(coordinator: AreaOccupancyCoordinator):
