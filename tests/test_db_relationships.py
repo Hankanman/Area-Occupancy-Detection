@@ -1,5 +1,6 @@
 """Tests for database area relationship functions."""
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.relationships import (
     calculate_adjacent_influence,
     get_adjacent_areas,
@@ -12,9 +13,11 @@ from custom_components.area_occupancy.db.relationships import (
 class TestSaveAreaRelationship:
     """Test save_area_relationship function."""
 
-    def test_save_area_relationship_success(self, test_db):
+    def test_save_area_relationship_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test saving area relationship successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area
@@ -44,9 +47,11 @@ class TestSaveAreaRelationship:
             assert relationship is not None
             assert relationship.influence_weight == 0.5
 
-    def test_save_area_relationship_update_existing(self, test_db):
+    def test_save_area_relationship_update_existing(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test updating existing relationship."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area
@@ -85,9 +90,9 @@ class TestSaveAreaRelationship:
 class TestGetAdjacentAreas:
     """Test get_adjacent_areas function."""
 
-    def test_get_adjacent_areas_success(self, test_db):
+    def test_get_adjacent_areas_success(self, coordinator: AreaOccupancyCoordinator):
         """Test retrieving adjacent areas successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area and relationship
@@ -111,9 +116,9 @@ class TestGetAdjacentAreas:
         assert len(result) == 1
         assert result[0]["related_area_name"] == "Kitchen"
 
-    def test_get_adjacent_areas_empty(self, test_db):
+    def test_get_adjacent_areas_empty(self, coordinator: AreaOccupancyCoordinator):
         """Test retrieving adjacent areas when none exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = get_adjacent_areas(db, area_name)
         assert result == []
@@ -122,9 +127,9 @@ class TestGetAdjacentAreas:
 class TestGetInfluenceWeight:
     """Test get_influence_weight function."""
 
-    def test_get_influence_weight_success(self, test_db):
+    def test_get_influence_weight_success(self, coordinator: AreaOccupancyCoordinator):
         """Test retrieving influence weight successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area and relationship
@@ -146,9 +151,9 @@ class TestGetInfluenceWeight:
         weight = get_influence_weight(db, area_name, "Kitchen")
         assert weight == 0.6
 
-    def test_get_influence_weight_default(self, test_db):
+    def test_get_influence_weight_default(self, coordinator: AreaOccupancyCoordinator):
         """Test retrieving influence weight when relationship doesn't exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         weight = get_influence_weight(db, area_name, "Nonexistent")
         assert weight == 0.0  # Default weight
@@ -157,9 +162,11 @@ class TestGetInfluenceWeight:
 class TestCalculateAdjacentInfluence:
     """Test calculate_adjacent_influence function."""
 
-    def test_calculate_adjacent_influence_success(self, test_db):
+    def test_calculate_adjacent_influence_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test calculating adjacent influence successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area and relationship
@@ -191,9 +198,11 @@ class TestCalculateAdjacentInfluence:
 class TestSyncAdjacentAreasFromConfig:
     """Test sync_adjacent_areas_from_config function."""
 
-    def test_sync_adjacent_areas_from_config_success(self, test_db):
+    def test_sync_adjacent_areas_from_config_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test syncing adjacent areas from config successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Ensure main area exists first (foreign key requirement)
@@ -228,9 +237,11 @@ class TestSyncAdjacentAreasFromConfig:
         adjacent_names = {a["related_area_name"] for a in adjacent}
         assert adjacent_names == {"Kitchen", "Bedroom"}
 
-    def test_sync_adjacent_areas_from_config_removes_old(self, test_db):
+    def test_sync_adjacent_areas_from_config_removes_old(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test that syncing removes old relationships not in config."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Create old area and relationship

@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.const import NUMERIC_CORRELATION_HISTORY_COUNT
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.correlation import (
     _prune_old_correlations,
     analyze_and_save_correlation,
@@ -80,9 +81,9 @@ class TestCalculatePearsonCorrelation:
 class TestAnalyzeCorrelation:
     """Test analyze_correlation function."""
 
-    def test_analyze_correlation_success(self, test_db):
+    def test_analyze_correlation_success(self, coordinator: AreaOccupancyCoordinator):
         """Test successful correlation analysis for numeric sensors."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
@@ -124,9 +125,9 @@ class TestAnalyzeCorrelation:
         # Result may be None if insufficient data
         assert result is None or isinstance(result, dict)
 
-    def test_analyze_correlation_no_data(self, test_db):
+    def test_analyze_correlation_no_data(self, coordinator: AreaOccupancyCoordinator):
         """Test correlation analysis with no data."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = analyze_correlation(
             db, area_name, "sensor.nonexistent", analysis_period_days=30
@@ -134,9 +135,11 @@ class TestAnalyzeCorrelation:
         assert result is not None
         assert result["analysis_error"] == "too_few_samples"
 
-    def test_analyze_binary_correlation_success(self, test_db):
+    def test_analyze_binary_correlation_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful binary correlation analysis."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "binary_sensor.door"
         now = dt_util.utcnow()
@@ -198,9 +201,11 @@ class TestAnalyzeCorrelation:
         assert result["mean_value_when_occupied"] > 0.9  # Should be ~1.0
         assert result["mean_value_when_unoccupied"] < 0.1  # Should be ~0.0
 
-    def test_analyze_binary_correlation_no_active_states(self, test_db):
+    def test_analyze_binary_correlation_no_active_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test binary correlation without active states."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "binary_sensor.door"
 
@@ -219,9 +224,11 @@ class TestAnalyzeCorrelation:
 class TestSaveCorrelationResult:
     """Test save_correlation_result function."""
 
-    def test_save_correlation_result_success(self, test_db):
+    def test_save_correlation_result_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test saving correlation result successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
 
@@ -275,9 +282,11 @@ class TestSaveCorrelationResult:
 class TestGetCorrelationForEntity:
     """Test get_correlation_for_entity function."""
 
-    def test_get_correlation_for_entity_success(self, test_db):
+    def test_get_correlation_for_entity_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test retrieving correlation for entity."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
 
@@ -311,9 +320,11 @@ class TestGetCorrelationForEntity:
         assert result is not None
         assert result["correlation_coefficient"] == 0.8
 
-    def test_get_correlation_for_entity_not_found(self, test_db):
+    def test_get_correlation_for_entity_not_found(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test retrieving correlation when none exists."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = get_correlation_for_entity(db, area_name, "sensor.nonexistent")
         assert result is None
@@ -322,9 +333,11 @@ class TestGetCorrelationForEntity:
 class TestAnalyzeAndSaveCorrelation:
     """Test analyze_and_save_correlation function."""
 
-    def test_analyze_and_save_correlation_success(self, test_db):
+    def test_analyze_and_save_correlation_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test analyzing and saving correlation in one call."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
@@ -367,9 +380,11 @@ class TestAnalyzeAndSaveCorrelation:
         assert result["area_name"] == area_name
         assert result["entity_id"] == entity_id
 
-    def test_analyze_and_save_correlation_no_data(self, test_db):
+    def test_analyze_and_save_correlation_no_data(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test analyze_and_save when no correlation data is generated."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         result = analyze_and_save_correlation(
@@ -434,9 +449,11 @@ class TestCalculatePearsonCorrelationEdgeCases:
 class TestAnalyzeCorrelationEdgeCases:
     """Test analyze_correlation edge cases."""
 
-    def test_analyze_correlation_no_occupied_intervals(self, test_db):
+    def test_analyze_correlation_no_occupied_intervals(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test analysis when no occupied intervals exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
@@ -475,9 +492,11 @@ class TestAnalyzeCorrelationEdgeCases:
         assert result is not None
         assert result["analysis_error"] == "no_occupied_samples"
 
-    def test_analyze_correlation_insufficient_samples(self, test_db):
+    def test_analyze_correlation_insufficient_samples(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test analysis with insufficient samples."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
@@ -516,9 +535,11 @@ class TestAnalyzeCorrelationEdgeCases:
         assert result is not None
         assert result["analysis_error"] == "too_few_samples"
 
-    def test_analyze_correlation_negative_correlation(self, test_db):
+    def test_analyze_correlation_negative_correlation(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test analysis with negative correlation."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
@@ -557,9 +578,11 @@ class TestAnalyzeCorrelationEdgeCases:
         # May return None if insufficient correlation
         assert result is None or isinstance(result, dict)
 
-    def test_analyze_correlation_database_error(self, test_db):
+    def test_analyze_correlation_database_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test analysis with database error."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         with patch.object(db, "get_session", side_effect=SQLAlchemyError("DB error")):
@@ -572,9 +595,11 @@ class TestAnalyzeCorrelationEdgeCases:
 class TestSaveCorrelationResultEdgeCases:
     """Test save_correlation_result edge cases."""
 
-    def test_save_correlation_result_database_error(self, test_db):
+    def test_save_correlation_result_database_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test saving correlation with database error."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         correlation_data = {
@@ -594,9 +619,11 @@ class TestSaveCorrelationResultEdgeCases:
             result = save_correlation_result(db, correlation_data)
             assert result is False
 
-    def test_save_correlation_result_missing_fields(self, test_db):
+    def test_save_correlation_result_missing_fields(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test saving correlation with missing required fields."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Missing required fields - will raise KeyError when accessing entity_id in logging
@@ -620,9 +647,11 @@ class TestSaveCorrelationResultEdgeCases:
 class TestPruneOldCorrelations:
     """Test _prune_old_correlations function."""
 
-    def test_prune_old_correlations_excess_records(self, test_db):
+    def test_prune_old_correlations_excess_records(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test pruning when there are more correlations than limit."""
-        db = test_db
+        db = coordinator.db
         db.init_db()
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
@@ -672,9 +701,11 @@ class TestPruneOldCorrelations:
             )
             assert count == NUMERIC_CORRELATION_HISTORY_COUNT
 
-    def test_prune_old_correlations_no_excess(self, test_db):
+    def test_prune_old_correlations_no_excess(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test pruning when there are fewer correlations than limit."""
-        db = test_db
+        db = coordinator.db
         db.init_db()
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
@@ -725,9 +756,9 @@ class TestPruneOldCorrelations:
             )
             assert count == num_correlations
 
-    def test_prune_old_correlations_error(self, test_db):
+    def test_prune_old_correlations_error(self, coordinator: AreaOccupancyCoordinator):
         """Test pruning with error."""
-        db = test_db
+        db = coordinator.db
         db.init_db()
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
@@ -742,18 +773,22 @@ class TestPruneOldCorrelations:
 class TestGetCorrelationForEntityEdgeCases:
     """Test get_correlation_for_entity edge cases."""
 
-    def test_get_correlation_for_entity_database_error(self, test_db):
+    def test_get_correlation_for_entity_database_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test getting correlation with database error."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         with patch.object(db, "get_session", side_effect=SQLAlchemyError("DB error")):
             result = get_correlation_for_entity(db, area_name, "sensor.temperature")
             assert result is None
 
-    def test_get_correlation_for_entity_multiple_results(self, test_db):
+    def test_get_correlation_for_entity_multiple_results(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test getting correlation when multiple results exist."""
-        db = test_db
+        db = coordinator.db
         db.init_db()
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"

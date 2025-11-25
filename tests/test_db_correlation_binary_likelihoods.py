@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.correlation import analyze_binary_likelihoods
 from homeassistant.util import dt as dt_util
 
@@ -9,9 +10,11 @@ from homeassistant.util import dt as dt_util
 class TestAnalyzeBinaryLikelihoods:
     """Test analyze_binary_likelihoods function."""
 
-    def test_analyze_binary_likelihoods_success(self, test_db):
+    def test_analyze_binary_likelihoods_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful binary likelihood analysis."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "light.test_light"
         now = dt_util.utcnow()
@@ -82,9 +85,11 @@ class TestAnalyzeBinaryLikelihoods:
         assert 0.05 <= result["prob_given_true"] <= 0.95
         assert 0.05 <= result["prob_given_false"] <= 0.95
 
-    def test_analyze_binary_likelihoods_no_active_states(self, test_db):
+    def test_analyze_binary_likelihoods_no_active_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test binary likelihood analysis without active states."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "light.test_light"
 
@@ -98,9 +103,11 @@ class TestAnalyzeBinaryLikelihoods:
 
         assert result is None
 
-    def test_analyze_binary_likelihoods_no_occupied_intervals(self, test_db):
+    def test_analyze_binary_likelihoods_no_occupied_intervals(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test binary likelihood analysis with no occupied intervals."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "light.test_light"
         now = dt_util.utcnow()
@@ -137,9 +144,11 @@ class TestAnalyzeBinaryLikelihoods:
         assert result["prob_given_false"] is None
         assert result["analysis_error"] == "no_occupied_intervals"
 
-    def test_analyze_binary_likelihoods_no_sensor_data(self, test_db):
+    def test_analyze_binary_likelihoods_no_sensor_data(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test binary likelihood analysis with no sensor intervals."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "light.test_light"
         now = dt_util.utcnow()
