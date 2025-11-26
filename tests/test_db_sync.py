@@ -107,7 +107,7 @@ class TestSyncStates:
         db.save_area_data(area_name)
 
         # Create entity first so sync can process it
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion",
                 entry_id=db.coordinator.entry_id,
@@ -251,7 +251,7 @@ class TestSyncStates:
         db.save_area_data(area_name)
 
         # Create entity first
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion",
                 entry_id=db.coordinator.entry_id,
@@ -377,7 +377,7 @@ class TestIntervalLookup:
 
         now = dt_util.utcnow()
         interval_defs = []
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             for idx in range(2):
                 start = now + timedelta(minutes=idx)
                 end = start + timedelta(minutes=5)

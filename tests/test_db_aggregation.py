@@ -29,7 +29,7 @@ class TestAggregateRawToDaily:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -39,7 +39,7 @@ class TestAggregateRawToDaily:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             for i in range(5):
                 interval = db.Intervals(
                     entry_id=db.coordinator.entry_id,
@@ -89,7 +89,7 @@ class TestAggregateDailyToWeekly:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -99,7 +99,7 @@ class TestAggregateDailyToWeekly:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             for i in range(7):
                 aggregate = db.IntervalAggregates(
                     entry_id=db.coordinator.entry_id,
@@ -146,7 +146,7 @@ class TestAggregateWeeklyToMonthly:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -156,7 +156,7 @@ class TestAggregateWeeklyToMonthly:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Create weekly aggregates spanning at least one full month (4-5 weeks)
             for i in range(5):  # 5 weeks to ensure we span a full month
                 week_start = month_start + timedelta(weeks=i)
@@ -202,7 +202,7 @@ class TestRunIntervalAggregation:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -212,7 +212,7 @@ class TestRunIntervalAggregation:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             interval = db.Intervals(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -244,7 +244,7 @@ class TestPruneOldAggregates:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -254,7 +254,7 @@ class TestPruneOldAggregates:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             aggregate = db.IntervalAggregates(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -300,7 +300,7 @@ class TestPruneOldNumericSamples:
         # Ensure area exists first (foreign key requirement)
         db.save_area_data(area_name)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Create entity first
             entity = db.Entities(
                 entity_id="sensor.temperature",

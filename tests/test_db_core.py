@@ -1,17 +1,14 @@
-"""Tests for AreaOccupancyDB core functionality - initialization, session management, locks, delegation."""
+"""Tests for AreaOccupancyDB core functionality - initialization, session management, delegation."""
 # ruff: noqa: SLF001
 
-from contextlib import contextmanager
 from typing import Any
 from unittest.mock import patch
 
-from filelock import FileLock, Timeout
 import pytest
 from sqlalchemy import create_engine, text
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import AreaOccupancyDB
-from homeassistant.exceptions import HomeAssistantError
 
 
 class TestAreaOccupancyDBInitialization:
@@ -28,7 +25,6 @@ class TestAreaOccupancyDBInitialization:
         assert db._session_maker is not None
         assert db.storage_path is not None
         assert db.db_path is not None
-        assert db._lock_path is not None
 
     def test_initialization_with_none_config_entry(self, coordinator):
         """Test initialization fails when config_entry is None."""
@@ -121,77 +117,6 @@ class TestSessionManagement:
         # that a new session is created each time
         with db.get_session() as session2:
             assert id(session2) != session_id
-
-    def test_get_locked_session_with_lock_path(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test get_locked_session when lock path exists."""
-        db = coordinator.db
-        assert db._lock_path is not None
-
-        with db.get_locked_session() as session:
-            assert session is not None
-            # Session should be usable
-            result = session.execute(text("SELECT 1"))
-            assert result.scalar() == 1
-
-    def test_get_locked_session_without_lock_path(
-        self, coordinator: AreaOccupancyCoordinator, tmp_path
-    ):
-        """Test get_locked_session falls back to regular session when no lock path."""
-
-        db = coordinator.db
-        db._lock_path = None
-
-        # Should fall back to regular session
-        with db.get_locked_session() as session:
-            assert session is not None
-
-    def test_get_locked_session_timeout(
-        self, coordinator: AreaOccupancyCoordinator, tmp_path
-    ):
-        """Test get_locked_session raises error on lock timeout."""
-        db = coordinator.db
-        db._lock_path = tmp_path / "test.lock"
-
-        # Create a lock file that's already locked
-        lock_file = db._lock_path
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # Create a file lock that will hold the lock
-
-        existing_lock = FileLock(lock_file, timeout=0.1)
-        existing_lock.acquire()
-
-        try:
-            # Try to get a locked session with short timeout
-            with (
-                pytest.raises(HomeAssistantError, match="Database is busy"),
-                db.get_locked_session(timeout=0.1),
-            ):
-                pass
-        finally:
-            existing_lock.release()
-
-    def test_get_locked_session_handles_timeout_exception(
-        self, coordinator: AreaOccupancyCoordinator, monkeypatch
-    ):
-        """Test that get_locked_session properly handles Timeout exception."""
-        db = coordinator.db
-
-        @contextmanager
-        def mock_filelock(*_args, **_kwargs):
-            raise Timeout("Lock timeout")
-
-        monkeypatch.setattr(
-            "custom_components.area_occupancy.db.core.FileLock", mock_filelock
-        )
-
-        with (
-            pytest.raises(HomeAssistantError, match="Database is busy"),
-            db.get_locked_session(timeout=1),
-        ):
-            pass
 
 
 class TestTableProperties:
@@ -426,25 +351,5 @@ class TestErrorHandling:
         with (
             pytest.raises(RuntimeError, match="Session creation failed"),
             db.get_session(),
-        ):
-            pass
-
-    def test_get_locked_session_handles_lock_errors(
-        self, coordinator: AreaOccupancyCoordinator, monkeypatch
-    ):
-        """Test that get_locked_session handles lock errors gracefully."""
-        db = coordinator.db
-
-        @contextmanager
-        def mock_filelock(*_args, **_kwargs):
-            raise Timeout("Lock timeout")
-
-        monkeypatch.setattr(
-            "custom_components.area_occupancy.db.core.FileLock", mock_filelock
-        )
-
-        with (
-            pytest.raises(HomeAssistantError, match="Database is busy"),
-            db.get_locked_session(timeout=1),
         ):
             pass

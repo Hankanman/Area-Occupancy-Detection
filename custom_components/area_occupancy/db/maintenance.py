@@ -601,8 +601,8 @@ def set_last_prune_time(
                     db.Metadata(key="last_prune_time", value=timestamp.isoformat())
                 )
         else:
-            # Fallback to new locked session if not provided
-            with db.get_locked_session() as new_session:
+            # Fallback to new session if not provided
+            with db.get_session() as new_session:
                 existing = (
                     new_session.query(db.Metadata)
                     .filter_by(key="last_prune_time")

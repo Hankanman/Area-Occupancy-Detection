@@ -21,7 +21,7 @@ from ..const import (
     NUMERIC_CORRELATION_HISTORY_COUNT,
 )
 from ..data.entity_type import InputType
-from ..utils import clamp_probability
+from ..utils import clamp_probability, ensure_timezone_aware
 from .utils import (
     get_occupied_intervals_for_analysis,
     is_timestamp_occupied,
@@ -265,10 +265,12 @@ def analyze_binary_likelihoods(
                 return base_result
 
             # Calculate total occupied and unoccupied durations
+            # occupied_intervals are already timezone-aware UTC from get_occupied_intervals_for_analysis
             total_seconds_occupied = 0.0
             for occ_start, occ_end in occupied_intervals:
-                occ_start_utc = dt_util.as_utc(occ_start)
-                occ_end_utc = dt_util.as_utc(occ_end)
+                # Intervals are already timezone-aware UTC, but ensure they are for safety
+                occ_start_utc = ensure_timezone_aware(occ_start)
+                occ_end_utc = ensure_timezone_aware(occ_end)
                 # Clamp to analysis period
                 clamped_start = max(occ_start_utc, period_start_utc)
                 clamped_end = min(occ_end_utc, period_end_utc)
@@ -276,7 +278,6 @@ def analyze_binary_likelihoods(
                     total_seconds_occupied += (
                         clamped_end - clamped_start
                     ).total_seconds()
-
             total_period_seconds = (period_end_utc - period_start_utc).total_seconds()
             total_seconds_unoccupied = total_period_seconds - total_seconds_occupied
 
@@ -328,8 +329,10 @@ def analyze_binary_likelihoods(
             seconds_active_and_unoccupied = 0.0
 
             for interval in binary_intervals:
-                interval_start = dt_util.as_utc(interval.start_time)
-                interval_end = dt_util.as_utc(interval.end_time)
+                # SQLite returns naive datetimes, but they're stored as UTC
+                # Use ensure_timezone_aware to assume UTC for naive datetimes
+                interval_start = ensure_timezone_aware(interval.start_time)
+                interval_end = ensure_timezone_aware(interval.end_time)
                 # Clamp to analysis period
                 clamped_start = max(interval_start, period_start_utc)
                 clamped_end = min(interval_end, period_end_utc)
@@ -346,10 +349,12 @@ def analyze_binary_likelihoods(
                     continue
 
                 # Calculate overlap with occupied periods
+                # occupied_intervals are already timezone-aware UTC from get_occupied_intervals_for_analysis
                 occupied_overlap = 0.0
                 for occ_start, occ_end in occupied_intervals:
-                    occ_start_utc = dt_util.as_utc(occ_start)
-                    occ_end_utc = dt_util.as_utc(occ_end)
+                    # Intervals are already timezone-aware UTC, but ensure they are for safety
+                    occ_start_utc = ensure_timezone_aware(occ_start)
+                    occ_end_utc = ensure_timezone_aware(occ_end)
                     # Calculate overlap
                     overlap_start = max(clamped_start, occ_start_utc)
                     overlap_end = min(clamped_end, occ_end_utc)
@@ -520,88 +525,97 @@ def analyze_correlation(  # noqa: C901
             intervals_overlapping_occupied = 0
             intervals_overlapping_unoccupied = 0
 
-            # For binary sensors, use interval overlap instead of midpoint sampling
+            # For binary sensors, use time-based chunking to avoid duplicate samples
             if is_binary:
-                # Re-query intervals to calculate overlap-based samples
-                with db.get_session() as overlap_session:
-                    binary_intervals = (
-                        overlap_session.query(db.Intervals)
-                        .filter(
-                            db.Intervals.entry_id == db.coordinator.entry_id,
-                            db.Intervals.area_name == area_name,
-                            db.Intervals.entity_id == entity_id,
-                            db.Intervals.start_time < period_end_utc,
-                            db.Intervals.end_time > period_start_utc,
-                        )
-                        .all()
+                # Query intervals to calculate time-based chunked samples
+                binary_intervals = (
+                    session.query(db.Intervals)
+                    .filter(
+                        db.Intervals.entry_id == db.coordinator.entry_id,
+                        db.Intervals.area_name == area_name,
+                        db.Intervals.entity_id == entity_id,
+                        db.Intervals.start_time < period_end_utc,
+                        db.Intervals.end_time > period_start_utc,
                     )
+                    .all()
+                )
 
-                    sample_values = []
-                    occupancy_flags = []
-                    samples_in_occupied = 0
-                    samples_in_unoccupied = 0
-                    active_samples_in_occupied = 0
-                    active_samples_in_unoccupied = 0
-                    inactive_samples_in_occupied = 0
-                    inactive_samples_in_unoccupied = 0
+                sample_values = []
+                occupancy_flags = []
+                samples_in_occupied = 0
+                samples_in_unoccupied = 0
+                active_samples_in_occupied = 0
+                active_samples_in_unoccupied = 0
+                inactive_samples_in_occupied = 0
+                inactive_samples_in_unoccupied = 0
 
-                    for interval in binary_intervals:
-                        interval_start = dt_util.as_utc(interval.start_time)
-                        interval_end = dt_util.as_utc(interval.end_time)
-                        # Clamp to analysis period
-                        clamped_start = max(interval_start, period_start_utc)
-                        clamped_end = min(interval_end, period_end_utc)
-                        interval_duration = (
-                            clamped_end - clamped_start
-                        ).total_seconds()
+                # Time chunk granularity: 60 seconds (1 minute)
+                # This ensures proper weighting and avoids duplicate samples
+                chunk_duration_seconds = 60.0
 
-                        if interval_duration <= 0:
-                            continue
+                for interval in binary_intervals:
+                    interval_start = dt_util.as_utc(interval.start_time)
+                    interval_end = dt_util.as_utc(interval.end_time)
+                    # Clamp to analysis period
+                    clamped_start = max(interval_start, period_start_utc)
+                    clamped_end = min(interval_end, period_end_utc)
+                    interval_duration = (clamped_end - clamped_start).total_seconds()
 
-                        # Calculate overlap with occupied periods
-                        occupied_overlap = 0.0
-                        for occ_start, occ_end in occupied_intervals:
-                            occ_start_utc = dt_util.as_utc(occ_start)
-                            occ_end_utc = dt_util.as_utc(occ_end)
-                            # Calculate overlap
-                            overlap_start = max(clamped_start, occ_start_utc)
-                            overlap_end = min(clamped_end, occ_end_utc)
-                            if overlap_start < overlap_end:
-                                occupied_overlap += (
-                                    overlap_end - overlap_start
-                                ).total_seconds()
+                    if interval_duration <= 0:
+                        continue
 
-                        unoccupied_overlap = interval_duration - occupied_overlap
+                    # Determine value based on state
+                    is_active = interval.state in active_states
+                    value = 1.0 if is_active else 0.0
 
-                        # Track interval overlap for diagnostics
-                        if occupied_overlap > 0:
-                            intervals_overlapping_occupied += 1
-                        if unoccupied_overlap > 0:
-                            intervals_overlapping_unoccupied += 1
+                    # Subdivide interval into time chunks
+                    # Each chunk is assigned to either occupied or unoccupied
+                    current_time = clamped_start
+                    chunks_in_occupied = 0
+                    chunks_in_unoccupied = 0
 
-                        # Determine value based on state
-                        is_active = interval.state in active_states
-                        value = 1.0 if is_active else 0.0
+                    while current_time < clamped_end:
+                        # Calculate chunk end (don't exceed interval end)
+                        chunk_end = min(
+                            current_time + timedelta(seconds=chunk_duration_seconds),
+                            clamped_end,
+                        )
 
-                        # Create samples based on overlap duration
-                        # Split interval into occupied and unoccupied portions
-                        if occupied_overlap > 0:
-                            sample_values.append(value)
-                            occupancy_flags.append(1.0)
+                        # Use chunk midpoint to determine occupancy
+                        chunk_midpoint = current_time + (chunk_end - current_time) / 2
+
+                        # Check if chunk midpoint falls within any occupied interval
+                        is_occupied = is_timestamp_occupied(
+                            chunk_midpoint, occupied_intervals
+                        )
+
+                        # Create one sample per chunk with unambiguous occupancy flag
+                        sample_values.append(value)
+                        occupancy_flags.append(1.0 if is_occupied else 0.0)
+
+                        if is_occupied:
+                            samples_in_occupied += 1
+                            chunks_in_occupied += 1
                             if value == 1.0:
                                 active_samples_in_occupied += 1
                             else:
                                 inactive_samples_in_occupied += 1
-                            samples_in_occupied += 1
-
-                        if unoccupied_overlap > 0:
-                            sample_values.append(value)
-                            occupancy_flags.append(0.0)
+                        else:
+                            samples_in_unoccupied += 1
+                            chunks_in_unoccupied += 1
                             if value == 1.0:
                                 active_samples_in_unoccupied += 1
                             else:
                                 inactive_samples_in_unoccupied += 1
-                            samples_in_unoccupied += 1
+
+                        # Move to next chunk
+                        current_time = chunk_end
+
+                    # Track interval overlap for diagnostics
+                    if chunks_in_occupied > 0:
+                        intervals_overlapping_occupied += 1
+                    if chunks_in_unoccupied > 0:
+                        intervals_overlapping_unoccupied += 1
             else:
                 # For numeric sensors, use existing midpoint-based approach
                 sample_values: list[float] = []
@@ -832,7 +846,7 @@ def save_correlation_result(
 
     session = None
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Check if correlation already exists for this period
             existing = (
                 session.query(db.NumericCorrelations)

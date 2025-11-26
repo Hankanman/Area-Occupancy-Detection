@@ -10,12 +10,10 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from filelock import FileLock, Timeout
 import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker as create_sessionmaker
 
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import (
@@ -173,9 +171,6 @@ class AreaOccupancyDB:
             Path(self.hass.config.config_dir) / ".storage" if self.hass else None
         )
         self.db_path = self.storage_path / DB_NAME if self.storage_path else None
-        self._lock_path = (
-            self.storage_path / (DB_NAME + ".lock") if self.storage_path else None
-        )
 
         if self.storage_path:
             self.storage_path.mkdir(exist_ok=True)
@@ -350,39 +345,6 @@ class AreaOccupancyDB:
             raise
         finally:
             session.close()
-
-    @contextmanager
-    def get_locked_session(self, timeout: int = 30) -> Any:
-        """Get a database session with file locking to prevent concurrent access.
-
-        Args:
-            timeout: Maximum time to wait for lock acquisition in seconds
-
-        Yields:
-            Session: A SQLAlchemy session protected by file lock
-
-        Example:
-            with self.get_locked_session() as session:
-                result = session.query(self.Areas).first()
-
-        """
-        if not self._lock_path:
-            # Fallback to regular session if no lock path available
-            with self.get_session() as session:
-                yield session
-            return
-
-        try:
-            with (
-                FileLock(self._lock_path, timeout=timeout),
-                self.get_session() as session,
-            ):
-                yield session
-        except Timeout as e:
-            _LOGGER.error("Database lock timeout after %d seconds: %s", timeout, e)
-            raise HomeAssistantError(
-                f"Database is busy, please try again later: {e}"
-            ) from e
 
     @property
     def areas(self) -> Any:

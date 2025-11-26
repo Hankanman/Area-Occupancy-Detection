@@ -21,7 +21,7 @@ class TestSaveAreaRelationship:
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area2 = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name="Kitchen",
@@ -55,7 +55,7 @@ class TestSaveAreaRelationship:
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area2 = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name="Kitchen",
@@ -96,7 +96,7 @@ class TestGetAdjacentAreas:
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area and relationship
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area2 = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name="Kitchen",
@@ -133,7 +133,7 @@ class TestGetInfluenceWeight:
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area and relationship
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area2 = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name="Kitchen",
@@ -170,7 +170,7 @@ class TestCalculateAdjacentInfluence:
         area_name = db.coordinator.get_area_names()[0]
 
         # Create second area and relationship
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area2 = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name="Kitchen",
@@ -209,7 +209,7 @@ class TestSyncAdjacentAreasFromConfig:
         db.save_area_data(area_name)
 
         # Create adjacent areas and update area record with adjacent_areas in database
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Create adjacent areas
             for adj_name in ["Kitchen", "Bedroom"]:
                 adj_area = db.Areas(
@@ -245,7 +245,7 @@ class TestSyncAdjacentAreasFromConfig:
         area_name = db.coordinator.get_area_names()[0]
 
         # Create old area and relationship
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             old_area = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name="Old Area",
@@ -272,7 +272,7 @@ class TestSyncAdjacentAreasFromConfig:
         # Update area record in database to remove old area
         # Note: sync_adjacent_areas_from_config doesn't remove old relationships,
         # so we need to manually remove them or the test should verify they remain
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
             if area_record:
                 area_record.adjacent_areas = []  # Remove all adjacent areas
