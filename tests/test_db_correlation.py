@@ -1,6 +1,7 @@
 """Tests for database correlation analysis functions."""
 
 from datetime import datetime, timedelta
+import math
 
 import pytest
 
@@ -1064,6 +1065,116 @@ class TestGaussianLikelihood:
         assert mock_numeric_entity.learned_active_range is not None
         assert mock_numeric_entity.learned_active_range[1] == float("inf")
         # Should NOT update stored prob_given_true/false (no fallback)
+
+    def test_get_likelihoods_nan_mean_occupied(self, mock_numeric_entity):
+        """Test get_likelihoods with NaN mean_occupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": float("nan"),
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_nan_mean_unoccupied(self, mock_numeric_entity):
+        """Test get_likelihoods with NaN mean_unoccupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": float("nan"),
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_inf_mean_occupied(self, mock_numeric_entity):
+        """Test get_likelihoods with inf mean_occupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": float("inf"),
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_inf_mean_unoccupied(self, mock_numeric_entity):
+        """Test get_likelihoods with inf mean_unoccupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": float("inf"),
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_nan_state_value(self, mock_numeric_entity):
+        """Test get_likelihoods with NaN state value uses mean of means."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        # Set state to NaN
+        mock_numeric_entity.state_provider = lambda x: float("nan")
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should use mean of means (21.0) and calculate valid densities
+        assert not math.isnan(p_t)
+        assert not math.isnan(p_f)
+        assert not math.isinf(p_t)
+        assert not math.isinf(p_f)
+        assert p_t > 0.0
+        assert p_f > 0.0
+
+    def test_get_likelihoods_inf_state_value(self, mock_numeric_entity):
+        """Test get_likelihoods with inf state value uses mean of means."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        # Set state to inf
+        mock_numeric_entity.state_provider = lambda x: float("inf")
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should use mean of means (21.0) and calculate valid densities
+        assert not math.isnan(p_t)
+        assert not math.isnan(p_f)
+        assert not math.isinf(p_t)
+        assert not math.isinf(p_f)
+        assert p_t > 0.0
+        assert p_f > 0.0
 
     def test_get_likelihoods_motion_sensor_uses_configured_values(self):
         """Test that motion sensors always use configured prob_given_true/false."""

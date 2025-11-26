@@ -891,3 +891,145 @@ class TestBayesianProbability:
         assert 0.0 <= result <= 1.0
         # Densities should be > 0 (clamped to 1e-9 minimum later)
         assert result > 0.0
+
+    def test_bayesian_nan_likelihoods_filtered(self) -> None:
+        """Test that entities with NaN likelihoods are filtered out."""
+
+        # Entity with NaN prob_given_true
+        entity1 = Mock()
+        entity1.evidence = True
+        entity1.decay.decay_factor = 1.0
+        entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0
+        entity1.prob_given_true = float("nan")
+        entity1.prob_given_false = 0.1
+        entity1.weight = 1.0
+        entity1.is_continuous_likelihood = False
+
+        # Entity with valid likelihoods
+        entity2 = Mock()
+        entity2.evidence = True
+        entity2.decay.decay_factor = 1.0
+        entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0
+        entity2.prob_given_true = 0.8
+        entity2.prob_given_false = 0.1
+        entity2.weight = 1.0
+        entity2.is_continuous_likelihood = False
+
+        entities = {"entity1": entity1, "entity2": entity2}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should only use entity2 (entity1 filtered out)
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        # Result should be based on entity2 only
+        assert result > 0.5  # entity2 suggests occupied
+
+    def test_bayesian_inf_likelihoods_filtered(self) -> None:
+        """Test that entities with inf likelihoods are filtered out."""
+
+        # Entity with inf prob_given_false
+        entity1 = Mock()
+        entity1.evidence = True
+        entity1.decay.decay_factor = 1.0
+        entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0
+        entity1.prob_given_true = 0.8
+        entity1.prob_given_false = float("inf")
+        entity1.weight = 1.0
+        entity1.is_continuous_likelihood = False
+
+        # Entity with valid likelihoods
+        entity2 = Mock()
+        entity2.evidence = True
+        entity2.decay.decay_factor = 1.0
+        entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0
+        entity2.prob_given_true = 0.8
+        entity2.prob_given_false = 0.1
+        entity2.weight = 1.0
+        entity2.is_continuous_likelihood = False
+
+        entities = {"entity1": entity1, "entity2": entity2}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should only use entity2 (entity1 filtered out)
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        # Result should be based on entity2 only
+        assert result > 0.5  # entity2 suggests occupied
+
+    def test_bayesian_get_likelihoods_returns_nan(self) -> None:
+        """Test that get_likelihoods() returning NaN falls back to static values."""
+
+        entity = Mock()
+        entity.evidence = True
+        entity.decay.decay_factor = 1.0
+        entity.decay.is_decaying = False
+        entity.decay_factor = 1.0
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to return NaN
+        entity.get_likelihoods = Mock(return_value=(float("nan"), 0.5))
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.1
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should fallback to static values and produce valid result
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        entity.get_likelihoods.assert_called_once()
+
+    def test_bayesian_get_likelihoods_returns_inf(self) -> None:
+        """Test that get_likelihoods() returning inf falls back to static values."""
+
+        entity = Mock()
+        entity.evidence = True
+        entity.decay.decay_factor = 1.0
+        entity.decay.is_decaying = False
+        entity.decay_factor = 1.0
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to return inf
+        entity.get_likelihoods = Mock(return_value=(0.5, float("inf")))
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.1
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should fallback to static values and produce valid result
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        entity.get_likelihoods.assert_called_once()
+
+    def test_clamp_probability_nan(self) -> None:
+        """Test clamp_probability handles NaN values."""
+
+        result = clamp_probability(float("nan"))
+        assert not math.isnan(result)
+        assert not math.isinf(result)
+        assert result == 0.99  # MAX_PROBABILITY (matching existing behavior)
+
+    def test_clamp_probability_inf(self) -> None:
+        """Test clamp_probability handles inf values."""
+
+        result = clamp_probability(float("inf"))
+        assert not math.isnan(result)
+        assert not math.isinf(result)
+        assert result == 0.99  # MAX_PROBABILITY (positive infinity clamped to max)
+
+    def test_clamp_probability_neg_inf(self) -> None:
+        """Test clamp_probability handles negative inf values."""
+
+        result = clamp_probability(float("-inf"))
+        assert not math.isnan(result)
+        assert not math.isinf(result)
+        assert result == 0.01  # MIN_PROBABILITY
