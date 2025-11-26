@@ -55,7 +55,23 @@ def _chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
 
 
 def _normalize_datetime(value: datetime) -> datetime:
-    """Strip timezone info for consistent comparison."""
+    """Strip timezone info for consistent database key comparison.
+
+    This function is used specifically for database key lookups where we need to
+    match keys regardless of timezone representation. SQLite may return naive or
+    timezone-aware datetimes depending on how they were stored, and Home Assistant
+    states may have timezone-aware datetimes. By normalizing to naive datetimes,
+    we ensure consistent key matching for duplicate detection.
+
+    Note: This is ONLY for database key comparisons, not for timezone-aware
+    datetime operations elsewhere in the codebase.
+
+    Args:
+        value: Datetime to normalize (may be naive or timezone-aware)
+
+    Returns:
+        Naive datetime (timezone info stripped if present)
+    """
     if value.tzinfo is not None:
         return value.replace(tzinfo=None)
     return value

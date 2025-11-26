@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DEFAULT_LOOKBACK_DAYS
 from ..data.entity_type import InputType
 from ..db.queries import is_occupied_intervals_cache_valid
-from ..utils import format_area_names
+from ..utils import ensure_timezone_aware, format_area_names
 from .prior import Prior
 
 if TYPE_CHECKING:
@@ -93,11 +93,12 @@ class PriorAnalyzer:
             # 2. Calculate global prior using actual data period
             # Determine actual data period from intervals (not fixed lookback)
             # Ensure all datetime objects are timezone-aware UTC
+            # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
             first_interval_start = min(
-                dt_util.as_utc(start) for start, end in occupied_intervals
+                ensure_timezone_aware(start) for start, end in occupied_intervals
             )
             last_interval_end = max(
-                dt_util.as_utc(end) for start, end in occupied_intervals
+                ensure_timezone_aware(end) for start, end in occupied_intervals
             )
             now = dt_util.utcnow()
 
@@ -130,8 +131,11 @@ class PriorAnalyzer:
                 return
 
             # Calculate occupied duration (ensure timezone-aware)
+            # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
             occupied_duration = sum(
-                (dt_util.as_utc(end) - dt_util.as_utc(start)).total_seconds()
+                (
+                    ensure_timezone_aware(end) - ensure_timezone_aware(start)
+                ).total_seconds()
                 for start, end in occupied_intervals
             )
 

@@ -10,7 +10,6 @@ import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
 
 from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
 from ..utils import ensure_timezone_aware
@@ -208,8 +207,9 @@ def get_occupied_intervals_for_analysis(
     """
     try:
         # Ensure timezone-aware UTC for query
-        start_time_utc = dt_util.as_utc(start_time)
-        end_time_utc = dt_util.as_utc(end_time)
+        # Use ensure_timezone_aware to handle both naive and aware inputs consistently
+        start_time_utc = ensure_timezone_aware(start_time)
+        end_time_utc = ensure_timezone_aware(end_time)
 
         with db.get_session() as session:
             # Debug: Check total intervals in cache for this area
@@ -283,9 +283,10 @@ def is_timestamp_occupied(
         True if timestamp is within an interval, False otherwise
     """
     # Ensure timestamp is timezone-aware UTC for comparison
-    timestamp_utc = dt_util.as_utc(timestamp)
+    # Use ensure_timezone_aware to handle both naive and aware inputs consistently
+    timestamp_utc = ensure_timezone_aware(timestamp)
     return any(
-        dt_util.as_utc(start) <= timestamp_utc < dt_util.as_utc(end)
+        ensure_timezone_aware(start) <= timestamp_utc < ensure_timezone_aware(end)
         for start, end in occupied_intervals
     )
 

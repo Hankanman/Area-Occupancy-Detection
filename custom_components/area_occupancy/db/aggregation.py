@@ -48,7 +48,6 @@ def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) ->
     """
     _LOGGER.debug("Starting raw to daily aggregation for area: %s", area_name)
 
-    session = None
     try:
         with db.get_session() as session:
             # Calculate cutoff date (30 days ago)
@@ -183,8 +182,6 @@ def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) ->
         OSError,
     ) as e:
         _LOGGER.error("Error aggregating raw to daily: %s", e)
-        if session is not None:
-            session.rollback()
         raise
 
 
@@ -200,7 +197,6 @@ def aggregate_daily_to_weekly(db: AreaOccupancyDB, area_name: str | None = None)
     """
     _LOGGER.debug("Starting daily to weekly aggregation for area: %s", area_name)
 
-    session = None
     try:
         with db.get_session() as session:
             # Calculate cutoff date (90 days ago)
@@ -337,8 +333,6 @@ def aggregate_daily_to_weekly(db: AreaOccupancyDB, area_name: str | None = None)
         OSError,
     ) as e:
         _LOGGER.error("Error aggregating daily to weekly: %s", e)
-        if session is not None:
-            session.rollback()
         raise
 
 
@@ -356,7 +350,6 @@ def aggregate_weekly_to_monthly(
     """
     _LOGGER.debug("Starting weekly to monthly aggregation for area: %s", area_name)
 
-    session = None
     try:
         with db.get_session() as session:
             # Calculate cutoff date (365 days ago)
@@ -501,8 +494,6 @@ def aggregate_weekly_to_monthly(
         OSError,
     ) as e:
         _LOGGER.error("Error aggregating weekly to monthly: %s", e)
-        if session is not None:
-            session.rollback()
         raise
 
 
@@ -579,7 +570,6 @@ def prune_old_aggregates(
         "monthly": 0,
     }
 
-    session = None
     try:
         with db.get_session() as session:
             now = dt_util.utcnow()
@@ -639,8 +629,6 @@ def prune_old_aggregates(
         OSError,
     ) as e:
         _LOGGER.error("Error pruning old aggregates: %s", e)
-        if session is not None:
-            session.rollback()
         raise
 
     return results
@@ -658,7 +646,6 @@ def prune_old_numeric_samples(db: AreaOccupancyDB, area_name: str | None = None)
     """
     _LOGGER.debug("Pruning old numeric samples for area: %s", area_name or "all areas")
 
-    session = None
     try:
         with db.get_session() as session:
             cutoff_date = dt_util.utcnow() - timedelta(
@@ -691,6 +678,4 @@ def prune_old_numeric_samples(db: AreaOccupancyDB, area_name: str | None = None)
         OSError,
     ) as e:
         _LOGGER.error("Error pruning old numeric samples: %s", e)
-        if session is not None:
-            session.rollback()
         raise
