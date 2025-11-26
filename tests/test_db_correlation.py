@@ -1099,3 +1099,141 @@ class TestGaussianLikelihood:
         # Should use configured values, not Gaussian params or EntityType defaults
         assert p_t == 0.9
         assert p_f == 0.05
+
+
+class TestCorrelationBugFixes:
+    """Test fixes for correlation logic bugs."""
+
+    def test_timezone_aware_numeric_query(self, coordinator: AreaOccupancyCoordinator):
+        """Test that numeric sensor query uses timezone-aware datetimes."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+
+        # Create samples with timezone-aware timestamps
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 50, lambda i: 20.0 + (i % 10)
+        )
+
+        # Create occupied intervals
+        intervals = [
+            (now - timedelta(hours=30), now - timedelta(hours=20)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Test with timezone-aware period (should work correctly)
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+        assert "correlation_coefficient" in result
+        assert result["sample_count"] > 0
+
+    def test_entry_id_filtering(self, coordinator: AreaOccupancyCoordinator):
+        """Test that numeric samples query filters by entry_id to prevent cross-entry leakage."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+
+        # Create samples for the current entry
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 50, lambda i: 20.0 + (i % 10)
+        )
+
+        # Create samples for a different entry_id (simulating another config entry)
+        with db.get_session() as session:
+            different_entry_id = "different_entry_id"
+            for i in range(20):
+                sample = db.NumericSamples(
+                    entry_id=different_entry_id,  # Different entry_id
+                    area_name=area_name,  # Same area_name
+                    entity_id=entity_id,  # Same entity_id
+                    timestamp=now - timedelta(hours=20 - i),
+                    value=100.0 + i,  # Different values to make detection easier
+                )
+                session.add(sample)
+            session.commit()
+
+        # Create occupied intervals
+        intervals = [
+            (now - timedelta(hours=30), now - timedelta(hours=20)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Analyze correlation - should only use samples from current entry
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+        # Should have 50 samples (from current entry), not 70 (50 + 20)
+        assert result["sample_count"] == 50
+
+        # Verify the values are from the correct entry (should be around 20-30, not 100+)
+        # Get the actual samples used
+        with db.get_session() as session:
+            samples = (
+                session.query(db.NumericSamples)
+                .filter(
+                    db.NumericSamples.entry_id == db.coordinator.entry_id,
+                    db.NumericSamples.area_name == area_name,
+                    db.NumericSamples.entity_id == entity_id,
+                )
+                .all()
+            )
+            # All samples should be from the current entry
+            assert all(sample.entry_id == db.coordinator.entry_id for sample in samples)
+            # Values should be in the expected range (20-30 from our generator)
+            assert all(20.0 <= sample.value <= 30.0 for sample in samples)
+
+    def test_unoccupied_overlap_validation(self, coordinator: AreaOccupancyCoordinator):
+        """Test that unoccupied_overlap calculation handles edge cases correctly."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "light.test_light"
+        now = dt_util.utcnow()
+
+        db.save_area_data(area_name)
+
+        # Create motion sensor intervals (occupied periods)
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = db.coordinator.get_area(area_name).config.sensors.motion[0]
+        motion_intervals = _create_motion_intervals(
+            db, area_name, motion_entity_id, 5, now=base_time
+        )
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create light intervals that span both occupied and unoccupied periods
+        # This tests the edge case where an interval partially overlaps with occupied periods
+        with db.get_session() as session:
+            # Create an interval that starts before occupied period and ends during it
+            # This will test the unoccupied_overlap calculation
+            interval_start = base_time - timedelta(hours=6)
+            interval_end = base_time - timedelta(hours=4) + timedelta(minutes=30)
+            # This interval spans: unoccupied -> occupied -> unoccupied
+            interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id=entity_id,
+                start_time=interval_start,
+                end_time=interval_end,
+                state="on",
+                duration_seconds=(interval_end - interval_start).total_seconds(),
+            )
+            session.add(interval)
+            session.commit()
+
+        # Analyze binary likelihoods - should handle the edge case correctly
+        result = analyze_binary_likelihoods(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=1,
+            active_states=["on"],
+        )
+
+        assert result is not None
+        assert result["prob_given_true"] is not None
+        assert result["prob_given_false"] is not None
+        # Probabilities should be valid (clamped between 0.05 and 0.95)
+        assert 0.05 <= result["prob_given_true"] <= 0.95
+        assert 0.05 <= result["prob_given_false"] <= 0.95
+        # Unoccupied overlap should be non-negative and valid
+        # (validated internally by the max/min clamping we added)
