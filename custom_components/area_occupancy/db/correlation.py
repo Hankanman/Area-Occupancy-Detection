@@ -366,7 +366,12 @@ def analyze_binary_likelihoods(
                             overlap_end - overlap_start
                         ).total_seconds()
 
-                unoccupied_overlap = interval_duration - occupied_overlap
+                # Calculate unoccupied overlap: remainder of interval duration after occupied overlap
+                # The entire clamped interval duration is either occupied or unoccupied (no gaps)
+                # Clamp to ensure non-negative and not exceeding interval_duration (defensive check)
+                unoccupied_overlap = max(
+                    0.0, min(interval_duration - occupied_overlap, interval_duration)
+                )
 
                 # Accumulate active durations
                 seconds_active_and_occupied += occupied_overlap
@@ -507,10 +512,11 @@ def analyze_correlation(  # noqa: C901
                 samples = (
                     session.query(db.NumericSamples)
                     .filter(
+                        db.NumericSamples.entry_id == db.coordinator.entry_id,
                         db.NumericSamples.area_name == area_name,
                         db.NumericSamples.entity_id == entity_id,
-                        db.NumericSamples.timestamp >= period_start,
-                        db.NumericSamples.timestamp <= period_end,
+                        db.NumericSamples.timestamp >= period_start_utc,
+                        db.NumericSamples.timestamp <= period_end_utc,
                     )
                     .order_by(db.NumericSamples.timestamp)
                     .all()
@@ -850,7 +856,6 @@ def save_correlation_result(
         correlation_data["area_name"],
     )
 
-    session = None
     try:
         with db.get_session() as session:
             # Check if correlation already exists for this period
