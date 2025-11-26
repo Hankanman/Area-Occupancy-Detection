@@ -36,13 +36,6 @@ def _create_service_call(**kwargs) -> Mock:
     return mock_call
 
 
-def _create_missing_entry_service_call() -> Mock:
-    """Create a service call with missing entry_id (for backward compatibility tests)."""
-    mock_call = Mock(spec=ServiceCall)
-    mock_call.data = {"entry_id": None}
-    return mock_call
-
-
 class TestRunAnalysis:
     """Test _run_analysis service function."""
 
@@ -115,9 +108,10 @@ class TestRunAnalysis:
         assert entity_data["analysis_error"] is None
 
     async def test_run_analysis_missing_entry_id(self, hass: HomeAssistant) -> None:
-        """Test analysis run with missing entry_id (backward compatibility)."""
+        """Test analysis run with missing entry_id."""
         hass.data[DOMAIN] = None
-        mock_service_call = _create_missing_entry_service_call()
+        mock_service_call = Mock(spec=ServiceCall)
+        mock_service_call.data = {"entry_id": None}
 
         with pytest.raises(
             HomeAssistantError,

@@ -8,8 +8,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from filelock import FileLock
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
@@ -62,43 +60,41 @@ async def async_reset_database_if_needed(hass: HomeAssistant, version: int) -> N
             )
             return
 
-        lock_path = storage_dir / (DB_NAME + ".lock")
-        # Use FileLock to prevent concurrent deletion by other processes/threads
-        with FileLock(lock_path):
-            # Re-check existence inside lock to handle race conditions
-            if not db_path.exists():
-                _LOGGER.debug(
-                    "Database file already deleted by another process, skipping deletion"
-                )
-                return
-
-            _LOGGER.info(
-                "Config entry version %d is older than current version %d. "
-                "Deleting database file to allow recreation with new schema.",
-                version,
-                CONF_VERSION,
+        # Re-check existence to handle race conditions
+        # The asyncio.Lock (_migration_lock) already serializes access within the process
+        if not db_path.exists():
+            _LOGGER.debug(
+                "Database file already deleted by another process, skipping deletion"
             )
+            return
 
-            # Delete database file and associated WAL files
-            try:
-                db_path.unlink()
-                _LOGGER.debug("Deleted database file: %s", db_path)
-            except FileNotFoundError:
-                # Handled by exists check, but safe to catch just in case
-                pass
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.warning("Failed to delete database file %s: %s", db_path, e)
+        _LOGGER.info(
+            "Config entry version %d is older than current version %d. "
+            "Deleting database file to allow recreation with new schema.",
+            version,
+            CONF_VERSION,
+        )
 
-            # Delete WAL and shared memory files if they exist
-            wal_path = storage_dir / (DB_NAME + "-wal")
-            shm_path = storage_dir / (DB_NAME + "-shm")
-            for path in [wal_path, shm_path]:
-                if path.exists():
-                    try:
-                        path.unlink()
-                        _LOGGER.debug("Deleted database file: %s", path)
-                    except Exception as e:  # noqa: BLE001
-                        _LOGGER.debug("Failed to delete %s: %s", path, e)
+        # Delete database file and associated WAL files
+        try:
+            db_path.unlink()
+            _LOGGER.debug("Deleted database file: %s", db_path)
+        except FileNotFoundError:
+            # Handled by exists check, but safe to catch just in case
+            pass
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.warning("Failed to delete database file %s: %s", db_path, e)
+
+        # Delete WAL and shared memory files if they exist
+        wal_path = storage_dir / (DB_NAME + "-wal")
+        shm_path = storage_dir / (DB_NAME + "-shm")
+        for path in [wal_path, shm_path]:
+            if path.exists():
+                try:
+                    path.unlink()
+                    _LOGGER.debug("Deleted database file: %s", path)
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.debug("Failed to delete %s: %s", path, e)
 
     await hass.async_add_executor_job(_delete_database_file)
 
@@ -425,7 +421,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     This migration combines multiple old config entries (each representing one area)
     into a single config entry with CONF_AREAS list format.
 
-    Uses file locking to prevent concurrent migrations from creating multiple instances.
+    Uses asyncio.Lock to prevent concurrent migrations within the single process.
 
     Args:
         hass: Home Assistant instance
@@ -475,10 +471,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         if current_entry and current_entry.version >= CONF_VERSION:
             _LOGGER.debug("Entry %s already migrated, skipping", config_entry.entry_id)
             return True
-
-        # Use file lock to prevent concurrent migrations - DEPRECATED for config entry updates
-        # We now rely on asyncio.Lock within the single process to serialize access to async APIs.
-        # Calling async APIs from a thread (via FileLock executor) is unsafe and causes deadlocks.
 
         # Track entry IDs that need cleanup (set by migration function)
         cleanup_entry_ids: list[str] = []

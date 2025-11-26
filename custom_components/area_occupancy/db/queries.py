@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
-from sqlalchemy import func, union_all
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import literal
 
-from homeassistant.const import STATE_ON, STATE_PLAYING
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TIME_PRIOR
 from ..data.entity_type import InputType
+from ..utils import ensure_timezone_aware
 from .utils import apply_motion_timeout, merge_overlapping_intervals
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
             ).scalar()
             if result:
                 return result - timedelta(hours=1)
-            return dt_util.now() - timedelta(days=10)
+            return dt_util.utcnow() - timedelta(days=10)
     except (
         SQLAlchemyError,
         ValueError,
@@ -60,7 +60,7 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
             _LOGGER.debug("Intervals table doesn't exist yet, using default time")
         else:
             _LOGGER.warning("Failed to get latest interval, using default time: %s", e)
-        return dt_util.now() - timedelta(days=10)
+        return dt_util.utcnow() - timedelta(days=10)
 
 
 def get_time_prior(
@@ -114,12 +114,11 @@ def get_occupied_intervals(
     area_name: str,
     lookback_days: int,
     motion_timeout_seconds: int,
-    include_media: bool = False,
-    include_appliance: bool = False,
-    media_sensor_ids: list[str] | None = None,
-    appliance_sensor_ids: list[str] | None = None,
 ) -> list[tuple[datetime, datetime]]:
-    """Fetch occupied intervals without caching (direct query).
+    """Fetch occupied intervals from motion sensors only (direct query).
+
+    Occupied intervals are determined exclusively by motion sensors to ensure
+    consistent ground truth for prior calculations and correlation analysis.
 
     For cached version with prior-specific caching, use analysis.get_occupied_intervals_with_cache.
     """
@@ -127,8 +126,6 @@ def get_occupied_intervals(
     lookback_date = now - timedelta(days=lookback_days)
     all_intervals: list[tuple[datetime, datetime]] = []
     motion_raw: list[tuple[datetime, datetime]] = []
-    media_count = 0
-    appliance_count = 0
     extended_intervals: list[tuple[datetime, datetime]] = []
 
     try:
@@ -136,34 +133,17 @@ def get_occupied_intervals(
         with db.get_session() as session:
             base_filters = build_base_filters(db, entry_id, lookback_date, area_name)
             motion_query = build_motion_query(session, db, base_filters)
-            queries = [motion_query]
 
-            if include_media and media_sensor_ids:
-                queries.append(
-                    build_media_query(session, db, base_filters, media_sensor_ids)
-                )
-
-            if include_appliance and appliance_sensor_ids:
-                queries.append(
-                    build_appliance_query(
-                        session, db, base_filters, appliance_sensor_ids
-                    )
-                )
-
-            all_results = execute_union_queries(session, db, queries)
-            all_intervals, motion_raw, media_count, appliance_count = (
-                process_query_results(all_results)
-            )
+            all_results = execute_union_queries(session, db, [motion_query])
+            all_intervals, motion_raw = process_query_results(all_results)
 
         query_time = (dt_util.utcnow() - start_time).total_seconds()
         _LOGGER.debug(
-            "Interval query executed in %.3fs for %s (total=%d, motion=%d, media=%d, appliance=%d)",
+            "Interval query executed in %.3fs for %s (total=%d, motion=%d)",
             query_time,
             area_name,
             len(all_intervals),
             len(motion_raw),
-            media_count,
-            appliance_count,
         )
 
         if not all_intervals:
@@ -277,96 +257,32 @@ def build_motion_query(
     )
 
 
-def build_media_query(
-    session: Any,
-    db: AreaOccupancyDB,
-    base_filters: list[Any],
-    sensor_ids: list[str],
-) -> Any:
-    """Create query selecting media player intervals."""
-    return (
-        session.query(
-            db.Intervals.start_time,
-            db.Intervals.end_time,
-            literal("media").label("sensor_type"),
-        )
-        .join(
-            db.Entities,
-            (db.Intervals.entity_id == db.Entities.entity_id)
-            & (db.Intervals.area_name == db.Entities.area_name),
-        )
-        .filter(
-            *base_filters,
-            db.Entities.entity_type == InputType.MEDIA.value,
-            db.Intervals.entity_id.in_(sensor_ids),
-            db.Intervals.state == STATE_PLAYING,
-        )
-    )
-
-
-def build_appliance_query(
-    session: Any,
-    db: AreaOccupancyDB,
-    base_filters: list[Any],
-    sensor_ids: list[str],
-) -> Any:
-    """Create query selecting appliance intervals."""
-    return (
-        session.query(
-            db.Intervals.start_time,
-            db.Intervals.end_time,
-            literal("appliance").label("sensor_type"),
-        )
-        .join(
-            db.Entities,
-            (db.Intervals.entity_id == db.Entities.entity_id)
-            & (db.Intervals.area_name == db.Entities.area_name),
-        )
-        .filter(
-            *base_filters,
-            db.Entities.entity_type == InputType.APPLIANCE.value,
-            db.Intervals.entity_id.in_(sensor_ids),
-            db.Intervals.state == STATE_ON,
-        )
-    )
-
-
 def execute_union_queries(session: Any, db: AreaOccupancyDB, queries: list[Any]) -> Any:
-    """Execute one or more queries, returning combined results."""
-    if len(queries) == 1:
-        combined_query = queries[0].order_by(db.Intervals.start_time)
-        return combined_query.all()
+    """Execute motion query, returning results.
 
-    select_statements = [query.statement for query in queries]
-    union_query = union_all(*select_statements).subquery()
-    combined_query = session.query(
-        union_query.c.start_time,
-        union_query.c.end_time,
-        union_query.c.sensor_type,
-    ).order_by(union_query.c.start_time)
+    Since occupied intervals are motion-only, this always executes a single motion query.
+    """
+    combined_query = queries[0].order_by(db.Intervals.start_time)
     return combined_query.all()
 
 
 def process_query_results(
     results: list[tuple[datetime, datetime, str]],
-) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]], int, int]:
-    """Split query results into categories and counts."""
+) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
+    """Process query results into intervals and motion intervals.
+
+    Since occupied intervals are motion-only, all results are motion intervals.
+    """
     motion_raw: list[tuple[datetime, datetime]] = []
     all_intervals: list[tuple[datetime, datetime]] = []
-    media_count = 0
-    appliance_count = 0
 
     for start, end, sensor_type in results:
         interval = (start, end)
         all_intervals.append(interval)
         if sensor_type == "motion":
             motion_raw.append(interval)
-        elif sensor_type == "media":
-            media_count += 1
-        elif sensor_type == "appliance":
-            appliance_count += 1
 
-    return (all_intervals, motion_raw, media_count, appliance_count)
+    return (all_intervals, motion_raw)
 
 
 def get_global_prior(db: AreaOccupancyDB, area_name: str) -> dict[str, Any] | None:
@@ -477,15 +393,13 @@ def is_occupied_intervals_cache_valid(
                 return False
 
             # Normalize datetimes for comparison (database may return with/without tzinfo)
+            # SQLite returns naive datetimes, but they're stored as UTC
+            # Use ensure_timezone_aware to assume UTC for naive datetimes
             now = dt_util.utcnow()
             calc_date = latest.calculation_date
             # Ensure both are timezone-aware
-            if calc_date.tzinfo is None:
-                # If database returned naive datetime, assume it's UTC
-                calc_date = calc_date.replace(tzinfo=UTC)
-            if now.tzinfo is None:
-                # If now is naive (shouldn't happen with dt_util.utcnow()), make it aware
-                now = now.replace(tzinfo=UTC)
+            calc_date = ensure_timezone_aware(calc_date)
+            now = ensure_timezone_aware(now)
 
             age = (now - calc_date).total_seconds() / 3600
             return age < max_age_hours
@@ -501,15 +415,11 @@ def get_total_occupied_seconds(
     area_name: str,
     lookback_days: int,
     motion_timeout_seconds: int,
-    include_media: bool = False,
-    include_appliance: bool = False,
-    media_sensor_ids: list[str] | None = None,
-    appliance_sensor_ids: list[str] | None = None,
 ) -> float:
     """Calculate total occupied seconds using robust Python interval merging logic.
 
-    This method handles all complexity (timeouts, overlapping intervals, mixed sensors)
-    by fetching raw intervals and processing them consistently.
+    This method handles all complexity (timeouts, overlapping intervals) by fetching
+    raw motion sensor intervals and processing them consistently.
     """
     intervals = get_occupied_intervals(
         db,
@@ -517,10 +427,6 @@ def get_total_occupied_seconds(
         area_name,
         lookback_days,
         motion_timeout_seconds,
-        include_media=include_media,
-        include_appliance=include_appliance,
-        media_sensor_ids=media_sensor_ids,
-        appliance_sensor_ids=appliance_sensor_ids,
     )
 
     total_seconds = 0.0

@@ -46,6 +46,18 @@ def format_percentage(value: float) -> str:
     return f"{value * 100:.2f}%"
 
 
+def is_valid_number(value: float) -> bool:
+    """Check if value is a valid finite number (not NaN or infinity).
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is finite and not NaN, False otherwise
+    """
+    return not (math.isnan(value) or math.isinf(value))
+
+
 def clamp_probability(
     value: float, min_val: float | None = None, max_val: float | None = None
 ) -> float:
@@ -57,14 +69,159 @@ def clamp_probability(
         max_val: Maximum value (default: MAX_PROBABILITY from const)
 
     Returns:
-        Clamped probability value
+        Clamped probability value (always a valid finite number)
     """
+    # Handle NaN and infinity values explicitly
+    if not is_valid_number(value):
+        if math.isinf(value):
+            if value > 0:
+                # Positive infinity -> clamp to MAX_PROBABILITY
+                return max_val if max_val is not None else MAX_PROBABILITY
+            # Negative infinity -> clamp to MIN_PROBABILITY
+            return min_val if min_val is not None else MIN_PROBABILITY
+        # NaN -> clamp to MAX_PROBABILITY (matching existing test behavior)
+        _LOGGER.warning(
+            "clamp_probability received invalid value (NaN): %s, using MAX_PROBABILITY",
+            value,
+        )
+        return max_val if max_val is not None else MAX_PROBABILITY
+
     min_bound = min_val if min_val is not None else MIN_PROBABILITY
     max_bound = max_val if max_val is not None else MAX_PROBABILITY
     return max(min_bound, min(max_bound, value))
 
 
 # ────────────────────────────────────── Core Bayes ───────────────────────────
+def _validate_entity_likelihoods(
+    active_entities: dict[str, Entity],
+) -> dict[str, Entity]:
+    """Validate entity likelihoods and filter out invalid entities.
+
+    Args:
+        active_entities: Dictionary of entities to validate
+
+    Returns:
+        Dictionary of entities with valid likelihoods
+    """
+    entities_to_remove = []
+    for entity_id, entity in active_entities.items():
+        # Check if entity uses continuous likelihood (densities can be > 1.0)
+        is_continuous = getattr(entity, "is_continuous_likelihood", False)
+        if not isinstance(is_continuous, bool):
+            is_continuous = False
+
+        # Validate likelihoods based on sensor type
+        # First check for NaN/inf explicitly (comparison operators don't catch NaN)
+        if not is_valid_number(entity.prob_given_true) or not is_valid_number(
+            entity.prob_given_false
+        ):
+            # Mark entities with NaN/inf likelihoods for removal
+            entities_to_remove.append(entity_id)
+            continue
+
+        if is_continuous:
+            # For continuous likelihoods (densities), only check > 0
+            # Densities can be > 1.0, so we don't check upper bound
+            if entity.prob_given_true <= 0.0 or entity.prob_given_false <= 0.0:
+                # Mark entities with invalid likelihoods for removal
+                entities_to_remove.append(entity_id)
+        # For standard probabilities, validate [0, 1] range
+        elif (
+            entity.prob_given_true <= 0.0
+            or entity.prob_given_true >= 1.0
+            or entity.prob_given_false <= 0.0
+            or entity.prob_given_false >= 1.0
+        ):
+            # Mark entities with invalid likelihoods for removal
+            entities_to_remove.append(entity_id)
+
+    # Remove invalid entities after iteration
+    for entity_id in entities_to_remove:
+        active_entities.pop(entity_id, None)
+
+    return active_entities
+
+
+def _get_entity_likelihoods(
+    entity: Entity, is_continuous: bool, effective_evidence: bool
+) -> tuple[float, float] | None:
+    """Get likelihoods for an entity, handling continuous and binary sensors.
+
+    Args:
+        entity: Entity to get likelihoods for
+        is_continuous: Whether entity uses continuous likelihood
+        effective_evidence: Whether entity has effective evidence
+
+    Returns:
+        Tuple of (p_t, p_f) or None if entity should be skipped
+    """
+    if effective_evidence:
+        # Evidence is present (either current or decaying) - use likelihoods
+        # Use dynamic likelihoods if available (for Gaussian sensors)
+        if is_continuous and hasattr(entity, "get_likelihoods"):
+            # Ensure get_likelihoods is callable (Mocks make everything callable but check anyway)
+            if callable(entity.get_likelihoods):
+                p_t, p_f = entity.get_likelihoods()
+                # Validate return values for NaN/inf
+                if not is_valid_number(p_t) or not is_valid_number(p_f):
+                    # Fallback to static values if get_likelihoods() returned invalid values
+                    _LOGGER.warning(
+                        "get_likelihoods() returned invalid values (NaN/inf) for %s, using static probabilities",
+                        entity.entity_id if hasattr(entity, "entity_id") else "unknown",
+                    )
+                    p_t = entity.prob_given_true
+                    p_f = entity.prob_given_false
+                    # If static values are also invalid, skip this entity
+                    if not is_valid_number(p_t) or not is_valid_number(p_f):
+                        return None
+                return (p_t, p_f)
+            return (entity.prob_given_true, entity.prob_given_false)
+        return (entity.prob_given_true, entity.prob_given_false)
+
+    # No evidence present
+    if is_continuous:
+        # For continuous sensors with no effective evidence, use get_likelihoods()
+        if hasattr(entity, "get_likelihoods") and callable(entity.get_likelihoods):
+            p_t, p_f = entity.get_likelihoods()
+            # Validate return values for NaN/inf
+            if not is_valid_number(p_t) or not is_valid_number(p_f):
+                # Fallback to neutral values if get_likelihoods() returned invalid values
+                _LOGGER.warning(
+                    "get_likelihoods() returned invalid values (NaN/inf) for %s, using neutral values",
+                    entity.entity_id if hasattr(entity, "entity_id") else "unknown",
+                )
+                # Can't use inverse for densities, so use neutral values
+                return (0.5, 0.5)
+            return (p_t, p_f)
+        # Fallback: use neutral values
+        return (0.5, 0.5)
+
+    # Binary sensors: use inverse probabilities
+    return (1.0 - entity.prob_given_true, 1.0 - entity.prob_given_false)
+
+
+def _apply_decay_interpolation(
+    p_t: float, p_f: float, is_decaying: bool, decay_factor: float
+) -> tuple[float, float]:
+    """Apply decay interpolation to likelihoods.
+
+    Args:
+        p_t: Probability given true
+        p_f: Probability given false
+        is_decaying: Whether entity is decaying
+        decay_factor: Decay factor (0.0 to 1.0)
+
+    Returns:
+        Tuple of (adjusted p_t, adjusted p_f)
+    """
+    if is_decaying and decay_factor < 1.0:
+        # When decaying, interpolate between neutral and full evidence based on decay factor
+        neutral_prob = 0.5
+        p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
+        p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
+    return (p_t, p_f)
+
+
 def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> float:
     """Compute posterior probability of occupancy given current features and prior.
 
@@ -86,20 +243,7 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
         return clamp_probability(prior)
 
     # Check for entities with invalid likelihoods
-    entities_to_remove = []
-    for entity_id, entity in active_entities.items():
-        if (
-            entity.prob_given_true <= 0.0
-            or entity.prob_given_true >= 1.0
-            or entity.prob_given_false <= 0.0
-            or entity.prob_given_false >= 1.0
-        ):
-            # Mark entities with invalid likelihoods for removal
-            entities_to_remove.append(entity_id)
-
-    # Remove invalid entities after iteration
-    for entity_id in entities_to_remove:
-        active_entities.pop(entity_id, None)
+    active_entities = _validate_entity_likelihoods(active_entities)
 
     if not active_entities:
         # All entities had invalid likelihoods - return prior
@@ -114,8 +258,11 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
 
     for entity in active_entities.values():
         value = entity.evidence
+        # Use entity.decay_factor property which handles evidence=True case correctly
         # Clamp decay factor locally to avoid mutating entity state
-        decay_factor = entity.decay.decay_factor
+        # This is defensive programming: decay.decay_factor should always return [0, 1],
+        # but we clamp to handle edge cases (e.g., clock skew, invalid half_life values)
+        decay_factor = entity.decay_factor
         if decay_factor < 0.0 or decay_factor > 1.0:
             decay_factor = max(0.0, min(1.0, decay_factor))
         is_decaying = entity.decay.is_decaying
@@ -136,38 +283,14 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
         if not isinstance(is_continuous, bool):
             is_continuous = False
 
-        if effective_evidence:
-            # Evidence is present (either current or decaying) - use likelihoods with decay applied
+        # Get likelihoods for this entity
+        likelihoods = _get_entity_likelihoods(entity, is_continuous, effective_evidence)
+        if likelihoods is None:
+            continue
+        p_t, p_f = likelihoods
 
-            # Use dynamic likelihoods if available (for Gaussian sensors)
-            if is_continuous and hasattr(entity, "get_likelihoods"):
-                # Ensure get_likelihoods is callable (Mocks make everything callable but check anyway)
-                if callable(entity.get_likelihoods):
-                    p_t, p_f = entity.get_likelihoods()
-                else:
-                    p_t = entity.prob_given_true
-                    p_f = entity.prob_given_false
-            else:
-                p_t = entity.prob_given_true
-                p_f = entity.prob_given_false
-
-            # Apply decay factor to reduce the strength of the evidence
-            if is_decaying and decay_factor < 1.0:
-                # When decaying, interpolate between neutral (0.5) and full evidence based on decay factor
-                # This works for densities too: if p_t=2.0, neutral=0.5, factor=0.5 -> 0.5 + 1.5*0.5 = 1.25
-                neutral_prob = 0.5
-                p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
-                p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
-        else:
-            # No evidence present - use inverse likelihoods
-            # P(Inactive | Occupied) = 1 - P(Active | Occupied)
-            # P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
-
-            # Note: For continuous likelihood sensors, "no evidence" usually means
-            # the sensor is unavailable or excluded. If it provides a value, it's "evidence".
-            # So this branch is mostly for binary sensors.
-            p_t = 1.0 - entity.prob_given_true
-            p_f = 1.0 - entity.prob_given_false
+        # Apply decay interpolation if needed
+        p_t, p_f = _apply_decay_interpolation(p_t, p_f, is_decaying, decay_factor)
 
         # Clamp probabilities to avoid log(0) or log(1)
         # For continuous likelihoods (densities), we only clamp the lower bound > 0

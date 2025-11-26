@@ -308,23 +308,24 @@ def setup_area_registry(hass: HomeAssistant) -> dict[str, str]:
     return area_id_map
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def coordinator(
     hass: HomeAssistant,
     mock_realistic_config_entry: Mock,
     db_engine: Any,
 ) -> AreaOccupancyCoordinator:
-    """Primary fixture for coordinator testing.
+    """Primary fixture for coordinator testing (autouse).
 
-    Provides a real AreaOccupancyCoordinator instance with:
+    This fixture is automatically used for all tests. It provides a real
+    AreaOccupancyCoordinator instance with:
     - Real Home Assistant instance
     - Areas loaded from config entry
     - Real coordinator behavior
     - Proper initialization
     - In-memory SQLite database (via db_engine)
 
-    This is the recommended default for most coordinator tests.
-    Use mocks only when you need to test error paths or control behavior.
+    Tests can access the coordinator by including it in their function signature
+    if needed, but it's automatically available for all tests.
 
     Example:
         def test_coordinator_method(coordinator: AreaOccupancyCoordinator):
@@ -356,23 +357,6 @@ def coordinator(
     # Now load areas (which might use the DB)
     coordinator._load_areas_from_config()
     return coordinator
-
-
-@pytest.fixture
-def coordinator_with_db(test_db: Any) -> AreaOccupancyCoordinator:
-    """Create a real coordinator with real db attached.
-
-    This is a simple wrapper around test_db that returns the coordinator.
-    Use this for tests that need both coordinator and database functionality.
-
-    Example:
-        def test_db_operation(coordinator_with_db: AreaOccupancyCoordinator):
-            coordinator = coordinator_with_db
-            db = coordinator.db  # Real db attached to real coordinator
-            area = coordinator.get_area("Test Area")
-            # Use real area.prior.value instead of mocking
-    """
-    return test_db.coordinator
 
 
 @pytest.fixture
@@ -560,24 +544,15 @@ def create_test_entity(
     coordinator: AreaOccupancyCoordinator,
     entity_type: EntityType,
     decay: DecayClass,
-    evidence: bool | None = True,
     available: bool = True,
     state: str | None = STATE_ON,
-    probability: float = 0.75,
-    active: bool = True,
     last_updated: datetime | None = None,
     previous_evidence: bool | None = False,
-    previous_probability: float = 0.35,
-    has_new_evidence: bool = True,
-    decay_factor: float = 1.0,
 ) -> Entity:
     """Create real entities with different states."""
     # Set state in HASS so Entity can read it
     if available and state is not None:
         coordinator.hass.states.async_set(entity_id, state)
-
-    # If probability is passed, we can't easily set it on real Entity as it's calculated.
-    # But we can set prob_given_true/false to influence it if needed.
 
     return Entity(
         entity_id=entity_id,
@@ -603,7 +578,6 @@ def mock_active_entity(
         coordinator=coordinator,
         entity_type=mock_entity_type,
         decay=mock_decay,
-        evidence=True,
         available=True,
         state=STATE_ON,
     )
@@ -621,7 +595,6 @@ def mock_inactive_entity(
         coordinator=coordinator,
         entity_type=mock_entity_type,
         decay=mock_decay,
-        evidence=False,
         available=True,
         state=STATE_OFF,
     )
@@ -639,7 +612,6 @@ def mock_unavailable_entity(
         coordinator=coordinator,
         entity_type=mock_entity_type,
         decay=mock_decay,
-        evidence=None,
         available=False,
         state=None,
     )
@@ -657,7 +629,6 @@ def mock_stale_entity(
         coordinator=coordinator,
         entity_type=mock_entity_type,
         decay=mock_decay,
-        evidence=False,
         available=True,
         state=STATE_OFF,
         last_updated=dt_util.utcnow() - timedelta(hours=2),
@@ -921,15 +892,9 @@ def mock_comprehensive_entity(
         coordinator=coordinator,
         entity_type=mock_entity_type,
         decay=mock_decay,
-        evidence=True,
         available=True,
         state=STATE_ON,
-        probability=0.5,
-        active=True,
         previous_evidence=False,
-        previous_probability=0.5,
-        has_new_evidence=True,
-        decay_factor=1.0,
     )
 
 
@@ -1016,15 +981,9 @@ def mock_entity_for_likelihood_tests(
         coordinator=coordinator,
         entity_type=mock_entity_type,
         decay=mock_decay,
-        evidence=True,
         available=True,
         state=STATE_ON,
-        probability=0.75,
-        active=True,
         previous_evidence=False,
-        previous_probability=0.35,
-        has_new_evidence=True,
-        decay_factor=1.0,
     )
 
 
@@ -1303,7 +1262,7 @@ def mock_config() -> Mock:
         side_effect=lambda key, default=None: getattr(config, key, default)
     )
 
-    # Add purpose manager mock (for backward compatibility)
+    # Add purpose manager mock
     config.purpose_manager = Mock(spec=Purpose)
     config.purpose_manager.purpose = AreaPurpose.SOCIAL
     config.purpose_manager.name = "Social"
@@ -1563,65 +1522,21 @@ def db_engine() -> Generator[Any]:
 
 
 @pytest.fixture
-def test_db(
-    coordinator: AreaOccupancyCoordinator, db_engine: Any, tmp_path: Any
-) -> Generator[Any]:
-    """Primary fixture for database testing.
-
-    Provides a real AreaOccupancyDB instance with:
-    - In-memory SQLite database
-    - Real coordinator attached
-    - Proper session management
-    - Automatic cleanup
-
-    Each test gets a fresh database instance with rollback for isolation.
-    The db_engine fixture (module-scoped) handles table creation/cleanup efficiently.
-
-    Example:
-        def test_db_operation(test_db: AreaOccupancyDB):
-            db = test_db
-            area_name = db.coordinator.get_area_names()[0]
-            # Use real database operations
-    """
-    # Create real database instance attached to real coordinator
-    # Since coordinator fixture already sets up the DB with db_engine,
-    # we can just return coordinator.db, but ensure we have a fresh session scope?
-    # The db_engine fixture handles shared state.
-    # The test_db logic in original code was creating a NEW db instance.
-
-    # However, if we reuse coordinator.db, we are good because coordinator uses db_engine.
-    # db = coordinator.db
-
-    # Just to be safe and match original behavior of ensuring clean state if needed
-    # But with shared in-memory DB, state is persisted across tests unless we clean it.
-    # Wait, db_engine fixture (module scoped?) No, let's check db_engine scope.
-    # It was function scoped in the code I read?
-
-    # @pytest.fixture
-    # def db_engine() -> Generator[Any]:
-    # ...
-    # It defaults to function scope. So each test gets a FRESH engine.
-    # So coordinator gets a FRESH engine.
-    # So test_db just needs to return coordinator.db.
-    return coordinator.db
-
-
-@pytest.fixture
-def db_test_session(test_db: Any) -> Generator[Any]:
+def db_test_session(coordinator: AreaOccupancyCoordinator) -> Generator[Any]:
     """Provide a fresh database session for each test with automatic rollback.
 
     This fixture provides per-test session isolation. Each test gets a fresh
     session that is automatically rolled back after the test completes.
 
     Example:
-        def test_with_session(test_db: AreaOccupancyDB, db_test_session):
+        def test_with_session(coordinator: AreaOccupancyCoordinator, db_test_session):
             session = db_test_session
             # Use session for direct database operations
             session.add(...)
             session.commit()
             # Changes are automatically rolled back after test
     """
-    session = test_db._session_maker()
+    session = coordinator.db._session_maker()
 
     try:
         yield session
@@ -1693,7 +1608,7 @@ def transactional_db_session(db_engine: Any) -> Generator[Any]:
 
 # Removed redundant fixture: seeded_db_session (use db_session directly)
 # Removed deprecated fixtures: mock_area_occupancy_db, db_with_engine, mock_db_with_engine
-# Use test_db fixture instead for all database testing needs
+# Use coordinator.db for all database testing needs
 
 
 def _create_sample_data() -> dict[str, Any]:
@@ -1903,33 +1818,6 @@ def config_flow_mock_config_entry_with_areas(
                 CONF_THRESHOLD: 60.0,
             }
         ]
-    }
-    entry.options = {}
-    return entry
-
-
-@pytest.fixture
-def config_flow_mock_config_entry_legacy() -> Mock:
-    """Create a mock config entry with legacy single-area format."""
-    entry = Mock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_id"
-    entry.state = ConfigEntryState.LOADED
-    entry.data = {
-        CONF_AREA_ID: "legacy_area",
-        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-    }
-    entry.options = {}
-    return entry
-
-
-@pytest.fixture
-def config_flow_mock_config_entry_legacy_no_name() -> Mock:
-    """Create a mock config entry with legacy format but no name."""
-    entry = Mock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_id"
-    entry.state = ConfigEntryState.LOADED
-    entry.data = {
-        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
     }
     entry.options = {}
     return entry

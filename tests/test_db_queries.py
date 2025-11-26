@@ -4,14 +4,13 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.operations import (
     save_global_prior,
     save_occupied_intervals_cache,
 )
 from custom_components.area_occupancy.db.queries import (
-    build_appliance_query,
     build_base_filters,
-    build_media_query,
     build_motion_query,
     get_area_data,
     get_global_prior,
@@ -28,9 +27,9 @@ from homeassistant.util import dt as dt_util
 class TestGetAreaData:
     """Test get_area_data function."""
 
-    def test_get_area_data_success(self, test_db):
+    def test_get_area_data_success(self, coordinator: AreaOccupancyCoordinator):
         """Test get_area_data with existing area."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Save area data first
@@ -41,15 +40,17 @@ class TestGetAreaData:
         assert result["entry_id"] == db.coordinator.entry_id
         assert result["area_name"] == area_name
 
-    def test_get_area_data_not_found(self, test_db):
+    def test_get_area_data_not_found(self, coordinator: AreaOccupancyCoordinator):
         """Test get_area_data when area doesn't exist."""
-        db = test_db
+        db = coordinator.db
         result = get_area_data(db, "nonexistent_entry")
         assert result is None
 
-    def test_get_area_data_error(self, test_db, monkeypatch):
+    def test_get_area_data_error(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test get_area_data with database error."""
-        db = test_db
+        db = coordinator.db
 
         def bad_session():
             raise SQLAlchemyError("Error")
@@ -62,16 +63,16 @@ class TestGetAreaData:
 class TestGetLatestInterval:
     """Test get_latest_interval function."""
 
-    def test_get_latest_interval_with_data(self, test_db):
+    def test_get_latest_interval_with_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_latest_interval when intervals exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=60)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -100,22 +101,24 @@ class TestGetLatestInterval:
         # Should be end_time - 1 hour
         assert result <= end.replace(tzinfo=None)
 
-    def test_get_latest_interval_no_data(self, test_db):
+    def test_get_latest_interval_no_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_latest_interval when no intervals exist."""
-        db = test_db
+        db = coordinator.db
         result = get_latest_interval(db)
         assert isinstance(result, datetime)
         # Should return default (now - 10 days)
         # Both result and expected are timezone-aware, so compare directly
-        expected = dt_util.now() - timedelta(days=10)
+        expected = dt_util.utcnow() - timedelta(days=10)
         # Compare as naive datetimes to avoid timezone issues
         result_naive = result.replace(tzinfo=None) if result.tzinfo else result
         expected_naive = expected.replace(tzinfo=None) if expected.tzinfo else expected
         assert abs((result_naive - expected_naive).total_seconds()) < 60
 
-    def test_get_latest_interval_error(self, test_db, monkeypatch):
+    def test_get_latest_interval_error(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test get_latest_interval with database error."""
-        db = test_db
+        db = coordinator.db
 
         def bad_session():
             raise SQLAlchemyError("no such table")
@@ -128,12 +131,12 @@ class TestGetLatestInterval:
 class TestGetTimePrior:
     """Test get_time_prior function."""
 
-    def test_get_time_prior_with_data(self, test_db):
+    def test_get_time_prior_with_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_time_prior when prior exists."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -157,9 +160,9 @@ class TestGetTimePrior:
         result = get_time_prior(db, db.coordinator.entry_id, area_name, 1, 14, 0.5)
         assert result == 0.35
 
-    def test_get_time_prior_default(self, test_db):
+    def test_get_time_prior_default(self, coordinator: AreaOccupancyCoordinator):
         """Test get_time_prior returns default when prior doesn't exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = get_time_prior(db, db.coordinator.entry_id, area_name, 1, 14, 0.5)
         assert result == 0.5
@@ -168,9 +171,11 @@ class TestGetTimePrior:
 class TestGetOccupiedIntervals:
     """Test get_occupied_intervals function."""
 
-    def test_get_occupied_intervals_success(self, test_db):
+    def test_get_occupied_intervals_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful retrieval of occupied intervals."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Ensure area exists first (foreign key requirement)
@@ -179,7 +184,7 @@ class TestGetOccupiedIntervals:
         end = dt_util.utcnow()
         start = end - timedelta(hours=1)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
@@ -214,9 +219,9 @@ class TestGetOccupiedIntervals:
             assert isinstance(result[0], tuple)
             assert len(result[0]) == 2
 
-    def test_get_occupied_intervals_empty(self, test_db):
+    def test_get_occupied_intervals_empty(self, coordinator: AreaOccupancyCoordinator):
         """Test get_occupied_intervals with no intervals."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = get_occupied_intervals(
             db,
@@ -227,16 +232,18 @@ class TestGetOccupiedIntervals:
         )
         assert result == []
 
-    def test_get_occupied_intervals_motion_only(self, test_db):
+    def test_get_occupied_intervals_motion_only(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test retrieval with motion sensors only (prior calculations use motion-only)."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         db.save_area_data(area_name)
 
         now = dt_util.utcnow()
         start = now - timedelta(hours=2)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entities = [
                 db.Entities(
                     entity_id="binary_sensor.motion1",
@@ -260,7 +267,7 @@ class TestGetOccupiedIntervals:
             session.add_all(entities)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             intervals = [
                 db.Intervals(
                     entry_id=db.coordinator.entry_id,
@@ -293,15 +300,13 @@ class TestGetOccupiedIntervals:
             session.add_all(intervals)
             session.commit()
 
-        # Test motion-only retrieval (prior calculations use motion-only)
+        # Test motion-only retrieval (occupied intervals are motion-only)
         result = get_occupied_intervals(
             db,
             db.coordinator.entry_id,
             area_name,
             lookback_days=1,
             motion_timeout_seconds=0,
-            include_media=False,
-            include_appliance=False,
         )
 
         # Should only return motion sensor intervals
@@ -311,9 +316,9 @@ class TestGetOccupiedIntervals:
 class TestGetTimeBounds:
     """Test get_time_bounds function."""
 
-    def test_get_time_bounds_with_data(self, test_db):
+    def test_get_time_bounds_with_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_time_bounds when intervals exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Ensure area exists first (foreign key requirement)
@@ -322,7 +327,7 @@ class TestGetTimeBounds:
         end = dt_util.utcnow()
         start = end - timedelta(hours=1)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
@@ -348,9 +353,9 @@ class TestGetTimeBounds:
         assert first is not None
         assert last is not None
 
-    def test_get_time_bounds_no_data(self, test_db):
+    def test_get_time_bounds_no_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_time_bounds when no intervals exist."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         first, last = get_time_bounds(db, db.coordinator.entry_id, area_name)
         assert first is None
@@ -360,9 +365,9 @@ class TestGetTimeBounds:
 class TestBuildFilters:
     """Test filter building functions."""
 
-    def test_build_base_filters(self, test_db):
+    def test_build_base_filters(self, coordinator: AreaOccupancyCoordinator):
         """Test build_base_filters function."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         lookback_date = dt_util.utcnow() - timedelta(days=90)
 
@@ -372,9 +377,9 @@ class TestBuildFilters:
         assert isinstance(filters, list)
         assert len(filters) > 0
 
-    def test_build_motion_query(self, test_db):
+    def test_build_motion_query(self, coordinator: AreaOccupancyCoordinator):
         """Test build_motion_query function."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         lookback_date = dt_util.utcnow() - timedelta(days=90)
         base_filters = build_base_filters(
@@ -385,41 +390,13 @@ class TestBuildFilters:
             query = build_motion_query(session, db, base_filters)
             assert query is not None
 
-    def test_build_media_query(self, test_db):
-        """Test build_media_query function."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        lookback_date = dt_util.utcnow() - timedelta(days=90)
-        base_filters = build_base_filters(
-            db, db.coordinator.entry_id, lookback_date, area_name
-        )
-
-        with db.get_session() as session:
-            query = build_media_query(session, db, base_filters, ["media.player"])
-            assert query is not None
-
-    def test_build_appliance_query(self, test_db):
-        """Test build_appliance_query function."""
-        db = test_db
-        area_name = db.coordinator.get_area_names()[0]
-        lookback_date = dt_util.utcnow() - timedelta(days=90)
-        base_filters = build_base_filters(
-            db, db.coordinator.entry_id, lookback_date, area_name
-        )
-
-        with db.get_session() as session:
-            query = build_appliance_query(
-                session, db, base_filters, ["switch.appliance"]
-            )
-            assert query is not None
-
 
 class TestGetGlobalPrior:
     """Test get_global_prior function."""
 
-    def test_get_global_prior_with_data(self, test_db):
+    def test_get_global_prior_with_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_global_prior when data exists."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         save_global_prior(
@@ -437,9 +414,9 @@ class TestGetGlobalPrior:
         assert result is not None
         assert result["prior_value"] == 0.35
 
-    def test_get_global_prior_no_data(self, test_db):
+    def test_get_global_prior_no_data(self, coordinator: AreaOccupancyCoordinator):
         """Test get_global_prior when no data exists."""
-        db = test_db
+        db = coordinator.db
         result = get_global_prior(db, "nonexistent_area")
         assert result is None
 
@@ -447,9 +424,9 @@ class TestGetGlobalPrior:
 class TestOccupiedIntervalsCache:
     """Test occupied intervals cache functions."""
 
-    def test_get_occupied_intervals_cache(self, test_db):
+    def test_get_occupied_intervals_cache(self, coordinator: AreaOccupancyCoordinator):
         """Test get_occupied_intervals_cache function."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         intervals = [
@@ -463,9 +440,11 @@ class TestOccupiedIntervalsCache:
         result = get_occupied_intervals_cache(db, area_name)
         assert len(result) == 1
 
-    def test_is_occupied_intervals_cache_valid(self, test_db):
+    def test_is_occupied_intervals_cache_valid(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test is_occupied_intervals_cache_valid function."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Initially invalid

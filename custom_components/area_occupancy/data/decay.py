@@ -57,7 +57,7 @@ class Decay:
 
         try:
             # Parse sleep times
-            now = dt_util.now()
+            now = dt_util.utcnow()
             start_time = datetime.strptime(self.sleep_start, "%H:%M:%S").time()
             end_time = datetime.strptime(self.sleep_end, "%H:%M:%S").time()
 
@@ -89,9 +89,7 @@ class Decay:
         if not self.is_decaying:
             return 1.0
 
-        # Ensure decay_start is timezone-aware to avoid subtraction errors
-        decay_start_aware = ensure_timezone_aware(self.decay_start)
-        age = (dt_util.utcnow() - decay_start_aware).total_seconds()
+        age = (dt_util.utcnow() - self.decay_start).total_seconds()
         factor = float(0.5 ** (age / self.half_life))
         if factor < 0.05:  # practical zero
             self.is_decaying = False

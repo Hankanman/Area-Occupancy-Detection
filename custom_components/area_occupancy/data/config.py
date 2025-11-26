@@ -572,8 +572,11 @@ class AreaConfig:
                 )
                 self._load_config({})
         else:
-            # Legacy single-area format
-            self._load_config(merged)
+            # No CONF_AREAS format found - load empty/default config
+            _LOGGER.warning(
+                "Configuration must contain CONF_AREAS list. Loading default config."
+            )
+            self._load_config({})
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value by key."""
@@ -603,48 +606,64 @@ class AreaConfig:
                         "area_name is required when using multi-area configuration format"
                     )
 
+        def _validate_area_found_in_list(area_id: str, area_updated: bool) -> None:
+            """Validate that area was found in CONF_AREAS list."""
+            if not area_updated:
+                _LOGGER.warning(
+                    "Area with ID '%s' not found in CONF_AREAS list when updating config",
+                    area_id,
+                )
+                raise ValueError(
+                    f"Area with ID '{area_id}' not found in CONF_AREAS list"
+                )
+
+        def _validate_area_id_available(area_id: str | None) -> None:
+            """Validate that area_id is available for config update."""
+            if not area_id:
+                _LOGGER.warning(
+                    "Area ID not available, cannot update area in CONF_AREAS list"
+                )
+                raise ValueError("Area ID not available for config update")
+
+        def _validate_multi_area_format(
+            new_options: dict[str, Any],
+        ) -> None:
+            """Validate that configuration is in multi-area format."""
+            if CONF_AREAS not in new_options or not isinstance(
+                new_options.get(CONF_AREAS), list
+            ):
+                raise ValueError(
+                    "Configuration must be in multi-area format (CONF_AREAS list)"
+                )
+
         try:
             _validate_config_entry()
             # Create new options dict by merging existing with new options
             new_options = dict(self.config_entry.options)  # type: ignore[union-attr]
 
             # Check if we're in multi-area format and need to update area within CONF_AREAS list
-            if CONF_AREAS in new_options and isinstance(new_options[CONF_AREAS], list):
-                # Multi-area format: update the specific area within CONF_AREAS list
-                areas_list = new_options[CONF_AREAS].copy()
-                area_updated = False
+            _validate_multi_area_format(new_options)
 
-                # Find the area to update by matching area_id
-                area_id = self.area_id
-                if area_id:
-                    for i, area_data in enumerate(areas_list):
-                        if area_data.get(CONF_AREA_ID) == area_id:
-                            # Merge new options into existing area config
-                            updated_area = dict(area_data)
-                            updated_area.update(options)
-                            areas_list[i] = updated_area
-                            area_updated = True
-                            break
+            # Multi-area format: update the specific area within CONF_AREAS list
+            areas_list = new_options[CONF_AREAS].copy()
+            area_updated = False
 
-                    if not area_updated:
-                        _LOGGER.warning(
-                            "Area with ID '%s' not found in CONF_AREAS list when updating config",
-                            area_id,
-                        )
-                        # Fallback: add options at top level (legacy behavior)
-                        new_options.update(options)
-                    else:
-                        # Update CONF_AREAS list with modified area
-                        new_options[CONF_AREAS] = areas_list
-                else:
-                    _LOGGER.warning(
-                        "Area ID not available, cannot update area in CONF_AREAS list"
-                    )
-                    # Fallback: add options at top level
-                    new_options.update(options)
-            else:
-                # Legacy single-area format: update options at top level
-                new_options.update(options)
+            # Find the area to update by matching area_id
+            area_id = self.area_id
+            _validate_area_id_available(area_id)
+
+            for i, area_data in enumerate(areas_list):
+                if area_data.get(CONF_AREA_ID) == area_id:
+                    # Merge new options into existing area config
+                    updated_area = dict(area_data)
+                    updated_area.update(options)
+                    areas_list[i] = updated_area
+                    area_updated = True
+                    break
+
+            _validate_area_found_in_list(area_id, area_updated)
+            # Update CONF_AREAS list with modified area
+            new_options[CONF_AREAS] = areas_list
 
             # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
@@ -655,9 +674,6 @@ class AreaConfig:
             # Merge existing config entry with new options for internal state
             data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
             # For multi-area format, data already has updated area from new_options
-            # For legacy format, update at top level
-            if CONF_AREAS not in data or not isinstance(data.get(CONF_AREAS), list):
-                data.update(options)
 
             # Validate area_name for multi-area config before processing
             _validate_area_name_for_multi_area(data)
@@ -680,8 +696,11 @@ class AreaConfig:
                     )
                     self._load_config({})
             else:
-                # Legacy single-area format
-                self._load_config(data)
+                # No CONF_AREAS format found - log warning and load empty/default config
+                _LOGGER.warning(
+                    "Configuration must contain CONF_AREAS list. Loading default config."
+                )
+                self._load_config({})
 
             # Request update since threshold affects occupied calculation
             # Only request refresh if setup is complete to avoid debouncer conflicts
