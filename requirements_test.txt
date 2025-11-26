@@ -1,2 +1,3 @@
 pytest-homeassistant-custom-component
 pytest-cov
+matplotlib>=3.7.0
