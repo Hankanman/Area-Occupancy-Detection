@@ -39,7 +39,8 @@ class TestAreaMethods:
         mock_entity1.prob_given_true = 0.8
         mock_entity1.prob_given_false = 0.2
         mock_entity1.type = Mock(weight=0.85)
-        mock_entity1.decay = Mock(decay_factor=1.0)
+        mock_entity1.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         type(mock_entity1).weight = PropertyMock(return_value=0.85)
 
         mock_entity2 = Mock()
@@ -47,7 +48,10 @@ class TestAreaMethods:
         mock_entity2.prob_given_true = 0.7
         mock_entity2.prob_given_false = 0.3
         mock_entity2.type = Mock(weight=0.7)
-        mock_entity2.decay = Mock(decay_factor=1.0)
+        mock_entity2.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_entity2.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         type(mock_entity2).weight = PropertyMock(return_value=0.7)
 
         # Set entities via _entities private attribute
