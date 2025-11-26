@@ -150,8 +150,9 @@ def convert_intervals_to_samples(
         return []
 
     # Ensure period boundaries are timezone-aware UTC for SQL query
-    period_start_utc = dt_util.as_utc(period_start)
-    period_end_utc = dt_util.as_utc(period_end)
+    # Use ensure_timezone_aware to handle both naive and aware inputs consistently
+    period_start_utc = ensure_timezone_aware(period_start)
+    period_end_utc = ensure_timezone_aware(period_end)
 
     # Query intervals for the entity, filtered by area_name and entry_id
     # Filter intervals that overlap with the analysis period
@@ -174,9 +175,10 @@ def convert_intervals_to_samples(
     samples = []
 
     for interval in intervals:
-        # Ensure interval times are timezone-aware
-        interval_start = dt_util.as_utc(interval.start_time)
-        interval_end = dt_util.as_utc(interval.end_time)
+        # SQLite returns naive datetimes, but they're stored as UTC
+        # Use ensure_timezone_aware to assume UTC for naive datetimes
+        interval_start = ensure_timezone_aware(interval.start_time)
+        interval_end = ensure_timezone_aware(interval.end_time)
 
         # Clamp interval bounds to period boundaries
         clamped_start = max(interval_start, period_start_utc)
@@ -236,8 +238,9 @@ def analyze_binary_likelihoods(
             # Get analysis period
             period_end = dt_util.utcnow()
             period_start = period_end - timedelta(days=analysis_period_days)
-            period_start_utc = dt_util.as_utc(period_start)
-            period_end_utc = dt_util.as_utc(period_end)
+            # Use ensure_timezone_aware to handle both naive and aware inputs consistently
+            period_start_utc = ensure_timezone_aware(period_start)
+            period_end_utc = ensure_timezone_aware(period_end)
 
             # Base result structure
             base_result = {
@@ -459,8 +462,9 @@ def analyze_correlation(  # noqa: C901
             # Get analysis period
             period_end = dt_util.utcnow()
             period_start = period_end - timedelta(days=analysis_period_days)
-            period_start_utc = dt_util.as_utc(period_start)
-            period_end_utc = dt_util.as_utc(period_end)
+            # Use ensure_timezone_aware to handle both naive and aware inputs consistently
+            period_start_utc = ensure_timezone_aware(period_start)
+            period_end_utc = ensure_timezone_aware(period_end)
 
             # Base result structure with defaults for required fields
             base_result = {
@@ -554,8 +558,10 @@ def analyze_correlation(  # noqa: C901
                 chunk_duration_seconds = 60.0
 
                 for interval in binary_intervals:
-                    interval_start = dt_util.as_utc(interval.start_time)
-                    interval_end = dt_util.as_utc(interval.end_time)
+                    # SQLite returns naive datetimes, but they're stored as UTC
+                    # Use ensure_timezone_aware to assume UTC for naive datetimes
+                    interval_start = ensure_timezone_aware(interval.start_time)
+                    interval_end = ensure_timezone_aware(interval.end_time)
                     # Clamp to analysis period
                     clamped_start = max(interval_start, period_start_utc)
                     clamped_end = min(interval_end, period_end_utc)

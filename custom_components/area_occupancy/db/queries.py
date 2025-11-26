@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TIME_PRIOR
 from ..data.entity_type import InputType
+from ..utils import ensure_timezone_aware
 from .utils import apply_motion_timeout, merge_overlapping_intervals
 
 if TYPE_CHECKING:
@@ -392,15 +393,13 @@ def is_occupied_intervals_cache_valid(
                 return False
 
             # Normalize datetimes for comparison (database may return with/without tzinfo)
+            # SQLite returns naive datetimes, but they're stored as UTC
+            # Use ensure_timezone_aware to assume UTC for naive datetimes
             now = dt_util.utcnow()
             calc_date = latest.calculation_date
             # Ensure both are timezone-aware
-            if calc_date.tzinfo is None:
-                # If database returned naive datetime, assume it's UTC
-                calc_date = calc_date.replace(tzinfo=UTC)
-            if now.tzinfo is None:
-                # If now is naive (shouldn't happen with dt_util.utcnow()), make it aware
-                now = now.replace(tzinfo=UTC)
+            calc_date = ensure_timezone_aware(calc_date)
+            now = ensure_timezone_aware(now)
 
             age = (now - calc_date).total_seconds() / 3600
             return age < max_age_hours

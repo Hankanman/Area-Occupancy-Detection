@@ -428,7 +428,7 @@ class Entity:
             self.prob_given_false,
         )
 
-    def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
+    def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
         self.decay.decay_start = (
             ensure_timezone_aware(decay_start)
