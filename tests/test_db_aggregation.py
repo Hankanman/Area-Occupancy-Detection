@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.aggregation import (
     aggregate_daily_to_weekly,
     aggregate_raw_to_daily,
@@ -18,15 +19,17 @@ from homeassistant.util import dt as dt_util
 class TestAggregateRawToDaily:
     """Test aggregate_raw_to_daily function."""
 
-    def test_aggregate_raw_to_daily_success(self, test_db):
+    def test_aggregate_raw_to_daily_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful aggregation from raw to daily."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=65)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -36,7 +39,7 @@ class TestAggregateRawToDaily:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             for i in range(5):
                 interval = db.Intervals(
                     entry_id=db.coordinator.entry_id,
@@ -63,9 +66,11 @@ class TestAggregateRawToDaily:
             )
             assert len(aggregates) > 0
 
-    def test_aggregate_raw_to_daily_no_data(self, test_db):
+    def test_aggregate_raw_to_daily_no_data(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test aggregation with no raw data."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         result = aggregate_raw_to_daily(db, area_name)
         assert result == 0
@@ -74,15 +79,17 @@ class TestAggregateRawToDaily:
 class TestAggregateDailyToWeekly:
     """Test aggregate_daily_to_weekly function."""
 
-    def test_aggregate_daily_to_weekly_success(self, test_db):
+    def test_aggregate_daily_to_weekly_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful aggregation from daily to weekly."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=95)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -92,7 +99,7 @@ class TestAggregateDailyToWeekly:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             for i in range(7):
                 aggregate = db.IntervalAggregates(
                     entry_id=db.coordinator.entry_id,
@@ -125,9 +132,11 @@ class TestAggregateWeeklyToMonthly:
     """Test aggregate_weekly_to_monthly function."""
 
     @pytest.mark.filterwarnings("ignore::sqlalchemy.exc.SAWarning")
-    def test_aggregate_weekly_to_monthly_success(self, test_db):
+    def test_aggregate_weekly_to_monthly_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test successful aggregation from weekly to monthly."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         # Use date older than RETENTION_WEEKLY_AGGREGATES_DAYS (365 days)
         # and ensure weeks span at least one full month
@@ -137,7 +146,7 @@ class TestAggregateWeeklyToMonthly:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -147,7 +156,7 @@ class TestAggregateWeeklyToMonthly:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Create weekly aggregates spanning at least one full month (4-5 weeks)
             for i in range(5):  # 5 weeks to ensure we span a full month
                 week_start = month_start + timedelta(weeks=i)
@@ -183,15 +192,17 @@ class TestAggregateWeeklyToMonthly:
 class TestRunIntervalAggregation:
     """Test run_interval_aggregation function."""
 
-    def test_run_interval_aggregation_success(self, test_db):
+    def test_run_interval_aggregation_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test running full tiered aggregation process."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=35)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -201,7 +212,7 @@ class TestRunIntervalAggregation:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             interval = db.Intervals(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -225,15 +236,15 @@ class TestRunIntervalAggregation:
 class TestPruneOldAggregates:
     """Test prune_old_aggregates function."""
 
-    def test_prune_old_aggregates_success(self, test_db):
+    def test_prune_old_aggregates_success(self, coordinator: AreaOccupancyCoordinator):
         """Test pruning old aggregates successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=400)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -243,7 +254,7 @@ class TestPruneOldAggregates:
             session.add(entity)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             aggregate = db.IntervalAggregates(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -278,16 +289,18 @@ class TestPruneOldAggregates:
 class TestPruneOldNumericSamples:
     """Test prune_old_numeric_samples function."""
 
-    def test_prune_old_numeric_samples_success(self, test_db):
+    def test_prune_old_numeric_samples_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test pruning old numeric samples successfully."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         old_date = dt_util.utcnow() - timedelta(days=100)
 
         # Ensure area exists first (foreign key requirement)
         db.save_area_data(area_name)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Create entity first
             entity = db.Entities(
                 entity_id="sensor.temperature",

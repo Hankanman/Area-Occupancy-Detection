@@ -1496,10 +1496,8 @@ class TestNewHelperFunctions:
             ),  # not_found
         ],
     )
-    def test_find_area_by_name(self, areas, search_name, expected_found, expected_name):
-        """Test finding area by name (legacy support)."""
-        # Note: _find_area_by_name is for legacy support only
-        # For new format areas with CONF_AREA_ID, use _find_area_by_id instead
+    def test_find_area_by_id(self, areas, search_name, expected_found, expected_name):
+        """Test finding area by ID."""
         result = _find_area_by_id(areas, search_name)
         if expected_found:
             assert result is not None

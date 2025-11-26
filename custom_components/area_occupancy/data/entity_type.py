@@ -1,6 +1,7 @@
 """Minimal intelligent entity type builder."""
 
 from enum import StrEnum
+import logging
 from typing import Any
 
 from homeassistant.const import (
@@ -10,6 +11,8 @@ from homeassistant.const import (
     STATE_PLAYING,
     STATE_STANDBY,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class InputType(StrEnum):
@@ -86,8 +89,25 @@ class EntityType:
                     f"Invalid active range for {input_type}: {active_range}"
                 )
 
-        # Get defaults from DEFAULT_TYPES
-        defaults = dict(DEFAULT_TYPES[input_type])
+        # Get defaults from DEFAULT_TYPES with safe fallback
+        default_type = DEFAULT_TYPES.get(input_type)
+        if default_type is None:
+            _LOGGER.warning(
+                "InputType %s is missing from DEFAULT_TYPES, falling back to UNKNOWN. "
+                "Please update DEFAULT_TYPES to include this input type.",
+                input_type,
+            )
+            default_type = DEFAULT_TYPES.get(InputType.UNKNOWN)
+            if default_type is None:
+                # Ultimate fallback if UNKNOWN is also missing (should never happen)
+                default_type = {
+                    "weight": 0.5,
+                    "prob_given_true": 0.5,
+                    "prob_given_false": 0.05,
+                    "active_states": [STATE_ON],
+                    "active_range": None,
+                }
+        defaults = dict(default_type)
 
         # Start with defaults, then override with explicit params if provided
         self.weight = weight if weight is not None else defaults["weight"]

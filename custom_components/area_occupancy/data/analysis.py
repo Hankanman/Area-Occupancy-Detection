@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DEFAULT_LOOKBACK_DAYS
 from ..data.entity_type import InputType
 from ..db.queries import is_occupied_intervals_cache_valid
-from ..utils import format_area_names
+from ..utils import ensure_timezone_aware, format_area_names
 from .prior import Prior
 
 if TYPE_CHECKING:
@@ -54,40 +54,21 @@ class PriorAnalyzer:
     def get_occupied_intervals(
         self,
         days: int = DEFAULT_LOOKBACK_DAYS,
-        include_media: bool = False,
-        include_appliance: bool = False,
     ) -> list[tuple[datetime, datetime]]:
-        """Get intervals where the area was occupied based on motion/device activity."""
-        # Get active motion sensors for this area
-        motion_sensors = self._get_entity_ids_by_type(InputType.MOTION)
+        """Get intervals where the area was occupied based on motion sensors only.
 
-        if not motion_sensors:
-            _LOGGER.debug("No motion sensors found for area %s", self.area_name)
-            return []
-
+        Occupied intervals are determined exclusively by motion sensors to ensure
+        consistent ground truth for prior calculations.
+        """
         # Calculate time range
         end_time = dt_util.utcnow()
         start_time = end_time - timedelta(days=days)
 
-        # Get media/appliance sensor IDs if needed
-        media_sensor_ids = None
-        if include_media:
-            media_sensor_ids = self._get_entity_ids_by_type(InputType.MEDIA)
-
-        appliance_sensor_ids = None
-        if include_appliance:
-            appliance_sensor_ids = self._get_entity_ids_by_type(InputType.APPLIANCE)
-
-        # Get occupied intervals from database (raw calculation)
+        # Get occupied intervals from database (motion sensors only)
+        # The query automatically includes all motion sensors for the area
         return self.db.get_occupied_intervals(
             area_name=self.area_name,
-            motion_sensor_ids=motion_sensors,
             start_time=start_time,
-            end_time=end_time,
-            include_media=include_media,
-            include_appliance=include_appliance,
-            media_sensor_ids=media_sensor_ids,
-            appliance_sensor_ids=appliance_sensor_ids,
         )
 
     def calculate_and_update_prior(self, days: int = DEFAULT_LOOKBACK_DAYS) -> None:
@@ -100,10 +81,7 @@ class PriorAnalyzer:
 
         try:
             # 1. Get occupied intervals based on motion sensors (ground truth)
-            # We don't include media/appliance for prior calculation to avoid circular dependencies
-            occupied_intervals = self.get_occupied_intervals(
-                days, include_media=False, include_appliance=False
-            )
+            occupied_intervals = self.get_occupied_intervals(days)
 
             if not occupied_intervals:
                 _LOGGER.debug(
@@ -115,11 +93,12 @@ class PriorAnalyzer:
             # 2. Calculate global prior using actual data period
             # Determine actual data period from intervals (not fixed lookback)
             # Ensure all datetime objects are timezone-aware UTC
+            # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
             first_interval_start = min(
-                dt_util.as_utc(start) for start, end in occupied_intervals
+                ensure_timezone_aware(start) for start, end in occupied_intervals
             )
             last_interval_end = max(
-                dt_util.as_utc(end) for start, end in occupied_intervals
+                ensure_timezone_aware(end) for start, end in occupied_intervals
             )
             now = dt_util.utcnow()
 
@@ -152,8 +131,11 @@ class PriorAnalyzer:
                 return
 
             # Calculate occupied duration (ensure timezone-aware)
+            # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
             occupied_duration = sum(
-                (dt_util.as_utc(end) - dt_util.as_utc(start)).total_seconds()
+                (
+                    ensure_timezone_aware(end) - ensure_timezone_aware(start)
+                ).total_seconds()
                 for start, end in occupied_intervals
             )
 
@@ -209,13 +191,11 @@ async def ensure_occupied_intervals_cache(
                 "OccupiedIntervalsCache invalid or missing for %s, populating from raw intervals",
                 area_name,
             )
-            # Calculate occupied intervals from raw intervals
+            # Calculate occupied intervals from raw intervals (motion sensors only)
             analyzer = PriorAnalyzer(coordinator, area_name)
             intervals = await coordinator.hass.async_add_executor_job(
                 analyzer.get_occupied_intervals,
                 DEFAULT_LOOKBACK_DAYS,
-                False,  # include_media
-                False,  # include_appliance
             )
 
             # Save to cache
@@ -295,7 +275,9 @@ async def run_full_analysis(
     4. Run interval aggregation
     5. Recalculate priors for all areas
     6. Run correlation analysis
-    7. Refresh coordinator and save data
+    7. Save data (preserve decay state before refresh)
+    8. Refresh coordinator
+    9. Save data (persist all changes)
 
     Args:
         coordinator: The coordinator instance containing areas and database
@@ -340,10 +322,14 @@ async def run_full_analysis(
         # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
         await run_correlation_analysis(coordinator)
 
-        # Step 7: Refresh the coordinator
+        # Step 7: Save data (preserve decay state before refresh)
+        # This ensures decay state is saved before async_refresh() potentially resets it
+        await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
+
+        # Step 8: Refresh the coordinator
         await coordinator.async_refresh()
 
-        # Step 8: Save data (always save - no master check)
+        # Step 9: Save data (persist all changes after refresh)
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
 
     except (HomeAssistantError, OSError, RuntimeError) as err:

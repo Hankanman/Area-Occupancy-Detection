@@ -242,7 +242,6 @@ def is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
         "corrupted",
         "file is not a database",
         "database or disk is full",
-        "database is locked",
         "unable to open database file",
     ]
 
@@ -257,6 +256,7 @@ def attempt_database_recovery(db: AreaOccupancyDB) -> bool:
     """
     _LOGGER.warning("Attempting database recovery from corruption")
 
+    temp_engine = None
     try:
         # First, try to close all connections and recreate engine
         db.engine.dispose()
@@ -292,6 +292,8 @@ def attempt_database_recovery(db: AreaOccupancyDB) -> bool:
                 # Replace the engine with the recovered one
                 db.engine = temp_engine
                 db.update_session_maker()
+                # Don't dispose temp_engine since it's now db.engine
+                temp_engine = None
                 return True
             _LOGGER.error("Database recovery failed, no tables found")
             return False
@@ -299,6 +301,10 @@ def attempt_database_recovery(db: AreaOccupancyDB) -> bool:
     except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
         _LOGGER.error("Database recovery failed: %s", e)
         return False
+    finally:
+        # Dispose temp_engine if it wasn't assigned to db.engine
+        if temp_engine is not None and temp_engine is not db.engine:
+            temp_engine.dispose()
 
 
 def backup_database(db: AreaOccupancyDB) -> bool:
@@ -571,7 +577,16 @@ def set_last_prune_time(
     Args:
         db: Database instance
         timestamp: When the prune occurred
-        session: Optional existing session to use (avoids nested locks)
+        session: Optional existing session to use (avoids nested locks).
+            When an external session is provided, the caller is responsible
+            for committing or rolling back the transaction. This function will
+            not commit external sessions to avoid breaking external transaction
+            management.
+
+    Note:
+        When an external session is provided, no commit is performed. The caller
+        must handle transaction management (commit/rollback) as appropriate for
+        their use case.
     """
     try:
         if session is not None:
@@ -585,10 +600,9 @@ def set_last_prune_time(
                 session.add(
                     db.Metadata(key="last_prune_time", value=timestamp.isoformat())
                 )
-            session.commit()
         else:
-            # Fallback to new locked session if not provided
-            with db.get_locked_session() as new_session:
+            # Fallback to new session if not provided
+            with db.get_session() as new_session:
                 existing = (
                     new_session.query(db.Metadata)
                     .filter_by(key="last_prune_time")

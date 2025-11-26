@@ -1,16 +1,14 @@
-"""Tests for AreaOccupancyDB core functionality - initialization, session management, locks, delegation."""
+"""Tests for AreaOccupancyDB core functionality - initialization, session management, delegation."""
 # ruff: noqa: SLF001
 
-from contextlib import contextmanager
-from datetime import datetime
+from typing import Any
 from unittest.mock import patch
 
-from filelock import FileLock, Timeout
 import pytest
 from sqlalchemy import create_engine, text
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import AreaOccupancyDB
-from homeassistant.exceptions import HomeAssistantError
 
 
 class TestAreaOccupancyDBInitialization:
@@ -27,7 +25,6 @@ class TestAreaOccupancyDBInitialization:
         assert db._session_maker is not None
         assert db.storage_path is not None
         assert db.db_path is not None
-        assert db._lock_path is not None
 
     def test_initialization_with_none_config_entry(self, coordinator):
         """Test initialization fails when config_entry is None."""
@@ -87,9 +84,9 @@ class TestAreaOccupancyDBInitialization:
 class TestSessionManagement:
     """Test session management methods."""
 
-    def test_get_session_creates_session(self, test_db):
+    def test_get_session_creates_session(self, coordinator: AreaOccupancyCoordinator):
         """Test that get_session creates a session."""
-        db = test_db
+        db = coordinator.db
 
         with db.get_session() as session:
             assert session is not None
@@ -97,18 +94,20 @@ class TestSessionManagement:
             result = session.execute(text("SELECT 1"))
             assert result.scalar() == 1
 
-    def test_get_session_rollback_on_exception(self, test_db):
+    def test_get_session_rollback_on_exception(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test that get_session rolls back on exception."""
-        db = test_db
+        db = coordinator.db
 
         with pytest.raises(ValueError), db.get_session():
             # Add something that will fail
             raise ValueError("Test error")
             # Session should be rolled back automatically
 
-    def test_get_session_closes_on_exit(self, test_db):
+    def test_get_session_closes_on_exit(self, coordinator: AreaOccupancyCoordinator):
         """Test that get_session closes session on exit."""
-        db = test_db
+        db = coordinator.db
 
         with db.get_session() as session:
             session_id = id(session)
@@ -119,76 +118,13 @@ class TestSessionManagement:
         with db.get_session() as session2:
             assert id(session2) != session_id
 
-    def test_get_locked_session_with_lock_path(self, test_db):
-        """Test get_locked_session when lock path exists."""
-        db = test_db
-        assert db._lock_path is not None
-
-        with db.get_locked_session() as session:
-            assert session is not None
-            # Session should be usable
-            result = session.execute(text("SELECT 1"))
-            assert result.scalar() == 1
-
-    def test_get_locked_session_without_lock_path(self, coordinator, tmp_path):
-        """Test get_locked_session falls back to regular session when no lock path."""
-
-        db = AreaOccupancyDB(coordinator=coordinator)
-        db._lock_path = None
-
-        # Should fall back to regular session
-        with db.get_locked_session() as session:
-            assert session is not None
-
-    def test_get_locked_session_timeout(self, test_db, tmp_path):
-        """Test get_locked_session raises error on lock timeout."""
-        db = test_db
-        db._lock_path = tmp_path / "test.lock"
-
-        # Create a lock file that's already locked
-        lock_file = db._lock_path
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # Create a file lock that will hold the lock
-
-        existing_lock = FileLock(lock_file, timeout=0.1)
-        existing_lock.acquire()
-
-        try:
-            # Try to get a locked session with short timeout
-            with (
-                pytest.raises(HomeAssistantError, match="Database is busy"),
-                db.get_locked_session(timeout=0.1),
-            ):
-                pass
-        finally:
-            existing_lock.release()
-
-    def test_get_locked_session_handles_timeout_exception(self, test_db, monkeypatch):
-        """Test that get_locked_session properly handles Timeout exception."""
-        db = test_db
-
-        @contextmanager
-        def mock_filelock(*args, **kwargs):
-            raise Timeout("Lock timeout")
-
-        monkeypatch.setattr(
-            "custom_components.area_occupancy.db.core.FileLock", mock_filelock
-        )
-
-        with (
-            pytest.raises(HomeAssistantError, match="Database is busy"),
-            db.get_locked_session(timeout=1),
-        ):
-            pass
-
 
 class TestTableProperties:
     """Test table property accessors."""
 
-    def test_table_properties(self, test_db):
+    def test_table_properties(self, coordinator: AreaOccupancyCoordinator):
         """Test table property accessors."""
-        db = test_db
+        db = coordinator.db
 
         assert db.areas.name == "areas"
         assert db.entities.name == "entities"
@@ -196,17 +132,17 @@ class TestTableProperties:
         assert db.priors.name == "priors"
         assert db.metadata.name == "metadata"
 
-    def test_get_engine(self, test_db):
+    def test_get_engine(self, coordinator: AreaOccupancyCoordinator):
         """Test get_engine method."""
-        db = test_db
+        db = coordinator.db
 
         engine = db.get_engine()
         assert engine is not None
         assert engine == db.engine
 
-    def test_update_session_maker(self, test_db):
+    def test_update_session_maker(self, coordinator: AreaOccupancyCoordinator):
         """Test update_session_maker method."""
-        db = test_db
+        db = coordinator.db
 
         original_maker = db._session_maker
 
@@ -225,9 +161,9 @@ class TestTableProperties:
 class TestModelClassReferences:
     """Test model class references."""
 
-    def test_model_class_references(self, test_db):
+    def test_model_class_references(self, coordinator: AreaOccupancyCoordinator):
         """Test that model classes are correctly referenced."""
-        db = test_db
+        db = coordinator.db
 
         # Test that class attributes reference schema models
         assert db.Areas is not None
@@ -247,155 +183,165 @@ class TestModelClassReferences:
 
 
 class TestDelegationCorrectness:
-    """Test that core.py methods correctly delegate to underlying modules."""
+    """Test that core.py methods correctly delegate to underlying modules via __getattr__."""
+
+    def test_delegated_methods_dict_exists(self, coordinator: AreaOccupancyCoordinator):
+        """Test that _delegated_methods dictionary exists and contains expected methods."""
+        db = coordinator.db
+
+        assert hasattr(db, "_delegated_methods")
+        assert isinstance(db._delegated_methods, dict)
+        # Verify some expected methods are in the dictionary
+        assert "load_data" in db._delegated_methods
+        assert "save_area_data" in db._delegated_methods
+        assert "check_database_integrity" in db._delegated_methods
+        assert "get_area_data" in db._delegated_methods
+
+    def test_nonexistent_attribute_raises_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that accessing non-existent attributes raises AttributeError."""
+        db = coordinator.db
+
+        with pytest.raises(
+            AttributeError, match="has no attribute 'nonexistent_method'"
+        ):
+            _ = db.nonexistent_method
+
+    @pytest.mark.parametrize(
+        ("method_name", "module_path", "call_args", "return_value"),
+        [
+            (
+                "save_area_data",
+                "custom_components.area_occupancy.db.operations.save_area_data",
+                ("Test Area",),
+                None,
+            ),
+            (
+                "get_area_data",
+                "custom_components.area_occupancy.db.queries.get_area_data",
+                ("test_entry",),
+                {"entry_id": "test"},
+            ),
+            (
+                "check_database_integrity",
+                "custom_components.area_occupancy.db.maintenance.check_database_integrity",
+                (),
+                True,
+            ),
+            (
+                "is_intervals_empty",
+                "custom_components.area_occupancy.db.utils.is_intervals_empty",
+                (),
+                True,
+            ),
+            (
+                "aggregate_raw_to_daily",
+                "custom_components.area_occupancy.db.aggregation.aggregate_raw_to_daily",
+                ("Test Area",),
+                5,
+            ),
+            (
+                "save_area_relationship",
+                "custom_components.area_occupancy.db.relationships.save_area_relationship",
+                ("Area1", "Area2", "adjacent", 0.5),
+                True,
+            ),
+            (
+                "analyze_correlation",
+                "custom_components.area_occupancy.db.correlation.analyze_correlation",
+                ("Area1", "sensor.temp", 30, False, None),
+                {"correlation": 0.8},
+            ),
+        ],
+    )
+    def test_delegated_methods_via_getattr(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        method_name: str,
+        module_path: str,
+        call_args: tuple,
+        return_value: Any,
+    ):
+        """Test that delegated methods correctly call their underlying module functions via __getattr__."""
+        db = coordinator.db
+
+        # Replace function in _delegated_methods with mock to test delegation
+        original_func = db._delegated_methods[method_name]
+        with patch(module_path, return_value=return_value) as mock_func:
+            db._delegated_methods[method_name] = mock_func
+            result = getattr(db, method_name)(*call_args)
+            # Verify it was called with db as first argument followed by call_args
+            mock_func.assert_called_once_with(db, *call_args)
+            if return_value is not None:
+                assert result == return_value
+            db._delegated_methods[method_name] = original_func
 
     @pytest.mark.asyncio
-    async def test_load_data_delegates_to_operations(self, test_db):
-        """Test that load_data delegates to operations.load_data."""
-        db = test_db
+    @pytest.mark.parametrize(
+        ("method_name", "module_path"),
+        [
+            ("load_data", "custom_components.area_occupancy.db.operations.load_data"),
+            ("sync_states", "custom_components.area_occupancy.db.sync.sync_states"),
+        ],
+    )
+    async def test_async_delegated_methods_via_getattr(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        method_name: str,
+        module_path: str,
+    ):
+        """Test that async delegated methods correctly call their underlying module functions via __getattr__."""
+        db = coordinator.db
 
+        # Replace function in _delegated_methods with mock to test delegation
+        original_func = db._delegated_methods[method_name]
+        with patch(module_path, return_value=None) as mock_func:
+            db._delegated_methods[method_name] = mock_func
+            await getattr(db, method_name)()
+            mock_func.assert_called_once_with(db)
+            db._delegated_methods[method_name] = original_func
+
+    def test_is_valid_state_explicit_method(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that is_valid_state is an explicit method (doesn't follow func(db, ...) pattern)."""
+        db = coordinator.db
+
+        # is_valid_state is an explicit method (doesn't follow func(db, ...) pattern)
+        assert "is_valid_state" not in db._delegated_methods
         with patch(
-            "custom_components.area_occupancy.db.operations.load_data"
-        ) as mock_load:
-            await db.load_data()
-            mock_load.assert_called_once_with(db)
-
-    def test_save_area_data_delegates_to_operations(self, test_db):
-        """Test that save_area_data delegates to operations.save_area_data."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.operations.save_area_data"
-        ) as mock_save:
-            db.save_area_data("Test Area")
-            mock_save.assert_called_once_with(db, "Test Area")
-
-    def test_save_entity_data_delegates_to_operations(self, test_db):
-        """Test that save_entity_data delegates to operations.save_entity_data."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.operations.save_entity_data"
-        ) as mock_save:
-            db.save_entity_data()
-            mock_save.assert_called_once_with(db)
-
-    def test_get_area_data_delegates_to_queries(self, test_db):
-        """Test that get_area_data delegates to queries.get_area_data."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.queries.get_area_data"
-        ) as mock_get:
-            mock_get.return_value = {"entry_id": "test"}
-            result = db.get_area_data("test_entry")
-            mock_get.assert_called_once_with(db, "test_entry")
-            assert result == {"entry_id": "test"}
-
-    def test_get_latest_interval_delegates_to_queries(self, test_db):
-        """Test that get_latest_interval delegates to queries.get_latest_interval."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.queries.get_latest_interval"
-        ) as mock_get:
-            mock_get.return_value = datetime.now()
-            result = db.get_latest_interval()
-            mock_get.assert_called_once_with(db)
-            assert isinstance(result, datetime)
-
-    def test_is_valid_state_delegates_to_utils(self, test_db):
-        """Test that is_valid_state delegates to utils.is_valid_state."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.utils.is_valid_state"
+            "custom_components.area_occupancy.db.utils.is_valid_state",
+            return_value=True,
         ) as mock_is_valid:
-            mock_is_valid.return_value = True
             result = db.is_valid_state("on")
             mock_is_valid.assert_called_once_with("on")
             assert result is True
 
-    def test_is_intervals_empty_delegates_to_utils(self, test_db):
-        """Test that is_intervals_empty delegates to utils.is_intervals_empty."""
-        db = test_db
+    def test_explicit_methods_not_delegated(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that methods with added logic (get_time_prior, get_occupied_intervals) are not delegated."""
+        db = coordinator.db
 
-        with patch(
-            "custom_components.area_occupancy.db.utils.is_intervals_empty"
-        ) as mock_is_empty:
-            mock_is_empty.return_value = True
-            result = db.is_intervals_empty()
-            mock_is_empty.assert_called_once_with(db)
-            assert result is True
-
-    @pytest.mark.asyncio
-    async def test_sync_states_delegates_to_sync(self, test_db):
-        """Test that sync_states delegates to sync.sync_states."""
-        db = test_db
-
-        with patch("custom_components.area_occupancy.db.sync.sync_states") as mock_sync:
-            await db.sync_states()
-            mock_sync.assert_called_once_with(db)
-
-    def test_aggregate_raw_to_daily_delegates_to_aggregation(self, test_db):
-        """Test that aggregate_raw_to_daily delegates to aggregation.aggregate_raw_to_daily."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.aggregation.aggregate_raw_to_daily"
-        ) as mock_agg:
-            mock_agg.return_value = 5
-            result = db.aggregate_raw_to_daily("Test Area")
-            mock_agg.assert_called_once_with(db, "Test Area")
-            assert result == 5
-
-    def test_check_database_integrity_delegates_to_maintenance(self, test_db):
-        """Test that check_database_integrity delegates to maintenance.check_database_integrity."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.maintenance.check_database_integrity"
-        ) as mock_check:
-            mock_check.return_value = True
-            result = db.check_database_integrity()
-            mock_check.assert_called_once_with(db)
-            assert result is True
-
-    def test_save_area_relationship_delegates_to_relationships(self, test_db):
-        """Test that save_area_relationship delegates to relationships.save_area_relationship."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.relationships.save_area_relationship"
-        ) as mock_save:
-            mock_save.return_value = True
-            result = db.save_area_relationship("Area1", "Area2", "adjacent", 0.5)
-            mock_save.assert_called_once_with(
-                db, "Area1", "Area2", "adjacent", 0.5, None
-            )
-            assert result is True
-
-    def test_analyze_correlation_delegates_to_correlation(self, test_db):
-        """Test that analyze_correlation delegates to correlation.analyze_correlation."""
-        db = test_db
-
-        with patch(
-            "custom_components.area_occupancy.db.correlation.analyze_correlation"
-        ) as mock_analyze:
-            mock_analyze.return_value = {"correlation": 0.8}
-            result = db.analyze_correlation("Area1", "sensor.temp", 30, False, None)
-            mock_analyze.assert_called_once_with(
-                db, "Area1", "sensor.temp", 30, False, None
-            )
-            assert result == {"correlation": 0.8}
+        # These methods should exist as real methods, not in _delegated_methods
+        assert "get_time_prior" not in db._delegated_methods
+        assert "get_occupied_intervals" not in db._delegated_methods
+        # Verify they exist as real methods
+        assert hasattr(db, "get_time_prior")
+        assert hasattr(db, "get_occupied_intervals")
+        assert callable(db.get_time_prior)
+        assert callable(db.get_occupied_intervals)
 
 
 class TestErrorHandling:
     """Test error handling at core level."""
 
-    def test_get_session_handles_exception(self, test_db, monkeypatch):
+    def test_get_session_handles_exception(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test that get_session properly handles exceptions."""
-        db = test_db
+        db = coordinator.db
 
         def failing_maker():
             raise RuntimeError("Session creation failed")
@@ -405,23 +351,5 @@ class TestErrorHandling:
         with (
             pytest.raises(RuntimeError, match="Session creation failed"),
             db.get_session(),
-        ):
-            pass
-
-    def test_get_locked_session_handles_lock_errors(self, test_db, monkeypatch):
-        """Test that get_locked_session handles lock errors gracefully."""
-        db = test_db
-
-        @contextmanager
-        def mock_filelock(*args, **kwargs):
-            raise Timeout("Lock timeout")
-
-        monkeypatch.setattr(
-            "custom_components.area_occupancy.db.core.FileLock", mock_filelock
-        )
-
-        with (
-            pytest.raises(HomeAssistantError, match="Database is busy"),
-            db.get_locked_session(timeout=1),
         ):
             pass

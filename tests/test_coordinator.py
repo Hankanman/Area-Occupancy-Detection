@@ -16,7 +16,6 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
-from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -681,92 +680,6 @@ class TestAreaOccupancyCoordinator:
             await coordinator._start_analysis_timer()  # Now async
             mock_track.assert_not_called()
 
-    async def test_run_interval_aggregation_job_success(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test successful execution of interval aggregation job."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-        coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
-
-        async def fake_executor_job(func, *args, **kwargs):
-            return func(*args, **kwargs)
-
-        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
-
-        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-        coordinator.db.run_interval_aggregation.assert_called_once()
-        assert summary["aggregation"] == {"daily": 1}
-        assert summary["errors"] == []
-
-    async def test_run_interval_aggregation_job_triggers_correlation(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Ensure interval aggregation job runs correlation for numeric entities."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-        area_name = "Test Area"
-        area = create_test_area(coordinator, area_name=area_name)
-        area.entities._entities = {
-            "sensor.numeric": Mock(type=Mock(input_type=InputType.TEMPERATURE)),
-            "binary_sensor.motion": Mock(type=Mock(input_type=InputType.MOTION)),
-        }
-
-        coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
-        coordinator.db.analyze_and_save_correlation = Mock(return_value=True)
-
-        async def fake_executor_job(func, *args, **kwargs):
-            return func(*args, **kwargs)
-
-        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
-
-        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-        coordinator.db.analyze_and_save_correlation.assert_called_once_with(
-            area_name, "sensor.numeric", 30, False, None
-        )
-        assert summary["correlations"]
-        assert summary["correlations"][0]["success"] is True
-
-    async def test_run_interval_aggregation_job_skips_when_no_numeric(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Ensure interval aggregation job skips correlation when no numeric entities."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-        area_name = "Test Area"
-        area = create_test_area(coordinator, area_name=area_name)
-        area.entities._entities = {
-            "binary_sensor.motion": Mock(type=Mock(input_type=InputType.MOTION))
-        }
-
-        coordinator.db.run_interval_aggregation = Mock(return_value={"daily": 1})
-        coordinator.db.analyze_and_save_correlation = Mock(return_value=True)
-
-        async def fake_executor_job(func, *args, **kwargs):
-            return func(*args, **kwargs)
-
-        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
-
-        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-        coordinator.db.analyze_and_save_correlation.assert_not_called()
-        assert summary["correlations"] == []
-
-    async def test_run_interval_aggregation_job_error(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
-    ) -> None:
-        """Test error handling for interval aggregation job."""
-        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-
-        def _raise_error():
-            raise RuntimeError("Aggregation failed")
-
-        coordinator.db.run_interval_aggregation = Mock(side_effect=_raise_error)
-
-        async def fake_executor_job(func, *args, **kwargs):
-            return func(*args, **kwargs)
-
-        hass.async_add_executor_job = AsyncMock(side_effect=fake_executor_job)
-
-        summary = await coordinator.run_interval_aggregation_job(dt_util.utcnow())
-        assert summary["errors"]
-
     async def test_run_analysis(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
@@ -780,11 +693,20 @@ class TestAreaOccupancyCoordinator:
         area = create_test_area(coordinator, area_name=area_name)
         coordinator.get_area = Mock(return_value=area)
 
+        # Create a mock function that matches the signature of prune_old_intervals
+        # The wrapper from __getattr__ calls func(self, *args, **kwargs)
+        # So our mock needs to accept db as first argument
+        mock_prune_func = Mock(return_value=5)
+
         with (
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
-            patch.object(
-                coordinator.db, "prune_old_intervals", return_value=5
-            ) as mock_prune,  # Mock pruning
+            patch.object(coordinator.db, "periodic_health_check", return_value=True),
+            # Patch the delegated method in the _delegated_methods dictionary
+            # This ensures the wrapper returned by __getattr__ uses our mock
+            patch.dict(
+                coordinator.db._delegated_methods,
+                {"prune_old_intervals": mock_prune_func},
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.ensure_occupied_intervals_cache",
                 new=AsyncMock(),
@@ -808,7 +730,8 @@ class TestAreaOccupancyCoordinator:
             await coordinator.run_analysis()
             assert coordinator._analysis_timer is None
             # Verify pruning was called (master-only)
-            mock_prune.assert_called_once()
+            # The wrapper from __getattr__ will call our mock with (db, *args)
+            mock_prune_func.assert_called_once()
             # Verify cache ensure was called before aggregation
             mock_cache.assert_called_once()
             # Verify interval aggregation was called before prior analysis
@@ -817,8 +740,10 @@ class TestAreaOccupancyCoordinator:
             mock_prior.assert_called_once()
             # Verify correlation analysis was called after prior analysis
             mock_correlation.assert_called_once()
-            # Verify save was called last
-            mock_save.assert_called_once()
+            # Verify save was called twice:
+            # 1. Before async_refresh() to preserve decay state
+            # 2. After async_refresh() to persist all changes
+            assert mock_save.call_count == 2
 
     async def test_run_analysis_with_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

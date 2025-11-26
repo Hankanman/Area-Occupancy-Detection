@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.sync import (
     _get_existing_interval_keys,
@@ -19,9 +20,11 @@ from homeassistant.util import dt as dt_util
 class TestStatesToIntervals:
     """Test _states_to_intervals function."""
 
-    def test_states_to_intervals_single_state(self, test_db):
+    def test_states_to_intervals_single_state(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test converting single state to interval."""
-        db = test_db
+        db = coordinator.db
         start = dt_util.utcnow()
         states = {
             "binary_sensor.motion": [
@@ -38,9 +41,11 @@ class TestStatesToIntervals:
         assert intervals[0]["end_time"] == end_time
         assert intervals[0]["duration_seconds"] == (end_time - start).total_seconds()
 
-    def test_states_to_intervals_multiple_states(self, test_db):
+    def test_states_to_intervals_multiple_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test converting multiple states to intervals."""
-        db = test_db
+        db = coordinator.db
         start = dt_util.utcnow()
         states = {
             "binary_sensor.motion": [
@@ -63,9 +68,11 @@ class TestStatesToIntervals:
         assert intervals[1]["start_time"] == start + timedelta(seconds=10)
         assert intervals[1]["end_time"] == end_time
 
-    def test_states_to_intervals_filters_invalid_states(self, test_db):
+    def test_states_to_intervals_filters_invalid_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
         """Test that invalid states are filtered out."""
-        db = test_db
+        db = coordinator.db
         start = dt_util.utcnow()
         states = {
             "binary_sensor.motion": [
@@ -89,16 +96,18 @@ class TestSyncStates:
     """Test sync_states function."""
 
     @pytest.mark.asyncio
-    async def test_sync_states_success(self, test_db, monkeypatch):
+    async def test_sync_states_success(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test successful state synchronization."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Ensure area exists first (foreign key requirement)
         db.save_area_data(area_name)
 
         # Create entity first so sync can process it
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion",
                 entry_id=db.coordinator.entry_id,
@@ -186,7 +195,7 @@ class TestSyncStates:
 
             # end_time validation: duration check is sufficient
             # Note: We don't compare absolute end_time or check end_time >= start_time
-            # due to potential timezone differences between dt_util.now() (used in sync_states)
+            # due to potential timezone differences between dt_util.utcnow() (used in sync_states)
             # and dt_util.utcnow() (used for start_time). The duration_seconds check below
             # validates that the interval is approximately 5 minutes, which is the key validation.
 
@@ -209,9 +218,11 @@ class TestSyncStates:
             assert interval.entry_id == db.coordinator.entry_id
 
     @pytest.mark.asyncio
-    async def test_sync_states_handles_errors(self, test_db, monkeypatch):
+    async def test_sync_states_handles_errors(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test that sync_states handles errors gracefully."""
-        db = test_db
+        db = coordinator.db
 
         # Mock get_instance to return a mock recorder
         mock_recorder = Mock()
@@ -229,16 +240,18 @@ class TestSyncStates:
         await sync_states(db)
 
     @pytest.mark.asyncio
-    async def test_sync_states_multi_area_isolation(self, test_db, monkeypatch):
+    async def test_sync_states_multi_area_isolation(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test that sync_states isolates areas correctly."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
         # Ensure area exists first (foreign key requirement)
         db.save_area_data(area_name)
 
         # Create entity first
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion",
                 entry_id=db.coordinator.entry_id,
@@ -291,9 +304,11 @@ class TestSyncStates:
                 assert interval.area_name == area_name
 
     @pytest.mark.asyncio
-    async def test_sync_states_records_numeric_samples(self, test_db, monkeypatch):
+    async def test_sync_states_records_numeric_samples(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Ensure numeric states are stored in NumericSamples."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         db.save_area_data(area_name)
 
@@ -352,15 +367,17 @@ class TestSyncStates:
 class TestIntervalLookup:
     """Tests for helper functions used during sync."""
 
-    def test_get_existing_interval_keys_batches(self, test_db, monkeypatch):
+    def test_get_existing_interval_keys_batches(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Existing intervals should be found in batch-sized queries."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         db.save_area_data(area_name)
 
         now = dt_util.utcnow()
         interval_defs = []
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             for idx in range(2):
                 start = now + timedelta(minutes=idx)
                 end = start + timedelta(minutes=5)

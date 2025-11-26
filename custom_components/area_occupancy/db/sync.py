@@ -55,7 +55,23 @@ def _chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
 
 
 def _normalize_datetime(value: datetime) -> datetime:
-    """Strip timezone info for consistent comparison."""
+    """Strip timezone info for consistent database key comparison.
+
+    This function is used specifically for database key lookups where we need to
+    match keys regardless of timezone representation. SQLite may return naive or
+    timezone-aware datetimes depending on how they were stored, and Home Assistant
+    states may have timezone-aware datetimes. By normalizing to naive datetimes,
+    we ensure consistent key matching for duplicate detection.
+
+    Note: This is ONLY for database key comparisons, not for timezone-aware
+    datetime operations elsewhere in the codebase.
+
+    Args:
+        value: Datetime to normalize (may be naive or timezone-aware)
+
+    Returns:
+        Naive datetime (timezone info stripped if present)
+    """
     if value.tzinfo is not None:
         return value.replace(tzinfo=None)
     return value
@@ -171,7 +187,8 @@ def _states_to_intervals(
 
     """
     intervals = []
-    retention_time = dt_util.now() - timedelta(days=RETENTION_DAYS)
+    retention_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
+    created_at = dt_util.utcnow()
 
     for entity_id, state_list in states.items():
         if not state_list:
@@ -207,7 +224,7 @@ def _states_to_intervals(
                             "start_time": state.last_changed,
                             "end_time": interval_end,
                             "duration_seconds": duration_seconds,
-                            "created_at": dt_util.utcnow(),
+                            "created_at": created_at,
                         }
                     )
             elif (
@@ -221,7 +238,7 @@ def _states_to_intervals(
                         "start_time": state.last_changed,
                         "end_time": interval_end,
                         "duration_seconds": duration_seconds,
-                        "created_at": dt_util.utcnow(),
+                        "created_at": created_at,
                     }
                 )
 
@@ -233,7 +250,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
     hass = db.coordinator.hass
     recorder = get_instance(hass)
     start_time = queries.get_latest_interval(db)
-    end_time = dt_util.now()
+    end_time = dt_util.utcnow()
 
     # Collect all entity IDs from all areas
     all_entity_ids = []
@@ -264,7 +281,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
         # Convert states to proper intervals with correct duration calculation
         intervals = _states_to_intervals(db, states, end_time)
         if intervals:
-            with db.get_locked_session() as session:
+            with db.get_session() as session:
                 interval_keys = {
                     (
                         interval_data["entity_id"],
@@ -309,7 +326,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
         numeric_samples = _states_to_numeric_samples(db, states)
         if numeric_samples:
-            with db.get_locked_session() as session:
+            with db.get_session() as session:
                 sample_keys = {
                     (
                         sample_data["entity_id"],

@@ -23,7 +23,7 @@ class TestAreaMethods:
 
         assert device_info is not None
         # Device identifier should use area_id (stable even if area is renamed)
-        # Fallback to area_name for legacy compatibility
+        # Fallback to area_name if area_id is not available
         expected_identifier = default_area.config.area_id or default_area.area_name
         assert device_info["identifiers"] == {(DOMAIN, expected_identifier)}
         assert device_info["name"] == default_area.config.name
@@ -39,7 +39,8 @@ class TestAreaMethods:
         mock_entity1.prob_given_true = 0.8
         mock_entity1.prob_given_false = 0.2
         mock_entity1.type = Mock(weight=0.85)
-        mock_entity1.decay = Mock(decay_factor=1.0)
+        mock_entity1.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         type(mock_entity1).weight = PropertyMock(return_value=0.85)
 
         mock_entity2 = Mock()
@@ -47,7 +48,10 @@ class TestAreaMethods:
         mock_entity2.prob_given_true = 0.7
         mock_entity2.prob_given_false = 0.3
         mock_entity2.type = Mock(weight=0.7)
-        mock_entity2.decay = Mock(decay_factor=1.0)
+        mock_entity2.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_entity2.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         type(mock_entity2).weight = PropertyMock(return_value=0.7)
 
         # Set entities via _entities private attribute
@@ -180,7 +184,7 @@ class TestAreaMethodsIntegration:
         device_info = area.device_info()
         assert device_info is not None
         # Device identifier should use area_id (stable even if area is renamed)
-        # Fallback to area_name for legacy compatibility
+        # Fallback to area_name if area_id is not available
         expected_identifier = area.config.area_id or area_name
         assert device_info["identifiers"] == {(DOMAIN, expected_identifier)}
         assert device_info["name"] == area.config.name

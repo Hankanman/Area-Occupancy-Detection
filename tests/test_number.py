@@ -216,6 +216,14 @@ class TestThreshold:
         handle = coordinator.get_area_handle(area_name)
         threshold_entity = Threshold(area_handle=handle)
 
+        # Ensure config entry options has CONF_AREAS format (required for update_config)
+        if CONF_AREAS not in coordinator.config_entry.options:
+            # Get current area config from data and copy to options
+            areas_list = coordinator.config_entry.data.get(CONF_AREAS, [])
+            coordinator.config_entry.options = {
+                CONF_AREAS: [area.copy() for area in areas_list]
+            }
+
         # Mock config entry update to verify it's called with properly structured options
         with patch.object(
             hass.config_entries, "async_update_entry"

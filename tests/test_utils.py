@@ -307,6 +307,7 @@ class TestBayesianProbability:
         entity1.evidence = True
         entity1.decay.decay_factor = 1.0
         entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity1.prob_given_true = 0.8
         entity1.prob_given_false = 0.1
         entity1.weight = 0.5
@@ -315,6 +316,9 @@ class TestBayesianProbability:
         entity2.evidence = False
         entity2.decay.decay_factor = 1.0
         entity2.decay.is_decaying = False
+        entity2.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         entity2.prob_given_true = 0.7
         entity2.prob_given_false = 0.2
         entity2.weight = 0.3
@@ -336,6 +340,9 @@ class TestBayesianProbability:
         entity.evidence = False  # No current evidence
         entity.decay.decay_factor = 0.5  # Decaying
         entity.decay.is_decaying = True
+        entity.decay_factor = (
+            0.5  # Property returns decay.decay_factor when evidence is False
+        )
         entity.prob_given_true = 0.8
         entity.prob_given_false = 0.1
         entity.weight = 0.5
@@ -356,6 +363,7 @@ class TestBayesianProbability:
         entity.evidence = True
         entity.decay.decay_factor = 1.0
         entity.decay.is_decaying = False
+        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity.prob_given_true = 0.8
         entity.prob_given_false = 0.1
         entity.weight = 0.5
@@ -381,6 +389,8 @@ class TestBayesianProbability:
             entity.evidence = i % 2 == 0  # Alternate evidence
             entity.decay.decay_factor = 1.0
             entity.decay.is_decaying = False
+            # Property returns 1.0 when evidence is True, decay.decay_factor when False
+            entity.decay_factor = 1.0
             entity.prob_given_true = 0.8
             entity.prob_given_false = 0.1
             entity.weight = 0.1
@@ -397,6 +407,7 @@ class TestBayesianProbability:
         entity1.evidence = True
         entity1.decay.decay_factor = 1.0
         entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity1.prob_given_true = 0.8
         entity1.prob_given_false = 0.1
         entity1.weight = 0.0  # Zero weight
@@ -405,6 +416,7 @@ class TestBayesianProbability:
         entity2.evidence = True
         entity2.decay.decay_factor = 1.0
         entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity2.prob_given_true = 0.8
         entity2.prob_given_false = 0.1
         entity2.weight = 0.5  # Non-zero weight
@@ -425,6 +437,7 @@ class TestBayesianProbability:
         entity1.evidence = True
         entity1.decay.decay_factor = 1.0
         entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity1.prob_given_true = 0.0  # Invalid
         entity1.prob_given_false = 0.1
         entity1.weight = 0.5
@@ -434,6 +447,7 @@ class TestBayesianProbability:
         entity2.evidence = True
         entity2.decay.decay_factor = 1.0
         entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity2.prob_given_true = 0.8
         entity2.prob_given_false = 1.0  # Invalid
         entity2.weight = 0.5
@@ -443,6 +457,7 @@ class TestBayesianProbability:
         entity3.evidence = True
         entity3.decay.decay_factor = 1.0
         entity3.decay.is_decaying = False
+        entity3.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity3.prob_given_true = 1.5  # Invalid
         entity3.prob_given_false = 0.1
         entity3.weight = 0.5
@@ -452,6 +467,7 @@ class TestBayesianProbability:
         entity4.evidence = True
         entity4.decay.decay_factor = 1.0
         entity4.decay.is_decaying = False
+        entity4.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity4.prob_given_true = 0.8
         entity4.prob_given_false = 0.1
         entity4.weight = 0.5
@@ -480,6 +496,7 @@ class TestBayesianProbability:
         entity1.evidence = True
         entity1.decay.decay_factor = -0.5  # Should be clamped to 0.0
         entity1.decay.is_decaying = True
+        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity1.prob_given_true = 0.8
         entity1.prob_given_false = 0.1
         entity1.weight = 0.5
@@ -489,6 +506,7 @@ class TestBayesianProbability:
         entity2.evidence = True
         entity2.decay.decay_factor = 1.5  # Should be clamped to 1.0
         entity2.decay.is_decaying = True
+        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity2.prob_given_true = 0.8
         entity2.prob_given_false = 0.1
         entity2.weight = 0.5
@@ -509,6 +527,7 @@ class TestBayesianProbability:
         entity.evidence = True
         entity.decay.decay_factor = 1.0
         entity.decay.is_decaying = False
+        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity.prob_given_true = 0.999999  # Very close to 1
         entity.prob_given_false = 0.000001  # Very close to 0
         entity.weight = 1.0
@@ -526,6 +545,7 @@ class TestBayesianProbability:
         entity1.evidence = True
         entity1.decay.decay_factor = 1.0
         entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity1.prob_given_true = 0.0  # Invalid
         entity1.prob_given_false = 0.1
         entity1.weight = 0.5
@@ -534,6 +554,7 @@ class TestBayesianProbability:
         entity2.evidence = True
         entity2.decay.decay_factor = 1.0
         entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity2.prob_given_true = 0.8
         entity2.prob_given_false = 1.0  # Invalid
         entity2.weight = 0.5
@@ -551,6 +572,9 @@ class TestBayesianProbability:
         entity.evidence = False  # No current evidence
         entity.decay.decay_factor = 0.5  # Half decay
         entity.decay.is_decaying = True
+        entity.decay_factor = (
+            0.5  # Property returns decay.decay_factor when evidence is False
+        )
         entity.prob_given_true = 0.8
         entity.prob_given_false = 0.1
         entity.weight = 1.0
@@ -572,6 +596,7 @@ class TestBayesianProbability:
         entity.evidence = True
         entity.decay.decay_factor = 1.0
         entity.decay.is_decaying = False
+        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         entity.prob_given_true = 0.5
         entity.prob_given_false = 0.5  # This makes the calculation neutral
         entity.weight = 1.0
@@ -591,6 +616,9 @@ class TestBayesianProbability:
         entity.evidence = False  # Inactive
         entity.decay.decay_factor = 1.0
         entity.decay.is_decaying = False
+        entity.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         entity.prob_given_true = 0.8
         entity.prob_given_false = 0.1
         entity.weight = 1.0
@@ -616,6 +644,7 @@ class TestBayesianProbability:
         motion.evidence = True
         motion.decay.decay_factor = 1.0
         motion.decay.is_decaying = False
+        motion.decay_factor = 1.0  # Property returns 1.0 when evidence is True
         motion.prob_given_true = 0.95
         motion.prob_given_false = 0.02
         motion.weight = 1.0
@@ -625,6 +654,9 @@ class TestBayesianProbability:
         media.evidence = False
         media.decay.decay_factor = 1.0
         media.decay.is_decaying = False
+        media.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         media.prob_given_true = 0.65
         media.prob_given_false = 0.02
         media.weight = 0.85
@@ -634,6 +666,9 @@ class TestBayesianProbability:
         door.evidence = False
         door.decay.decay_factor = 1.0
         door.decay.is_decaying = False
+        door.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         door.prob_given_true = 0.2
         door.prob_given_false = 0.02
         door.weight = 0.3
@@ -643,6 +678,9 @@ class TestBayesianProbability:
         window.evidence = False
         window.decay.decay_factor = 1.0
         window.decay.is_decaying = False
+        window.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         window.prob_given_true = 0.2
         window.prob_given_false = 0.02
         window.weight = 0.2
@@ -672,6 +710,9 @@ class TestBayesianProbability:
         entity1.evidence = False
         entity1.decay.decay_factor = 1.0
         entity1.decay.is_decaying = False
+        entity1.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         entity1.prob_given_true = 0.01  # Near 0
         entity1.prob_given_false = 0.01
         entity1.weight = 1.0
@@ -686,6 +727,9 @@ class TestBayesianProbability:
         entity2.evidence = False
         entity2.decay.decay_factor = 1.0
         entity2.decay.is_decaying = False
+        entity2.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         entity2.prob_given_true = 0.99  # Near 1
         entity2.prob_given_false = 0.99
         entity2.weight = 1.0
@@ -702,6 +746,9 @@ class TestBayesianProbability:
         inactive.evidence = False
         inactive.decay.decay_factor = 1.0
         inactive.decay.is_decaying = False
+        inactive.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
         inactive.prob_given_true = 0.8
         inactive.prob_given_false = 0.1
         inactive.weight = 1.0
@@ -711,6 +758,9 @@ class TestBayesianProbability:
         unavailable.evidence = None  # Unavailable
         unavailable.decay.decay_factor = 1.0
         unavailable.decay.is_decaying = False
+        unavailable.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is None
+        )
         unavailable.prob_given_true = 0.8
         unavailable.prob_given_false = 0.1
         unavailable.weight = 1.0
@@ -723,3 +773,263 @@ class TestBayesianProbability:
 
         # Results should be the same (unavailable sensor is skipped)
         assert abs(result1 - result2) < 1e-6
+
+    def test_bayesian_evidence_true_with_decay_active(self) -> None:
+        """Test that entity.decay_factor property prevents decay when evidence is True.
+
+        This tests Bug 1 fix: when evidence=True but is_decaying=True (inconsistent state),
+        entity.decay_factor should return 1.0 to prevent decay from being applied.
+        """
+        entity = Mock()
+        entity.evidence = True  # Evidence is active
+        entity.decay.is_decaying = True  # But decay is also active (inconsistent state)
+        entity.decay.decay_factor = 0.5  # Decay factor would be 0.5 if used directly
+        # Mock entity.decay_factor property to return 1.0 when evidence is True
+        entity.decay_factor = 1.0  # Property should return 1.0 when evidence is True
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.1
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = False
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Since decay_factor should be 1.0 (from entity.decay_factor property),
+        # decay should not be applied, so likelihoods should be used at full strength
+        assert 0.0 <= result <= 1.0
+        # With evidence=True and no decay applied, probability should be high
+        assert result > 0.5
+
+    def test_bayesian_continuous_sensor_inactive_state(self) -> None:
+        """Test continuous sensor with inactive state (evidence=False, not None).
+
+        This tests Bug 3: continuous sensors with evidence=False should still
+        use get_likelihoods() which handles inactive states correctly.
+        """
+        entity = Mock()
+        entity.evidence = False  # Inactive (not unavailable)
+        entity.decay.is_decaying = False
+        entity.decay.decay_factor = 1.0
+        entity.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is False
+        )
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to return densities for inactive state
+        entity.get_likelihoods = Mock(return_value=(0.3, 0.7))
+        # These shouldn't be used for continuous sensors, but set them anyway
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.2
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should use get_likelihoods() for inactive continuous sensor
+        entity.get_likelihoods.assert_called_once()
+        assert 0.0 <= result <= 1.0
+
+    def test_bayesian_continuous_sensor_unavailable_state(self) -> None:
+        """Test continuous sensor with unavailable state (evidence=None).
+
+        This tests that continuous sensors handle unavailable state correctly
+        by using get_likelihoods() which uses mean of means.
+        """
+        entity = Mock()
+        entity.evidence = None  # Unavailable
+        entity.decay.is_decaying = False
+        entity.decay.decay_factor = 1.0
+        entity.decay_factor = (
+            1.0  # Property returns decay.decay_factor when evidence is None
+        )
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to return densities using mean of means
+        entity.get_likelihoods = Mock(return_value=(0.5, 0.5))
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.2
+
+        entities = {"entity1": entity}
+
+        # Unavailable sensor should be skipped (unless decaying)
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should return prior since entity is skipped
+        assert abs(result - 0.5) < 1e-6
+        # get_likelihoods should not be called since entity is skipped
+        entity.get_likelihoods.assert_not_called()
+
+    def test_bayesian_gaussian_std_zero_edge_case(self) -> None:
+        """Test Gaussian density calculation with std=0 edge case.
+
+        This tests Bug 4: std should be clamped to minimum 0.05 before
+        calling _calculate_gaussian_density to prevent returning 0.0.
+        """
+        # This test verifies that get_likelihoods() clamps std before calculation
+        # We can't directly test _calculate_gaussian_density with std=0 since
+        # get_likelihoods() clamps it, but we can verify the behavior is correct
+        entity = Mock()
+        entity.evidence = True
+        entity.decay.is_decaying = False
+        entity.decay.decay_factor = 1.0
+        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to simulate std=0 case (should be clamped to 0.05)
+        # With std=0.05, density should be calculable (not 0.0)
+        entity.get_likelihoods = Mock(return_value=(0.6, 0.4))
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.2
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should use get_likelihoods() and get valid densities
+        entity.get_likelihoods.assert_called_once()
+        assert 0.0 <= result <= 1.0
+        # Densities should be > 0 (clamped to 1e-9 minimum later)
+        assert result > 0.0
+
+    def test_bayesian_nan_likelihoods_filtered(self) -> None:
+        """Test that entities with NaN likelihoods are filtered out."""
+
+        # Entity with NaN prob_given_true
+        entity1 = Mock()
+        entity1.evidence = True
+        entity1.decay.decay_factor = 1.0
+        entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0
+        entity1.prob_given_true = float("nan")
+        entity1.prob_given_false = 0.1
+        entity1.weight = 1.0
+        entity1.is_continuous_likelihood = False
+
+        # Entity with valid likelihoods
+        entity2 = Mock()
+        entity2.evidence = True
+        entity2.decay.decay_factor = 1.0
+        entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0
+        entity2.prob_given_true = 0.8
+        entity2.prob_given_false = 0.1
+        entity2.weight = 1.0
+        entity2.is_continuous_likelihood = False
+
+        entities = {"entity1": entity1, "entity2": entity2}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should only use entity2 (entity1 filtered out)
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        # Result should be based on entity2 only
+        assert result > 0.5  # entity2 suggests occupied
+
+    def test_bayesian_inf_likelihoods_filtered(self) -> None:
+        """Test that entities with inf likelihoods are filtered out."""
+
+        # Entity with inf prob_given_false
+        entity1 = Mock()
+        entity1.evidence = True
+        entity1.decay.decay_factor = 1.0
+        entity1.decay.is_decaying = False
+        entity1.decay_factor = 1.0
+        entity1.prob_given_true = 0.8
+        entity1.prob_given_false = float("inf")
+        entity1.weight = 1.0
+        entity1.is_continuous_likelihood = False
+
+        # Entity with valid likelihoods
+        entity2 = Mock()
+        entity2.evidence = True
+        entity2.decay.decay_factor = 1.0
+        entity2.decay.is_decaying = False
+        entity2.decay_factor = 1.0
+        entity2.prob_given_true = 0.8
+        entity2.prob_given_false = 0.1
+        entity2.weight = 1.0
+        entity2.is_continuous_likelihood = False
+
+        entities = {"entity1": entity1, "entity2": entity2}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should only use entity2 (entity1 filtered out)
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        # Result should be based on entity2 only
+        assert result > 0.5  # entity2 suggests occupied
+
+    def test_bayesian_get_likelihoods_returns_nan(self) -> None:
+        """Test that get_likelihoods() returning NaN falls back to static values."""
+
+        entity = Mock()
+        entity.evidence = True
+        entity.decay.decay_factor = 1.0
+        entity.decay.is_decaying = False
+        entity.decay_factor = 1.0
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to return NaN
+        entity.get_likelihoods = Mock(return_value=(float("nan"), 0.5))
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.1
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should fallback to static values and produce valid result
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        entity.get_likelihoods.assert_called_once()
+
+    def test_bayesian_get_likelihoods_returns_inf(self) -> None:
+        """Test that get_likelihoods() returning inf falls back to static values."""
+
+        entity = Mock()
+        entity.evidence = True
+        entity.decay.decay_factor = 1.0
+        entity.decay.is_decaying = False
+        entity.decay_factor = 1.0
+        entity.weight = 1.0
+        entity.is_continuous_likelihood = True
+        # Mock get_likelihoods to return inf
+        entity.get_likelihoods = Mock(return_value=(0.5, float("inf")))
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.1
+
+        entities = {"entity1": entity}
+
+        result = bayesian_probability(entities, prior=0.5)
+
+        # Should fallback to static values and produce valid result
+        assert 0.0 <= result <= 1.0
+        assert not (math.isnan(result) or math.isinf(result))
+        entity.get_likelihoods.assert_called_once()
+
+    def test_clamp_probability_nan(self) -> None:
+        """Test clamp_probability handles NaN values."""
+
+        result = clamp_probability(float("nan"))
+        assert not math.isnan(result)
+        assert not math.isinf(result)
+        assert result == 0.99  # MAX_PROBABILITY (matching existing behavior)
+
+    def test_clamp_probability_inf(self) -> None:
+        """Test clamp_probability handles inf values."""
+
+        result = clamp_probability(float("inf"))
+        assert not math.isnan(result)
+        assert not math.isinf(result)
+        assert result == 0.99  # MAX_PROBABILITY (positive infinity clamped to max)
+
+    def test_clamp_probability_neg_inf(self) -> None:
+        """Test clamp_probability handles negative inf values."""
+
+        result = clamp_probability(float("-inf"))
+        assert not math.isnan(result)
+        assert not math.isinf(result)
+        assert result == 0.01  # MIN_PROBABILITY

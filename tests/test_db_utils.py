@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.utils import (
     is_intervals_empty,
     is_valid_state,
@@ -40,22 +41,22 @@ class TestIsValidState:
 class TestIsIntervalsEmpty:
     """Test is_intervals_empty function."""
 
-    def test_empty_intervals(self, test_db):
+    def test_empty_intervals(self, coordinator: AreaOccupancyCoordinator):
         """Test is_intervals_empty with empty intervals table."""
-        db = test_db
+        db = coordinator.db
         result = is_intervals_empty(db)
         assert result is True
 
-    def test_non_empty_intervals(self, test_db):
+    def test_non_empty_intervals(self, coordinator: AreaOccupancyCoordinator):
         """Test is_intervals_empty with non-empty intervals table."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=60)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -82,9 +83,11 @@ class TestIsIntervalsEmpty:
         result = is_intervals_empty(db)
         assert result is False
 
-    def test_no_such_table_error(self, test_db, monkeypatch):
+    def test_no_such_table_error(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test is_intervals_empty when table doesn't exist."""
-        db = test_db
+        db = coordinator.db
 
         @contextmanager
         def mock_session():
@@ -101,9 +104,11 @@ class TestIsIntervalsEmpty:
         result = is_intervals_empty(db)
         assert result is True  # Should return True when table doesn't exist
 
-    def test_other_sqlalchemy_error(self, test_db, monkeypatch):
+    def test_other_sqlalchemy_error(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test is_intervals_empty with other SQLAlchemy error."""
-        db = test_db
+        db = coordinator.db
 
         @contextmanager
         def mock_session():
@@ -120,9 +125,11 @@ class TestIsIntervalsEmpty:
         result = is_intervals_empty(db)
         assert result is True  # Should return True as fallback
 
-    def test_home_assistant_error(self, test_db, monkeypatch):
+    def test_home_assistant_error(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test is_intervals_empty with HomeAssistantError."""
-        db = test_db
+        db = coordinator.db
 
         @contextmanager
         def mock_session():
@@ -136,22 +143,22 @@ class TestIsIntervalsEmpty:
 class TestSafeIsIntervalsEmpty:
     """Test safe_is_intervals_empty function."""
 
-    def test_safe_empty_intervals(self, test_db):
+    def test_safe_empty_intervals(self, coordinator: AreaOccupancyCoordinator):
         """Test safe_is_intervals_empty with empty intervals."""
-        db = test_db
+        db = coordinator.db
         result = safe_is_intervals_empty(db)
         assert result is True
 
-    def test_safe_non_empty_intervals(self, test_db):
+    def test_safe_non_empty_intervals(self, coordinator: AreaOccupancyCoordinator):
         """Test safe_is_intervals_empty with non-empty intervals."""
-        db = test_db
+        db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         end = dt_util.utcnow()
         start = end - timedelta(seconds=60)
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -178,9 +185,11 @@ class TestSafeIsIntervalsEmpty:
         result = safe_is_intervals_empty(db)
         assert result is False
 
-    def test_safe_corruption_error(self, test_db, monkeypatch):
+    def test_safe_corruption_error(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
         """Test safe_is_intervals_empty with corruption error."""
-        db = test_db
+        db = coordinator.db
 
         @contextmanager
         def mock_session():
@@ -192,9 +201,9 @@ class TestSafeIsIntervalsEmpty:
         result = safe_is_intervals_empty(db)
         assert result is True  # Should return True to trigger data population
 
-    def test_safe_other_error(self, test_db, monkeypatch):
+    def test_safe_other_error(self, coordinator: AreaOccupancyCoordinator, monkeypatch):
         """Test safe_is_intervals_empty with other error."""
-        db = test_db
+        db = coordinator.db
 
         @contextmanager
         def mock_session():

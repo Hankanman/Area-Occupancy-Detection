@@ -121,18 +121,42 @@ class Entity:
 
         # Numeric sensors: Use Gaussian PDF if available
         if self.learned_gaussian_params:
+            # Validate mean values first
+            mean_occupied = self.learned_gaussian_params["mean_occupied"]
+            mean_unoccupied = self.learned_gaussian_params["mean_unoccupied"]
+
+            # Check for NaN/inf in mean values
+            if math.isnan(mean_occupied) or math.isinf(mean_occupied):
+                _LOGGER.warning(
+                    "Invalid mean_occupied value (NaN/inf) for %s, using EntityType defaults",
+                    self.entity_id,
+                )
+                return (self.type.prob_given_true, self.type.prob_given_false)
+
+            if math.isnan(mean_unoccupied) or math.isinf(mean_unoccupied):
+                _LOGGER.warning(
+                    "Invalid mean_unoccupied value (NaN/inf) for %s, using EntityType defaults",
+                    self.entity_id,
+                )
+                return (self.type.prob_given_true, self.type.prob_given_false)
+
             # Try to get current state value, fall back to mean if unavailable
             val = None
             if self.state is not None:
                 with suppress(ValueError, TypeError):
                     # State is not a valid number (e.g., "unknown", "unavailable")
                     val = float(self.state)
+                    # Validate state value for NaN/inf
+                    if math.isnan(val) or math.isinf(val):
+                        _LOGGER.warning(
+                            "Invalid state value (NaN/inf) for %s, using mean of means",
+                            self.entity_id,
+                        )
+                        val = None
 
-            # If state is unavailable, use mean of occupied and unoccupied as representative value
+            # If state is unavailable or invalid, use mean of occupied and unoccupied as representative value
             if val is None:
-                mean_occupied = self.learned_gaussian_params["mean_occupied"]
-                mean_unoccupied = self.learned_gaussian_params["mean_unoccupied"]
-                # Use average of means as representative value
+                # Use average of means as representative value (means are already validated)
                 val = (mean_occupied + mean_unoccupied) / 2.0
 
             try:
@@ -146,16 +170,31 @@ class Entity:
                 # Calculate density for occupied state
                 p_true = self._calculate_gaussian_density(
                     val,
-                    self.learned_gaussian_params["mean_occupied"],
+                    mean_occupied,
                     std_occupied,
                 )
 
                 # Calculate density for unoccupied state
                 p_false = self._calculate_gaussian_density(
                     val,
-                    self.learned_gaussian_params["mean_unoccupied"],
+                    mean_unoccupied,
                     std_unoccupied,
                 )
+
+                # Validate calculated densities for NaN/inf
+                if math.isnan(p_true) or math.isinf(p_true):
+                    _LOGGER.warning(
+                        "Invalid p_true density (NaN/inf) for %s, using EntityType defaults",
+                        self.entity_id,
+                    )
+                    return (self.type.prob_given_true, self.type.prob_given_false)
+
+                if math.isnan(p_false) or math.isinf(p_false):
+                    _LOGGER.warning(
+                        "Invalid p_false density (NaN/inf) for %s, using EntityType defaults",
+                        self.entity_id,
+                    )
+                    return (self.type.prob_given_true, self.type.prob_given_false)
 
             except (ValueError, TypeError):
                 # Fall back to EntityType defaults if calculation fails
@@ -428,9 +467,13 @@ class Entity:
             self.prob_given_false,
         )
 
-    def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
+    def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
-        self.decay.decay_start = decay_start
+        self.decay.decay_start = (
+            ensure_timezone_aware(decay_start)
+            if decay_start is not None
+            else decay_start
+        )
         self.decay.is_decaying = is_decaying
 
     def has_new_evidence(self) -> bool:
