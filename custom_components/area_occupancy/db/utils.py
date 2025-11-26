@@ -13,6 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
+from ..utils import ensure_timezone_aware
 from . import maintenance
 
 _LOGGER = logging.getLogger(__name__)
@@ -211,6 +212,23 @@ def get_occupied_intervals_for_analysis(
         end_time_utc = dt_util.as_utc(end_time)
 
         with db.get_session() as session:
+            # Debug: Check total intervals in cache for this area
+            total_intervals = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter(
+                    db.OccupiedIntervalsCache.entry_id == db.coordinator.entry_id,
+                    db.OccupiedIntervalsCache.area_name == area_name,
+                )
+                .count()
+            )
+            _LOGGER.debug(
+                "Querying occupied intervals for area %s: period=[%s, %s], total_intervals_in_cache=%d",
+                area_name,
+                start_time_utc,
+                end_time_utc,
+                total_intervals,
+            )
+
             intervals = (
                 session.query(db.OccupiedIntervalsCache)
                 .filter(
@@ -221,9 +239,29 @@ def get_occupied_intervals_for_analysis(
                 )
                 .all()
             )
+
+            _LOGGER.debug(
+                "Found %d overlapping intervals for area %s",
+                len(intervals),
+                area_name,
+            )
+
+            # Debug: Log first few intervals if any found
+            if intervals:
+                for i, interval in enumerate(intervals[:3]):
+                    _LOGGER.debug(
+                        "Interval %d: [%s, %s]",
+                        i,
+                        interval.start_time,
+                        interval.end_time,
+                    )
+
             # Ensure all returned intervals are timezone-aware UTC
+            # SQLite returns naive datetimes, but they're stored as UTC
+            # Use ensure_timezone_aware to assume UTC for naive datetimes
+            # instead of as_utc which might convert based on system timezone
             return [
-                (dt_util.as_utc(i.start_time), dt_util.as_utc(i.end_time))
+                (ensure_timezone_aware(i.start_time), ensure_timezone_aware(i.end_time))
                 for i in intervals
             ]
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:

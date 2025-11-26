@@ -72,7 +72,7 @@ class TestGetLatestInterval:
 
         # Ensure area and entity exist first (foreign key requirements)
         db.save_area_data(area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -136,7 +136,7 @@ class TestGetTimePrior:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             area = db.Areas(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -184,7 +184,7 @@ class TestGetOccupiedIntervals:
         end = dt_util.utcnow()
         start = end - timedelta(hours=1)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,
@@ -243,7 +243,7 @@ class TestGetOccupiedIntervals:
         now = dt_util.utcnow()
         start = now - timedelta(hours=2)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entities = [
                 db.Entities(
                     entity_id="binary_sensor.motion1",
@@ -267,7 +267,7 @@ class TestGetOccupiedIntervals:
             session.add_all(entities)
             session.commit()
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             intervals = [
                 db.Intervals(
                     entry_id=db.coordinator.entry_id,
@@ -327,7 +327,7 @@ class TestGetTimeBounds:
         end = dt_util.utcnow()
         start = end - timedelta(hours=1)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entity_id="binary_sensor.motion1",
                 entry_id=db.coordinator.entry_id,

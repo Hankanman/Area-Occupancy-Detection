@@ -208,7 +208,7 @@ class TestSaveAreaData:
         with (
             patch.object(
                 db,
-                "get_locked_session",
+                "get_session",
                 side_effect=OperationalError("DB error", None, None),
             ),
             pytest.raises((OperationalError, ValueError)),
@@ -318,7 +318,7 @@ class TestSaveEntityData:
         with (
             patch.object(
                 db,
-                "get_locked_session",
+                "get_session",
                 side_effect=OperationalError("DB error", None, None),
             ),
             pytest.raises(OperationalError),
@@ -434,7 +434,7 @@ class TestCleanupOrphanedEntities:
         db.save_entity_data()
 
         # Manually add orphaned entity to database (not in config)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             orphaned = db.Entities(
                 entity_id="binary_sensor.orphaned",
                 entry_id=db.coordinator.entry_id,
@@ -486,9 +486,7 @@ class TestDeleteAreaData:
         area_name = db.coordinator.get_area_names()[0]
 
         with (
-            patch.object(
-                db, "get_locked_session", side_effect=SQLAlchemyError("DB error")
-            ),
+            patch.object(db, "get_session", side_effect=SQLAlchemyError("DB error")),
             suppress(Exception),
         ):
             # Should handle error gracefully
@@ -516,7 +514,7 @@ class TestPruneOldIntervals:
 
         # Ensure area and entity exist first (foreign key requirements)
         save_area_data(db, area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,
@@ -571,7 +569,7 @@ class TestPruneOldIntervals:
         def bad_session():
             raise OperationalError("Error", None, None)
 
-        monkeypatch.setattr(db, "get_locked_session", bad_session)
+        monkeypatch.setattr(db, "get_session", bad_session)
         # Should handle error gracefully
         count = prune_old_intervals(db, force=False)
         assert count == 0
@@ -583,7 +581,7 @@ class TestPruneOldIntervals:
         old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
 
         save_area_data(db, area_name)
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=db.coordinator.entry_id,
                 area_name=area_name,

@@ -50,7 +50,7 @@ def aggregate_raw_to_daily(db: AreaOccupancyDB, area_name: str | None = None) ->
 
     session = None
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Calculate cutoff date (30 days ago)
             cutoff_date = dt_util.utcnow() - timedelta(
                 days=RETENTION_RAW_INTERVALS_DAYS
@@ -202,7 +202,7 @@ def aggregate_daily_to_weekly(db: AreaOccupancyDB, area_name: str | None = None)
 
     session = None
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Calculate cutoff date (90 days ago)
             cutoff_date = dt_util.utcnow() - timedelta(
                 days=RETENTION_DAILY_AGGREGATES_DAYS
@@ -358,7 +358,7 @@ def aggregate_weekly_to_monthly(
 
     session = None
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Calculate cutoff date (365 days ago)
             cutoff_date = dt_util.utcnow() - timedelta(
                 days=RETENTION_WEEKLY_AGGREGATES_DAYS
@@ -581,7 +581,7 @@ def prune_old_aggregates(
 
     session = None
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             now = dt_util.utcnow()
 
             # Prune daily aggregates older than retention period
@@ -660,7 +660,7 @@ def prune_old_numeric_samples(db: AreaOccupancyDB, area_name: str | None = None)
 
     session = None
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             cutoff_date = dt_util.utcnow() - timedelta(
                 days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS
             )

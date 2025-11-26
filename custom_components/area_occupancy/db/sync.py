@@ -265,7 +265,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
         # Convert states to proper intervals with correct duration calculation
         intervals = _states_to_intervals(db, states, end_time)
         if intervals:
-            with db.get_locked_session() as session:
+            with db.get_session() as session:
                 interval_keys = {
                     (
                         interval_data["entity_id"],
@@ -310,7 +310,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
         numeric_samples = _states_to_numeric_samples(db, states)
         if numeric_samples:
-            with db.get_locked_session() as session:
+            with db.get_session() as session:
                 sample_keys = {
                     (
                         sample_data["entity_id"],

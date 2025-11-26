@@ -55,7 +55,7 @@ class TestPriorAnalyzerWithRealDB:
         end = dt_util.utcnow()
         start = end - timedelta(hours=1)
 
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             entity = db.Entities(
                 entry_id=coordinator.entry_id,
                 area_name=area_name,

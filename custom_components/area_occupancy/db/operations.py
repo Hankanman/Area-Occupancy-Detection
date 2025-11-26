@@ -137,8 +137,11 @@ async def load_data(db: AreaOccupancyDB) -> None:
         return area, entities, stale_entity_ids, correlations
 
     def _delete_stale_operation(area_name: str, stale_ids: list[str]) -> None:
-        """Delete stale entities (requires lock to prevent race conditions)."""
-        with db.get_locked_session() as session:
+        """Delete stale entities from database.
+
+        SQLite's built-in locking handles concurrency for this operation.
+        """
+        with db.get_session() as session:
             for entity_id in stale_ids:
                 _LOGGER.info(
                     "Deleting stale entity %s from database for area %s (not in current config)",
@@ -311,11 +314,11 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
         return True
 
     try:
-        # Retry with backoff under a file lock
+        # Retry with backoff
         backoffs = [0.1, 0.25, 0.5, 1.0]
         for attempt, delay in enumerate(backoffs, start=1):
             try:
-                with db.get_locked_session() as session:
+                with db.get_session() as session:
                     success = _attempt(session)
                 if not success:
                     raise ValueError(
@@ -452,7 +455,7 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
         backoffs = [0.1, 0.25, 0.5, 1.0]
         for attempt, delay in enumerate(backoffs, start=1):
             try:
-                with db.get_locked_session() as session:
+                with db.get_session() as session:
                     _attempt(session)
                 # Update debounce timestamp after any successful attempt,
                 # regardless of whether merges occurred, to avoid rapid retries
@@ -804,8 +807,8 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
     _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
 
     try:
-        with db.get_locked_session() as session:
-            # Re-check last_prune inside locked session to prevent concurrent bypass
+        with db.get_session() as session:
+            # Re-check last_prune inside session to prevent concurrent bypass
             # This ensures the throttle cannot be bypassed by concurrent instances
             if not force:
                 result = (
@@ -898,7 +901,7 @@ def save_global_prior(
         "Saving global prior for area: %s, value: %.4f", area_name, prior_value
     )
 
-    with db.get_locked_session() as session:
+    with db.get_session() as session:
         try:
             # Create hash of underlying data for validation
             data_hash = _create_data_hash(
@@ -983,7 +986,7 @@ def save_occupied_intervals_cache(
         area_name,
     )
 
-    with db.get_locked_session() as session:
+    with db.get_session() as session:
         try:
             calculation_date = dt_util.utcnow()
 

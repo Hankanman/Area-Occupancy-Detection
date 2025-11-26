@@ -58,7 +58,7 @@ def save_area_relationship(
     )
 
     try:
-        with db.get_locked_session() as session:
+        with db.get_session() as session:
             # Use default weight if not provided
             if influence_weight is None:
                 influence_weight = DEFAULT_INFLUENCE_WEIGHTS.get(
