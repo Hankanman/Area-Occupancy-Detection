@@ -86,9 +86,24 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
         return clamp_probability(prior)
 
     # Check for entities with invalid likelihoods
+    # For continuous likelihood sensors (Gaussian densities), only validate > 0
+    # For standard probability sensors, validate [0, 1] range
     entities_to_remove = []
     for entity_id, entity in active_entities.items():
-        if (
+        # Check if entity uses continuous likelihood (densities can be > 1.0)
+        is_continuous = getattr(entity, "is_continuous_likelihood", False)
+        if not isinstance(is_continuous, bool):
+            is_continuous = False
+
+        # Validate likelihoods based on sensor type
+        if is_continuous:
+            # For continuous likelihoods (densities), only check > 0
+            # Densities can be > 1.0, so we don't check upper bound
+            if entity.prob_given_true <= 0.0 or entity.prob_given_false <= 0.0:
+                # Mark entities with invalid likelihoods for removal
+                entities_to_remove.append(entity_id)
+        # For standard probabilities, validate [0, 1] range
+        elif (
             entity.prob_given_true <= 0.0
             or entity.prob_given_true >= 1.0
             or entity.prob_given_false <= 0.0
@@ -114,8 +129,11 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
 
     for entity in active_entities.values():
         value = entity.evidence
+        # Use entity.decay_factor property which handles evidence=True case correctly
         # Clamp decay factor locally to avoid mutating entity state
-        decay_factor = entity.decay.decay_factor
+        # This is defensive programming: decay.decay_factor should always return [0, 1],
+        # but we clamp to handle edge cases (e.g., clock skew, invalid half_life values)
+        decay_factor = entity.decay_factor
         if decay_factor < 0.0 or decay_factor > 1.0:
             decay_factor = max(0.0, min(1.0, decay_factor))
         is_decaying = entity.decay.is_decaying
@@ -153,19 +171,47 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
 
             # Apply decay factor to reduce the strength of the evidence
             if is_decaying and decay_factor < 1.0:
-                # When decaying, interpolate between neutral (0.5) and full evidence based on decay factor
-                # This works for densities too: if p_t=2.0, neutral=0.5, factor=0.5 -> 0.5 + 1.5*0.5 = 1.25
+                # When decaying, interpolate between neutral and full evidence based on decay factor
+                # For standard probabilities [0, 1], 0.5 is the natural neutral value (no evidence either way)
+                # For continuous likelihoods (probability densities), values can be > 1.0. We use 0.5 as
+                # the neutral point for consistency and because it effectively reduces evidence strength:
+                # - In log space, we compare log(p_t) - log(p_f)
+                # - Interpolating both densities toward 0.5 reduces their log difference
+                # - This reduces the evidence strength as intended
+                # - While 1.0 might be more mathematically "neutral" for densities (no change in ratio),
+                #   using 0.5 works correctly in practice and is consistent with standard probabilities
+                # Example: p_t=2.0, p_f=0.5, factor=0.5 -> p_t=1.25, p_f=0.5, ratio 4:1 -> 2.5:1
                 neutral_prob = 0.5
                 p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
                 p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
-        else:
-            # No evidence present - use inverse likelihoods
-            # P(Inactive | Occupied) = 1 - P(Active | Occupied)
-            # P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
+        # No evidence present - use inverse likelihoods for binary sensors
+        # P(Inactive | Occupied) = 1 - P(Active | Occupied)
+        # P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
 
-            # Note: For continuous likelihood sensors, "no evidence" usually means
-            # the sensor is unavailable or excluded. If it provides a value, it's "evidence".
-            # So this branch is mostly for binary sensors.
+        # Note: For continuous likelihood sensors, "no effective evidence" can mean:
+        # 1. Unavailable (value = None): state is unknown/unavailable
+        # 2. Inactive (value = False): state is valid but not in active_range
+        # For continuous sensors, we always use get_likelihoods() which calculates
+        # Gaussian densities based on the current state value. This is correct for
+        # both unavailable (uses mean of means) and inactive (uses actual value).
+        # The inverse calculation (1.0 - prob) is only valid for probabilities [0, 1],
+        # not for probability densities which can be > 1.0.
+        elif is_continuous:
+            # For continuous sensors with no effective evidence, use get_likelihoods()
+            # which handles both unavailable (None) and inactive (False) states correctly
+            if hasattr(entity, "get_likelihoods") and callable(entity.get_likelihoods):
+                # get_likelihoods() handles:
+                # - Unavailable state (value = None): uses mean of means as representative value
+                # - Inactive state (value = False but state is valid): uses actual state value
+                # Both cases calculate Gaussian densities based on the appropriate value
+                p_t, p_f = entity.get_likelihoods()
+            else:
+                # Fallback: use static values (shouldn't happen for proper continuous sensors)
+                # But we can't use inverse for densities, so use neutral values
+                p_t = 0.5
+                p_f = 0.5
+        else:
+            # Binary sensors: use inverse probabilities
             p_t = 1.0 - entity.prob_given_true
             p_f = 1.0 - entity.prob_given_false
 
