@@ -176,7 +176,7 @@ class TestModelClassReferences:
         assert db.GlobalPriors is not None
         assert db.NumericSamples is not None
         assert db.NumericAggregates is not None
-        assert db.NumericCorrelations is not None
+        assert db.Correlations is not None
         assert db.EntityStatistics is not None
         assert db.AreaRelationships is not None
         assert db.CrossAreaStats is not None

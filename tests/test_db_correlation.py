@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from custom_components.area_occupancy.const import NUMERIC_CORRELATION_HISTORY_COUNT
+from custom_components.area_occupancy.const import CORRELATION_MONTHS_TO_KEEP
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity, EntityType
@@ -441,6 +441,7 @@ class TestSaveCorrelationResult:
             "entry_id": db.coordinator.entry_id,
             "area_name": area_name,
             "entity_id": entity_id,
+            "input_type": InputType.TEMPERATURE.value,
             "correlation_coefficient": 0.75,
             "correlation_type": "occupancy_positive",
             "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
@@ -462,7 +463,7 @@ class TestSaveCorrelationResult:
         # Verify correlation was saved
         with db.get_session() as session:
             correlation = (
-                session.query(db.NumericCorrelations)
+                session.query(db.Correlations)
                 .filter_by(area_name=area_name, entity_id=entity_id)
                 .first()
             )
@@ -487,6 +488,7 @@ class TestGetCorrelationForEntity:
             "entry_id": db.coordinator.entry_id,
             "area_name": area_name,
             "entity_id": entity_id,
+            "input_type": InputType.TEMPERATURE.value,
             "correlation_coefficient": 0.8,
             "correlation_type": "occupancy_positive",
             "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
@@ -527,10 +529,11 @@ class TestGetCorrelationForEntity:
                 # Use different analysis_period_start to avoid unique constraint violation
                 period_start = now - timedelta(days=30 + i)
                 period_end = now - timedelta(days=i)
-                correlation = db.NumericCorrelations(
+                correlation = db.Correlations(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
                     entity_id=entity_id,
+                    input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.1),
                     correlation_type="occupancy_positive",
                     calculation_date=now - timedelta(days=i),
@@ -603,20 +606,24 @@ class TestPruneOldCorrelations:
 
         _create_entity(db, area_name, entity_id)
 
-        # Create more correlations than NUMERIC_CORRELATION_HISTORY_COUNT
+        # Create more correlations than CORRELATION_MONTHS_TO_KEEP
+        # Spread them across multiple months to test pruning properly
         with db.get_session() as session:
             now = dt_util.utcnow()
-            for i in range(NUMERIC_CORRELATION_HISTORY_COUNT + 5):
-                # Use different analysis_period_start to avoid unique constraint violation
-                period_start = now - timedelta(days=30 + i)
-                period_end = now - timedelta(days=i)
-                correlation = db.NumericCorrelations(
+            for i in range(CORRELATION_MONTHS_TO_KEEP + 5):
+                # Create correlations spread across months (one per month)
+                # Use i * 30 days to ensure they're in different months
+                days_ago = i * 30
+                period_start = now - timedelta(days=days_ago + 30)
+                period_end = now - timedelta(days=days_ago)
+                correlation = db.Correlations(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
                     entity_id=entity_id,
+                    input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.01),
                     correlation_type="occupancy_positive",
-                    calculation_date=now - timedelta(days=i),
+                    calculation_date=now - timedelta(days=days_ago),
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
                     sample_count=100,
@@ -628,14 +635,14 @@ class TestPruneOldCorrelations:
         with db.get_session() as session:
             _prune_old_correlations(db, session, area_name, entity_id)
 
-        # Verify only NUMERIC_CORRELATION_HISTORY_COUNT remain
+        # Verify only CORRELATION_MONTHS_TO_KEEP remain (one per month)
         with db.get_session() as session:
             count = (
-                session.query(db.NumericCorrelations)
+                session.query(db.Correlations)
                 .filter_by(area_name=area_name, entity_id=entity_id)
                 .count()
             )
-            assert count == NUMERIC_CORRELATION_HISTORY_COUNT
+            assert count == CORRELATION_MONTHS_TO_KEEP
 
     def test_prune_old_correlations_no_excess(
         self, coordinator: AreaOccupancyCoordinator
@@ -649,20 +656,44 @@ class TestPruneOldCorrelations:
         _create_entity(db, area_name, entity_id)
 
         # Create fewer correlations than limit
+        # Spread them across months to test pruning properly
         with db.get_session() as session:
             now = dt_util.utcnow()
-            num_correlations = NUMERIC_CORRELATION_HISTORY_COUNT - 2
+            num_correlations = CORRELATION_MONTHS_TO_KEEP - 2
             for i in range(num_correlations):
-                # Use different analysis_period_start to avoid unique constraint violation
-                period_start = now - timedelta(days=30 + i)
-                period_end = now - timedelta(days=i)
-                correlation = db.NumericCorrelations(
+                # Create correlations spread across months (one per month)
+                # Use month boundaries to ensure they're in different months
+                # Start from current month and go back i months
+                target_date = now.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0
+                )
+                for _ in range(i):
+                    # Go back one month
+                    if target_date.month == 1:
+                        target_date = target_date.replace(
+                            year=target_date.year - 1, month=12
+                        )
+                    else:
+                        target_date = target_date.replace(month=target_date.month - 1)
+
+                # Create period that starts at the beginning of the month
+                period_start = target_date
+                # Period ends at the beginning of next month
+                if period_start.month == 12:
+                    period_end = period_start.replace(
+                        year=period_start.year + 1, month=1
+                    )
+                else:
+                    period_end = period_start.replace(month=period_start.month + 1)
+
+                correlation = db.Correlations(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
                     entity_id=entity_id,
+                    input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5,
                     correlation_type="occupancy_positive",
-                    calculation_date=now - timedelta(days=i),
+                    calculation_date=period_end,
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
                     sample_count=100,
@@ -677,7 +708,7 @@ class TestPruneOldCorrelations:
         # Verify all correlations remain
         with db.get_session() as session:
             count = (
-                session.query(db.NumericCorrelations)
+                session.query(db.Correlations)
                 .filter_by(area_name=area_name, entity_id=entity_id)
                 .count()
             )
