@@ -48,7 +48,7 @@ class Decay:
     def half_life(self) -> float:
         """Return the effective half-life based on purpose and time of day."""
         # If purpose is not sleeping, use base half-life
-        if self.purpose != AreaPurpose.SLEEPING:
+        if self.purpose != AreaPurpose.SLEEPING.value:
             return self._base_half_life
 
         # If sleep times are not configured, use base half-life
@@ -77,11 +77,17 @@ class Decay:
                 return self._base_half_life
 
             # Outside sleep window, behave like RELAXING
-            return PURPOSE_DEFINITIONS[AreaPurpose.RELAXING].half_life
-
+            # Fallback to base half-life if RELAXING purpose is not defined
+            relaxing_purpose = PURPOSE_DEFINITIONS.get(AreaPurpose.RELAXING)
         except (ValueError, TypeError):
             # Fallback on error
             return self._base_half_life
+        else:
+            return (
+                relaxing_purpose.half_life
+                if relaxing_purpose is not None
+                else self._base_half_life
+            )
 
     @property
     def decay_factor(self) -> float:
