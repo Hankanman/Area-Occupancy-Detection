@@ -239,6 +239,8 @@ CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
 CORRELATION_STRONG_THRESHOLD: Final = 0.7
 # Moderate correlation threshold (absolute value)
 CORRELATION_MODERATE_THRESHOLD: Final = 0.4
+# Weak correlation threshold (absolute value)
+CORRELATION_WEAK_THRESHOLD: Final = 0.15
 
 # Global prior retention
 # Number of historical global prior calculations to keep

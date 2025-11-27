@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from ..const import (
     CORRELATION_MODERATE_THRESHOLD,
     CORRELATION_MONTHS_TO_KEEP,
+    CORRELATION_WEAK_THRESHOLD,
     MIN_CORRELATION_SAMPLES,
 )
 from ..data.entity_type import InputType
@@ -788,11 +789,19 @@ def analyze_correlation(  # noqa: C901
             analysis_error = None
 
             if abs_correlation >= CORRELATION_MODERATE_THRESHOLD:
+                # Strong correlation (>= 0.4)
                 if correlation > 0:
-                    correlation_type = "occupancy_positive"
+                    correlation_type = "strong_positive"
                 else:
-                    correlation_type = "occupancy_negative"
+                    correlation_type = "strong_negative"
+            elif abs_correlation >= CORRELATION_WEAK_THRESHOLD:
+                # Weak correlation (0.15 to 0.4)
+                if correlation > 0:
+                    correlation_type = "positive"
+                else:
+                    correlation_type = "negative"
             else:
+                # Very weak correlation (< 0.15) - no meaningful correlation
                 correlation_type = "none"
                 analysis_error = "no_correlation"
 
@@ -1169,7 +1178,6 @@ def analyze_and_save_correlation(
 
     # Save correlation results even when they have errors, so analysis_error is preserved
     # This allows failed analyses to be restored after entity reload
-    correlation_type = correlation_data.get("correlation_type")
     analysis_error = correlation_data.get("analysis_error")
     correlation_coefficient = correlation_data.get("correlation_coefficient")
 
@@ -1184,14 +1192,8 @@ def analyze_and_save_correlation(
                 area_name,
             )
             return None
-        # Only save valid correlations (not "none" type) for successful analyses
-        if correlation_type == "none":
-            _LOGGER.debug(
-                "Skipping save of correlation with type 'none' for %s in area %s",
-                entity_id,
-                area_name,
-            )
-            return None
+        # Save all valid correlations (including weak correlations)
+        # Weak correlations (0.15-0.4) are now saved and used for occupancy detection
     else:
         # For failed analyses, save the error even if correlation_coefficient is invalid
         # Use a placeholder value for correlation_coefficient if it's invalid

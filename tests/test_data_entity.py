@@ -701,7 +701,7 @@ class TestEntityPropertiesAndMethods:
         # Test with valid positive correlation
         correlation_data = {
             "confidence": 0.8,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             "mean_value_when_unoccupied": 10.0,
             "std_dev_when_unoccupied": 2.0,
         }
@@ -722,7 +722,7 @@ class TestEntityPropertiesAndMethods:
         # Test with valid negative correlation
         correlation_data = {
             "confidence": 0.8,
-            "correlation_type": "occupancy_negative",
+            "correlation_type": "strong_negative",
             "mean_value_when_unoccupied": 10.0,
             "std_dev_when_unoccupied": 2.0,
         }
@@ -739,7 +739,7 @@ class TestEntityPropertiesAndMethods:
         # Test with low confidence - should set range but NOT update probabilities
         correlation_data = {
             "confidence": 0.2,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             "mean_value_when_unoccupied": 10.0,
             "std_dev_when_unoccupied": 2.0,
         }
@@ -755,7 +755,7 @@ class TestEntityPropertiesAndMethods:
         # Test with invalid data (missing keys)
         correlation_data = {
             "confidence": 0.9,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             # missing mean/std
         }
         entity.update_correlation(correlation_data)

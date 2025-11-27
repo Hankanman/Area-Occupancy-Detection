@@ -443,7 +443,7 @@ class TestSaveCorrelationResult:
             "entity_id": entity_id,
             "input_type": InputType.TEMPERATURE.value,
             "correlation_coefficient": 0.75,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
             "analysis_period_end": dt_util.utcnow(),
             "sample_count": 100,
@@ -490,7 +490,7 @@ class TestGetCorrelationForEntity:
             "entity_id": entity_id,
             "input_type": InputType.TEMPERATURE.value,
             "correlation_coefficient": 0.8,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
             "analysis_period_end": dt_util.utcnow(),
             "sample_count": 100,
@@ -535,7 +535,7 @@ class TestGetCorrelationForEntity:
                     entity_id=entity_id,
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.1),
-                    correlation_type="occupancy_positive",
+                    correlation_type="strong_positive",
                     calculation_date=now - timedelta(days=i),
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
@@ -622,7 +622,7 @@ class TestPruneOldCorrelations:
                     entity_id=entity_id,
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.01),
-                    correlation_type="occupancy_positive",
+                    correlation_type="strong_positive",
                     calculation_date=now - timedelta(days=days_ago),
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
@@ -692,7 +692,7 @@ class TestPruneOldCorrelations:
                     entity_id=entity_id,
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5,
-                    correlation_type="occupancy_positive",
+                    correlation_type="strong_positive",
                     calculation_date=period_end,
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
@@ -1060,7 +1060,7 @@ class TestGaussianLikelihood:
         """Test update_correlation populates Gaussian params."""
         correlation_data = {
             "confidence": 0.8,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             "mean_value_when_occupied": 22.0,
             "mean_value_when_unoccupied": 20.0,
             "std_dev_when_occupied": 1.5,
@@ -1082,7 +1082,7 @@ class TestGaussianLikelihood:
         """Test update_correlation handles missing occupied stats."""
         correlation_data = {
             "confidence": 0.8,
-            "correlation_type": "occupancy_positive",
+            "correlation_type": "strong_positive",
             "mean_value_when_unoccupied": 20.0,
             "std_dev_when_unoccupied": 1.2,
             # Missing occupied stats

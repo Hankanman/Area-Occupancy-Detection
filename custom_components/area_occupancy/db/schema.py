@@ -549,7 +549,7 @@ class Correlations(Base):
     )  # Pearson correlation (-1 to 1)
     correlation_type = Column(
         String, nullable=True
-    )  # 'occupancy_positive', 'occupancy_negative', 'none', 'binary_likelihood'
+    )  # 'strong_positive', 'strong_negative', 'none', 'binary_likelihood'
     analysis_period_start = Column(DateTime(timezone=True), nullable=False)
     analysis_period_end = Column(DateTime(timezone=True), nullable=False)
     sample_count = Column(Integer, nullable=False)

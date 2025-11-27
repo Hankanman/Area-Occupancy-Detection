@@ -92,6 +92,7 @@ def _build_binary_likelihood_data(corr_data: dict[str, Any]) -> dict[str, Any]:
         "prob_given_true": corr_data.get("mean_value_when_occupied"),
         "prob_given_false": corr_data.get("mean_value_when_unoccupied"),
         "analysis_error": corr_data.get("analysis_error"),
+        "correlation_type": corr_data.get("correlation_type"),
     }
 
 

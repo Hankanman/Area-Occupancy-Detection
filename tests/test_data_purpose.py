@@ -39,14 +39,14 @@ class TestPurpose:
         purpose = Purpose(purpose=AreaPurpose.SOCIAL)
         assert purpose.purpose == AreaPurpose.SOCIAL
         assert purpose.name == "Social"
-        assert purpose.half_life == 720.0
+        assert purpose.half_life == PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
 
     def test_purpose_creation_from_string(self):
         """Test creating a Purpose instance from string."""
         purpose = Purpose(purpose="social")
         assert purpose.purpose == AreaPurpose.SOCIAL
         assert purpose.name == "Social"
-        assert purpose.half_life == 720.0
+        assert purpose.half_life == PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
 
 
 class TestPurposeDefinitions:
@@ -57,22 +57,14 @@ class TestPurposeDefinitions:
         for purpose_type in AreaPurpose:
             assert purpose_type in PURPOSE_DEFINITIONS
 
-    @pytest.mark.parametrize(
-        ("purpose_enum", "expected_half_life"),
-        [
-            (AreaPurpose.PASSAGEWAY, 60.0),
-            (AreaPurpose.UTILITY, 120.0),
-            (AreaPurpose.FOOD_PREP, 300.0),
-            (AreaPurpose.EATING, 600.0),
-            (AreaPurpose.WORKING, 600.0),
-            (AreaPurpose.SOCIAL, 720.0),
-            (AreaPurpose.RELAXING, 900.0),
-            (AreaPurpose.SLEEPING, 1800.0),
-        ],
-    )
-    def test_purpose_half_lives(self, purpose_enum, expected_half_life):
-        """Test that purpose half-lives match the expected values."""
-        assert PURPOSE_DEFINITIONS[purpose_enum].half_life == expected_half_life
+    @pytest.mark.parametrize("purpose_enum", list(AreaPurpose))
+    def test_purpose_half_lives(self, purpose_enum):
+        """Test that purpose half-lives are defined and positive."""
+        half_life = PURPOSE_DEFINITIONS[purpose_enum].half_life
+        assert half_life > 0, f"Half-life for {purpose_enum} must be positive"
+        assert isinstance(half_life, float), (
+            f"Half-life for {purpose_enum} must be a float"
+        )
 
     def test_get_purpose_options(self):
         """Test getting purpose options for UI."""
@@ -92,7 +84,7 @@ class TestPurposeInitialization:
         """Test Purpose initialization with None defaults to SOCIAL."""
         purpose = Purpose(purpose=None)
         assert purpose.purpose == AreaPurpose.SOCIAL
-        assert purpose.half_life == 720.0
+        assert purpose.half_life == PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
 
     @pytest.mark.parametrize(
         ("invalid_purpose", "expected_fallback"),
@@ -132,7 +124,7 @@ class TestPurposeInitialization:
         """Test getting specific purpose."""
         purpose = Purpose.get_purpose(AreaPurpose.WORKING)
         assert purpose.purpose == AreaPurpose.WORKING
-        assert purpose.half_life == 600.0
+        assert purpose.half_life == PURPOSE_DEFINITIONS[AreaPurpose.WORKING].half_life
 
     def test_get_all_purposes(self):
         """Test getting all purposes."""

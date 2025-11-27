@@ -89,16 +89,19 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
         # Always include analysis data and errors (even if None) for visibility
         analysis_data = getattr(entity, "learned_gaussian_params", None)
         analysis_error = getattr(entity, "analysis_error", None)
+        correlation_type = getattr(entity, "correlation_type", None)
 
         raw_data["analysis_data"] = analysis_data
         raw_data["analysis_error"] = analysis_error
+        raw_data["correlation_type"] = correlation_type
 
-        # Filter out keys with None values, but keep analysis_data and analysis_error
+        # Filter out keys with None values, but keep analysis_data, analysis_error, and correlation_type
         # even if None so users can see which entities have been analyzed
         filtered_data = {
             k: v
             for k, v in raw_data.items()
-            if k in ("analysis_data", "analysis_error") or v is not None
+            if k in ("analysis_data", "analysis_error", "correlation_type")
+            or v is not None
         }
         likelihood_data[entity_id] = filtered_data
     return likelihood_data

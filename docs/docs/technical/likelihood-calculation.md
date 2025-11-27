@@ -84,7 +84,7 @@ Stores analysis results for both numeric sensors and binary sensors:
 **For Numeric Sensors** (Gaussian parameters):
 
 - `area_name`, `entity_id`
-- `correlation_type`: "occupancy_positive", "occupancy_negative", or "none"
+- `correlation_type`: "strong_positive", "strong_negative", or "none"
 - `mean_value_when_occupied`, `std_dev_when_occupied`
 - `mean_value_when_unoccupied`, `std_dev_when_unoccupied`
 - `correlation_coefficient`, `confidence`
