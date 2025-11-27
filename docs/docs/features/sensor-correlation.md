@@ -46,7 +46,7 @@ If a sensor qualifies, the system learns two statistical distributions:
 1. **Occupied Distribution**: $(\mu_{occ}, \sigma_{occ})$ - The pattern when the room is _known_ to be occupied.
 2. **Unoccupied Distribution**: $(\mu_{unocc}, \sigma_{unocc})$ - The pattern when the room is _known_ to be empty.
 
-These parameters are stored in the `NumericCorrelations` database table.
+These parameters are stored in the `Correlations` database table.
 
 #### 3. Calculating Dynamic Likelihood
 

@@ -68,6 +68,61 @@ def _validate_area_data(
     return failures
 
 
+def _convert_correlation_to_dict(corr: Any) -> dict[str, Any]:
+    """Convert correlation ORM object to dictionary."""
+    return {
+        "correlation_coefficient": corr.correlation_coefficient,
+        "correlation_type": corr.correlation_type,
+        "confidence": corr.confidence,
+        "mean_value_when_occupied": corr.mean_value_when_occupied,
+        "mean_value_when_unoccupied": corr.mean_value_when_unoccupied,
+        "std_dev_when_occupied": corr.std_dev_when_occupied,
+        "std_dev_when_unoccupied": corr.std_dev_when_unoccupied,
+        "threshold_active": corr.threshold_active,
+        "input_type": getattr(corr, "input_type", None),
+        "threshold_inactive": corr.threshold_inactive,
+        "analysis_error": corr.analysis_error,
+        "calculation_date": corr.calculation_date,
+    }
+
+
+def _build_binary_likelihood_data(corr_data: dict[str, Any]) -> dict[str, Any]:
+    """Convert correlation table format to binary likelihood format."""
+    return {
+        "prob_given_true": corr_data.get("mean_value_when_occupied"),
+        "prob_given_false": corr_data.get("mean_value_when_unoccupied"),
+        "analysis_error": corr_data.get("analysis_error"),
+    }
+
+
+def _apply_correlation_data(entity: Any, corr_data: dict[str, Any]) -> None:
+    """Apply correlation or binary likelihood data to an entity."""
+    if corr_data.get("correlation_type") == "binary_likelihood":
+        binary_likelihood_data = _build_binary_likelihood_data(corr_data)
+        entity.update_binary_likelihoods(binary_likelihood_data)
+    else:
+        entity.update_correlation(corr_data)
+
+
+def _update_existing_entity(
+    existing_entity: Any, entity_obj: Any, corr_data: dict[str, Any] | None
+) -> None:
+    """Update existing entity with database values."""
+    existing_entity.update_decay(entity_obj.decay_start, entity_obj.is_decaying)
+    # DB weight takes priority over configured defaults when valid
+    if hasattr(existing_entity, "type") and hasattr(existing_entity.type, "weight"):
+        try:
+            weight_val = float(entity_obj.weight)
+            if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
+                existing_entity.type.weight = weight_val
+        except (TypeError, ValueError):
+            pass
+    existing_entity.last_updated = entity_obj.last_updated
+    existing_entity.previous_evidence = entity_obj.evidence
+    if corr_data:
+        _apply_correlation_data(existing_entity, corr_data)
+
+
 async def load_data(db: AreaOccupancyDB) -> None:
     """Load the data from the database for all areas.
 
@@ -95,30 +150,26 @@ async def load_data(db: AreaOccupancyDB) -> None:
                 .all()
             )
 
-            # Fetch correlations for all entities in this area
+            # Fetch correlations and binary likelihoods for all entities in this area
             all_corrs = (
-                session.query(db.NumericCorrelations)
+                session.query(db.Correlations)
                 .filter_by(area_name=area_name)
-                .order_by(db.NumericCorrelations.calculation_date.desc())
+                .order_by(db.Correlations.calculation_date.desc())
                 .all()
             )
 
-            # Keep only the latest per entity_id
+            # Keep only the latest per entity_id, prioritizing binary_likelihood over correlation
+            # Binary likelihoods should be applied first, then correlations
             for corr in all_corrs:
                 if corr.entity_id not in correlations:
-                    correlations[corr.entity_id] = {
-                        "correlation_coefficient": corr.correlation_coefficient,
-                        "correlation_type": corr.correlation_type,
-                        "confidence": corr.confidence,
-                        "mean_value_when_occupied": corr.mean_value_when_occupied,
-                        "mean_value_when_unoccupied": corr.mean_value_when_unoccupied,
-                        "std_dev_when_occupied": corr.std_dev_when_occupied,
-                        "std_dev_when_unoccupied": corr.std_dev_when_unoccupied,
-                        "threshold_active": corr.threshold_active,
-                        "threshold_inactive": corr.threshold_inactive,
-                        "analysis_error": corr.analysis_error,
-                        "calculation_date": corr.calculation_date,
-                    }
+                    correlations[corr.entity_id] = _convert_correlation_to_dict(corr)
+                elif corr.correlation_type == "binary_likelihood":
+                    # Prefer binary_likelihood over correlation if both exist
+                    existing_type = correlations[corr.entity_id].get("correlation_type")
+                    if existing_type != "binary_likelihood":
+                        correlations[corr.entity_id] = _convert_correlation_to_dict(
+                            corr
+                        )
 
             if entities:
                 # Get the area's entity manager to check if entities exist
@@ -183,29 +234,8 @@ async def load_data(db: AreaOccupancyDB) -> None:
                         existing_entity = area_data.entities.get_entity(
                             entity_obj.entity_id
                         )
-                        # Update existing entity with database values (preserve database timestamp)
-                        existing_entity.update_decay(
-                            entity_obj.decay_start,
-                            entity_obj.is_decaying,
-                        )
-                        # DB weight takes priority over configured defaults when valid
-                        if hasattr(existing_entity, "type") and hasattr(
-                            existing_entity.type, "weight"
-                        ):
-                            try:
-                                weight_val = float(entity_obj.weight)
-                                if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
-                                    existing_entity.type.weight = weight_val
-                            except (TypeError, ValueError):
-                                pass
-                        existing_entity.last_updated = entity_obj.last_updated
-                        existing_entity.previous_evidence = entity_obj.evidence
-
-                        # Update correlation data if available
-                        if entity_obj.entity_id in correlations:
-                            existing_entity.update_correlation(
-                                correlations[entity_obj.entity_id]
-                            )
+                        corr_data = correlations.get(entity_obj.entity_id)
+                        _update_existing_entity(existing_entity, entity_obj, corr_data)
                     except ValueError:
                         # Entity should exist but doesn't - create it from database
                         # (This handles cases where we can't determine current config, like in tests)
@@ -215,10 +245,9 @@ async def load_data(db: AreaOccupancyDB) -> None:
                             area_name,
                         )
                         new_entity = area_data.factory.create_from_db(entity_obj)
-                        if entity_obj.entity_id in correlations:
-                            new_entity.update_correlation(
-                                correlations[entity_obj.entity_id]
-                            )
+                        corr_data = correlations.get(entity_obj.entity_id)
+                        if corr_data:
+                            _apply_correlation_data(new_entity, corr_data)
                         area_data.entities.add_entity(new_entity)
 
             # Phase 2: Only lock if cleanup needed (rare)

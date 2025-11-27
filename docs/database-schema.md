@@ -20,16 +20,16 @@ The Area Occupancy Detection integration uses a SQLite database to store sensor 
 
 Stores area configuration and metadata.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `entry_id` | String | Integration entry ID (same for all areas) |
-| `area_name` | String (PK) | Unique area identifier |
-| `area_id` | String | Home Assistant area ID |
-| `purpose` | String | Area purpose (e.g., "social", "work", "sleep") |
-| `threshold` | Float | Occupancy probability threshold (0.0-1.0) |
-| `adjacent_areas` | JSON | Array of adjacent area names |
-| `created_at` | DateTime | Creation timestamp |
-| `updated_at` | DateTime | Last update timestamp |
+| Column           | Type        | Description                                    |
+| ---------------- | ----------- | ---------------------------------------------- |
+| `entry_id`       | String      | Integration entry ID (same for all areas)      |
+| `area_name`      | String (PK) | Unique area identifier                         |
+| `area_id`        | String      | Home Assistant area ID                         |
+| `purpose`        | String      | Area purpose (e.g., "social", "work", "sleep") |
+| `threshold`      | Float       | Occupancy probability threshold (0.0-1.0)      |
+| `adjacent_areas` | JSON        | Array of adjacent area names                   |
+| `created_at`     | DateTime    | Creation timestamp                             |
+| `updated_at`     | DateTime    | Last update timestamp                          |
 
 **Indexes:**
 
@@ -45,22 +45,22 @@ Stores area configuration and metadata.
 
 Stores entity (sensor) configuration and Bayesian parameters.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String (PK, FK) | Area this entity belongs to |
-| `entity_id` | String (PK) | Home Assistant entity ID |
-| `entity_type` | String | Type (motion, media, appliance, etc.) |
-| `weight` | Float | Bayesian weight (0.0-1.0) |
-| `prob_given_true` | Float | P(entity active \| area occupied) |
-| `prob_given_false` | Float | P(entity active \| area unoccupied) |
-| `is_shared` | Boolean | Whether entity is shared across areas |
-| `shared_with_areas` | JSON | Array of area names this entity is shared with |
-| `last_updated` | DateTime | Last update timestamp |
-| `created_at` | DateTime | Creation timestamp |
-| `is_decaying` | Boolean | Whether probability is currently decaying |
-| `decay_start` | DateTime | When decay started |
-| `evidence` | Boolean | Current evidence state |
+| Column              | Type            | Description                                    |
+| ------------------- | --------------- | ---------------------------------------------- |
+| `entry_id`          | String          | Integration entry ID                           |
+| `area_name`         | String (PK, FK) | Area this entity belongs to                    |
+| `entity_id`         | String (PK)     | Home Assistant entity ID                       |
+| `entity_type`       | String          | Type (motion, media, appliance, etc.)          |
+| `weight`            | Float           | Bayesian weight (0.0-1.0)                      |
+| `prob_given_true`   | Float           | P(entity active \| area occupied)              |
+| `prob_given_false`  | Float           | P(entity active \| area unoccupied)            |
+| `is_shared`         | Boolean         | Whether entity is shared across areas          |
+| `shared_with_areas` | JSON            | Array of area names this entity is shared with |
+| `last_updated`      | DateTime        | Last update timestamp                          |
+| `created_at`        | DateTime        | Creation timestamp                             |
+| `is_decaying`       | Boolean         | Whether probability is currently decaying      |
+| `decay_start`       | DateTime        | When decay started                             |
+| `evidence`          | Boolean         | Current evidence state                         |
 
 **Indexes:**
 
@@ -77,18 +77,18 @@ Stores entity (sensor) configuration and Bayesian parameters.
 
 Stores state change intervals for all sensors.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area this interval belongs to |
-| `entity_id` | String (FK) | Entity ID |
-| `state` | String | Sensor state (e.g., "on", "off") |
-| `start_time` | DateTime | Interval start time |
-| `end_time` | DateTime | Interval end time |
-| `duration_seconds` | Float | Interval duration |
-| `aggregation_level` | String | Aggregation level: "raw", "daily", "weekly", "monthly" |
-| `created_at` | DateTime | Creation timestamp |
+| Column              | Type         | Description                                            |
+| ------------------- | ------------ | ------------------------------------------------------ |
+| `id`                | Integer (PK) | Auto-increment primary key                             |
+| `entry_id`          | String       | Integration entry ID                                   |
+| `area_name`         | String       | Area this interval belongs to                          |
+| `entity_id`         | String (FK)  | Entity ID                                              |
+| `state`             | String       | Sensor state (e.g., "on", "off")                       |
+| `start_time`        | DateTime     | Interval start time                                    |
+| `end_time`          | DateTime     | Interval end time                                      |
+| `duration_seconds`  | Float        | Interval duration                                      |
+| `aggregation_level` | String       | Aggregation level: "raw", "daily", "weekly", "monthly" |
+| `created_at`        | DateTime     | Creation timestamp                                     |
 
 **Indexes:**
 
@@ -112,20 +112,20 @@ Stores state change intervals for all sensors.
 
 Stores time-slot priors (day of week × time slot).
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String (PK, FK) | Area name |
-| `day_of_week` | Integer (PK) | Day of week (0=Monday, 6=Sunday) |
-| `time_slot` | Integer (PK) | Time slot (0-23 for hourly slots) |
-| `prior_value` | Float | Prior probability for this slot |
-| `data_points` | Integer | Number of data points used |
-| `confidence` | Float | Confidence in the calculation (0.0-1.0) |
-| `last_calculation_date` | DateTime | When prior was last calculated |
-| `sample_period_start` | DateTime | Start of data period used |
-| `sample_period_end` | DateTime | End of data period used |
-| `calculation_method` | String | Method used (e.g., "interval_analysis") |
-| `last_updated` | DateTime | Last update timestamp |
+| Column                  | Type            | Description                             |
+| ----------------------- | --------------- | --------------------------------------- |
+| `entry_id`              | String          | Integration entry ID                    |
+| `area_name`             | String (PK, FK) | Area name                               |
+| `day_of_week`           | Integer (PK)    | Day of week (0=Monday, 6=Sunday)        |
+| `time_slot`             | Integer (PK)    | Time slot (0-23 for hourly slots)       |
+| `prior_value`           | Float           | Prior probability for this slot         |
+| `data_points`           | Integer         | Number of data points used              |
+| `confidence`            | Float           | Confidence in the calculation (0.0-1.0) |
+| `last_calculation_date` | DateTime        | When prior was last calculated          |
+| `sample_period_start`   | DateTime        | Start of data period used               |
+| `sample_period_end`     | DateTime        | End of data period used                 |
+| `calculation_method`    | String          | Method used (e.g., "interval_analysis") |
+| `last_updated`          | DateTime        | Last update timestamp                   |
 
 **Indexes:**
 
@@ -142,24 +142,24 @@ Stores time-slot priors (day of week × time slot).
 
 Stores aggregated interval statistics for efficient querying.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area name |
-| `entity_id` | String (FK) | Entity ID |
-| `aggregation_period` | String | Period: "daily", "weekly", "monthly", "yearly" |
-| `period_start` | DateTime | Period start time |
-| `period_end` | DateTime | Period end time |
-| `state` | String | Sensor state |
-| `interval_count` | Integer | Number of intervals in period |
-| `total_duration_seconds` | Float | Total duration of all intervals |
-| `min_duration_seconds` | Float | Minimum interval duration |
-| `max_duration_seconds` | Float | Maximum interval duration |
-| `avg_duration_seconds` | Float | Average interval duration |
-| `first_occurrence` | DateTime | First interval start in period |
-| `last_occurrence` | DateTime | Last interval end in period |
-| `created_at` | DateTime | Creation timestamp |
+| Column                   | Type         | Description                                    |
+| ------------------------ | ------------ | ---------------------------------------------- |
+| `id`                     | Integer (PK) | Auto-increment primary key                     |
+| `entry_id`               | String       | Integration entry ID                           |
+| `area_name`              | String       | Area name                                      |
+| `entity_id`              | String (FK)  | Entity ID                                      |
+| `aggregation_period`     | String       | Period: "daily", "weekly", "monthly", "yearly" |
+| `period_start`           | DateTime     | Period start time                              |
+| `period_end`             | DateTime     | Period end time                                |
+| `state`                  | String       | Sensor state                                   |
+| `interval_count`         | Integer      | Number of intervals in period                  |
+| `total_duration_seconds` | Float        | Total duration of all intervals                |
+| `min_duration_seconds`   | Float        | Minimum interval duration                      |
+| `max_duration_seconds`   | Float        | Maximum interval duration                      |
+| `avg_duration_seconds`   | Float        | Average interval duration                      |
+| `first_occurrence`       | DateTime     | First interval start in period                 |
+| `last_occurrence`        | DateTime     | Last interval end in period                    |
+| `created_at`             | DateTime     | Creation timestamp                             |
 
 **Indexes:**
 
@@ -172,17 +172,17 @@ Stores aggregated interval statistics for efficient querying.
 
 Stores precomputed occupied intervals for fast prior calculations.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area name |
-| `start_time` | DateTime | Interval start time |
-| `end_time` | DateTime | Interval end time |
-| `duration_seconds` | Float | Interval duration |
-| `calculation_date` | DateTime | When interval was calculated |
-| `data_source` | String | Source: "motion_sensors", "merged" |
-| `created_at` | DateTime | Creation timestamp |
+| Column             | Type         | Description                        |
+| ------------------ | ------------ | ---------------------------------- |
+| `id`               | Integer (PK) | Auto-increment primary key         |
+| `entry_id`         | String       | Integration entry ID               |
+| `area_name`        | String       | Area name                          |
+| `start_time`       | DateTime     | Interval start time                |
+| `end_time`         | DateTime     | Interval end time                  |
+| `duration_seconds` | Float        | Interval duration                  |
+| `calculation_date` | DateTime     | When interval was calculated       |
+| `data_source`      | String       | Source: "motion_sensors", "merged" |
+| `created_at`       | DateTime     | Creation timestamp                 |
 
 **Indexes:**
 
@@ -195,23 +195,23 @@ Stores precomputed occupied intervals for fast prior calculations.
 
 Stores global prior values with calculation metadata and history. **This is the only source of truth for global priors** - the `areas` table no longer contains an `area_prior` field.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String (Unique) | Area name |
-| `prior_value` | Float | Global prior probability |
-| `calculation_date` | DateTime | When prior was calculated |
-| `data_period_start` | DateTime | Start of data period used |
-| `data_period_end` | DateTime | End of data period used |
-| `total_occupied_seconds` | Float | Total occupied time in period |
-| `total_period_seconds` | Float | Total period duration |
-| `interval_count` | Integer | Number of intervals used |
-| `confidence` | Float | Confidence in calculation (0.0-1.0) |
-| `calculation_method` | String | Method used |
-| `underlying_data_hash` | String | Hash of underlying data (for validation) |
-| `created_at` | DateTime | Creation timestamp |
-| `updated_at` | DateTime | Last update timestamp |
+| Column                   | Type            | Description                              |
+| ------------------------ | --------------- | ---------------------------------------- |
+| `id`                     | Integer (PK)    | Auto-increment primary key               |
+| `entry_id`               | String          | Integration entry ID                     |
+| `area_name`              | String (Unique) | Area name                                |
+| `prior_value`            | Float           | Global prior probability                 |
+| `calculation_date`       | DateTime        | When prior was calculated                |
+| `data_period_start`      | DateTime        | Start of data period used                |
+| `data_period_end`        | DateTime        | End of data period used                  |
+| `total_occupied_seconds` | Float           | Total occupied time in period            |
+| `total_period_seconds`   | Float           | Total period duration                    |
+| `interval_count`         | Integer         | Number of intervals used                 |
+| `confidence`             | Float           | Confidence in calculation (0.0-1.0)      |
+| `calculation_method`     | String          | Method used                              |
+| `underlying_data_hash`   | String          | Hash of underlying data (for validation) |
+| `created_at`             | DateTime        | Creation timestamp                       |
+| `updated_at`             | DateTime        | Last update timestamp                    |
 
 **Indexes:**
 
@@ -226,17 +226,17 @@ Stores global prior values with calculation metadata and history. **This is the 
 
 Stores raw numeric sensor samples for correlation analysis.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area name |
-| `entity_id` | String (FK) | Entity ID |
-| `timestamp` | DateTime | Sample timestamp |
-| `value` | Float | Numeric value |
-| `unit_of_measurement` | String | Unit (e.g., "°C", "%") |
-| `state` | String | Associated state (if any) |
-| `created_at` | DateTime | Creation timestamp |
+| Column                | Type         | Description                |
+| --------------------- | ------------ | -------------------------- |
+| `id`                  | Integer (PK) | Auto-increment primary key |
+| `entry_id`            | String       | Integration entry ID       |
+| `area_name`           | String       | Area name                  |
+| `entity_id`           | String (FK)  | Entity ID                  |
+| `timestamp`           | DateTime     | Sample timestamp           |
+| `value`               | Float        | Numeric value              |
+| `unit_of_measurement` | String       | Unit (e.g., "°C", "%")     |
+| `state`               | String       | Associated state (if any)  |
+| `created_at`          | DateTime     | Creation timestamp         |
 
 **Indexes:**
 
@@ -251,24 +251,24 @@ Stores raw numeric sensor samples for correlation analysis.
 
 Stores aggregated numeric sensor data for trend analysis.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area name |
-| `entity_id` | String (FK) | Entity ID |
-| `aggregation_period` | String | Period: "hourly", "daily", "weekly", "monthly", "yearly" |
-| `period_start` | DateTime | Period start time |
-| `period_end` | DateTime | Period end time |
-| `min_value` | Float | Minimum value in period |
-| `max_value` | Float | Maximum value in period |
-| `avg_value` | Float | Average value in period |
-| `median_value` | Float | Median value in period |
-| `sample_count` | Integer | Number of samples in period |
-| `first_value` | Float | First value in period |
-| `last_value` | Float | Last value in period |
-| `std_deviation` | Float | Standard deviation |
-| `created_at` | DateTime | Creation timestamp |
+| Column               | Type         | Description                                              |
+| -------------------- | ------------ | -------------------------------------------------------- |
+| `id`                 | Integer (PK) | Auto-increment primary key                               |
+| `entry_id`           | String       | Integration entry ID                                     |
+| `area_name`          | String       | Area name                                                |
+| `entity_id`          | String (FK)  | Entity ID                                                |
+| `aggregation_period` | String       | Period: "hourly", "daily", "weekly", "monthly", "yearly" |
+| `period_start`       | DateTime     | Period start time                                        |
+| `period_end`         | DateTime     | Period end time                                          |
+| `min_value`          | Float        | Minimum value in period                                  |
+| `max_value`          | Float        | Maximum value in period                                  |
+| `avg_value`          | Float        | Average value in period                                  |
+| `median_value`       | Float        | Median value in period                                   |
+| `sample_count`       | Integer      | Number of samples in period                              |
+| `first_value`        | Float        | First value in period                                    |
+| `last_value`         | Float        | Last value in period                                     |
+| `std_deviation`      | Float        | Standard deviation                                       |
+| `created_at`         | DateTime     | Creation timestamp                                       |
 
 **Indexes:**
 
@@ -282,57 +282,64 @@ Stores aggregated numeric sensor data for trend analysis.
 
 **Purpose:** Enables trend analysis across seasons (e.g., temperature differences between winter and summer).
 
-### `numeric_correlations`
+### `correlations`
 
-Stores calculated correlations between numeric sensor values and occupancy.
+Stores calculated correlations between numeric sensor values and occupancy, as well as binary likelihood analysis results for binary sensors.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area name |
-| `entity_id` | String (FK) | Entity ID |
-| `correlation_coefficient` | Float | Pearson correlation (-1.0 to 1.0) |
-| `correlation_type` | String | Type: "occupancy_positive", "occupancy_negative", "none" |
-| `analysis_period_start` | DateTime | Start of analysis period |
-| `analysis_period_end` | DateTime | End of analysis period |
-| `sample_count` | Integer | Number of samples used |
-| `confidence` | Float | Confidence in correlation (0.0-1.0) |
-| `mean_value_when_occupied` | Float | Mean value when area is occupied |
-| `mean_value_when_unoccupied` | Float | Mean value when area is unoccupied |
-| `std_dev_when_occupied` | Float | Standard deviation when occupied |
-| `std_dev_when_unoccupied` | Float | Standard deviation when unoccupied |
-| `threshold_active` | Float | Threshold for active state |
-| `threshold_inactive` | Float | Threshold for inactive state |
-| `calculation_date` | DateTime | When correlation was calculated |
-| `created_at` | DateTime | Creation timestamp |
-| `updated_at` | DateTime | Last update timestamp |
+| Column                       | Type         | Description                                                                                                                                                                          |
+| ---------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                         | Integer (PK) | Auto-increment primary key                                                                                                                                                           |
+| `entry_id`                   | String       | Integration entry ID                                                                                                                                                                 |
+| `area_name`                  | String       | Area name                                                                                                                                                                            |
+| `entity_id`                  | String (FK)  | Entity ID                                                                                                                                                                            |
+| `input_type`                 | String       | Input type (e.g., "humidity", "temperature")                                                                                                                                         |
+| `correlation_coefficient`    | Float        | Pearson correlation (-1.0 to 1.0). `None` for binary sensors                                                                                                                         |
+| `correlation_type`           | String       | Type: "occupancy_positive", "occupancy_negative", "none", or "binary_likelihood"                                                                                                     |
+| `analysis_period_start`      | DateTime     | Start of analysis period                                                                                                                                                             |
+| `analysis_period_end`        | DateTime     | End of analysis period                                                                                                                                                               |
+| `sample_count`               | Integer      | Number of samples used                                                                                                                                                               |
+| `confidence`                 | Float        | Confidence in correlation (0.0-1.0). `None` for binary sensors                                                                                                                       |
+| `mean_value_when_occupied`   | Float        | For numeric sensors: mean value when occupied. For binary sensors: `prob_given_true`                                                                                                 |
+| `mean_value_when_unoccupied` | Float        | For numeric sensors: mean value when unoccupied. For binary sensors: `prob_given_false`                                                                                              |
+| `std_dev_when_occupied`      | Float        | Standard deviation when occupied. `None` for binary sensors                                                                                                                          |
+| `std_dev_when_unoccupied`    | Float        | Standard deviation when unoccupied. `None` for binary sensors                                                                                                                        |
+| `threshold_active`           | Float        | Threshold for active state. `None` for binary sensors                                                                                                                                |
+| `threshold_inactive`         | Float        | Threshold for inactive state. `None` for binary sensors                                                                                                                              |
+| `analysis_error`             | String       | Reason why analysis failed (e.g., "no_correlation", "too_few_samples", "no_occupied_intervals") or `None` if successful. Applies to both numeric correlations and binary likelihoods |
+| `calculation_date`           | DateTime     | When correlation was calculated                                                                                                                                                      |
+| `created_at`                 | DateTime     | Creation timestamp                                                                                                                                                                   |
+| `updated_at`                 | DateTime     | Last update timestamp                                                                                                                                                                |
 
 **Indexes:**
 
 - Unique constraint on `(area_name, entity_id, analysis_period_start)`
 - Composite indexes for querying by correlation type and confidence
 
-**Retention:** Last 10 correlation analyses per sensor are retained.
+**Retention:** Last 10 correlation analyses per sensor are retained (pruned monthly, keeping one record per month up to 24 months).
 
-**Purpose:** Identifies which numeric sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10, energy, etc.) correlate with occupancy, enabling them to be used as occupancy indicators.
+**Purpose:**
+
+- **Numeric Sensors**: Identifies which numeric sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10, energy, etc.) correlate with occupancy, enabling them to be used as occupancy indicators.
+- **Binary Sensors**: Stores duration-based probability analysis results (`prob_given_true` and `prob_given_false`) calculated from interval overlaps with occupied/unoccupied periods.
+
+**Note:** Both numeric correlation results and binary likelihood results are stored in this table, distinguished by the `correlation_type` field. Binary sensors use `correlation_type="binary_likelihood"` and store their probabilities in the `mean_value_when_occupied` and `mean_value_when_unoccupied` fields.
 
 ### `entity_statistics`
 
 Stores per-entity operational and Bayesian statistics.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Area name |
-| `entity_id` | String (FK) | Entity ID |
-| `statistic_type` | String | Type: "operational" or "bayesian" |
-| `statistic_name` | String | Name (e.g., "total_activations", "prob_given_true") |
-| `statistic_value` | Float | Statistic value |
-| `period_start` | DateTime | Period start time |
-| `period_end` | DateTime | Period end time |
-| `updated_at` | DateTime | Last update timestamp |
+| Column            | Type         | Description                                         |
+| ----------------- | ------------ | --------------------------------------------------- |
+| `id`              | Integer (PK) | Auto-increment primary key                          |
+| `entry_id`        | String       | Integration entry ID                                |
+| `area_name`       | String       | Area name                                           |
+| `entity_id`       | String (FK)  | Entity ID                                           |
+| `statistic_type`  | String       | Type: "operational" or "bayesian"                   |
+| `statistic_name`  | String       | Name (e.g., "total_activations", "prob_given_true") |
+| `statistic_value` | Float        | Statistic value                                     |
+| `period_start`    | DateTime     | Period start time                                   |
+| `period_end`      | DateTime     | Period end time                                     |
+| `updated_at`      | DateTime     | Last update timestamp                               |
 
 **Indexes:**
 
@@ -345,17 +352,17 @@ Stores per-entity operational and Bayesian statistics.
 
 Defines and tracks relationships between areas.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `area_name` | String | Source area name |
-| `related_area_name` | String | Related/adjacent area name |
-| `relationship_type` | String | Type: "adjacent", "shared_wall", "shared_entrance", etc. |
-| `influence_weight` | Float | Influence weight (0.0-1.0) |
-| `distance` | Float | Physical distance (if applicable) |
-| `created_at` | DateTime | Creation timestamp |
-| `updated_at` | DateTime | Last update timestamp |
+| Column              | Type         | Description                                              |
+| ------------------- | ------------ | -------------------------------------------------------- |
+| `id`                | Integer (PK) | Auto-increment primary key                               |
+| `entry_id`          | String       | Integration entry ID                                     |
+| `area_name`         | String       | Source area name                                         |
+| `related_area_name` | String       | Related/adjacent area name                               |
+| `relationship_type` | String       | Type: "adjacent", "shared_wall", "shared_entrance", etc. |
+| `influence_weight`  | Float        | Influence weight (0.0-1.0)                               |
+| `distance`          | Float        | Physical distance (if applicable)                        |
+| `created_at`        | DateTime     | Creation timestamp                                       |
+| `updated_at`        | DateTime     | Last update timestamp                                    |
 
 **Indexes:**
 
@@ -368,19 +375,19 @@ Defines and tracks relationships between areas.
 
 Stores aggregated statistics that span multiple areas.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | Integer (PK) | Auto-increment primary key |
-| `entry_id` | String | Integration entry ID |
-| `statistic_type` | String | Type (e.g., "combined_occupancy", "shared_sensor_active") |
-| `statistic_name` | String | Statistic name |
-| `involved_areas` | JSON | Array of area names involved |
-| `aggregation_period` | String | Period: "hourly", "daily", "weekly", "monthly" |
-| `period_start` | DateTime | Period start time |
-| `period_end` | DateTime | Period end time |
-| `statistic_value` | Float | Statistic value |
-| `extra_metadata` | JSON | Additional metadata |
-| `created_at` | DateTime | Creation timestamp |
+| Column               | Type         | Description                                               |
+| -------------------- | ------------ | --------------------------------------------------------- |
+| `id`                 | Integer (PK) | Auto-increment primary key                                |
+| `entry_id`           | String       | Integration entry ID                                      |
+| `statistic_type`     | String       | Type (e.g., "combined_occupancy", "shared_sensor_active") |
+| `statistic_name`     | String       | Statistic name                                            |
+| `involved_areas`     | JSON         | Array of area names involved                              |
+| `aggregation_period` | String       | Period: "hourly", "daily", "weekly", "monthly"            |
+| `period_start`       | DateTime     | Period start time                                         |
+| `period_end`         | DateTime     | Period end time                                           |
+| `statistic_value`    | Float        | Statistic value                                           |
+| `extra_metadata`     | JSON         | Additional metadata                                       |
+| `created_at`         | DateTime     | Creation timestamp                                        |
 
 **Indexes:**
 
@@ -393,10 +400,10 @@ Stores aggregated statistics that span multiple areas.
 
 Stores database metadata (version, last prune time, etc.).
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `key` | String (PK) | Metadata key |
-| `value` | String | Metadata value |
+| Column  | Type        | Description    |
+| ------- | ----------- | -------------- |
+| `key`   | String (PK) | Metadata key   |
+| `value` | String      | Metadata value |
 
 **Common Keys:**
 
@@ -424,21 +431,21 @@ Stores database metadata (version, last prune time, etc.).
 
 1. **Numeric Samples**: Raw numeric sensor values are stored in `numeric_samples`.
 2. **Aggregation**: Samples are aggregated into `numeric_aggregates` for trend analysis.
-3. **Correlation**: Samples are correlated with occupancy intervals to calculate correlations stored in `numeric_correlations`.
+3. **Correlation**: Samples are correlated with occupancy intervals to calculate correlations stored in `correlations`.
 
 ## Retention Policies
 
-| Data Type | Retention Period | Aggregation |
-|-----------|------------------|-------------|
-| Raw intervals | 60 days | None |
-| Raw numeric samples | 14 days | None |
-| Daily interval aggregates | 90 days | From raw |
-| Weekly interval aggregates | 365 days | From daily |
-| Monthly interval aggregates | 5 years | From weekly |
-| Hourly numeric aggregates | 30 days | From raw samples |
-| Weekly numeric aggregates | 3 years | From hourly |
-| Global priors | Last 15 calculations | N/A |
-| Numeric correlations | Last 10 per sensor | N/A |
+| Data Type                   | Retention Period     | Aggregation      |
+| --------------------------- | -------------------- | ---------------- |
+| Raw intervals               | 60 days              | None             |
+| Raw numeric samples         | 14 days              | None             |
+| Daily interval aggregates   | 90 days              | From raw         |
+| Weekly interval aggregates  | 365 days             | From daily       |
+| Monthly interval aggregates | 5 years              | From weekly      |
+| Hourly numeric aggregates   | 30 days              | From raw samples |
+| Weekly numeric aggregates   | 3 years              | From hourly      |
+| Global priors               | Last 15 calculations | N/A              |
+| Numeric correlations        | Last 10 per sensor   | N/A              |
 
 ## Indexes and Performance
 

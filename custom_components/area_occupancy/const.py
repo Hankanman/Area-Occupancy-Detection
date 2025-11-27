@@ -211,9 +211,7 @@ RETENTION_WEEKLY_NUMERIC_YEARS: Final = (
 DB_NAME: Final = "area_occupancy.db"
 
 # Database schema version for migrations
-DB_VERSION: Final = (
-    5  # New schema: redesigned for single integration with multiple areas
-)
+DB_VERSION: Final = 5
 
 # States to exclude from intervals
 INVALID_STATES: Final = {"unknown", "unavailable", None, "", "NaN"}
@@ -246,9 +244,9 @@ CORRELATION_MODERATE_THRESHOLD: Final = 0.4
 # Number of historical global prior calculations to keep
 GLOBAL_PRIOR_HISTORY_COUNT: Final = 15
 
-# Numeric correlation retention
-# Number of correlation analyses to keep per sensor
-NUMERIC_CORRELATION_HISTORY_COUNT: Final = 10
+# Correlation retention
+# Number of months of correlation history to keep per sensor
+CORRELATION_MONTHS_TO_KEEP: Final = 24
 
 # Coordinator timer intervals
 DECAY_INTERVAL: Final = 10  # seconds

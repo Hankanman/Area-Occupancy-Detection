@@ -531,22 +531,25 @@ class NumericAggregates(Base):
     )
 
 
-class NumericCorrelations(Base):
-    """A table to store calculated correlations between numeric sensor values and occupancy."""
+class Correlations(Base):
+    """A table to store calculated correlations between sensor values and occupancy."""
 
-    __tablename__ = "numeric_correlations"
+    __tablename__ = "correlations"
     id = Column(Integer, primary_key=True)
     entry_id = Column(String, nullable=False, index=True)
     area_name = Column(String, nullable=False, index=True)
     # Note: Foreign key removed - SQLite doesn't support partial FKs for composite PKs
     # Relationships are validated at application level through joins
     entity_id = Column(String, nullable=False, index=True)
+    input_type = Column(
+        String, nullable=False, index=True
+    )  # InputType.value (e.g., "humidity", "temperature")
     correlation_coefficient = Column(
         Float, nullable=False
     )  # Pearson correlation (-1 to 1)
     correlation_type = Column(
         String, nullable=True
-    )  # 'occupancy_positive', 'occupancy_negative', 'none'
+    )  # 'occupancy_positive', 'occupancy_negative', 'none', 'binary_likelihood'
     analysis_period_start = Column(DateTime(timezone=True), nullable=False)
     analysis_period_end = Column(DateTime(timezone=True), nullable=False)
     sample_count = Column(Integer, nullable=False)
@@ -559,7 +562,7 @@ class NumericCorrelations(Base):
     threshold_inactive = Column(Float, nullable=True)
     analysis_error = Column(
         String, nullable=True
-    )  # Reason why correlation was rejected (e.g., 'no_correlation', 'too_few_samples')
+    )  # Reason why analysis failed (e.g., 'no_correlation', 'too_few_samples', 'no_occupied_intervals') or None if successful
     calculation_date = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
     updated_at = Column(
@@ -574,16 +577,16 @@ class NumericCorrelations(Base):
             "area_name",
             "entity_id",
             "analysis_period_start",
-            name="uq_numeric_correlations_area_entity_period",
+            name="uq_correlations_area_entity_period",
         ),
         Index(
-            "idx_numeric_correlations_area_entity_date",
+            "idx_correlations_area_entity_date",
             "area_name",
             "entity_id",
             "calculation_date",
         ),
         Index(
-            "idx_numeric_correlations_type_confidence",
+            "idx_correlations_type_confidence",
             "correlation_type",
             "confidence",
         ),

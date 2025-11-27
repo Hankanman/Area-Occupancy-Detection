@@ -57,7 +57,7 @@ class Decay:
 
         try:
             # Parse sleep times
-            now = dt_util.utcnow()
+            now = dt_util.as_local(dt_util.utcnow())
             start_time = datetime.strptime(self.sleep_start, "%H:%M:%S").time()
             end_time = datetime.strptime(self.sleep_end, "%H:%M:%S").time()
 
