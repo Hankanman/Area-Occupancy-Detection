@@ -38,6 +38,7 @@ from . import (
 from .schema import (
     AreaRelationships,
     Areas,
+    Correlations,
     CrossAreaStats,
     Entities,
     EntityStatistics,
@@ -46,7 +47,6 @@ from .schema import (
     Intervals,
     Metadata,
     NumericAggregates,
-    NumericCorrelations,
     NumericSamples,
     OccupiedIntervalsCache,
     Priors,
@@ -111,6 +111,7 @@ def _create_delegated_methods() -> dict[str, Any]:
         # Correlation methods
         "analyze_correlation": correlation.analyze_correlation,
         "save_correlation_result": correlation.save_correlation_result,
+        "save_binary_likelihood_result": correlation.save_binary_likelihood_result,
         "analyze_and_save_correlation": correlation.analyze_and_save_correlation,
         "analyze_binary_likelihoods": correlation.analyze_binary_likelihoods,
         "get_correlation_for_entity": correlation.get_correlation_for_entity,
@@ -137,7 +138,7 @@ class AreaOccupancyDB:
     GlobalPriors = GlobalPriors
     NumericSamples = NumericSamples
     NumericAggregates = NumericAggregates
-    NumericCorrelations = NumericCorrelations
+    Correlations = Correlations
     EntityStatistics = EntityStatistics
     AreaRelationships = AreaRelationships
     CrossAreaStats = CrossAreaStats
@@ -215,7 +216,7 @@ class AreaOccupancyDB:
             "GlobalPriors",
             "NumericSamples",
             "NumericAggregates",
-            "NumericCorrelations",
+            "Correlations",
             "EntityStatistics",
             "AreaRelationships",
             "CrossAreaStats",

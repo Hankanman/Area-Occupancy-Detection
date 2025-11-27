@@ -6,6 +6,7 @@ and area occupancy to identify sensors that can be used as occupancy indicators.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -17,8 +18,8 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     CORRELATION_MODERATE_THRESHOLD,
+    CORRELATION_MONTHS_TO_KEEP,
     MIN_CORRELATION_SAMPLES,
-    NUMERIC_CORRELATION_HISTORY_COUNT,
 )
 from ..data.entity_type import InputType
 from ..utils import clamp_probability, ensure_timezone_aware
@@ -440,6 +441,7 @@ def analyze_correlation(  # noqa: C901
     analysis_period_days: int = 30,
     is_binary: bool = False,
     active_states: list[str] | None = None,
+    input_type: InputType | None = None,
 ) -> dict[str, Any] | None:
     """Analyze correlation between sensor values and occupancy.
 
@@ -447,9 +449,10 @@ def analyze_correlation(  # noqa: C901
         db: Database instance
         area_name: Area name
         entity_id: Sensor entity ID
-        analysis_period_days: Number of days to analyze
+        analysis_period_days: Number of days to analyze (legacy, now uses monthly periods)
         is_binary: Whether the entity is a binary sensor
         active_states: List of active states (required if is_binary is True)
+        input_type: InputType of the sensor (e.g., InputType.HUMIDITY)
 
     Returns:
         Dictionary with correlation results, or None if insufficient data
@@ -464,9 +467,22 @@ def analyze_correlation(  # noqa: C901
 
     try:
         with db.get_session() as session:
-            # Get analysis period
+            # Get analysis period - round to start of current month for monthly accumulation
             period_end = dt_util.utcnow()
-            period_start = period_end - timedelta(days=analysis_period_days)
+            # Round to start of current month
+            period_start = period_end.replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            # Extend period_end to end of month for consistency
+            # Calculate last day of current month
+            if period_start.month == 12:
+                next_month = period_start.replace(year=period_start.year + 1, month=1)
+            else:
+                next_month = period_start.replace(month=period_start.month + 1)
+            period_end = next_month - timedelta(days=1)
+            period_end = period_end.replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
             # Use ensure_timezone_aware to handle both naive and aware inputs consistently
             period_start_utc = ensure_timezone_aware(period_start)
             period_end_utc = ensure_timezone_aware(period_end)
@@ -476,6 +492,9 @@ def analyze_correlation(  # noqa: C901
                 "entry_id": db.coordinator.entry_id,
                 "area_name": area_name,
                 "entity_id": entity_id,
+                "input_type": input_type.value
+                if input_type
+                else InputType.UNKNOWN.value,
                 "analysis_period_start": period_start,
                 "analysis_period_end": period_end,
                 "calculation_date": dt_util.utcnow(),
@@ -801,6 +820,9 @@ def analyze_correlation(  # noqa: C901
                 "entry_id": db.coordinator.entry_id,
                 "area_name": area_name,
                 "entity_id": entity_id,
+                "input_type": input_type.value
+                if input_type
+                else InputType.UNKNOWN.value,
                 "correlation_coefficient": correlation,
                 "correlation_type": correlation_type,
                 "analysis_error": analysis_error,
@@ -838,6 +860,116 @@ def analyze_correlation(  # noqa: C901
         return None
 
 
+def save_binary_likelihood_result(
+    db: AreaOccupancyDB,
+    likelihood_data: dict[str, Any],
+    input_type: InputType | None = None,
+) -> bool:
+    """Save binary likelihood analysis result to database.
+
+    Binary likelihood results are stored in the Correlations table with
+    correlation_type="binary_likelihood" to distinguish them from numeric correlations.
+
+    Args:
+        db: Database instance
+        likelihood_data: Binary likelihood analysis result dictionary
+        input_type: InputType of the sensor (e.g., InputType.MEDIA, InputType.APPLIANCE)
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    _LOGGER.debug(
+        "Saving binary likelihood result for %s in area %s",
+        likelihood_data["entity_id"],
+        likelihood_data["area_name"],
+    )
+
+    try:
+        # Convert binary likelihood data to correlation table format
+        # Use correlation_type="binary_likelihood" to distinguish from numeric correlations
+        input_type_value = (
+            input_type.value
+            if input_type
+            else likelihood_data.get("input_type", "unknown")
+        )
+        correlation_data = {
+            "entry_id": likelihood_data["entry_id"],
+            "area_name": likelihood_data["area_name"],
+            "entity_id": likelihood_data["entity_id"],
+            "input_type": input_type_value,
+            "correlation_coefficient": 0.0,  # Binary sensors don't have correlation
+            "correlation_type": "binary_likelihood",
+            "analysis_period_start": likelihood_data["analysis_period_start"],
+            "analysis_period_end": likelihood_data["analysis_period_end"],
+            "sample_count": likelihood_data.get(
+                "sample_count", 0
+            ),  # Binary sensors don't use samples
+            "confidence": None,  # Binary sensors don't have confidence scores
+            # Store prob_given_true and prob_given_false in mean fields
+            "mean_value_when_occupied": likelihood_data.get("prob_given_true"),
+            "mean_value_when_unoccupied": likelihood_data.get("prob_given_false"),
+            "std_dev_when_occupied": None,  # Binary sensors don't have std dev
+            "std_dev_when_unoccupied": None,
+            "threshold_active": None,
+            "threshold_inactive": None,
+            "analysis_error": likelihood_data.get("analysis_error"),
+            "calculation_date": likelihood_data.get(
+                "calculation_date", dt_util.utcnow()
+            ),
+        }
+
+        with db.get_session() as session:
+            # Check if correlation already exists for this period
+            existing = (
+                session.query(db.Correlations)
+                .filter_by(
+                    area_name=correlation_data["area_name"],
+                    entity_id=correlation_data["entity_id"],
+                    analysis_period_start=correlation_data["analysis_period_start"],
+                )
+                .first()
+            )
+
+            if existing:
+                # Update existing record
+                for key, value in correlation_data.items():
+                    if key not in (
+                        "entry_id",
+                        "area_name",
+                        "entity_id",
+                        "analysis_period_start",
+                    ):
+                        setattr(existing, key, value)
+                existing.updated_at = dt_util.utcnow()
+            else:
+                # Create new record
+                correlation = db.Correlations(**correlation_data)
+                session.add(correlation)
+
+            session.commit()
+
+            # Prune old correlation results (keep only last N)
+            _prune_old_correlations(
+                db,
+                session,
+                correlation_data["area_name"],
+                correlation_data["entity_id"],
+            )
+
+            _LOGGER.debug("Binary likelihood result saved successfully")
+            return True
+
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error saving binary likelihood result: %s", e)
+        return False
+
+
 def save_correlation_result(
     db: AreaOccupancyDB, correlation_data: dict[str, Any]
 ) -> bool:
@@ -856,11 +988,15 @@ def save_correlation_result(
         correlation_data["area_name"],
     )
 
+    # Ensure input_type is set (required field)
+    if "input_type" not in correlation_data or correlation_data["input_type"] is None:
+        correlation_data["input_type"] = InputType.UNKNOWN.value
+
     try:
         with db.get_session() as session:
             # Check if correlation already exists for this period
             existing = (
-                session.query(db.NumericCorrelations)
+                session.query(db.Correlations)
                 .filter_by(
                     area_name=correlation_data["area_name"],
                     entity_id=correlation_data["entity_id"],
@@ -885,7 +1021,7 @@ def save_correlation_result(
                 # Ensure calculation_date is set if not provided
                 if "calculation_date" not in correlation_data:
                     correlation_data["calculation_date"] = dt_util.utcnow()
-                correlation = db.NumericCorrelations(**correlation_data)
+                correlation = db.Correlations(**correlation_data)
                 session.add(correlation)
 
             session.commit()
@@ -918,7 +1054,7 @@ def _prune_old_correlations(
     area_name: str,
     entity_id: str,
 ) -> None:
-    """Prune old correlation results, keeping only the most recent N.
+    """Prune old correlation results, keeping only the most recent N months.
 
     Args:
         db: Database instance
@@ -927,24 +1063,50 @@ def _prune_old_correlations(
         entity_id: Entity ID
     """
     try:
-        # Get all correlations for this entity, ordered by calculation date
+        # Get all correlations for this entity, ordered by analysis_period_start
         correlations = (
-            session.query(db.NumericCorrelations)
+            session.query(db.Correlations)
             .filter_by(area_name=area_name, entity_id=entity_id)
-            .order_by(db.NumericCorrelations.calculation_date.desc())
+            .order_by(db.Correlations.analysis_period_start.desc())
             .all()
         )
 
-        # Keep only the most recent N correlations
-        if len(correlations) > NUMERIC_CORRELATION_HISTORY_COUNT:
-            to_delete = correlations[NUMERIC_CORRELATION_HISTORY_COUNT:]
+        if not correlations:
+            return
+
+        # Group correlations by year-month
+        monthly_correlations: dict[tuple[int, int], list[Any]] = defaultdict(list)
+        for corr in correlations:
+            period_start = ensure_timezone_aware(corr.analysis_period_start)
+            month_key = (period_start.year, period_start.month)
+            monthly_correlations[month_key].append(corr)
+
+        # For each month, keep only the most recent record (by calculation_date)
+        # Then keep only the last N months
+        months_to_keep = []
+        for month_key in sorted(monthly_correlations.keys(), reverse=True):
+            month_corrs = monthly_correlations[month_key]
+            # Keep the most recent record for this month
+            most_recent = max(
+                month_corrs, key=lambda c: ensure_timezone_aware(c.calculation_date)
+            )
+            months_to_keep.append(most_recent)
+            # Delete other records for this month
+            for corr in month_corrs:
+                if corr.id != most_recent.id:
+                    session.delete(corr)
+
+        # Keep only the last N months
+        if len(months_to_keep) > CORRELATION_MONTHS_TO_KEEP:
+            to_delete = months_to_keep[CORRELATION_MONTHS_TO_KEEP:]
             for correlation in to_delete:
                 session.delete(correlation)
             session.commit()
             _LOGGER.debug(
-                "Pruned %d old correlation results for %s",
+                "Pruned %d old correlation results for %s (kept %d months)",
                 len(to_delete),
                 entity_id,
+                CORRELATION_MONTHS_TO_KEEP,
             )
 
     except (
@@ -965,6 +1127,7 @@ def analyze_and_save_correlation(
     analysis_period_days: int = 30,
     is_binary: bool = False,
     active_states: list[str] | None = None,
+    input_type: InputType | None = None,
 ) -> dict[str, Any] | None:
     """Analyze and save correlation for a sensor (numeric or binary).
 
@@ -972,15 +1135,22 @@ def analyze_and_save_correlation(
         db: Database instance
         area_name: Area name
         entity_id: Sensor entity ID
-        analysis_period_days: Number of days to analyze
+        analysis_period_days: Number of days to analyze (legacy, now uses monthly periods)
         is_binary: Whether the entity is a binary sensor
         active_states: List of active states (required if is_binary is True)
+        input_type: InputType of the sensor (e.g., InputType.HUMIDITY)
 
     Returns:
         Correlation data if analysis completed and saved, None otherwise
     """
     correlation_data = analyze_correlation(
-        db, area_name, entity_id, analysis_period_days, is_binary, active_states
+        db,
+        area_name,
+        entity_id,
+        analysis_period_days,
+        is_binary,
+        active_states,
+        input_type,
     )
 
     if correlation_data is None:
@@ -990,6 +1160,46 @@ def analyze_and_save_correlation(
             area_name,
         )
         return None
+
+    # Save correlation results even when they have errors, so analysis_error is preserved
+    # This allows failed analyses to be restored after entity reload
+    correlation_type = correlation_data.get("correlation_type")
+    analysis_error = correlation_data.get("analysis_error")
+    correlation_coefficient = correlation_data.get("correlation_coefficient")
+
+    # Only skip saving if correlation_coefficient is invalid (None, NaN, or infinite)
+    # and there's no analysis_error to preserve
+    if analysis_error is None:
+        # For successful analyses, validate correlation_coefficient
+        if correlation_coefficient is None or not np.isfinite(correlation_coefficient):
+            _LOGGER.debug(
+                "Skipping save of correlation with invalid coefficient for %s in area %s",
+                entity_id,
+                area_name,
+            )
+            return None
+        # Only save valid correlations (not "none" type) for successful analyses
+        if correlation_type == "none":
+            _LOGGER.debug(
+                "Skipping save of correlation with type 'none' for %s in area %s",
+                entity_id,
+                area_name,
+            )
+            return None
+    else:
+        # For failed analyses, save the error even if correlation_coefficient is invalid
+        # Use a placeholder value for correlation_coefficient if it's invalid
+        if correlation_coefficient is None or not np.isfinite(correlation_coefficient):
+            correlation_data["correlation_coefficient"] = 0.0
+        # Ensure sample_count is set (required field)
+        if correlation_data.get("sample_count") is None:
+            correlation_data["sample_count"] = 0
+        _LOGGER.debug(
+            "Saving correlation result with analysis_error for %s in area %s: error=%s",
+            entity_id,
+            area_name,
+            analysis_error,
+        )
 
     if save_correlation_result(db, correlation_data):
         return correlation_data
@@ -1001,6 +1211,9 @@ def get_correlation_for_entity(
 ) -> dict[str, Any] | None:
     """Get the most recent correlation result for an entity.
 
+    Gets the current month's correlation record (by analysis_period_start) to ensure
+    we get the accumulating monthly record even if it was calculated earlier in the month.
+
     Args:
         db: Database instance
         area_name: Area name
@@ -1011,12 +1224,32 @@ def get_correlation_for_entity(
     """
     try:
         with db.get_session() as session:
+            # Get current month's period_start
+            now = dt_util.utcnow()
+            current_month_start = now.replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            current_month_start_utc = ensure_timezone_aware(current_month_start)
+
+            # Try to get current month's record first
             correlation = (
-                session.query(db.NumericCorrelations)
-                .filter_by(area_name=area_name, entity_id=entity_id)
-                .order_by(db.NumericCorrelations.calculation_date.desc())
+                session.query(db.Correlations)
+                .filter_by(
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    analysis_period_start=current_month_start_utc,
+                )
                 .first()
             )
+
+            # If not found, fall back to most recent by calculation_date
+            if not correlation:
+                correlation = (
+                    session.query(db.Correlations)
+                    .filter_by(area_name=area_name, entity_id=entity_id)
+                    .order_by(db.Correlations.calculation_date.desc())
+                    .first()
+                )
 
             if correlation:
                 return {
@@ -1025,10 +1258,13 @@ def get_correlation_for_entity(
                     "confidence": correlation.confidence,
                     "mean_value_when_occupied": correlation.mean_value_when_occupied,
                     "mean_value_when_unoccupied": correlation.mean_value_when_unoccupied,
+                    "std_dev_when_occupied": correlation.std_dev_when_occupied,
+                    "std_dev_when_unoccupied": correlation.std_dev_when_unoccupied,
                     "threshold_active": correlation.threshold_active,
                     "threshold_inactive": correlation.threshold_inactive,
                     "analysis_error": correlation.analysis_error,
                     "calculation_date": correlation.calculation_date,
+                    "input_type": getattr(correlation, "input_type", None),
                 }
 
             return None
@@ -1099,12 +1335,14 @@ def get_correlatable_entities_by_area(
                     area_entities[entity_id] = {
                         "is_binary": True,
                         "active_states": active_states,
+                        "input_type": input_type,
                     }
             elif input_type in numeric_inputs:
                 # Numeric sensor
                 area_entities[entity_id] = {
                     "is_binary": False,
                     "active_states": None,
+                    "input_type": input_type,
                 }
 
         if area_entities:
@@ -1154,6 +1392,16 @@ async def run_correlation_analysis(
                             )
                         )
 
+                        # Save binary likelihood results to database (including errors)
+                        if likelihood_result:
+                            input_type = entity_info.get("input_type")
+                            await coordinator.hass.async_add_executor_job(
+                                save_binary_likelihood_result,
+                                coordinator.db,
+                                likelihood_result,
+                                input_type,
+                            )
+
                         # Apply analysis results to live entities immediately
                         if likelihood_result and area_name in coordinator.areas:
                             area = coordinator.areas[area_name]
@@ -1181,15 +1429,14 @@ async def run_correlation_analysis(
                             )
                     else:
                         # Numeric sensors: Use correlation analysis
-                        correlation_result = (
-                            await coordinator.hass.async_add_executor_job(
-                                coordinator.db.analyze_and_save_correlation,
-                                area_name,
-                                entity_id,
-                                30,  # analysis_period_days
-                                False,  # is_binary
-                                None,  # active_states (not used for numeric)
-                            )
+                        correlation_result = await coordinator.hass.async_add_executor_job(
+                            coordinator.db.analyze_and_save_correlation,
+                            area_name,
+                            entity_id,
+                            30,  # analysis_period_days (legacy, now uses monthly periods)
+                            False,  # is_binary
+                            None,  # active_states (not used for numeric)
+                            entity_info.get("input_type"),  # Pass input_type
                         )
 
                         # Apply analysis results to live entities immediately

@@ -50,7 +50,7 @@ flowchart TD
     GetOccIntervals2 --> MapOccupancy[Map Samples to Occupancy]
     MapOccupancy --> CalcCorr[Calculate Pearson Correlation]
     CalcCorr --> CalcStats[Calculate Mean/Std]
-    CalcStats --> SaveCorr[Save to NumericCorrelations]
+    CalcStats --> SaveCorr[Save to Correlations]
     SaveCorr --> UpdateNumeric[Update Entity with Gaussian Params]
 
     UpdateBinary --> Runtime[Runtime Likelihood Calculation]
@@ -153,12 +153,18 @@ Updates coordinator state and persists all changes to database.
 For each entity:
 
 1. **Route by Type**:
+
    - **Binary Sensors**: Calls `analyze_binary_likelihoods()` for duration-based analysis.
    - **Numeric Sensors**: Calls `analyze_and_save_correlation()` for correlation analysis.
 
 2. **Update Live Entity**:
+
    - **Binary Sensors**: Updates entity with `prob_given_true` and `prob_given_false` via `update_binary_likelihoods()`.
    - **Numeric Sensors**: Updates entity with `learned_gaussian_params` via `update_correlation()`.
+
+3. **Persist Results**:
+   - **Binary Sensors**: Saves binary likelihood results (including `analysis_error` if present) to the `Correlations` table via `save_binary_likelihood_result()`.
+   - **Numeric Sensors**: Saves correlation results (including `analysis_error` if present) to the `Correlations` table via `save_correlation_result()`.
 
 **Location**: `custom_components/area_occupancy/db/correlation.py`
 
@@ -169,22 +175,31 @@ For each entity:
 **Process**:
 
 1. **Get Occupied Intervals**:
+
    - Retrieves occupied intervals from `OccupiedIntervalsCache` for the analysis period.
 
 2. **Get Binary Sensor Intervals**:
+
    - Queries `Intervals` table for the binary sensor's state changes.
 
 3. **Calculate Overlaps**:
+
    - For each binary sensor interval, calculates overlap duration with occupied periods.
    - Calculates overlap duration with unoccupied periods.
 
 4. **Calculate Probabilities**:
+
    - `prob_given_true = active_duration_occupied / total_occupied_duration`
    - `prob_given_false = active_duration_unoccupied / total_unoccupied_duration`
 
 5. **Clamp and Return**:
+
    - Clamps probabilities between 0.05 and 0.95.
    - Returns static probability values.
+
+6. **Save to Database**:
+   - Results (including `analysis_error` if analysis failed) are persisted to the `Correlations` table with `correlation_type="binary_likelihood"`.
+   - This ensures that `analysis_error` values are preserved across entity reloads.
 
 #### Step 3.3b: Numeric Sensor Analysis
 
@@ -195,21 +210,26 @@ For each entity:
 **Process**:
 
 1. **Data Retrieval**:
+
    - Queries `NumericSamples` directly for the analysis period.
 
 2. **Map to Occupancy**:
+
    - Checks each sample timestamp against `OccupiedIntervalsCache`.
    - Creates parallel arrays of values and occupancy flags (0/1).
 
 3. **Calculate Pearson Correlation**:
+
    - Determines relationship between value and occupancy.
 
 4. **Calculate Statistics**:
+
    - Learns Mean/Std for Occupied state.
    - Learns Mean/Std for Unoccupied state.
 
 5. **Save Result**:
-   - Persists parameters to `NumericCorrelations` table.
+   - Persists parameters to `Correlations` table, including `analysis_error` if analysis failed.
+   - This ensures that `analysis_error` values are preserved across entity reloads.
 
 ---
 
@@ -228,6 +248,7 @@ This phase occurs at runtime whenever the Bayesian probability calculation needs
 1. **Check Sensor Type**:
 
    - **Binary Sensors** (media, appliances, doors, windows):
+
      - If analysis has been run: Returns stored `prob_given_true` and `prob_given_false`.
      - If not analyzed: Returns `EntityType` default probabilities.
 
@@ -248,13 +269,13 @@ This phase occurs at runtime whenever the Bayesian probability calculation needs
 
 The system uses different analysis methods optimized for each sensor type:
 
-### Key Design Decisions:
+### Key Design Decisions
 
 1. **Numeric Sensors**: Use correlation analysis with Gaussian PDFs for dynamic, continuous likelihood calculation.
 2. **Binary Sensors**: Use duration-based analysis for simple, reliable static probabilities.
 3. **Motion Sensors**: Use configured static probabilities (not analyzed).
 
-### Benefits:
+### Benefits
 
 - **Appropriate Methods**: Each sensor type uses the analysis method best suited to its data characteristics.
 - **Dynamic Likelihoods (Numeric)**: Continuous values benefit from Gaussian PDF calculation.

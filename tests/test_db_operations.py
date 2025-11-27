@@ -11,6 +11,11 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from custom_components.area_occupancy.const import RETENTION_DAYS
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.db.correlation import (
+    save_binary_likelihood_result,
+    save_correlation_result,
+)
 from custom_components.area_occupancy.db.operations import (
     _create_data_hash,
     _prune_old_global_priors,
@@ -149,6 +154,121 @@ class TestLoadData:
         with patch.object(db, "get_session", side_effect=TimeoutError("Timeout")):
             # Should handle error gracefully and not raise
             await load_data(db)
+
+    @pytest.mark.asyncio
+    async def test_load_data_preserves_binary_likelihood_analysis_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that binary likelihood analysis_error is preserved after reload."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+
+        # Ensure area exists
+        save_area_data(db, area_name)
+
+        # Create a binary sensor entity
+        entity_id = "binary_sensor.test_light"
+        try:
+            entity = area.entities.get_entity(entity_id)
+        except ValueError:
+            # Entity doesn't exist, create it
+            entity = area.factory.create_from_config_spec(
+                entity_id, InputType.APPLIANCE.value
+            )
+            area.entities.add_entity(entity)
+
+        # Save entity to database
+        save_entity_data(db)
+
+        # Create binary likelihood result with analysis_error
+        likelihood_data = {
+            "entry_id": db.coordinator.entry_id,
+            "area_name": area_name,
+            "entity_id": entity_id,
+            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+            "analysis_period_end": dt_util.utcnow(),
+            "prob_given_true": None,
+            "prob_given_false": None,
+            "analysis_error": "no_occupied_intervals",
+            "calculation_date": dt_util.utcnow(),
+        }
+
+        # Save binary likelihood result
+        save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
+
+        # Update entity with the error
+        entity.update_binary_likelihoods(likelihood_data)
+        assert entity.analysis_error == "no_occupied_intervals"
+
+        # Reload data
+        await load_data(db)
+
+        # Verify analysis_error is preserved
+        reloaded_entity = area.entities.get_entity(entity_id)
+        assert reloaded_entity.analysis_error == "no_occupied_intervals"
+
+    @pytest.mark.asyncio
+    async def test_load_data_preserves_correlation_analysis_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that correlation analysis_error is preserved after reload."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+
+        # Ensure area exists
+        save_area_data(db, area_name)
+
+        # Create a numeric sensor entity
+        entity_id = "sensor.test_temperature"
+        try:
+            entity = area.entities.get_entity(entity_id)
+        except ValueError:
+            # Entity doesn't exist, create it
+            entity = area.factory.create_from_config_spec(
+                entity_id, InputType.TEMPERATURE.value
+            )
+            area.entities.add_entity(entity)
+
+        # Save entity to database
+        save_entity_data(db)
+
+        # Create correlation result with analysis_error
+        correlation_data = {
+            "entry_id": db.coordinator.entry_id,
+            "area_name": area_name,
+            "entity_id": entity_id,
+            "input_type": InputType.TEMPERATURE.value,
+            "correlation_coefficient": 0.0,  # Placeholder for failed analysis
+            "correlation_type": "none",
+            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+            "analysis_period_end": dt_util.utcnow(),
+            "sample_count": 0,
+            "confidence": None,
+            "mean_value_when_occupied": None,
+            "mean_value_when_unoccupied": None,
+            "std_dev_when_occupied": None,
+            "std_dev_when_unoccupied": None,
+            "threshold_active": None,
+            "threshold_inactive": None,
+            "analysis_error": "too_few_samples",
+            "calculation_date": dt_util.utcnow(),
+        }
+
+        # Save correlation result
+        save_correlation_result(db, correlation_data)
+
+        # Update entity with the error
+        entity.update_correlation(correlation_data)
+        assert entity.analysis_error == "too_few_samples"
+
+        # Reload data
+        await load_data(db)
+
+        # Verify analysis_error is preserved
+        reloaded_entity = area.entities.get_entity(entity_id)
+        assert reloaded_entity.analysis_error == "too_few_samples"
 
 
 class TestSaveAreaData:
