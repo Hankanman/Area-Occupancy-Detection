@@ -77,23 +77,38 @@ Higher weights mean the entity's evidence has more influence on the final probab
 
 ## Database Schema
 
-### NumericCorrelations Table
+### Correlations Table
 
-Stores learned Gaussian parameters for numeric sensors:
+Stores analysis results for both numeric sensors and binary sensors:
+
+**For Numeric Sensors** (Gaussian parameters):
 
 - `area_name`, `entity_id`
-- `mean_occupied`, `std_occupied`
-- `mean_unoccupied`, `std_unoccupied`
+- `correlation_type`: "occupancy_positive", "occupancy_negative", or "none"
+- `mean_value_when_occupied`, `std_dev_when_occupied`
+- `mean_value_when_unoccupied`, `std_dev_when_unoccupied`
 - `correlation_coefficient`, `confidence`
+
+**For Binary Sensors** (static probabilities):
+
+- `area_name`, `entity_id`
+- `correlation_type`: "binary_likelihood"
+- `mean_value_when_occupied`: Stores `prob_given_true`
+- `mean_value_when_unoccupied`: Stores `prob_given_false`
+- `correlation_coefficient`: `None` (not applicable for binary sensors)
+
+**For Both Types**:
+
+- `analysis_error`: Reason why analysis failed or was not performed (e.g., "no_correlation", "too_few_samples", "no_occupied_intervals"). This value is persisted and restored when entities are reloaded.
 
 ### Entities Table
 
-Stores static probabilities for binary sensors:
+Stores current entity state and configuration:
 
-- `prob_given_true`: Probability sensor is active when occupied (for binary sensors)
-- `prob_given_false`: Probability sensor is active when unoccupied (for binary sensors)
-- `learned_gaussian_params`: JSON field storing Gaussian parameters (for numeric sensors)
-- `analysis_error`: Reason why analysis failed or was not performed
+- `prob_given_true`: Probability sensor is active when occupied (for binary sensors, loaded from Correlations table)
+- `prob_given_false`: Probability sensor is active when unoccupied (for binary sensors, loaded from Correlations table)
+- `learned_gaussian_params`: JSON field storing Gaussian parameters (for numeric sensors, loaded from Correlations table)
+- `analysis_error`: Reason why analysis failed or was not performed (loaded from Correlations table)
 
 ### NumericSamples Table
 

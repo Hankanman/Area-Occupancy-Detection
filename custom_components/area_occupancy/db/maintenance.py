@@ -143,7 +143,7 @@ def _get_required_tables() -> set[str]:
         "global_priors",
         "numeric_samples",
         "numeric_aggregates",
-        "numeric_correlations",
+        "correlations",
         "entity_statistics",
         "area_relationships",
         "cross_area_stats",

@@ -9,7 +9,7 @@ debugpy:
 
 # https://www.home-assistant.io/integrations/logger/
 logger:
-  default: critical
+  default: error
   logs:
     custom_components.area_occupancy: debug
   filters:

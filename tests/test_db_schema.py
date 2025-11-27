@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from custom_components.area_occupancy.db.schema import (
     AreaRelationships,
     Areas,
+    Correlations,
     CrossAreaStats,
     Entities,
     EntityStatistics,
@@ -17,7 +18,6 @@ from custom_components.area_occupancy.db.schema import (
     Intervals,
     Metadata,
     NumericAggregates,
-    NumericCorrelations,
     NumericSamples,
     OccupiedIntervalsCache,
     Priors,
@@ -625,7 +625,7 @@ class TestOtherModels:
         assert aggregate.avg_value == 25.0
 
     def test_numeric_correlations_creation(self, db_session: Session):
-        """Test creating NumericCorrelations instance."""
+        """Test creating Correlations instance."""
         area = Areas.from_dict(create_test_area_data())
         db_session.add(area)
         db_session.commit()
@@ -634,10 +634,11 @@ class TestOtherModels:
         db_session.add(entity)
         db_session.commit()
 
-        correlation = NumericCorrelations(
+        correlation = Correlations(
             entry_id="test",
             area_name="Test Living Room",
             entity_id="binary_sensor.motion_1",
+            input_type="motion",
             correlation_coefficient=0.8,
             correlation_type="occupancy_positive",
             analysis_period_start=dt_util.utcnow() - timedelta(days=30),
