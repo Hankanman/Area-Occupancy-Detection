@@ -27,7 +27,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.11.3-pre9"
+DEVICE_SW_VERSION: Final = "2025.11.3-pre10"
 CONF_VERSION: Final = 13  # Incremented for single-instance multi-device architecture
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
@@ -292,9 +292,9 @@ def validate_and_sanitize_area_name(area_name: str) -> str:
 
     This function:
     1. Validates that area name is not empty
-    2. Prevents conflicts with ALL_AREAS_IDENTIFIER
-    3. Sanitizes special characters that could break unique IDs
-    4. Normalizes whitespace
+    2. Sanitizes special characters that could break unique IDs
+    3. Normalizes whitespace
+    4. Prevents conflicts with ALL_AREAS_IDENTIFIER (both raw and sanitized)
 
     Args:
         area_name: The area name to validate and sanitize
@@ -308,8 +308,9 @@ def validate_and_sanitize_area_name(area_name: str) -> str:
     if not area_name or not area_name.strip():
         raise ValueError("Area name cannot be empty")
 
-    # Prevent conflicts with special identifier
-    if area_name.strip() == ALL_AREAS_IDENTIFIER:
+    # Prevent conflicts with special identifier (check raw input first)
+    stripped_name = area_name.strip()
+    if stripped_name == ALL_AREAS_IDENTIFIER:
         raise ValueError(
             f"Area name cannot be '{ALL_AREAS_IDENTIFIER}' as it conflicts with "
             "the 'All Areas' aggregation identifier"
@@ -317,7 +318,7 @@ def validate_and_sanitize_area_name(area_name: str) -> str:
 
     # Sanitize for use in unique IDs
     # Replace special characters that could break unique IDs with underscores
-    sanitized = re.sub(r"[^\w\s-]", "_", area_name.strip())
+    sanitized = re.sub(r"[^\w\s-]", "_", stripped_name)
     # Replace multiple spaces/underscores with single underscore
     sanitized = re.sub(r"[\s_]+", "_", sanitized)
     # Remove leading/trailing underscores
@@ -326,8 +327,16 @@ def validate_and_sanitize_area_name(area_name: str) -> str:
     if not sanitized:
         raise ValueError("Area name contains only invalid characters")
 
+    # Prevent conflicts with special identifier (check sanitized result)
+    # This catches cases like "all areas" -> "all_areas"
+    if sanitized == ALL_AREAS_IDENTIFIER:
+        raise ValueError(
+            f"Area name '{area_name}' sanitizes to '{ALL_AREAS_IDENTIFIER}' which conflicts with "
+            "the 'All Areas' aggregation identifier"
+        )
+
     # Warn if sanitization changed the name
-    if sanitized != area_name.strip():
+    if sanitized != stripped_name:
         _LOGGER.warning(
             "Area name sanitized: '%s' -> '%s' (special characters replaced)",
             area_name,
