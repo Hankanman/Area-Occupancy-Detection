@@ -310,6 +310,53 @@ Stores calculated correlations between numeric sensor values and occupancy, as w
 | `created_at`                 | DateTime     | Creation timestamp                                                                                                                                                                   |
 | `updated_at`                 | DateTime     | Last update timestamp                                                                                                                                                                |
 
+**Binary Likelihood Calculation Methodology:**
+
+For binary sensors (identified by `correlation_type="binary_likelihood"`), the `mean_value_when_occupied` and `mean_value_when_unoccupied` columns store probability values calculated using an interval-overlap method. This method measures the proportion of time a sensor is active during occupied and unoccupied periods.
+
+**Calculation Method:**
+
+The binary likelihood calculation uses interval overlap to determine:
+
+- `mean_value_when_occupied`: Probability that the sensor is active given the area is occupied
+- `mean_value_when_unoccupied`: Probability that the sensor is active given the area is unoccupied
+
+**Formulas:**
+
+```text
+mean_value_when_occupied = time_active_during_occupied / total_occupied_time
+mean_value_when_unoccupied = time_active_during_unoccupied / total_unoccupied_time
+```
+
+**Interval-Overlap Algorithm:**
+
+1. For each active interval of the binary sensor (where the sensor state matches one of its `active_states`):
+
+   - Calculate the overlap duration with all occupied intervals
+   - Calculate the overlap duration with unoccupied periods (remainder of the interval after occupied overlap)
+
+2. Accumulate durations:
+
+   - `time_active_during_occupied`: Sum of all overlap durations between active sensor intervals and occupied intervals
+   - `time_active_during_unoccupied`: Sum of all overlap durations between active sensor intervals and unoccupied periods
+   - `total_occupied_time`: Total duration of all occupied intervals in the analysis period
+   - `total_unoccupied_time`: Total duration of all unoccupied periods in the analysis period
+
+3. Calculate probabilities by dividing accumulated active durations by total occupied/unoccupied time
+
+4. Clamp probabilities to the range [0.05, 0.95] to avoid extreme "black hole" values that could skew Bayesian calculations
+
+**Supported Binary Sensor Types:**
+
+Binary likelihood analysis is performed for sensors with binary states, including:
+
+- **Motion sensors** (`input_type="motion"`): Detects movement in the area
+- **Door/window sensors** (`input_type="door"`, `input_type="window"`): Detects door or window open/closed states
+- **Occupancy sensors** (`input_type="occupancy"`): Binary occupancy detection devices
+- **Media devices** (`input_type="media"`): Media players with active/inactive states (playing, paused, standby)
+- **Appliances** (`input_type="appliance"`): Binary appliance on/off states
+- Other binary sensors with defined `active_states` (e.g., `["on"]`, `["playing"]`, `["open"]`)
+
 **Indexes:**
 
 - Unique constraint on `(area_name, entity_id, analysis_period_start)`
