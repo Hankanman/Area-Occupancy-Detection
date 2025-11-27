@@ -662,10 +662,30 @@ class TestPruneOldCorrelations:
             num_correlations = CORRELATION_MONTHS_TO_KEEP - 2
             for i in range(num_correlations):
                 # Create correlations spread across months (one per month)
-                # Use i * 30 days to ensure they're in different months
-                days_ago = i * 30
-                period_start = now - timedelta(days=days_ago + 30)
-                period_end = now - timedelta(days=days_ago)
+                # Use month boundaries to ensure they're in different months
+                # Start from current month and go back i months
+                target_date = now.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0
+                )
+                for _ in range(i):
+                    # Go back one month
+                    if target_date.month == 1:
+                        target_date = target_date.replace(
+                            year=target_date.year - 1, month=12
+                        )
+                    else:
+                        target_date = target_date.replace(month=target_date.month - 1)
+
+                # Create period that starts at the beginning of the month
+                period_start = target_date
+                # Period ends at the beginning of next month
+                if period_start.month == 12:
+                    period_end = period_start.replace(
+                        year=period_start.year + 1, month=1
+                    )
+                else:
+                    period_end = period_start.replace(month=period_start.month + 1)
+
                 correlation = db.Correlations(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
@@ -673,7 +693,7 @@ class TestPruneOldCorrelations:
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5,
                     correlation_type="occupancy_positive",
-                    calculation_date=now - timedelta(days=days_ago),
+                    calculation_date=period_end,
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
                     sample_count=100,

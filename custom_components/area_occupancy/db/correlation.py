@@ -1084,6 +1084,7 @@ def _prune_old_correlations(
         # For each month, keep only the most recent record (by calculation_date)
         # Then keep only the last N months
         months_to_keep = []
+        duplicates_deleted = False
         for month_key in sorted(monthly_correlations.keys(), reverse=True):
             month_corrs = monthly_correlations[month_key]
             # Keep the most recent record for this month
@@ -1095,6 +1096,11 @@ def _prune_old_correlations(
             for corr in month_corrs:
                 if corr.id != most_recent.id:
                     session.delete(corr)
+                    duplicates_deleted = True
+
+        # Commit within-month duplicate deletions before proceeding to pruning
+        if duplicates_deleted:
+            session.commit()
 
         # Keep only the last N months
         if len(months_to_keep) > CORRELATION_MONTHS_TO_KEEP:
