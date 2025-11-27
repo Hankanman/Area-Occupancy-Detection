@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 
 from homeassistant.util import dt as dt_util
 
 from ..utils import ensure_timezone_aware
 from .purpose import PURPOSE_DEFINITIONS, AreaPurpose
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class Decay:
@@ -79,8 +82,9 @@ class Decay:
             # Outside sleep window, behave like RELAXING
             # Fallback to base half-life if RELAXING purpose is not defined
             relaxing_purpose = PURPOSE_DEFINITIONS.get(AreaPurpose.RELAXING)
-        except (ValueError, TypeError):
-            # Fallback on error
+        except (ValueError, TypeError) as _:
+            # Log error with stack trace before falling back
+            _LOGGER.exception("Error calculating half-life for sleeping purpose")
             return self._base_half_life
         else:
             return (
