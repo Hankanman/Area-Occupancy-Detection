@@ -362,7 +362,7 @@ Binary likelihood analysis is performed for sensors with binary states, includin
 - Unique constraint on `(area_name, entity_id, analysis_period_start)`
 - Composite indexes for querying by correlation type and confidence
 
-**Retention:** Last 10 correlation analyses per sensor are retained (pruned monthly, keeping one record per month up to 24 months).
+**Retention:** Last 24 months (one per month). Correlations are pruned monthly, keeping one record per month for the last 24 months.
 
 **Purpose:**
 
@@ -492,7 +492,7 @@ Stores database metadata (version, last prune time, etc.).
 | Hourly numeric aggregates   | 30 days              | From raw samples |
 | Weekly numeric aggregates   | 3 years              | From hourly      |
 | Global priors               | Last 15 calculations | N/A              |
-| Numeric correlations        | Last 10 per sensor   | N/A              |
+| Numeric correlations        | Last 24 months (one per month)   | N/A              |
 
 ## Indexes and Performance
 
