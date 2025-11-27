@@ -33,11 +33,20 @@ The system uses different analysis methods for numeric and binary sensors:
 
 Every hour as part of the analysis cycle, the system analyzes the relationship between the sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
 
-- **Positive Correlation**: Value increases when occupied.
-- **Negative Correlation**: Value decreases when occupied.
-- **No Correlation**: No clear pattern found.
+The system classifies correlations into different types based on their strength:
 
-If the correlation is too weak or the sample size is too small, the sensor is **rejected** for occupancy detection purposes to prevent false positives.
+- **Strong Positive Correlation** (≥ 0.4): Value increases significantly when occupied. Classified as `strong_positive`.
+- **Strong Negative Correlation** (≤ -0.4): Value decreases significantly when occupied. Classified as `strong_negative`.
+- **Weak Positive Correlation** (0.15 to 0.4): Value increases moderately when occupied. Classified as `positive`.
+- **Weak Negative Correlation** (-0.4 to -0.15): Value decreases moderately when occupied. Classified as `negative`.
+- **No Correlation** (< 0.15 absolute value): No meaningful pattern found. Classified as `none` with `analysis_error: "no_correlation"`.
+
+**Thresholds:**
+
+- **Weak Correlation Threshold**: 0.15 - Minimum correlation strength to be considered meaningful
+- **Moderate Correlation Threshold**: 0.4 - Minimum correlation strength for strong correlations
+
+Both strong and weak correlations are used for occupancy detection using the same Gaussian PDF approach. Only correlations below the weak threshold (< 0.15) are rejected to prevent false positives from noise.
 
 #### 2. Learning Distributions
 

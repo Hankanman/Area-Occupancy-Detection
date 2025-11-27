@@ -40,6 +40,7 @@ class Entity:
     learned_active_range: tuple[float, float] | None = None
     learned_gaussian_params: dict[str, float] | None = None
     analysis_error: str | None = None
+    correlation_type: str | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -324,6 +325,8 @@ class Entity:
         # Store analysis error (None means no error, analysis succeeded)
         # This will be None if analysis succeeded, or a string error reason if it failed
         self.analysis_error = correlation_data.get("analysis_error")
+        # Store correlation type for reporting
+        self.correlation_type = correlation_type
 
         # Get occupied stats
         mean_occupied = correlation_data.get("mean_value_when_occupied")
@@ -368,8 +371,9 @@ class Entity:
             # Numeric sensors: calculate thresholds (mean ± 2σ)
             k_factor = 2.0
 
-            if correlation_type == "occupancy_positive":
+            if correlation_type in ("strong_positive", "positive"):
                 # Active > mean_unoccupied + K*std_unoccupied
+                # Same logic for both strong and weak positive correlations
                 lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
 
                 # Try to determine upper bound from occupied stats
@@ -385,8 +389,9 @@ class Entity:
 
                 self.learned_active_range = (lower_bound, upper_bound)
 
-            elif correlation_type == "occupancy_negative":
+            elif correlation_type in ("strong_negative", "negative"):
                 # Active < mean_unoccupied - K*std_unoccupied
+                # Same logic for both strong and weak negative correlations
                 upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
 
                 # Try to determine lower bound from occupied stats
@@ -429,6 +434,8 @@ class Entity:
 
         # Store analysis error (None means no error, analysis succeeded)
         self.analysis_error = likelihood_data.get("analysis_error")
+        # Store correlation type for reporting (binary likelihoods have type "binary_likelihood")
+        self.correlation_type = likelihood_data.get("correlation_type")
 
         # Get probability values
         prob_given_true = likelihood_data.get("prob_given_true")
