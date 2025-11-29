@@ -15,6 +15,7 @@ from ..const import MAX_WEIGHT, MIN_WEIGHT
 from ..utils import ensure_timezone_aware
 from .decay import Decay
 from .entity_type import DEFAULT_TYPES, EntityType, InputType
+from .purpose import get_default_decay_half_life
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -667,6 +668,9 @@ class EntityFactory:
         # Create decay object
         # Wasp-in-Box sensors should not have decay (immediate vacancy)
         half_life = self.config.decay.half_life
+        # If half_life is 0, resolve from purpose
+        if half_life == 0:
+            half_life = get_default_decay_half_life(self.config.purpose)
 
         area = self.coordinator.areas.get(self.area_name)
         is_wasp = area and area.wasp_entity_id == entity_id
@@ -751,6 +755,10 @@ class EntityFactory:
 
         # Wasp-in-Box sensors should not have decay (immediate vacancy)
         half_life = self.config.decay.half_life
+        # If half_life is 0, resolve from purpose
+        if half_life == 0:
+            half_life = get_default_decay_half_life(self.config.purpose)
+
         area = self.coordinator.areas.get(self.area_name)
         is_wasp = area and area.wasp_entity_id == entity_id
         if is_wasp:

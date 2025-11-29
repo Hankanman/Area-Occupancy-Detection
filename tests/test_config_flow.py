@@ -19,7 +19,6 @@ from custom_components.area_occupancy.config_flow import (
     _find_area_by_sanitized_id,
     _flatten_sectioned_input,
     _get_area_summary_info,
-    _get_default_decay_half_life,
     _get_include_entities,
     _get_purpose_display_name,
     _get_state_select_options,
@@ -52,6 +51,7 @@ from custom_components.area_occupancy.const import (
     DEFAULT_PURPOSE,
     DOMAIN,
 )
+from custom_components.area_occupancy.data.purpose import get_default_decay_half_life
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
@@ -79,6 +79,17 @@ class TestBaseOccupancyFlow:
         flow._validate_config(
             config_flow_base_config, hass
         )  # Should not raise any exception
+
+    def test_validate_config_decay_half_life_zero_valid(
+        self, flow, config_flow_base_config, hass
+    ):
+        """Test that decay_half_life of 0 is valid (means use purpose value)."""
+        test_config = {
+            **config_flow_base_config,
+            "decay_enabled": True,
+            "decay_half_life": 0,
+        }
+        flow._validate_config(test_config, hass)  # Should not raise any exception
 
     @pytest.mark.parametrize(
         ("invalid_config", "expected_error"),
@@ -108,8 +119,16 @@ class TestBaseOccupancyFlow:
                 "Area selection is required",
             ),
             (
-                {"decay_enabled": True, "decay_half_life": 0},
-                "Decay half life must be between",
+                {"decay_enabled": True, "decay_half_life": -1},
+                "between 10 and 3600",
+            ),
+            (
+                {"decay_enabled": True, "decay_half_life": 5},
+                "between 10 and 3600",
+            ),
+            (
+                {"decay_enabled": True, "decay_half_life": 3601},
+                "between 10 and 3600",
             ),
             (
                 {CONF_PURPOSE: ""},
@@ -1363,20 +1382,20 @@ class TestHelperFunctionEdgeCases:
     """Test edge cases for helper functions."""
 
     def test_get_default_decay_half_life_with_purpose(self):
-        """Test _get_default_decay_half_life with valid purpose."""
-        result = _get_default_decay_half_life("social")
+        """Test get_default_decay_half_life with valid purpose."""
+        result = get_default_decay_half_life("social")
         assert isinstance(result, float)
         assert result > 0
 
     def test_get_default_decay_half_life_invalid_purpose(self):
-        """Test _get_default_decay_half_life with invalid purpose - should fallback."""
-        result = _get_default_decay_half_life("invalid_purpose")
+        """Test get_default_decay_half_life with invalid purpose - should fallback."""
+        result = get_default_decay_half_life("invalid_purpose")
         assert isinstance(result, float)
         assert result > 0
 
     def test_get_default_decay_half_life_none(self):
-        """Test _get_default_decay_half_life with None purpose."""
-        result = _get_default_decay_half_life(None)
+        """Test get_default_decay_half_life with None purpose."""
+        result = get_default_decay_half_life(None)
         assert isinstance(result, float)
         assert result > 0
 
