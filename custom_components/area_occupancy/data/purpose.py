@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from ..const import DEFAULT_PURPOSE
+
 
 class AreaPurpose(StrEnum):
     """Area purpose types."""
@@ -156,3 +158,22 @@ def get_purpose_options() -> list[dict[str, str]]:
         {"value": purpose.purpose.value, "label": purpose.name}
         for purpose in PURPOSE_DEFINITIONS.values()
     ]
+
+
+def get_default_decay_half_life(purpose: str | None = None) -> float:
+    """Get the default decay half-life based on the selected purpose.
+
+    Args:
+        purpose: The purpose string value. If None, uses DEFAULT_PURPOSE.
+
+    Returns:
+        The half-life value in seconds for the given purpose.
+    """
+    if purpose is not None:
+        try:
+            purpose_enum = AreaPurpose(purpose)
+            return PURPOSE_DEFINITIONS[purpose_enum].half_life
+        except (ValueError, KeyError):
+            pass
+    # Fallback to default purpose half-life
+    return PURPOSE_DEFINITIONS[AreaPurpose(DEFAULT_PURPOSE)].half_life

@@ -181,7 +181,7 @@
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10-3600 seconds to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
                             "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
                     }
@@ -377,7 +377,7 @@
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Automatically defaults based on area purpose: Passageway (60s), Utility (120s), Food-Prep (300s), Eating/Working (600s), Social (720s), Relaxing (900s), Sleeping (1800s). You can manually adjust this value or it will be auto-set when you change the area purpose.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10-3600 seconds to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
                             "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
                     }
