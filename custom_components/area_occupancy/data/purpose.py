@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from ..const import DEFAULT_PURPOSE
+
 
 class AreaPurpose(StrEnum):
     """Area purpose types."""
@@ -97,31 +99,31 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         purpose=AreaPurpose.PASSAGEWAY,
         _name="Passageway",
         _description="Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.",
-        _half_life=60.0,
+        _half_life=45.0,
     ),
     AreaPurpose.UTILITY: Purpose(
         purpose=AreaPurpose.UTILITY,
         _name="Utility",
         _description="Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.",
-        _half_life=120.0,
+        _half_life=90.0,
     ),
     AreaPurpose.BATHROOM: Purpose(
         purpose=AreaPurpose.BATHROOM,
         _name="Bathroom",
         _description="Showers, baths, getting ready. Motion can be obstructed or minimal; a moderate memory prevents darkness during a shower.",
-        _half_life=600.0,
+        _half_life=450.0,
     ),
     AreaPurpose.FOOD_PREP: Purpose(
         purpose=AreaPurpose.FOOD_PREP,
         _name="Food-Prep",
         _description="Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.",
-        _half_life=300.0,
+        _half_life=240.0,
     ),
     AreaPurpose.EATING: Purpose(
         purpose=AreaPurpose.EATING,
         _name="Eating",
         _description="Dining table, breakfast bar. Family members usually stay seated 10-20 minutes but may be fairly still between bites.",
-        _half_life=600.0,
+        _half_life=480.0,
     ),
     AreaPurpose.WORKING: Purpose(
         purpose=AreaPurpose.WORKING,
@@ -133,19 +135,19 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         purpose=AreaPurpose.SOCIAL,
         _name="Social",
         _description="Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.",
-        _half_life=720.0,
+        _half_life=480.0,
     ),
     AreaPurpose.RELAXING: Purpose(
         purpose=AreaPurpose.RELAXING,
         _name="Relaxing",
         _description='TV lounge, reading nook, music corner. People can remain very still while watching or reading; a quarter-hour memory keeps the room "occupied" through stretches of calm.',
-        _half_life=900.0,
+        _half_life=600.0,
     ),
     AreaPurpose.SLEEPING: Purpose(
         purpose=AreaPurpose.SLEEPING,
         _name="Sleeping",
         _description='Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up.',
-        _half_life=1800.0,
+        _half_life=1200.0,
     ),
 }
 
@@ -156,3 +158,22 @@ def get_purpose_options() -> list[dict[str, str]]:
         {"value": purpose.purpose.value, "label": purpose.name}
         for purpose in PURPOSE_DEFINITIONS.values()
     ]
+
+
+def get_default_decay_half_life(purpose: str | None = None) -> float:
+    """Get the default decay half-life based on the selected purpose.
+
+    Args:
+        purpose: The purpose string value. If None, uses DEFAULT_PURPOSE.
+
+    Returns:
+        The half-life value in seconds for the given purpose.
+    """
+    if purpose is not None:
+        try:
+            purpose_enum = AreaPurpose(purpose)
+            return PURPOSE_DEFINITIONS[purpose_enum].half_life
+        except (ValueError, KeyError):
+            pass
+    # Fallback to default purpose half-life
+    return PURPOSE_DEFINITIONS[AreaPurpose(DEFAULT_PURPOSE)].half_life

@@ -85,6 +85,7 @@ from ..const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     HA_RECORDER_DAYS,
 )
+from .purpose import get_default_decay_half_life
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -399,8 +400,13 @@ class AreaConfig:
             wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
         )
 
+        # Resolve half-life: if 0 or not set, use purpose-based value
+        half_life_value = int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE))
+        if half_life_value == 0:
+            half_life_value = int(get_default_decay_half_life(self.purpose))
+
         self.decay = Decay(
-            half_life=int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)),
+            half_life=half_life_value,
             enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
         )
 

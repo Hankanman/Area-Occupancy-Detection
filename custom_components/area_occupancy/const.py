@@ -27,7 +27,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.11.3-pre10"
+DEVICE_SW_VERSION: Final = "2025.11.3"
 CONF_VERSION: Final = 13  # Incremented for single-instance multi-device architecture
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
@@ -99,7 +99,7 @@ CONF_WEIGHT_WASP: Final = "weight_wasp"
 DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_PURPOSE: Final = "social"  # Default area purpose
 DEFAULT_DECAY_ENABLED: Final = True
-DEFAULT_DECAY_HALF_LIFE: Final = 120  # seconds (2 minutes)
+DEFAULT_DECAY_HALF_LIFE: Final = 0  # 0 means "use purpose value"
 DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
@@ -239,6 +239,8 @@ CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
 CORRELATION_STRONG_THRESHOLD: Final = 0.7
 # Moderate correlation threshold (absolute value)
 CORRELATION_MODERATE_THRESHOLD: Final = 0.4
+# Weak correlation threshold (absolute value)
+CORRELATION_WEAK_THRESHOLD: Final = 0.15
 
 # Global prior retention
 # Number of historical global prior calculations to keep

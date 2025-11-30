@@ -150,18 +150,6 @@ def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
     ]
 
 
-def _get_default_decay_half_life(purpose: str | None = None) -> float:
-    """Get the default decay half-life based on the selected purpose."""
-    if purpose is not None:
-        try:
-            purpose_enum = AreaPurpose(purpose)
-            return PURPOSE_DEFINITIONS[purpose_enum].half_life
-        except (ValueError, KeyError):
-            pass
-    # Fallback to default purpose half-life
-    return PURPOSE_DEFINITIONS[AreaPurpose(DEFAULT_PURPOSE)].half_life
-
-
 def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     """Get lists of entities to include for specific selectors."""
     registry = er.async_get(hass)
@@ -615,12 +603,10 @@ def _create_energy_section_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the parameters section."""
-    # Get the purpose-based default for decay half-life
-    purpose = defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE)
-    purpose_based_default = _get_default_decay_half_life(purpose)
-
-    # Use the purpose-based default if no explicit value is already set
-    decay_half_life_default = defaults.get(CONF_DECAY_HALF_LIFE, purpose_based_default)
+    # Default decay half-life to 0 (use purpose value)
+    decay_half_life_default = defaults.get(
+        CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE
+    )
 
     return vol.Schema(
         {
@@ -642,7 +628,7 @@ def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_DECAY_HALF_LIFE, default=decay_half_life_default
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=10,
+                    min=0,
                     max=3600,
                     step=1,
                     mode=NumberSelectorMode.BOX,
@@ -950,8 +936,8 @@ def _apply_purpose_based_decay_default(
 ) -> None:
     """Apply purpose-based default for decay half-life.
 
-    If decay half-life is not set or matches a default value, apply the
-    purpose-specific default. Modifies flattened_input in place.
+    If decay half-life is not set or matches a default value, set it to 0
+    (which means "use purpose value"). Modifies flattened_input in place.
 
     Args:
         flattened_input: Flattened configuration dictionary
@@ -961,7 +947,6 @@ def _apply_purpose_based_decay_default(
         return
 
     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
-    purpose_default = _get_default_decay_half_life(purpose)
     purpose_half_lives = {
         purpose_def.half_life for purpose_def in PURPOSE_DEFINITIONS.values()
     }
@@ -971,7 +956,8 @@ def _apply_purpose_based_decay_default(
         or user_set_decay == DEFAULT_DECAY_HALF_LIFE
         or user_set_decay in purpose_half_lives
     ):
-        flattened_input[CONF_DECAY_HALF_LIFE] = purpose_default
+        # Set to 0 to indicate "use purpose value"
+        flattened_input[CONF_DECAY_HALF_LIFE] = 0
 
 
 def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
@@ -1355,12 +1341,13 @@ class BaseOccupancyFlow:
         decay_enabled = data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
         if decay_enabled:
             decay_window = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
-            if (
-                not isinstance(decay_window, (int, float))
-                or decay_window < 10
-                or decay_window > 3600
+            # Allow 0 (use purpose value) or values between 10 and 3600
+            if not isinstance(decay_window, (int, float)) or (
+                decay_window != 0 and (decay_window < 10 or decay_window > 3600)
             ):
-                raise vol.Invalid("Decay half life must be between 10 and 3600 seconds")
+                raise vol.Invalid(
+                    "Decay half life must be 0 (use purpose value) or between 10 and 3600 seconds"
+                )
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
