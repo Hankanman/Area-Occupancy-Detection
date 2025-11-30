@@ -12,6 +12,9 @@
     simulation: null,
     purposes: [],
     isAnalyzing: false,
+    availableAreas: [],
+    selectedAreaName: null,
+    yamlData: null, // Store raw YAML data for area switching
   };
 
   document.body.classList.add("aod-simulator-mode");
@@ -299,6 +302,7 @@
   const rootEl = document.querySelector(".aod-simulator");
   const yamlInput = document.getElementById("yaml-input");
   const loadBtn = document.getElementById("load-btn");
+  const areaSelector = document.getElementById("area-selector");
   const errorMessage = document.getElementById("error-message");
   const simulationDisplay = document.getElementById("simulation-display");
   const areaName = document.getElementById("area-name");
@@ -552,6 +556,17 @@
     stateEl.textContent = `State: ${entity.state_display}`;
     header.appendChild(stateEl);
 
+    // Display analysis error if present
+    if (entity.analysis_error) {
+      const errorBadge = document.createElement("div");
+      errorBadge.className = "sim-error-badge";
+      errorBadge.style.cssText =
+        "display: inline-block; margin-left: 0.5rem; padding: 0.25rem 0.5rem; background-color: var(--md-typeset-a-color, #ff6b6b); color: white; border-radius: 0.25rem; font-size: 0.75rem; font-weight: bold;";
+      errorBadge.textContent = "Error";
+      errorBadge.title = `Analysis Error: ${entity.analysis_error}`;
+      header.appendChild(errorBadge);
+    }
+
     content.appendChild(header);
 
     const segments = parseDetailSegments(entity.details);
@@ -563,6 +578,16 @@
         row.appendChild(detailItem);
       });
       content.appendChild(row);
+    }
+
+    // Show analysis error in details if present
+    if (entity.analysis_error) {
+      const errorRow = createElementWithClass("div", "sim-card-row");
+      errorRow.style.cssText = "color: var(--md-typeset-a-color, #ff6b6b); font-weight: 500;";
+      const errorItem = document.createElement("div");
+      errorItem.textContent = `Analysis Error: ${entity.analysis_error}`;
+      errorRow.appendChild(errorItem);
+      content.appendChild(errorRow);
     }
 
     const metricsRow = createSensorMetricsRow(entity);
@@ -1035,6 +1060,9 @@
     }
 
     try {
+      // Store YAML data for area switching
+      state.yamlData = yamlText;
+
       const payload = await requestJson("/api/load", {
         method: "POST",
         headers: {
@@ -1043,6 +1071,25 @@
         body: JSON.stringify({ yaml: yamlText }),
       });
 
+      // Handle multiple areas if available
+      if (payload.available_areas && Array.isArray(payload.available_areas)) {
+        state.availableAreas = payload.available_areas;
+        state.selectedAreaName = payload.selected_area_name || payload.available_areas[0] || null;
+        updateAreaSelector();
+      } else {
+        // Old format: single area
+        state.availableAreas = [];
+        state.selectedAreaName = null;
+        if (areaSelector) {
+          areaSelector.disabled = true;
+          areaSelector.innerHTML = "";
+          const option = document.createElement("sl-option");
+          option.value = "";
+          option.textContent = "Single area (old format)";
+          areaSelector.appendChild(option);
+        }
+      }
+
       setSimulation(payload.simulation, payload.result, { resetHistory: true });
       startAutoUpdate();
       updateApiStatus("online", "API Online");
@@ -1050,6 +1097,77 @@
       const message = error instanceof Error ? error.message : String(error);
       showError(`Error loading simulation: ${message}`);
       updateApiStatus("offline", "API Offline");
+    }
+  }
+
+  function updateAreaSelector() {
+    if (!areaSelector) {
+      return;
+    }
+
+    areaSelector.innerHTML = "";
+
+    if (state.availableAreas.length === 0) {
+      areaSelector.disabled = true;
+      const option = document.createElement("sl-option");
+      option.value = "";
+      option.textContent = "No areas available";
+      areaSelector.appendChild(option);
+      return;
+    }
+
+    areaSelector.disabled = false;
+    state.availableAreas.forEach((areaName) => {
+      const option = document.createElement("sl-option");
+      option.value = areaName;
+      option.textContent = areaName;
+      areaSelector.appendChild(option);
+    });
+
+    if (state.selectedAreaName) {
+      areaSelector.value = state.selectedAreaName;
+    }
+  }
+
+  async function handleAreaChange(event) {
+    const newAreaName = getEventValue(event);
+    if (!newAreaName || newAreaName === state.selectedAreaName) {
+      return;
+    }
+
+    if (!state.yamlData) {
+      showError("No YAML data available. Please load simulation first.");
+      return;
+    }
+
+    try {
+      state.isAnalyzing = true;
+      updateApiStatus("checking", "Loading area...");
+
+      const payload = await requestJson("/api/load", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          yaml: state.yamlData,
+          area_name: newAreaName,
+        }),
+      });
+
+      state.selectedAreaName = newAreaName;
+      setSimulation(payload.simulation, payload.result, { resetHistory: true });
+      updateApiStatus("online", "API Online");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showError(`Error switching area: ${message}`);
+      updateApiStatus("offline", "API Offline");
+      // Revert selector to previous value
+      if (areaSelector && state.selectedAreaName) {
+        areaSelector.value = state.selectedAreaName;
+      }
+    } finally {
+      state.isAnalyzing = false;
     }
   }
 
@@ -1219,6 +1337,10 @@
 
     if (loadBtn) {
       loadBtn.addEventListener("click", handleLoadSimulation);
+    }
+
+    if (areaSelector) {
+      areaSelector.addEventListener("sl-change", handleAreaChange);
     }
 
     if (purposeSelect) {

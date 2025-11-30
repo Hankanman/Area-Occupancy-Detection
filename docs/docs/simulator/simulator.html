@@ -170,6 +170,16 @@
         >Checking</span
       >
       <div class="sim-actions">
+        <sl-select
+          id="area-selector"
+          label="Area"
+          placeholder="Select area..."
+          disabled
+          help-text="Select which area to simulate"
+          style="min-width: 200px"
+        >
+          <sl-option value="">No areas loaded</sl-option>
+        </sl-select>
         <sl-button id="help-dialog-btn" variant="default">
           <sl-icon slot="prefix" name="question-circle"></sl-icon>
           Help
