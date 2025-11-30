@@ -202,6 +202,32 @@ def convert_intervals_to_samples(
     return samples
 
 
+def _map_binary_state_to_semantic(state: str, active_states: list[str]) -> str:
+    """Map binary sensor state ('on'/'off') to semantic state ('open'/'closed') if needed.
+
+    Home Assistant binary sensors always report 'on'/'off', but some configs use
+    semantic states like 'open'/'closed'. This function maps between them.
+
+    Args:
+        state: The actual state from the sensor ('on' or 'off')
+        active_states: List of active states expected by the config
+
+    Returns:
+        The mapped state if mapping is needed, otherwise the original state
+    """
+    # If active_states contains semantic states, map binary states
+    if "closed" in active_states or "open" in active_states:
+        # Map binary states to semantic states
+        # For doors: 'off' means closed, 'on' means open
+        # For windows: 'off' means closed, 'on' means open
+        if state == "off":
+            return "closed"
+        if state == "on":
+            return "open"
+    # No mapping needed, return original state
+    return state
+
+
 def analyze_binary_likelihoods(
     db: AreaOccupancyDB,
     area_name: str,
@@ -332,6 +358,8 @@ def analyze_binary_likelihoods(
             # Calculate overlap durations
             seconds_active_and_occupied = 0.0
             seconds_active_and_unoccupied = 0.0
+            found_active_intervals = False
+            unique_states = set()
 
             for interval in binary_intervals:
                 # SQLite returns naive datetimes, but they're stored as UTC
@@ -346,12 +374,22 @@ def analyze_binary_likelihoods(
                 if interval_duration <= 0:
                     continue
 
-                # Check if sensor is active
-                is_active = interval.state in active_states
+                # Track unique states for diagnostic logging
+                unique_states.add(interval.state)
+
+                # Map binary state to semantic state if needed (e.g., 'off'/'on' → 'closed'/'open')
+                mapped_state = _map_binary_state_to_semantic(
+                    interval.state, active_states
+                )
+
+                # Check if sensor is active (using mapped state)
+                is_active = mapped_state in active_states
 
                 if not is_active:
                     # Skip inactive intervals
                     continue
+
+                found_active_intervals = True
 
                 # Calculate overlap with occupied periods
                 # occupied_intervals are already timezone-aware UTC from get_occupied_intervals_for_analysis
@@ -379,6 +417,27 @@ def analyze_binary_likelihoods(
                 seconds_active_and_occupied += occupied_overlap
                 seconds_active_and_unoccupied += unoccupied_overlap
 
+            # Check if sensor has intervals but none are active
+            if not found_active_intervals:
+                # Sensor has intervals but none match active_states
+                _LOGGER.warning(
+                    "Sensor %s in area %s has %d intervals but none match active_states %s. "
+                    "Found states: %s",
+                    entity_id,
+                    area_name,
+                    len(binary_intervals),
+                    active_states,
+                    sorted(unique_states),
+                )
+                base_result.update(
+                    {
+                        "prob_given_true": None,
+                        "prob_given_false": None,
+                        "analysis_error": "no_active_intervals",
+                    }
+                )
+                return base_result
+
             # Calculate probabilities
             prob_given_true = (
                 seconds_active_and_occupied / total_seconds_occupied
@@ -390,6 +449,38 @@ def analyze_binary_likelihoods(
                 if total_seconds_unoccupied > 0
                 else 0.0
             )
+
+            # If sensor was never active during occupied periods, treat as insufficient data
+            # This allows the entity to use type defaults instead of clamped low values
+            if seconds_active_and_occupied == 0.0:
+                if seconds_active_and_unoccupied > 0.0:
+                    # Sensor was active but never during occupied periods
+                    _LOGGER.debug(
+                        "Sensor %s in area %s was active for %.1fs but never during occupied periods. "
+                        "Found states: %s, active_states: %s. Using type defaults instead of clamped values.",
+                        entity_id,
+                        area_name,
+                        seconds_active_and_unoccupied,
+                        sorted(unique_states),
+                        active_states,
+                    )
+                else:
+                    # Sensor was never active at all (should have been caught earlier, but defensive check)
+                    _LOGGER.warning(
+                        "Sensor %s in area %s has active intervals but zero active duration. "
+                        "This should have been caught earlier. Using type defaults.",
+                        entity_id,
+                        area_name,
+                    )
+                # Return error to use type defaults instead of clamped 0.05
+                base_result.update(
+                    {
+                        "prob_given_true": None,
+                        "prob_given_false": None,
+                        "analysis_error": "no_active_during_occupied",
+                    }
+                )
+                return base_result
 
             # Clamp probabilities to avoid "black hole" values
             prob_given_true = clamp_probability(
