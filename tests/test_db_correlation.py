@@ -873,6 +873,238 @@ class TestAnalyzeBinaryLikelihoods:
         # Otherwise, we get "no_sensor_data" (no light intervals)
         assert result["analysis_error"] in ("no_sensor_data", "no_occupied_time")
 
+    def test_analyze_binary_likelihoods_no_active_intervals(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test binary likelihood analysis when sensor has intervals but none are active."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "media_player.test_tv"
+        now = dt_util.utcnow()
+
+        db.save_area_data(area_name)
+
+        # Create motion sensor intervals
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = db.coordinator.get_area(area_name).config.sensors.motion[0]
+        motion_intervals = _create_motion_intervals(
+            db, area_name, motion_entity_id, 5, now=base_time
+        )
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create media player intervals with states that don't match active_states
+        # Media player uses "playing"/"paused" as active, but we'll create "off"/"idle" intervals
+        with db.get_session() as session:
+            for i in range(5):
+                start = base_time - timedelta(hours=5 - i)
+                end = start + timedelta(hours=1)
+                # Use states that don't match active_states ["playing", "paused"]
+                state = "off" if i % 2 == 0 else "idle"
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    start_time=start,
+                    end_time=end,
+                    state=state,
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Analyze binary likelihoods with active_states that don't match any intervals
+        result = analyze_binary_likelihoods(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=1,
+            active_states=["playing", "paused"],
+        )
+
+        assert result is not None
+        assert result["prob_given_true"] is None
+        assert result["prob_given_false"] is None
+        assert result["analysis_error"] == "no_active_intervals"
+
+    def test_analyze_binary_likelihoods_active_but_not_during_occupied(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test binary likelihood analysis when sensor is active but never during occupied periods."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "light.test_light"
+        now = dt_util.utcnow()
+
+        db.save_area_data(area_name)
+
+        # Create motion sensor intervals (occupied periods)
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = db.coordinator.get_area(area_name).config.sensors.motion[0]
+        # Create 3 motion intervals in hours 1, 2, 3
+        motion_intervals = []
+        with db.get_session() as session:
+            for i in range(3):
+                start = base_time - timedelta(hours=3 - i)
+                end = start + timedelta(hours=1)
+                motion_intervals.append((start, end))
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=motion_entity_id,
+                    start_time=start,
+                    end_time=end,
+                    state="on",
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create light intervals that are active but NOT during occupied periods
+        # Light is on during hours 4, 5, 6 (after occupied periods)
+        with db.get_session() as session:
+            for i in range(3):
+                start = base_time - timedelta(hours=6 - i)
+                end = start + timedelta(hours=1)
+                # Light is on, but this is after the occupied periods
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    start_time=start,
+                    end_time=end,
+                    state="on",
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Analyze binary likelihoods
+        result = analyze_binary_likelihoods(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=1,
+            active_states=["on"],
+        )
+
+        assert result is not None
+        # When sensor was active but never during occupied periods, return error
+        # so entity can use type defaults instead of clamped 0.05
+        assert result["prob_given_true"] is None
+        assert result["prob_given_false"] is None
+        assert result["analysis_error"] == "no_active_during_occupied"
+
+    def test_analyze_binary_likelihoods_state_mapping_door(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test binary likelihood analysis with state mapping for door sensors (off/on → closed/open)."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.door_contact"
+        now = dt_util.utcnow()
+
+        db.save_area_data(area_name)
+
+        # Create motion sensor intervals (occupied periods)
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = db.coordinator.get_area(area_name).config.sensors.motion[0]
+        motion_intervals = _create_motion_intervals(
+            db, area_name, motion_entity_id, 3, now=base_time
+        )
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create door intervals using binary states ('off'/'on') but config expects semantic states ('closed'/'open')
+        # Door is 'off' (closed) during first 2 occupied periods, 'on' (open) during third
+        with db.get_session() as session:
+            for i in range(3):
+                start = base_time - timedelta(hours=3 - i)
+                end = start + timedelta(hours=1)
+                # 'off' means closed (active for door), 'on' means open (inactive)
+                state = "off" if i < 2 else "on"
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    start_time=start,
+                    end_time=end,
+                    state=state,
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Analyze with semantic states - should map 'off' → 'closed'
+        result = analyze_binary_likelihoods(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=1,
+            active_states=["closed"],  # Semantic state
+        )
+
+        assert result is not None
+        assert result["prob_given_true"] is not None
+        assert result["prob_given_false"] is not None
+        assert result["analysis_error"] is None
+        # Door was closed ('off') during 2 of 3 occupied periods
+        assert result["prob_given_true"] > 0.0
+
+    def test_analyze_binary_likelihoods_state_mapping_window(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test binary likelihood analysis with state mapping for window sensors (off/on → closed/open)."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.window_contact"
+        now = dt_util.utcnow()
+
+        db.save_area_data(area_name)
+
+        # Create motion sensor intervals (occupied periods)
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = db.coordinator.get_area(area_name).config.sensors.motion[0]
+        motion_intervals = _create_motion_intervals(
+            db, area_name, motion_entity_id, 3, now=base_time
+        )
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create window intervals using binary states ('off'/'on') but config expects semantic states ('closed'/'open')
+        # Window is 'on' (open) during first 2 occupied periods, 'off' (closed) during third
+        with db.get_session() as session:
+            for i in range(3):
+                start = base_time - timedelta(hours=3 - i)
+                end = start + timedelta(hours=1)
+                # 'on' means open (active for window), 'off' means closed (inactive)
+                state = "on" if i < 2 else "off"
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    start_time=start,
+                    end_time=end,
+                    state=state,
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Analyze with semantic states - should map 'on' → 'open'
+        result = analyze_binary_likelihoods(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=1,
+            active_states=["open"],  # Semantic state
+        )
+
+        assert result is not None
+        assert result["prob_given_true"] is not None
+        assert result["prob_given_false"] is not None
+        assert result["analysis_error"] is None
+        # Window was open ('on') during 2 of 3 occupied periods
+        assert result["prob_given_true"] > 0.0
+
 
 # ruff: noqa: SLF001
 @pytest.fixture
