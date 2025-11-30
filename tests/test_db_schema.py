@@ -640,7 +640,7 @@ class TestOtherModels:
             entity_id="binary_sensor.motion_1",
             input_type="motion",
             correlation_coefficient=0.8,
-            correlation_type="occupancy_positive",
+            correlation_type="strong_positive",
             analysis_period_start=dt_util.utcnow() - timedelta(days=30),
             analysis_period_end=dt_util.utcnow(),
             sample_count=1000,
@@ -650,7 +650,7 @@ class TestOtherModels:
         db_session.commit()
 
         assert correlation.correlation_coefficient == 0.8
-        assert correlation.correlation_type == "occupancy_positive"
+        assert correlation.correlation_type == "strong_positive"
 
     def test_entity_statistics_creation(self, db_session: Session):
         """Test creating EntityStatistics instance."""

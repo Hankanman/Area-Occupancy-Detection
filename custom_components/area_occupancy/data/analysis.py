@@ -81,6 +81,8 @@ class PriorAnalyzer:
 
         try:
             # 1. Get occupied intervals based on motion sensors (ground truth)
+            # Note: get_occupied_intervals already performs merging and timeout extension
+            # The intervals returned are the final merged intervals
             occupied_intervals = self.get_occupied_intervals(days)
 
             if not occupied_intervals:
@@ -89,6 +91,23 @@ class PriorAnalyzer:
                     self.area_name,
                 )
                 return
+
+            # Log interval statistics for debugging
+            # Note: The intervals from get_occupied_intervals are already merged,
+            # so we can't see the raw count here. The merge happens in queries.get_occupied_intervals.
+            # We log what we have: the final merged interval count and duration.
+            occupied_duration_before_calc = sum(
+                (
+                    ensure_timezone_aware(end) - ensure_timezone_aware(start)
+                ).total_seconds()
+                for start, end in occupied_intervals
+            )
+            _LOGGER.debug(
+                "Prior calculation for area %s: %d merged intervals, %.1f hours total duration",
+                self.area_name,
+                len(occupied_intervals),
+                occupied_duration_before_calc / 3600,
+            )
 
             # 2. Calculate global prior using actual data period
             # Determine actual data period from intervals (not fixed lookback)
@@ -150,11 +169,12 @@ class PriorAnalyzer:
             self.area.prior.set_global_prior(global_prior)
 
             _LOGGER.info(
-                "Prior analysis completed for area %s: global_prior=%.3f (occupied: %.1f hours over %.1f days)",
+                "Prior analysis completed for area %s: global_prior=%.3f (occupied: %.1f hours over %.1f days, %d intervals)",
                 self.area_name,
                 global_prior,
                 occupied_duration / 3600,
                 actual_period_duration / 86400,
+                len(occupied_intervals),
             )
 
         except (ValueError, TypeError, RuntimeError) as e:
