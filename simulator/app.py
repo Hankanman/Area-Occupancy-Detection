@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request
 from flask_cors import CORS  # type: ignore[import]
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
@@ -45,11 +45,7 @@ if str(PROJECT_ROOT) not in sys.path:
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
-app = Flask(
-    __name__,
-    template_folder=str(BASE_DIR / "templates"),
-    static_folder=str(BASE_DIR / "static"),
-)
+app = Flask(__name__)
 
 
 def get_allowed_origins() -> list[str] | str:
@@ -725,12 +721,6 @@ def _build_simulation_from_yaml(data: dict[str, Any]) -> dict[str, Any]:
     }
 
     return _normalize_simulation_payload(simulation_payload)
-
-
-@app.route("/")
-def index():
-    """Serve the simulator shell page."""
-    return render_template("index.html")
 
 
 @app.route("/api/analyze", methods=["POST"])
