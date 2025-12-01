@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -14,7 +14,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -23,7 +23,9 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .area import AllAreas, AreaDeviceHandle
 from .const import (
+    ALL_AREAS_IDENTIFIER,
     ATTR_DOOR_STATE,
     ATTR_LAST_DOOR_TIME,
     ATTR_LAST_MOTION_TIME,
@@ -35,7 +37,11 @@ from .const import (
     ATTR_VERIFICATION_PENDING,
     NAME_WASP_IN_BOX,
 )
-from .coordinator import AreaOccupancyCoordinator
+from .utils import generate_entity_unique_id
+
+if TYPE_CHECKING:
+    from .area import Area
+    from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,31 +52,73 @@ DOOR_OPEN = STATE_ON
 DOOR_CLOSED = STATE_OFF
 
 
-class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity):
+class Occupancy(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor for the occupancy status."""
 
-    def __init__(self, coordinator: AreaOccupancyCoordinator, entry_id: str) -> None:
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle | None = None,
+        all_areas: AllAreas | None = None,
+    ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        source = area_handle or all_areas
+        if source is None:
+            raise ValueError("area_handle or all_areas is required")
+        super().__init__(source.coordinator)
+        self._handle = area_handle
+        self._all_areas = all_areas
+        self._area_name = area_handle.area_name if area_handle else ALL_AREAS_IDENTIFIER
         self._attr_has_entity_name = True
-        self._attr_unique_id = (
-            f"{entry_id}_{NAME_BINARY_SENSOR.lower().replace(' ', '_')}"
+
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            source.coordinator.entry_id,
+            (
+                area_handle.device_info()
+                if area_handle is not None
+                else all_areas.device_info()
+            ),
+            NAME_BINARY_SENSOR,
         )
         self._attr_name = NAME_BINARY_SENSOR
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._attr_device_info: DeviceInfo | None = coordinator.device_info
+        # Get device_info directly from Area or AllAreas
+        self._attr_device_info = (
+            area_handle.device_info()
+            if area_handle is not None
+            else all_areas.device_info()
+        )
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        # Let the coordinator know our entity_id
-        self.coordinator.occupancy_entity_id = self.entity_id
+        # Let the coordinator know our entity_id (only for specific areas, not All Areas)
+        if (
+            self._area_name != ALL_AREAS_IDENTIFIER
+            and (area := self._get_area()) is not None
+        ):
+            area.occupancy_entity_id = self.entity_id
+
+            # Assign device to Home Assistant area if area_id is configured
+            if area.config.area_id and self.device_info:
+                device_registry = dr.async_get(self.hass)
+                # DeviceInfo is a TypedDict, access identifiers directly
+                identifiers = self.device_info.get("identifiers", set())
+                device = device_registry.async_get_device(identifiers=identifiers)
+                if device and device.area_id != area.config.area_id:
+                    device_registry.async_update_device(
+                        device.id, area_id=area.config.area_id
+                    )
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
-        # Clear the entity_id from coordinator
-        if self.coordinator.occupancy_entity_id == self.entity_id:
-            self.coordinator.occupancy_entity_id = None
+        # Clear the entity_id from coordinator (only for specific areas, not All Areas)
+        if (
+            self._area_name != ALL_AREAS_IDENTIFIER
+            and (area := self._get_area()) is not None
+            and area.occupancy_entity_id == self.entity_id
+        ):
+            area.occupancy_entity_id = None
         await super().async_will_remove_from_hass()
 
     @property
@@ -87,16 +135,24 @@ class Occupancy(CoordinatorEntity[AreaOccupancyCoordinator], BinarySensorEntity)
                  False if no data is available or area is unoccupied.
 
         """
-        return self.coordinator.occupied
+        if self._area_name == ALL_AREAS_IDENTIFIER:
+            if self._all_areas is None:
+                return False
+            return self._all_areas.occupied()
+        area = self._get_area()
+        if area is None:
+            return False
+        return area.occupied()
+
+    def _get_area(self) -> Area | None:
+        """Resolve the current Area instance for this entity."""
+        if self._handle is None:
+            return None
+        return self._handle.area
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        _LOGGER.debug(
-            "Occupancy sensor updating: occupied=%s, probability=%.3f",
-            self.coordinator.occupied,
-            self.coordinator.probability,
-        )
         super()._handle_coordinator_update()
 
 
@@ -113,19 +169,29 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
     def __init__(
         self,
-        coordinator: AreaOccupancyCoordinator,
+        area_handle: AreaDeviceHandle,
         config_entry: ConfigEntry,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the sensor.
+
+        Args:
+            area_handle: Stable reference to the parent Area.
+            config_entry: The config entry (for backward compatibility with unique_id migration)
+        """
         _LOGGER.debug(
-            "Initializing WaspInBoxSensor for entry_id: %s", config_entry.entry_id
+            "Initializing WaspInBoxSensor for area: %s", area_handle.area_name
         )
         super().__init__()
 
         # Store references and configuration
         # Note: self.hass is automatically set by Home Assistant when entity is added
-        self._coordinator = coordinator
-        self._config = coordinator.config
+        self._handle = area_handle
+        self._coordinator = area_handle.coordinator
+        self._area_name = area_handle.area_name
+        area = area_handle.resolve()
+        if area is None:
+            raise ValueError(f"Area '{area_handle.area_name}' is not available")
+        self._config = area.config
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
         self._weight = self._config.wasp_in_box.weight
         self._max_duration = self._config.wasp_in_box.max_duration
@@ -133,12 +199,16 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
         # Configure entity properties
         self._attr_has_entity_name = True
-        self._attr_unique_id = (
-            f"{config_entry.entry_id}_{NAME_WASP_IN_BOX.lower().replace(' ', '_')}"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            area_handle.coordinator.entry_id,
+            area.device_info(),
+            NAME_WASP_IN_BOX,
         )
         self._attr_name = NAME_WASP_IN_BOX
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._attr_device_info = coordinator.device_info
+        # Get device_info directly from Area
+        self._attr_device_info = area.device_info() if area is not None else None
         self._attr_available = True
         self._attr_is_on = False
 
@@ -179,7 +249,8 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             self._setup_entity_tracking()
 
             # Let the coordinator know our entity_id
-            self._coordinator.wasp_entity_id = self.entity_id
+            if (area := self._get_area()) is not None:
+                area.wasp_entity_id = self.entity_id
 
             _LOGGER.debug("WaspInBoxSensor setup completed for %s", self.entity_id)
         except Exception:
@@ -215,20 +286,42 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         else:
             _LOGGER.debug("No previous state found for %s to restore", self.entity_id)
 
+    def _cleanup_all_resources(self) -> None:
+        """Defensive cleanup of all resources (timers, listeners, state).
+
+        This method ensures all resources are cleaned up even if
+        async_will_remove_from_hass() is not called, preventing memory leaks.
+        """
+        _LOGGER.debug(
+            "Performing defensive cleanup for Wasp in Box sensor: %s", self.entity_id
+        )
+
+        # Cancel state listener
+        if self._remove_state_listener is not None:
+            try:
+                self._remove_state_listener()
+            except (RuntimeError, AttributeError) as err:
+                _LOGGER.warning("Error canceling state listener: %s", err)
+            self._remove_state_listener = None
+
+        # Cancel all timers
+        self._cancel_max_duration_timer()
+        self._cancel_verification_timer()
+
+        # Clear coordinator reference
+        area = self._get_area()
+        if area is not None and area.wasp_entity_id == self.entity_id:
+            area.wasp_entity_id = None
+
+        _LOGGER.debug(
+            "Defensive cleanup completed for Wasp in Box sensor: %s", self.entity_id
+        )
+
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is removed."""
         _LOGGER.debug("Removing Wasp in Box sensor: %s", self.entity_id)
-
-        # Clear the entity_id from coordinator and re-initialize entity manager
-        if self._coordinator.wasp_entity_id == self.entity_id:
-            self._coordinator.wasp_entity_id = None
-
-        if self._remove_state_listener is not None:
-            self._remove_state_listener()
-            self._remove_state_listener = None
-
-        self._cancel_max_duration_timer()
-        self._cancel_verification_timer()
+        self._cleanup_all_resources()
+        await super().async_will_remove_from_hass()
 
     @property
     def extra_state_attributes(self) -> dict[str, str | int | None | bool]:
@@ -640,6 +733,10 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             )
             self._set_state(STATE_OFF)
 
+    def _get_area(self) -> Area | None:
+        """Return the current Area backing this sensor."""
+        return self._handle.resolve()
+
 
 async def async_setup_entry(
     hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: Any
@@ -647,18 +744,38 @@ async def async_setup_entry(
     """Set up the Area Occupancy Detection binary sensors."""
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
-    # 1. Create the main sensor instance
-    entities: list[BinarySensorEntity] = [
-        Occupancy(coordinator=coordinator, entry_id=config_entry.entry_id)
-    ]
+    entities: list[BinarySensorEntity] = []
 
-    # 2. Create the Wasp in Box sensor if enabled
-    if coordinator.config.wasp_in_box.enabled:
-        _LOGGER.debug("Wasp in Box sensor enabled, creating sensor")
-        wasp_sensor = WaspInBoxSensor(
-            coordinator=coordinator, config_entry=config_entry
+    # Create occupancy sensors for each area
+    for area_name in coordinator.get_area_names():
+        handle = coordinator.get_area_handle(area_name)
+        _LOGGER.debug("Creating occupancy sensor for area: %s", area_name)
+        entities.append(Occupancy(area_handle=handle))
+
+        # Create Wasp in Box sensor if enabled for this area
+        area = coordinator.get_area(area_name)
+        if area and area.config.wasp_in_box.enabled:
+            _LOGGER.debug(
+                "Wasp in Box sensor enabled for area %s, creating sensor", area_name
+            )
+            wasp_sensor = WaspInBoxSensor(
+                area_handle=handle,
+                config_entry=config_entry,
+            )
+            entities.append(wasp_sensor)
+            _LOGGER.debug(
+                "Created Wasp in Box sensor for area %s: %s",
+                area_name,
+                wasp_sensor.unique_id,
+            )
+
+    # Create "All Areas" aggregation occupancy sensor when areas exist
+    if len(coordinator.get_area_names()) >= 1:
+        _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
+        entities.append(
+            Occupancy(
+                all_areas=coordinator.get_all_areas(),
+            )
         )
-        entities.append(wasp_sensor)
-        _LOGGER.debug("Created Wasp in Box sensor: %s", wasp_sensor.unique_id)
 
     async_add_entities(entities, update_before_add=False)

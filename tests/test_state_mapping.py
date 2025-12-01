@@ -2,7 +2,7 @@
 
 import pytest
 
-from custom_components.area_occupancy.state_mapping import (
+from custom_components.area_occupancy.const import (
     StateOption,
     get_default_state,
     get_friendly_state_name,

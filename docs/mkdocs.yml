@@ -29,6 +29,7 @@ theme:
         name: Switch to light mode
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.instant
     - navigation.instant.prefetch
@@ -83,6 +84,8 @@ markdown_extensions:
 plugins:
   - search:
       separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - include-markdown:
+      preserve_includer_indent: false
   - minify:
       minify_html: true
 
@@ -105,6 +108,7 @@ nav:
       - Bayesian Calculation: features/calculation.md
       - Prior Learning: features/prior-learning.md
       - Sensor Likelihoods: features/likelihood.md
+      - Sensor Correlation: features/sensor-correlation.md
       - Area Purpose: features/purpose.md
       - Wasp in Box: features/wasp-in-box.md
       - Probability Decay: features/decay.md
@@ -112,5 +116,13 @@ nav:
       - Services: features/services.md
   - Technical:
       - Deep Dive: technical/deep-dive.md
+      - Analysis Chain: technical/analysis-chain.md
+      - Bayesian Calculation: technical/bayesian-calculation.md
+      - Calculation Flow: technical/calculation-flow.md
+      - Data Flow: technical/data-flow.md
+      - Entity Evidence: technical/entity-evidence.md
+      - Likelihood Calculation: technical/likelihood-calculation.md
+      - Database Schema: technical/database-schema.md
       - Pre-Releases: technical/prerelease.md
       - Debugging: technical/debug.md
+  - Simulator: simulator/index.md

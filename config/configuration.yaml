@@ -5,11 +5,18 @@ default_config:
 homeassistant:
   debug: true
 
+debugpy:
+
 # https://www.home-assistant.io/integrations/logger/
 logger:
-  default: info
+  default: error
   logs:
-     custom_components.area_occupancy: DEBUG
+    custom_components.area_occupancy: debug
+  filters:
+    homeassistant.components.go2rtc:
+      - "Could not find go2rtc docker binary"
+    homeassistant.setup:
+      - ".*go2rtc.*"
 
 # Input controls for testing
 
@@ -260,4 +267,3 @@ media_player:
         data:
           entity_id: input_select.mock_media_state
           option: idle
-

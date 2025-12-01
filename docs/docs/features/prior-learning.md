@@ -4,51 +4,72 @@ To make the Bayesian calculations more accurate and specific to your environment
 
 ## What is a Prior Probability?
 
+Simply put the prior is the probability that the area is occupied at any given time. For example "I spend about 30% of my time in the living room" so the prior for the living room is 0.30. This sets the "ground truth" for the living room.
+
+Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behavior of your **motion sensors**, reflecting how often that area is typically occupied. This is done by analyzing the history of your sensors over a lookback period (default: 60 days).
+
 In the context of Bayesian probability, the **prior probability** (often denoted as `P(Occupied)` or simply `prior`) represents our initial belief about the likelihood of an event _before_ considering any new evidence. For this integration, it's the baseline probability that the area is occupied, independent of the _current_ state of the sensors.
 
-Think of it as the starting point for the calculation. When new sensor evidence comes in (e.g., motion is detected), Bayes' theorem uses this prior belief along with the sensor's learned likelihoods to calculate an updated belief (the posterior probability).
+## How Priors Are Calculated
 
-Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behavior of your **Primary Occupancy Sensor**, reflecting how often that area is typically occupied according to your chosen ground truth sensor.
+The system calculates two types of priors to provide a robust baseline:
 
-## Global Prior Learning
+1. **Global Prior**: A single value representing the overall "busyness" of a room (e.g., a living room is occupied 30% of the time, a guest room 1% of the time).
+2. **Time-Based Prior**: A time-specific probability based on the day of week and time of day (e.g., "Mondays at 09:00").
 
-The traditional approach calculates a single baseline prior probability for the entire area, regardless of time. This is the foundation of the learning system and provides a good baseline for occupancy detection.
+The final prior used for real-time detection is a combination of these two, giving weight to the specific time of day while using the global prior as a stable anchor.
 
-## Goal of Learning
+### 1. Global Prior Calculation
 
-The primary goal is to determine, for each configured sensor:
+The Global Prior is determined by analyzing the history of your sensors over a lookback period (default: 60 days).
 
-1.  **`P(Sensor Active | Area Occupied)` (Likelihood - True):** How likely is this sensor to be in its "active" state when the area is genuinely occupied?
-2.  **`P(Sensor Active | Area Not Occupied)` (Likelihood - False):** How likely is this sensor to be in its "active" state when the area is _not_ occupied? (This helps identify sensors that trigger falsely or independently of occupancy).
-3.  **`P(Sensor Occupied)` (Prior):** What is the baseline probability that this sensor is active, based on its history? (This is particularly relevant for the primary sensor, which informs the overall prior).
+- **Motion Analysis**: First, it calculates the percentage of time motion sensors were active.
+- **Fallback for Low Activity**: If motion sensors show very low activity (less than 10% of the time), the system assumes people might be sitting still (e.g., watching TV or working). It then checks **Media Players** and **Appliances** to supplement the occupancy data.
+- **Result**: This produces a single probability value (e.g., 0.35 or 35%) that serves as the general baseline for the room.
 
-## The Primary Sensor(s): Ground Truth
+### 2. Time-Based Prior Calculation
 
-This learning process relies heavily on the **Primary Occupancy Sensor** you designate during configuration. This sensor (usually a reliable motion or dedicated occupancy sensor) is treated as the "ground truth" indicator of when the area was actually occupied during the historical analysis period.
+The Time-Based Prior provides granularity by breaking the week into 1-hour slots (e.g., "Monday 09:00-10:00", "Tuesday 14:00-15:00").
 
-## How Learning Works
+- **Grid**: It creates a schedule of 168 slots (24 hours $\times$ 7 days).
+- **History Analysis**: For each slot, it looks at historical data to see how often the room was occupied during that specific hour on that day of the week.
+- **Smart Fallback**: Just like the Global Prior, if motion data is scarce, it will automatically consider **Media Players** and **Appliances** as indicators of occupancy. This ensures that "quiet" activities like watching TV are correctly learned as occupied times.
+- **Safety Bounds**: The system bounds these time-specific probabilities between 10% and 90%. This prevents extreme values (like 1% or 99%) from dominating the calculation, ensuring that the system remains responsive to new sensor evidence even if the schedule suggests the room "should" be empty.
+- **Result**: This produces a unique probability for every hour of the week, allowing the system to "expect" occupancy at usual times (like evening TV time) and "expect" vacancy at others (like work hours).
 
-### Global Prior Learning Process
+## Ground Truth: Defining "Occupancy"
 
-1.  **Time Period:** The system looks back over the configured **History Period** (e.g., the last 7 days) using the Home Assistant recorder database.
-2.  **Data Retrieval:** For the specified period, it fetches the state history for both the **Primary Occupancy Sensor** and the specific **sensor being analyzed**.
-3.  **Interval Analysis:** The state histories are converted into time intervals, noting the start and end times for each state (e.g., when a sensor turned `on` and then `off`).
-4.  **Correlation Calculation:** The system compares the time intervals of the sensor being analyzed with the intervals when the **Primary Occupancy Sensor** was `on` (considered occupied) and `off` (considered not occupied):
-    - **Calculate `P(Active | Occupied)`:** It measures the total duration the sensor was _active_ during the times the primary sensor indicated the area was _occupied_. This duration is divided by the total time the area was considered _occupied_.
-    - **Calculate `P(Active | Not Occupied)`:** It measures the total duration the sensor was _active_ during the times the primary sensor indicated the area was _not occupied_. This duration is divided by the total time the area was considered _not occupied_.
-    - **Calculate `P(Occupied)` (Prior):** For the primary sensor itself, its prior is calculated as the total time it was `on` divided by the total analysis period duration. For other sensors, their individual priors are also calculated based on their own total active time.
-5.  **Storage:** These learned `prob_given_true`, `prob_given_false`, and `prior` values are stored persistently for each sensor. They override the default probabilities defined in the integration's constants.
-6.  **Averaging for Type Priors:** The learned priors for individual entities are averaged to calculate priors for each _sensor type_ (e.g., the average prior for all configured motion sensors).
-7.  **Overall Prior:** The overall prior probability for the area (used in the main Bayesian calculation and shown by the Prior Probability sensor) is calculated by averaging the priors of the _active_ sensor types.
+To learn from history, the system needs to know when the room was _actually_ occupied. It uses **Motion Sensors** as the "Ground Truth" or Gold Standard.
 
-## When Learning Occurs
+- **Why Motion?**: Motion sensors are the most direct indicator of human presence. They rarely generate false positives (indicating presence when no one is there).
+- **Motion Timeout**: The system automatically accounts for the time after motion stops. If your motion sensors have a timeout (e.g., 5 minutes), this "cooldown" period is counted as occupied time, ensuring consistent logic across all calculations.
 
-### Global Prior Learning
+## Real-Time Probability Adjustment
 
-- **Automatically:** This learning process typically runs automatically in the background at a set interval (e.g., once per hour, though this might be configurable or dynamically adjusted).
-- **Manually:** You can trigger the learning process immediately using the `area_occupancy.run_analysis` service call.
-- **Startup:** It may also run on Home Assistant startup or when the integration is first set up, especially if no prior learned data exists.
+When the integration runs in real-time, it determines the current Prior Probability dynamically:
 
-## Using Learned Priors
+1. **Combine Priors**: It starts by mixing the **Global Prior** and the specific **Time-Based Prior** for the current hour. This balances the general busyness of the room with the specific expectation for the current time.
+2. **Bias Towards Safety**: The system slightly biases the prior towards assuming occupancy (multiplying by a small factor). This is a "better safe than sorry" heuristic to prevent lights from turning off on you.
+3. **Apply Minimum Floor**: Finally, it applies the **Minimum Prior Override** (if configured). This ensures that even in very rarely used rooms, the probability never drops so low that the system becomes unresponsive to new sensor activity.
 
-Once calculated, these learned priors are used by the [Bayesian Probability Calculation](calculation.md) instead of the generic defaults, making the occupancy detection tailored to the specific behavior of sensors in that area.
+## Handling Special Situations
+
+The system is designed to handle various edge cases robustly:
+
+- **New Installations**: If there is no history yet, the system uses a neutral **Default Prior** (50%) to avoid making assumptions until data is available.
+- **Missing Data**: If specific time slots have no history (e.g., a power outage occurred every Tuesday at 2 AM), it falls back to safe defaults.
+- **Sensor Dropouts**: If a sensor becomes unavailable, it is temporarily excluded from the calculation to prevent skewing the data.
+
+## Minimum Prior Override
+
+You can configure a `min_prior_override` for each area.
+
+- **Purpose**: This setting prevents the calculated prior from dropping too low in rarely-used rooms (like a guest room or attic).
+- **Effect**: If the historical probability is extremely low (e.g., 0.01%), the system might require overwhelming evidence to switch to "Occupied." Setting a minimum override (e.g., 0.10) ensures the system remains responsive to new motion or sensor activity, even in "quiet" rooms.
+
+## Default Behaviors
+
+When data is missing or insufficient, the system uses these defaults:
+
+- **Neutral (0.5)**: Used when historical data is completely missing or invalid (e.g., during initial setup).
+- **Time Slot Default (0.5)**: Used for specific time slots that have no recorded history.

@@ -9,7 +9,7 @@ The prior probabilities for each input entity are calculated in [custom_componen
 
 1. For each input entity:
    - Query historical states using recorder component
-   - Compare with primary occupancy indicator states
+   - Compare with motion sensor states (used as ground truth for occupancy)
    - Calculate:
      - prob_given_true: P(Entity State | Area Occupied)
      - prob_given_false: P(Entity State | Area Not Occupied)
@@ -138,7 +138,7 @@ Virtual sensor implementations in [custom_components/area_occupancy/virtual_sens
 All probability calculations use type-safe data structures from [custom_components/area_occupancy/types.py](mdc:custom_components/area_occupancy/types.py):
 
 1. **ProbabilityState**: Main state container with validation
-2. **PriorData**: Prior probability data with range validation  
+2. **PriorData**: Prior probability data with range validation
 3. **DecayState**: Decay parameters and status tracking
 4. **ConfigData**: Configuration validation and defaults
 

@@ -1,22 +1,25 @@
 """Entity model."""
 
-import bisect
-from collections import defaultdict
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_WEIGHT, MIN_PROBABILITY, MIN_WEIGHT
-from ..db import AreaOccupancyDB as DB
-from ..utils import clamp_probability, ensure_timezone_aware
+from ..const import MAX_WEIGHT, MIN_WEIGHT
+from ..utils import ensure_timezone_aware
 from .decay import Decay
-from .entity_type import EntityType, InputType
+from .entity_type import DEFAULT_TYPES, EntityType, InputType
+from .purpose import get_default_decay_half_life
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
+    from ..db import AreaOccupancyDB as DB
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,14 +34,193 @@ class Entity:
     prob_given_true: float
     prob_given_false: float
     decay: Decay
-    coordinator: "AreaOccupancyCoordinator"
-    last_updated: datetime
-    previous_evidence: bool | None
+    hass: HomeAssistant | None = None
+    state_provider: Callable[[str], Any] | None = None
+    last_updated: datetime | None = None
+    previous_evidence: bool | None = None
+    learned_active_range: tuple[float, float] | None = None
+    learned_gaussian_params: dict[str, float] | None = None
+    analysis_error: str | None = None
+    correlation_type: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate that either hass or state_provider is provided.
+
+        Either hass or state_provider must be provided, and they are mutually
+        exclusive. This ensures proper state retrieval behavior:
+
+        - **HA-backed instances**: Provide `hass` to use Home Assistant's state
+          registry for entity state retrieval. This is the standard usage pattern
+          for entities managed within a Home Assistant integration.
+
+        - **State-provider-only instances**: Provide `state_provider` (a callable
+          that takes an entity_id and returns state) for testing or external state
+          management scenarios where Home Assistant is not available.
+
+        Raises:
+            ValueError: If neither hass nor state_provider is provided, or if both
+                are provided simultaneously.
+        """
+        if self.hass is None and self.state_provider is None:
+            raise ValueError("Either hass or state_provider must be provided")
+        if self.hass is not None and self.state_provider is not None:
+            raise ValueError("Cannot provide both hass and state_provider")
+        if self.last_updated is None:
+            self.last_updated = dt_util.utcnow()
+
+        # Store the static probability values in protected attributes
+        # These are used as fallbacks when Gaussian calculation is not available
+        self._prob_given_true = self.prob_given_true
+        self._prob_given_false = self.prob_given_false
+
+    def _calculate_gaussian_density(
+        self, value: float, mean: float, std: float
+    ) -> float:
+        """Calculate Gaussian probability density function.
+
+        Args:
+            value: The current sensor value
+            mean: The mean of the distribution
+            std: The standard deviation of the distribution
+
+        Returns:
+            The probability density at the given value
+        """
+        if std <= 0:
+            return 0.0
+        exponent = -0.5 * ((value - mean) / std) ** 2
+        return (1.0 / (std * math.sqrt(2 * math.pi))) * math.exp(exponent)
+
+    def get_likelihoods(self) -> tuple[float, float]:
+        """Get dynamic likelihoods based on current state.
+
+        Motion sensors: Always use configured prob_given_true/prob_given_false.
+        Binary sensors: Use static probabilities if learned from analysis, otherwise EntityType defaults.
+        Numeric sensors: Use Gaussian PDF if available, otherwise EntityType defaults.
+
+        Returns:
+            Tuple of (prob_given_true, prob_given_false)
+        """
+        # Motion sensors: Always use configured values (not fallback)
+        if self.type.input_type == InputType.MOTION:
+            return (self.prob_given_true, self.prob_given_false)
+
+        # Binary sensors: Use static probabilities if learned, otherwise EntityType defaults
+        binary_input_types = {
+            InputType.MEDIA,
+            InputType.APPLIANCE,
+            InputType.DOOR,
+            InputType.WINDOW,
+        }
+        if self.type.input_type in binary_input_types:
+            # If analysis has been run (not "not_analyzed"), use learned probabilities
+            # Otherwise fall back to EntityType defaults
+            if self.analysis_error != "not_analyzed":
+                # Analysis has been run - use stored probabilities
+                return (self.prob_given_true, self.prob_given_false)
+            # Not analyzed yet - use EntityType defaults
+            return (self.type.prob_given_true, self.type.prob_given_false)
+
+        # Numeric sensors: Use Gaussian PDF if available
+        if self.learned_gaussian_params:
+            # Validate mean values first
+            mean_occupied = self.learned_gaussian_params["mean_occupied"]
+            mean_unoccupied = self.learned_gaussian_params["mean_unoccupied"]
+
+            # Check for NaN/inf in mean values
+            if math.isnan(mean_occupied) or math.isinf(mean_occupied):
+                _LOGGER.warning(
+                    "Invalid mean_occupied value (NaN/inf) for %s, using EntityType defaults",
+                    self.entity_id,
+                )
+                return (self.type.prob_given_true, self.type.prob_given_false)
+
+            if math.isnan(mean_unoccupied) or math.isinf(mean_unoccupied):
+                _LOGGER.warning(
+                    "Invalid mean_unoccupied value (NaN/inf) for %s, using EntityType defaults",
+                    self.entity_id,
+                )
+                return (self.type.prob_given_true, self.type.prob_given_false)
+
+            # Try to get current state value, fall back to mean if unavailable
+            val = None
+            if self.state is not None:
+                with suppress(ValueError, TypeError):
+                    # State is not a valid number (e.g., "unknown", "unavailable")
+                    val = float(self.state)
+                    # Validate state value for NaN/inf
+                    if math.isnan(val) or math.isinf(val):
+                        _LOGGER.warning(
+                            "Invalid state value (NaN/inf) for %s, using mean of means",
+                            self.entity_id,
+                        )
+                        val = None
+
+            # If state is unavailable or invalid, use mean of occupied and unoccupied as representative value
+            if val is None:
+                # Use average of means as representative value (means are already validated)
+                val = (mean_occupied + mean_unoccupied) / 2.0
+
+            try:
+                # Clamp std dev to minimum 0.05 to prevent numerical issues (division by zero)
+                # We do NOT clamp maximum as numeric sensors (e.g. CO2) can have large variance
+                std_occupied = max(0.05, self.learned_gaussian_params["std_occupied"])
+                std_unoccupied = max(
+                    0.05, self.learned_gaussian_params["std_unoccupied"]
+                )
+
+                # Calculate density for occupied state
+                p_true = self._calculate_gaussian_density(
+                    val,
+                    mean_occupied,
+                    std_occupied,
+                )
+
+                # Calculate density for unoccupied state
+                p_false = self._calculate_gaussian_density(
+                    val,
+                    mean_unoccupied,
+                    std_unoccupied,
+                )
+
+                # Validate calculated densities for NaN/inf
+                if math.isnan(p_true) or math.isinf(p_true):
+                    _LOGGER.warning(
+                        "Invalid p_true density (NaN/inf) for %s, using EntityType defaults",
+                        self.entity_id,
+                    )
+                    return (self.type.prob_given_true, self.type.prob_given_false)
+
+                if math.isnan(p_false) or math.isinf(p_false):
+                    _LOGGER.warning(
+                        "Invalid p_false density (NaN/inf) for %s, using EntityType defaults",
+                        self.entity_id,
+                    )
+                    return (self.type.prob_given_true, self.type.prob_given_false)
+
+            except (ValueError, TypeError):
+                # Fall back to EntityType defaults if calculation fails
+                pass
+            else:
+                return (p_true, p_false)
+
+        # Fallback: Use EntityType defaults (not stored prob_given_true/false)
+        return (self.type.prob_given_true, self.type.prob_given_false)
+
+    @property
+    def is_continuous_likelihood(self) -> bool:
+        """Check if entity uses continuous likelihood calculation."""
+        return self.learned_gaussian_params is not None
 
     @property
     def name(self) -> str | None:
-        """Get the entity name from Home Assistant state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity name from Home Assistant state or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "name"):
+                return state_obj.name
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
     @property
@@ -48,19 +230,32 @@ class Entity:
 
     @property
     def state(self) -> str | float | bool | None:
-        """Get the entity state."""
-        ha_state = self.coordinator.hass.states.get(self.entity_id)
+        """Get the entity state from Home Assistant or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj is None:
+                return None
+            # Handle both object with .state attribute and direct value
+            if hasattr(state_obj, "state"):
+                state_value = state_obj.state
+            else:
+                state_value = state_obj
+        else:
+            ha_state = self.hass.states.get(self.entity_id)
+            if ha_state is None:
+                return None
+            state_value = ha_state.state
 
-        # Check if HA state is valid
-        if ha_state and ha_state.state not in [
+        # Check if state is valid
+        if state_value in [
             "unknown",
             "unavailable",
             None,
             "",
             "NaN",
         ]:
-            return ha_state.state
-        return None
+            return None
+        return state_value
 
     @property
     def weight(self) -> float:
@@ -102,6 +297,8 @@ class Entity:
     @property
     def active_range(self) -> tuple[float, float] | None:
         """Get the active range for the entity."""
+        if self.learned_active_range is not None:
+            return self.learned_active_range
         return self.type.active_range
 
     @property
@@ -115,17 +312,176 @@ class Entity:
             return 1.0
         return self.decay.decay_factor
 
-    def update_likelihood(
-        self, prob_given_true: float, prob_given_false: float
-    ) -> None:
-        """Update the likelihood of the entity."""
-        self.prob_given_true = clamp_probability(prob_given_true)
-        self.prob_given_false = clamp_probability(prob_given_false)
-        self.last_updated = dt_util.utcnow()
+    def update_correlation(self, correlation_data: dict[str, Any]) -> None:
+        """Update the learned active range based on correlation data."""
+        if not correlation_data:
+            return
 
-    def update_decay(self, decay_start: datetime, is_decaying: bool) -> None:
+        # Get correlation details
+        confidence = correlation_data.get("confidence", 0.0)
+        correlation_type = correlation_data.get("correlation_type")
+        mean_unoccupied = correlation_data.get("mean_value_when_unoccupied")
+        std_unoccupied = correlation_data.get("std_dev_when_unoccupied")
+
+        # Store analysis error (None means no error, analysis succeeded)
+        # This will be None if analysis succeeded, or a string error reason if it failed
+        self.analysis_error = correlation_data.get("analysis_error")
+        # Store correlation type for reporting
+        self.correlation_type = correlation_type
+
+        # Get occupied stats
+        mean_occupied = correlation_data.get("mean_value_when_occupied")
+        std_occupied = correlation_data.get("std_dev_when_occupied")
+
+        # If any required data is missing or type is none, reset learned range
+        if (
+            mean_unoccupied is None
+            or std_unoccupied is None
+            or correlation_type == "none"
+        ):
+            self.learned_active_range = None
+            self.learned_gaussian_params = None
+            return
+
+        # Store Gaussian parameters if available
+        if mean_occupied is not None and std_occupied is not None:
+            self.learned_gaussian_params = {
+                "mean_occupied": mean_occupied,
+                "std_occupied": std_occupied,
+                "mean_unoccupied": mean_unoccupied,
+                "std_unoccupied": std_unoccupied,
+            }
+            # When using Gaussian params, we don't update static likelihoods
+            # because they are calculated dynamically
+        else:
+            self.learned_gaussian_params = None
+
+        # Only set learned_active_range for numeric sensors
+        # Binary sensors (MEDIA, APPLIANCE, DOOR, WINDOW) shouldn't have active_range
+        binary_input_types = {
+            InputType.MEDIA,
+            InputType.APPLIANCE,
+            InputType.DOOR,
+            InputType.WINDOW,
+        }
+
+        if self.type.input_type in binary_input_types:
+            # Binary sensors: don't set learned_active_range
+            self.learned_active_range = None
+        else:
+            # Numeric sensors: calculate thresholds (mean ± 2σ)
+            k_factor = 2.0
+
+            if correlation_type in ("strong_positive", "positive"):
+                # Active > mean_unoccupied + K*std_unoccupied
+                # Same logic for both strong and weak positive correlations
+                lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
+
+                # Try to determine upper bound from occupied stats
+                if mean_occupied is not None and std_occupied is not None:
+                    # Cap at mean_occupied + K*std_occupied
+                    upper_bound = mean_occupied + (k_factor * std_occupied)
+                    # Ensure logical consistency (upper > lower)
+                    if upper_bound <= lower_bound:
+                        # Fallback to open-ended if stats overlap significantly
+                        upper_bound = float("inf")
+                else:
+                    upper_bound = float("inf")
+
+                self.learned_active_range = (lower_bound, upper_bound)
+
+            elif correlation_type in ("strong_negative", "negative"):
+                # Active < mean_unoccupied - K*std_unoccupied
+                # Same logic for both strong and weak negative correlations
+                upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
+
+                # Try to determine lower bound from occupied stats
+                if mean_occupied is not None and std_occupied is not None:
+                    # Floor at mean_occupied - K*std_occupied
+                    lower_bound = mean_occupied - (k_factor * std_occupied)
+                    # Ensure logical consistency (lower < upper)
+                    if lower_bound >= upper_bound:
+                        # Fallback to open-ended if stats overlap significantly
+                        lower_bound = float("-inf")
+                else:
+                    lower_bound = float("-inf")
+
+                self.learned_active_range = (lower_bound, upper_bound)
+            else:
+                self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated learned active range for %s: %s (type=%s, conf=%.2f, p_true=%.2f, p_false=%.2f)",
+            self.entity_id,
+            self.learned_active_range,
+            correlation_type,
+            confidence,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
+
+    def update_binary_likelihoods(self, likelihood_data: dict[str, Any]) -> None:
+        """Update binary sensor likelihoods from duration-based analysis.
+
+        Binary sensors use static probabilities calculated from interval overlap
+        durations, not Gaussian PDFs.
+
+        Args:
+            likelihood_data: Dictionary with prob_given_true, prob_given_false,
+                and analysis_error
+        """
+        if not likelihood_data:
+            return
+
+        # Store analysis error (None means no error, analysis succeeded)
+        self.analysis_error = likelihood_data.get("analysis_error")
+        # Store correlation type for reporting (binary likelihoods have type "binary_likelihood")
+        self.correlation_type = likelihood_data.get("correlation_type")
+
+        # Get probability values
+        prob_given_true = likelihood_data.get("prob_given_true")
+        prob_given_false = likelihood_data.get("prob_given_false")
+
+        # If analysis failed or data is missing, reset to defaults
+        if (
+            self.analysis_error is not None
+            or prob_given_true is None
+            or prob_given_false is None
+        ):
+            # Reset to EntityType defaults
+            self.prob_given_true = self.type.prob_given_true
+            self.prob_given_false = self.type.prob_given_false
+            self.learned_gaussian_params = None
+            self.learned_active_range = None
+            _LOGGER.debug(
+                "Binary likelihood analysis failed for %s: %s, using defaults",
+                self.entity_id,
+                self.analysis_error or "missing data",
+            )
+            return
+
+        # Update static probabilities
+        self.prob_given_true = float(prob_given_true)
+        self.prob_given_false = float(prob_given_false)
+
+        # Binary sensors don't use Gaussian params or active ranges
+        self.learned_gaussian_params = None
+        self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated binary likelihoods for %s: prob_given_true=%.3f, prob_given_false=%.3f",
+            self.entity_id,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
+
+    def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
-        self.decay.decay_start = decay_start
+        self.decay.decay_start = (
+            ensure_timezone_aware(decay_start)
+            if decay_start is not None
+            else decay_start
+        )
         self.decay.is_decaying = is_decaying
 
     def has_new_evidence(self) -> bool:
@@ -171,10 +527,27 @@ class Entity:
 class EntityFactory:
     """Factory for creating entities from various sources."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the factory."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str,
+    ) -> None:
+        """Initialize the factory.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Area name for multi-area support
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Validate area_name exists and retrieve config from coordinator.areas
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
+            raise ValueError(
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
+            )
+        self.config = coordinator.areas[area_name].config
 
     def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
         """Create entity from storage data.
@@ -204,7 +577,7 @@ class EntityFactory:
 
         # Convert numeric fields with validation
         try:
-            weight = float(entity_data["weight"])
+            db_weight = float(entity_data["weight"])
             prob_given_true = float(entity_data["prob_given_true"])
             prob_given_false = float(entity_data["prob_given_false"])
         except (TypeError, ValueError) as e:
@@ -230,24 +603,108 @@ class EntityFactory:
             previous_evidence = bool(previous_evidence)
 
         # Create the entity type directly
-        entity_type = EntityType.create(
-            InputType(entity_type_str),
-            self.config,
+        input_type = InputType(entity_type_str)
+
+        # Extract overrides from config
+        config_weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_attr = getattr(weights, input_type.value, None)
+            if weight_attr is not None:
+                config_weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type,
+            weight=config_weight,
+            active_states=active_states,
+            active_range=active_range,
         )
 
         # DB weight should take priority over configured default
         try:
-            if MIN_WEIGHT <= weight <= MAX_WEIGHT:
-                entity_type.weight = weight
+            if MIN_WEIGHT <= db_weight <= MAX_WEIGHT:
+                entity_type.weight = db_weight
         except (TypeError, ValueError):
-            # Weight is invalid, keep the default from EntityType.create
+            # Weight is invalid, keep the default from EntityType initialization
             pass
 
+        # Motion sensors use configured likelihoods (user-configurable per area)
+        # Do not use learned likelihoods from database for motion sensors
+        if input_type == InputType.MOTION:
+            # Get configured values from area config, fall back to defaults if not configured
+            motion_prob_given_true = getattr(
+                self.config.sensors,
+                "motion_prob_given_true",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_true"],
+            )
+            motion_prob_given_false = getattr(
+                self.config.sensors,
+                "motion_prob_given_false",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_false"],
+            )
+            prob_given_true = float(motion_prob_given_true)
+            prob_given_false = float(motion_prob_given_false)
+            _LOGGER.debug(
+                "Using configured likelihoods for motion sensor %s: prob_given_true=%.2f, prob_given_false=%.2f",
+                entity_id,
+                prob_given_true,
+                prob_given_false,
+            )
+
         # Create decay object
-        decay = Decay.create(
-            decay_start=decay_start,
-            half_life=self.config.decay.half_life,
+        # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        half_life = self.config.decay.half_life
+        # If half_life is 0, resolve from purpose
+        if half_life == 0:
+            half_life = get_default_decay_half_life(self.config.purpose)
+
+        area = self.coordinator.areas.get(self.area_name)
+        is_wasp = area and area.wasp_entity_id == entity_id
+        if is_wasp:
+            half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+
+        # Get sleep settings from integration config
+        # For WASP entities, bypass sleeping semantics to ensure immediate vacancy
+        if is_wasp:
+            purpose_for_decay = None
+            sleep_start = None
+            sleep_end = None
+        else:
+            sleep_start = getattr(
+                self.coordinator.integration_config, "sleep_start", None
+            )
+            sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
+            purpose_for_decay = getattr(self.config, "purpose", None)
+
+        decay = Decay(
+            half_life=half_life,
             is_decaying=is_decaying,
+            decay_start=decay_start,
+            purpose=purpose_for_decay,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+        )
+
+        # Set default analysis_error based on entity type
+        # Motion sensors are excluded from correlation analysis
+        analysis_error = (
+            "motion_sensor_excluded"
+            if input_type == InputType.MOTION
+            else "not_analyzed"
         )
 
         return Entity(
@@ -256,33 +713,116 @@ class EntityFactory:
             prob_given_true=prob_given_true,
             prob_given_false=prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=last_updated,
             previous_evidence=previous_evidence,
+            analysis_error=analysis_error,
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
         """Create entity from configuration specification."""
         # Create the entity type directly
-        entity_type = EntityType.create(
-            InputType(input_type),
-            self.config,
+        input_type_enum = InputType(input_type)
+
+        # Extract overrides from config
+        weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_attr = getattr(weights, input_type_enum.value, None)
+            if weight_attr is not None:
+                weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type_enum.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type_enum.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type_enum,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
         )
-        decay = Decay.create(
-            decay_start=dt_util.utcnow(),
-            half_life=self.config.decay.half_life,
+
+        # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        half_life = self.config.decay.half_life
+        # If half_life is 0, resolve from purpose
+        if half_life == 0:
+            half_life = get_default_decay_half_life(self.config.purpose)
+
+        area = self.coordinator.areas.get(self.area_name)
+        is_wasp = area and area.wasp_entity_id == entity_id
+        if is_wasp:
+            half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+
+        # Get sleep settings from integration config
+        # For WASP entities, bypass sleeping semantics to ensure immediate vacancy
+        if is_wasp:
+            purpose_for_decay = None
+            sleep_start = None
+            sleep_end = None
+        else:
+            sleep_start = getattr(
+                self.coordinator.integration_config, "sleep_start", None
+            )
+            sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
+            purpose_for_decay = getattr(self.config, "purpose", None)
+
+        decay = Decay(
+            half_life=half_life,
             is_decaying=False,
+            decay_start=dt_util.utcnow(),
+            purpose=purpose_for_decay,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+        )
+
+        # Motion sensors use configured likelihoods (user-configurable per area)
+        # Other sensors use defaults from EntityType
+        if input_type_enum == InputType.MOTION:
+            motion_prob_given_true = getattr(
+                self.config.sensors,
+                "motion_prob_given_true",
+                entity_type.prob_given_true,
+            )
+            motion_prob_given_false = getattr(
+                self.config.sensors,
+                "motion_prob_given_false",
+                entity_type.prob_given_false,
+            )
+            prob_given_true = float(motion_prob_given_true)
+            prob_given_false = float(motion_prob_given_false)
+        else:
+            prob_given_true = entity_type.prob_given_true
+            prob_given_false = entity_type.prob_given_false
+
+        # Set default analysis_error based on entity type
+        # Motion sensors are excluded from correlation analysis
+        analysis_error = (
+            "motion_sensor_excluded"
+            if input_type_enum == InputType.MOTION
+            else "not_analyzed"
         )
 
         return Entity(
             entity_id=entity_id,
             type=entity_type,
-            prob_given_true=entity_type.prob_given_true,
-            prob_given_false=entity_type.prob_given_false,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
             decay=decay,
-            coordinator=self.coordinator,
+            hass=self.coordinator.hass,
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
+            analysis_error=analysis_error,
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:
@@ -314,6 +854,14 @@ class EntityFactory:
             "illuminance": InputType.ILLUMINANCE,
             "humidity": InputType.HUMIDITY,
             "temperature": InputType.TEMPERATURE,
+            "co2": InputType.CO2,
+            "sound_pressure": InputType.SOUND_PRESSURE,
+            "pressure": InputType.PRESSURE,
+            "air_quality": InputType.AIR_QUALITY,
+            "voc": InputType.VOC,
+            "pm25": InputType.PM25,
+            "pm10": InputType.PM10,
+            "energy": InputType.ENERGY,
         }
 
         # Process each sensor type using the mapping
@@ -333,12 +881,32 @@ class EntityFactory:
 class EntityManager:
     """Manages entities with simplified creation and storage logic."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator") -> None:
-        """Initialize the entity manager."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+    ) -> None:
+        """Initialize the entity manager.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Required area name for multi-area support. Used to look up
+                the area configuration from coordinator.areas.
+        """
         self.coordinator = coordinator
-        self.config = coordinator.config
+        self.area_name = area_name
+        # Validate area_name and retrieve config from coordinator.areas
+        if not area_name:
+            raise ValueError("Area name is required in multi-area architecture")
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
+            raise ValueError(
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available if available else '(none)'}"
+            )
+        self.config = coordinator.areas[area_name].config
         self.hass = coordinator.hass
-        self._factory = EntityFactory(coordinator)
+        self._factory = EntityFactory(coordinator, area_name=area_name)
         self._entities: dict[str, Entity] = self._factory.create_all_from_config()
 
     @property
@@ -397,194 +965,15 @@ class EntityManager:
         self._entities[entity.entity_id] = entity
 
     async def cleanup(self) -> None:
-        """Clean up resources and recreate from config."""
-        self._entities.clear()
-        self._entities = self._factory.create_all_from_config()
+        """Clean up resources and recreate from config.
 
-    async def update_likelihoods(self) -> None:
-        """Compute P(sensor=true|occupied) and P(sensor=true|empty) per sensor.
-
-        Use motion-based labels for 'occupied'.
+        This method clears all entity references to release memory
+        and prevent leaks when areas are removed or reconfigured.
         """
-        _LOGGER.debug("Updating likelihoods")
-        db = self.coordinator.db
-        entry_id = self.coordinator.entry_id
-
-        with db.get_session() as session:
-            sensors = self._get_sensors(session, entry_id)
-            if not sensors:
-                return
-
-            occupied_times = self.coordinator.prior.get_occupied_intervals()
-            intervals_by_entity = self._get_intervals_by_entity(session, sensors)
-
-            for entity in sensors:
-                self._update_entity_likelihoods(
-                    entity, intervals_by_entity, occupied_times, dt_util.utcnow()
-                )
-
-            session.commit()
-            _LOGGER.debug("Likelihoods updated")
-
-    def _get_sensors(self, session: Any, entry_id: str) -> list["DB.Entities"]:
-        """Get all sensor configs for this area."""
-        return list(
-            session.query(self.coordinator.db.Entities)
-            .filter_by(entry_id=entry_id)
-            .all()
-        )
-
-    def _get_intervals_by_entity(
-        self,
-        session: Any,
-        sensors: list["DB.Entities"],
-    ) -> dict[str, list["DB.Intervals"]]:
-        """Get all intervals grouped by entity_id."""
-        sensor_entity_ids = [entity.entity_id for entity in sensors]
-
-        all_intervals = (
-            session.query(self.coordinator.db.Intervals)
-            .filter(self.coordinator.db.Intervals.entity_id.in_(sensor_entity_ids))
-            .all()
-        )
-
-        intervals_by_entity = defaultdict(list)
-        for interval in all_intervals:
-            intervals_by_entity[interval.entity_id].append(interval)
-
-        return intervals_by_entity
-
-    def _update_entity_likelihoods(
-        self,
-        entity: "DB.Entities",
-        intervals_by_entity: dict[str, list["DB.Intervals"]],
-        occupied_times: list[tuple[datetime, datetime]],
-        now: datetime,
-    ) -> None:
-        """Update likelihoods for a single entity."""
-        # Convert SQLAlchemy entity to Python types
-        entity_id = str(entity.entity_id)
-        intervals = intervals_by_entity[entity_id]
-        entity_obj = self.get_entity(entity_id)
-
-        # Count interval states
-        true_occ: float = 0.0
-        false_occ: float = 0.0
-        true_empty: float = 0.0
-        false_empty: float = 0.0
-
-        for interval in intervals:
-            # Convert SQLAlchemy interval to Python types
-            interval_data = interval.to_dict()
-            start_time = interval_data["start_time"]
-            duration_seconds = float(interval_data["duration_seconds"])
-
-            occ = self._is_occupied(start_time, occupied_times)
-            is_active = self._is_interval_active(interval, entity_obj)
-
-            if is_active:
-                if occ:
-                    true_occ += duration_seconds
-                else:
-                    true_empty += duration_seconds
-            elif occ:
-                false_occ += duration_seconds
-            else:
-                false_empty += duration_seconds
-
-        # Calculate probabilities
-        prob_given_true = (
-            true_occ / (true_occ + false_occ) if (true_occ + false_occ) > 0 else 0.5
-        )
-        prob_given_false = (
-            true_empty / (true_empty + false_empty)
-            if (true_empty + false_empty) > 0
-            else 0.5
-        )
-
-        # Special handling for motion sensors (ground truth)
-        if entity_obj.type.input_type == InputType.MOTION:
-            # Check data quality for motion sensors
-            total_occupied_time = true_occ + false_occ
-            total_unoccupied_time = true_empty + false_empty
-
-            if total_occupied_time < 3600:  # Less than 1 hour of occupied time
-                _LOGGER.warning(
-                    "Motion sensor %s has insufficient occupied time data (%.1fs), using defaults",
-                    entity_id,
-                    total_occupied_time,
-                )
-                prob_given_true = entity_obj.type.prob_given_true
-                prob_given_false = entity_obj.type.prob_given_false
-            else:
-                # Trust calculated values when sufficient data exists
-                # Log info if values are outside typical ranges (for debugging)
-                if prob_given_true < 0.8:
-                    _LOGGER.info(
-                        "Motion sensor %s has calculated prob_given_true (%.3f) below typical range (0.8), "
-                        "but using calculated value due to sufficient data (%.1fs)",
-                        entity_id,
-                        prob_given_true,
-                        total_occupied_time,
-                    )
-
-                # Check if we have sufficient unoccupied data for prob_given_false
-                # If not, the calculated value is just a fallback (0.5), not real data
-                if total_unoccupied_time < 3600:  # Less than 1 hour of unoccupied time
-                    _LOGGER.info(
-                        "Motion sensor %s has insufficient unoccupied time data (%.1fs), "
-                        "using default for prob_given_false (%.3f)",
-                        entity_id,
-                        total_unoccupied_time,
-                        entity_obj.type.prob_given_false,
-                    )
-                    prob_given_false = entity_obj.type.prob_given_false
-                elif prob_given_false > 0.1:
-                    _LOGGER.info(
-                        "Motion sensor %s has calculated prob_given_false (%.3f) above typical range (0.1), "
-                        "but using calculated value due to sufficient data (%.1fs)",
-                        entity_id,
-                        prob_given_false,
-                        total_unoccupied_time,
-                    )
-        else:
-            # Fallback to defaults if too low for other sensors
-            if prob_given_true < MIN_PROBABILITY:
-                prob_given_true = entity_obj.type.prob_given_true
-            if prob_given_false < MIN_PROBABILITY:
-                prob_given_false = entity_obj.type.prob_given_false
-
-        # Update entity
-        entity_obj.update_likelihood(prob_given_true, prob_given_false)
-
-    def _is_occupied(
-        self, ts: datetime, occupied_times: list[tuple[datetime, datetime]]
-    ) -> bool:
-        """Check if timestamp falls within any occupied interval."""
-        if not occupied_times:
-            return False
-
-        # Binary search to find the rightmost interval that starts <= ts
-        idx = bisect.bisect_right([start for start, _ in occupied_times], ts)
-
-        # Check if ts falls within the interval found
-        if idx > 0:
-            start, end = occupied_times[idx - 1]
-            if start <= ts < end:
-                return True
-
-        return False
-
-    def _is_interval_active(self, interval: "DB.Intervals", entity_obj: Entity) -> bool:
-        """Determine if interval state is active based on entity type."""
-        if entity_obj.active_states:
-            return interval.state in entity_obj.active_states
-        if entity_obj.active_range:
-            min_val, max_val = entity_obj.active_range
-            try:
-                state_val = float(interval.state)
-            except (ValueError, TypeError):
-                return False
-            else:
-                return min_val <= state_val <= max_val
-        return False
+        _LOGGER.debug("Cleaning up EntityManager for area: %s", self.area_name)
+        # Clear all entity references to release memory
+        # This ensures entities and their internal state (decay, etc.) are released
+        self._entities.clear()
+        # Recreate entities from config (needed for reconfiguration scenarios)
+        self._entities = self._factory.create_all_from_config()
+        _LOGGER.debug("EntityManager cleanup completed for area: %s", self.area_name)

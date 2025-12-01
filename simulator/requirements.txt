@@ -1,0 +1,4 @@
+Flask>=3.0.0
+PyYAML>=6.0
+Flask-Cors>=4.0
+
