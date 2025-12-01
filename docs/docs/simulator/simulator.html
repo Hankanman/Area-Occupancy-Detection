@@ -15,15 +15,306 @@
     <div class="sim-layout">
       <div class="sim-header sim-sticky">
         <div class="sim-header-content">
-          <div class="sim-prob-value">
-            <h3 id="area-name">Area</h3>
-            <h3 id="probability-value">0.00%</h3>
-            <div id="probability-bar">
-              <div id="probability-fill"></div>
-            </div>
-          </div>
           <div class="sim-prob-chart">
             <canvas id="probability-chart"></canvas>
+            <div class="sim-prob-overlay">
+              <div id="probability-value">0.00%</div>
+            </div>
+          </div>
+          <div class="sim-header-actions">
+            <sl-select
+              id="area-selector"
+              placeholder="Select area..."
+              disabled
+              style="min-width: 200px"
+            >
+              <sl-option value="">No areas loaded</sl-option>
+            </sl-select>
+            <sl-button id="help-dialog-btn" variant="default">
+              <sl-icon slot="prefix" name="question-circle"></sl-icon>
+              Help
+            </sl-button>
+            <sl-dialog
+              label="How to Use the Simulator"
+              id="help-dialog"
+              class="help-dialog"
+            >
+              <h1>Area Occupancy Detection Simulator</h1>
+
+              <p>
+                This simulator lets you interactively explore how sensor states,
+                weights, and prior probabilities affect occupancy calculations.
+                It uses the <strong>exact same Python code</strong> that runs in
+                your Home Assistant integration, ensuring calculations match
+                exactly what happens in your actual setup.
+              </p>
+
+              <h2>Getting Started</h2>
+
+              <p>
+                <strong>Step 1:</strong> In Home Assistant, run the
+                <a href="../features/services/#area_occupancyrun_analysis"
+                  >"Run Analysis" service</a
+                >
+                for your area(s). This generates YAML output with all your
+                sensors, their states, likelihoods, and current probability
+                calculations.
+              </p>
+
+              <p>
+                <strong>Step 2:</strong> Copy the entire YAML output from the
+                service call and paste it into the
+                <strong>"Analysis Output"</strong>
+                text area below.
+              </p>
+
+              <p>
+                <strong>Step 3:</strong> Click
+                <strong>"Load Simulation"</strong> to send the data to the
+                simulator server. The simulator will populate with your sensors,
+                current states, and all configuration values.
+              </p>
+
+              <p>
+                <strong>Step 4:</strong> If your analysis output contains
+                multiple areas, use the <strong>Area</strong> dropdown to switch
+                between them.
+              </p>
+
+              <h2>Understanding the Interface</h2>
+
+              <h3>Header Section</h3>
+              <ul>
+                <li>
+                  <strong>Area Name:</strong> The name of the currently selected
+                  area
+                </li>
+                <li>
+                  <strong>Probability Value:</strong> The calculated occupancy
+                  probability (0-100%)
+                </li>
+                <li>
+                  <strong>Probability Bar:</strong> Visual representation of the
+                  current probability
+                </li>
+                <li>
+                  <strong>Probability Chart:</strong> Time-series graph showing
+                  how probability changes over time as you interact with sensors
+                </li>
+              </ul>
+
+              <h3>Sensors Section</h3>
+              <p>Each sensor card displays:</p>
+              <ul>
+                <li>
+                  <strong>Sensor Name:</strong> Friendly name or entity ID
+                </li>
+                <li>
+                  <strong>Current State:</strong> The sensor's current value or
+                  state
+                </li>
+                <li>
+                  <strong>Type & Weight:</strong> Sensor type (motion, media,
+                  door, etc.) and its weight in calculations
+                </li>
+                <li>
+                  <strong>Likelihood Values:</strong> P(active|occupied) and
+                  P(active|vacant) probabilities
+                </li>
+                <li>
+                  <strong>Controls:</strong>
+                  <ul>
+                    <li>
+                      <strong>Binary Sensors:</strong> Toggle switch or buttons
+                      to set active/inactive states
+                    </li>
+                    <li>
+                      <strong>Numeric Sensors:</strong> Input field to enter
+                      temperature, humidity, illuminance, or other numeric
+                      values
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <strong>Metrics:</strong> Contribution (how much this sensor
+                  affects probability), Likelihood, and Decay Factor (if sensor
+                  is decaying)
+                </li>
+              </ul>
+
+              <h3>Prior Probabilities Section</h3>
+              <ul>
+                <li>
+                  <strong>Global Prior:</strong> Base probability that the area
+                  is occupied, independent of time or sensor evidence
+                </li>
+                <li>
+                  <strong>Time Prior:</strong> Learned probability based on
+                  schedules or historical activity patterns
+                </li>
+                <li>
+                  <strong>Combined Prior:</strong> Weighted combination of
+                  global and time priors
+                </li>
+                <li>
+                  <strong>Final Prior:</strong> Effective prior after Bayesian
+                  factor and clamping are applied
+                </li>
+                <li>
+                  <strong>Area Purpose:</strong> Select a purpose (Social, Work,
+                  Rest, etc.) to auto-populate decay settings
+                </li>
+                <li>
+                  <strong>Half-life:</strong> Time in seconds for sensor
+                  evidence to decay by 50% when inactive
+                </li>
+              </ul>
+
+              <h3>Entity Type Weights Section</h3>
+              <p>
+                Adjust the weight (influence) of each sensor type on the overall
+                probability calculation:
+              </p>
+              <ul>
+                <li><strong>Motion:</strong> Motion sensors (default: 1.0)</li>
+                <li><strong>Media:</strong> Media players (default: 0.85)</li>
+                <li><strong>Appliance:</strong> Appliances (default: 0.4)</li>
+                <li><strong>Door:</strong> Door sensors (default: 0.3)</li>
+                <li><strong>Window:</strong> Window sensors (default: 0.2)</li>
+                <li>
+                  <strong>Illuminance:</strong> Light level sensors (default:
+                  0.1)
+                </li>
+                <li>
+                  <strong>Humidity:</strong> Humidity sensors (default: 0.1)
+                </li>
+                <li>
+                  <strong>Temperature:</strong> Temperature sensors (default:
+                  0.1)
+                </li>
+              </ul>
+              <p>
+                Higher weights mean that sensor type has more influence on the
+                final probability. Weights apply to all sensors of that type.
+              </p>
+
+              <h2>What You Can Do</h2>
+
+              <ul>
+                <li>
+                  <strong>Toggle Binary Sensors:</strong> Use switches or
+                  buttons to change motion, door, window, and appliance states.
+                  See immediate probability updates.
+                </li>
+                <li>
+                  <strong>Adjust Numeric Sensors:</strong> Enter new values for
+                  temperature, humidity, or illuminance sensors to see how they
+                  affect probability.
+                </li>
+                <li>
+                  <strong>Modify Entity Type Weights:</strong> Use sliders to
+                  change how much each sensor type contributes. Changes apply to
+                  all sensors of that type.
+                </li>
+                <li>
+                  <strong>Experiment with Priors:</strong> Adjust global and
+                  time priors to see how base probabilities affect calculations.
+                </li>
+                <li>
+                  <strong>Change Area Purpose:</strong> Select different
+                  purposes to see how decay settings change based on area type.
+                </li>
+                <li>
+                  <strong>Observe Decay:</strong> When sensors become inactive,
+                  watch how their evidence decays over time based on the
+                  half-life setting.
+                </li>
+                <li>
+                  <strong>View Detailed Metrics:</strong> See likelihood,
+                  contribution, and decay factors for each sensor to understand
+                  its impact.
+                </li>
+                <li>
+                  <strong>Track Changes:</strong> The probability chart shows
+                  the last 30 updates, helping you visualize how probability
+                  evolves.
+                </li>
+                <li>
+                  <strong>Switch Between Areas:</strong> If your analysis
+                  contains multiple areas, use the Area dropdown to simulate
+                  different areas.
+                </li>
+              </ul>
+
+              <h2>How It Works</h2>
+
+              <p>
+                The simulator uses a stateless architecture where each
+                interaction sends the current configuration to a server running
+                the
+                <strong>actual Python code</strong> from the Area Occupancy
+                Detection integration. This ensures:
+              </p>
+
+              <ul>
+                <li>
+                  Calculations match exactly what happens in Home Assistant
+                </li>
+                <li>
+                  You can test different scenarios and configurations before
+                  implementing them
+                </li>
+                <li>
+                  You can understand how each sensor, weight, and prior affects
+                  the final probability
+                </li>
+                <li>
+                  The probability chart provides a visual history of changes
+                </li>
+                <li>
+                  Real-time updates occur automatically every second, or
+                  immediately when you change a control
+                </li>
+              </ul>
+
+              <h2>Tips</h2>
+
+              <ul>
+                <li>
+                  The <strong>API Status</strong> badge shows whether the
+                  simulator server is online and responding.
+                </li>
+                <li>
+                  Sensor contributions show positive values when the sensor
+                  increases probability and negative values when it decreases
+                  probability.
+                </li>
+                <li>
+                  Decay factors apply when sensors transition from active to
+                  inactive, gradually reducing their influence over time.
+                </li>
+                <li>
+                  All changes are calculated in real-time, so you get immediate
+                  feedback on how your configuration behaves.
+                </li>
+                <li>
+                  The simulator preserves your YAML data when switching between
+                  areas, so you can easily compare different areas from the same
+                  analysis.
+                </li>
+              </ul>
+
+              <sl-button
+                slot="footer"
+                variant="primary"
+                onclick="document.getElementById('help-dialog').hide()"
+              >
+                Close
+              </sl-button>
+            </sl-dialog>
+            <sl-button id="load-btn" variant="primary"
+              >Load Simulation</sl-button
+            >
           </div>
         </div>
       </div>
@@ -169,285 +460,6 @@
       <span id="api-status-badge" role="status" aria-live="polite"
         >Checking</span
       >
-      <div class="sim-actions">
-        <sl-select
-          id="area-selector"
-          label="Area"
-          placeholder="Select area..."
-          disabled
-          help-text="Select which area to simulate"
-          style="min-width: 200px"
-        >
-          <sl-option value="">No areas loaded</sl-option>
-        </sl-select>
-        <sl-button id="help-dialog-btn" variant="default">
-          <sl-icon slot="prefix" name="question-circle"></sl-icon>
-          Help
-        </sl-button>
-        <sl-dialog
-          label="How to Use the Simulator"
-          id="help-dialog"
-          class="help-dialog"
-        >
-          <h1>Area Occupancy Detection Simulator</h1>
-
-          <p>
-            This simulator lets you interactively explore how sensor states,
-            weights, and prior probabilities affect occupancy calculations. It
-            uses the <strong>exact same Python code</strong> that runs in your
-            Home Assistant integration, ensuring calculations match exactly what
-            happens in your actual setup.
-          </p>
-
-          <h2>Getting Started</h2>
-
-          <p>
-            <strong>Step 1:</strong> In Home Assistant, run the
-            <a href="../features/services/#area_occupancyrun_analysis"
-              >"Run Analysis" service</a
-            >
-            for your area(s). This generates YAML output with all your sensors,
-            their states, likelihoods, and current probability calculations.
-          </p>
-
-          <p>
-            <strong>Step 2:</strong> Copy the entire YAML output from the
-            service call and paste it into the
-            <strong>"Analysis Output"</strong>
-            text area below.
-          </p>
-
-          <p>
-            <strong>Step 3:</strong> Click <strong>"Load Simulation"</strong> to
-            send the data to the simulator server. The simulator will populate
-            with your sensors, current states, and all configuration values.
-          </p>
-
-          <p>
-            <strong>Step 4:</strong> If your analysis output contains multiple
-            areas, use the <strong>Area</strong> dropdown to switch between
-            them.
-          </p>
-
-          <h2>Understanding the Interface</h2>
-
-          <h3>Header Section</h3>
-          <ul>
-            <li>
-              <strong>Area Name:</strong> The name of the currently selected
-              area
-            </li>
-            <li>
-              <strong>Probability Value:</strong> The calculated occupancy
-              probability (0-100%)
-            </li>
-            <li>
-              <strong>Probability Bar:</strong> Visual representation of the
-              current probability
-            </li>
-            <li>
-              <strong>Probability Chart:</strong> Time-series graph showing how
-              probability changes over time as you interact with sensors
-            </li>
-          </ul>
-
-          <h3>Sensors Section</h3>
-          <p>Each sensor card displays:</p>
-          <ul>
-            <li><strong>Sensor Name:</strong> Friendly name or entity ID</li>
-            <li>
-              <strong>Current State:</strong> The sensor's current value or
-              state
-            </li>
-            <li>
-              <strong>Type & Weight:</strong> Sensor type (motion, media, door,
-              etc.) and its weight in calculations
-            </li>
-            <li>
-              <strong>Likelihood Values:</strong> P(active|occupied) and
-              P(active|vacant) probabilities
-            </li>
-            <li>
-              <strong>Controls:</strong>
-              <ul>
-                <li>
-                  <strong>Binary Sensors:</strong> Toggle switch or buttons to
-                  set active/inactive states
-                </li>
-                <li>
-                  <strong>Numeric Sensors:</strong> Input field to enter
-                  temperature, humidity, illuminance, or other numeric values
-                </li>
-              </ul>
-            </li>
-            <li>
-              <strong>Metrics:</strong> Contribution (how much this sensor
-              affects probability), Likelihood, and Decay Factor (if sensor is
-              decaying)
-            </li>
-          </ul>
-
-          <h3>Prior Probabilities Section</h3>
-          <ul>
-            <li>
-              <strong>Global Prior:</strong> Base probability that the area is
-              occupied, independent of time or sensor evidence
-            </li>
-            <li>
-              <strong>Time Prior:</strong> Learned probability based on
-              schedules or historical activity patterns
-            </li>
-            <li>
-              <strong>Combined Prior:</strong> Weighted combination of global
-              and time priors
-            </li>
-            <li>
-              <strong>Final Prior:</strong> Effective prior after Bayesian
-              factor and clamping are applied
-            </li>
-            <li>
-              <strong>Area Purpose:</strong> Select a purpose (Social, Work,
-              Rest, etc.) to auto-populate decay settings
-            </li>
-            <li>
-              <strong>Half-life:</strong> Time in seconds for sensor evidence to
-              decay by 50% when inactive
-            </li>
-          </ul>
-
-          <h3>Entity Type Weights Section</h3>
-          <p>
-            Adjust the weight (influence) of each sensor type on the overall
-            probability calculation:
-          </p>
-          <ul>
-            <li><strong>Motion:</strong> Motion sensors (default: 1.0)</li>
-            <li><strong>Media:</strong> Media players (default: 0.85)</li>
-            <li><strong>Appliance:</strong> Appliances (default: 0.4)</li>
-            <li><strong>Door:</strong> Door sensors (default: 0.3)</li>
-            <li><strong>Window:</strong> Window sensors (default: 0.2)</li>
-            <li>
-              <strong>Illuminance:</strong> Light level sensors (default: 0.1)
-            </li>
-            <li><strong>Humidity:</strong> Humidity sensors (default: 0.1)</li>
-            <li>
-              <strong>Temperature:</strong> Temperature sensors (default: 0.1)
-            </li>
-          </ul>
-          <p>
-            Higher weights mean that sensor type has more influence on the final
-            probability. Weights apply to all sensors of that type.
-          </p>
-
-          <h2>What You Can Do</h2>
-
-          <ul>
-            <li>
-              <strong>Toggle Binary Sensors:</strong> Use switches or buttons to
-              change motion, door, window, and appliance states. See immediate
-              probability updates.
-            </li>
-            <li>
-              <strong>Adjust Numeric Sensors:</strong> Enter new values for
-              temperature, humidity, or illuminance sensors to see how they
-              affect probability.
-            </li>
-            <li>
-              <strong>Modify Entity Type Weights:</strong> Use sliders to change
-              how much each sensor type contributes. Changes apply to all
-              sensors of that type.
-            </li>
-            <li>
-              <strong>Experiment with Priors:</strong> Adjust global and time
-              priors to see how base probabilities affect calculations.
-            </li>
-            <li>
-              <strong>Change Area Purpose:</strong> Select different purposes to
-              see how decay settings change based on area type.
-            </li>
-            <li>
-              <strong>Observe Decay:</strong> When sensors become inactive,
-              watch how their evidence decays over time based on the half-life
-              setting.
-            </li>
-            <li>
-              <strong>View Detailed Metrics:</strong> See likelihood,
-              contribution, and decay factors for each sensor to understand its
-              impact.
-            </li>
-            <li>
-              <strong>Track Changes:</strong> The probability chart shows the
-              last 30 updates, helping you visualize how probability evolves.
-            </li>
-            <li>
-              <strong>Switch Between Areas:</strong> If your analysis contains
-              multiple areas, use the Area dropdown to simulate different areas.
-            </li>
-          </ul>
-
-          <h2>How It Works</h2>
-
-          <p>
-            The simulator uses a stateless architecture where each interaction
-            sends the current configuration to a server running the
-            <strong>actual Python code</strong> from the Area Occupancy
-            Detection integration. This ensures:
-          </p>
-
-          <ul>
-            <li>Calculations match exactly what happens in Home Assistant</li>
-            <li>
-              You can test different scenarios and configurations before
-              implementing them
-            </li>
-            <li>
-              You can understand how each sensor, weight, and prior affects the
-              final probability
-            </li>
-            <li>The probability chart provides a visual history of changes</li>
-            <li>
-              Real-time updates occur automatically every second, or immediately
-              when you change a control
-            </li>
-          </ul>
-
-          <h2>Tips</h2>
-
-          <ul>
-            <li>
-              The <strong>API Status</strong> badge shows whether the simulator
-              server is online and responding.
-            </li>
-            <li>
-              Sensor contributions show positive values when the sensor
-              increases probability and negative values when it decreases
-              probability.
-            </li>
-            <li>
-              Decay factors apply when sensors transition from active to
-              inactive, gradually reducing their influence over time.
-            </li>
-            <li>
-              All changes are calculated in real-time, so you get immediate
-              feedback on how your configuration behaves.
-            </li>
-            <li>
-              The simulator preserves your YAML data when switching between
-              areas, so you can easily compare different areas from the same
-              analysis.
-            </li>
-          </ul>
-
-          <sl-button
-            slot="footer"
-            variant="primary"
-            onclick="document.getElementById('help-dialog').hide()"
-          >
-            Close
-          </sl-button>
-        </sl-dialog>
-        <sl-button id="load-btn" variant="primary">Load Simulation</sl-button>
-      </div>
     </div>
     <sl-textarea
       id="yaml-input"

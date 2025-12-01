@@ -811,9 +811,7 @@
   const areaSelector = document.getElementById("area-selector");
   const errorMessage = document.getElementById("error-message");
   const simulationDisplay = document.getElementById("simulation-display");
-  const areaName = document.getElementById("area-name");
   const probabilityValue = document.getElementById("probability-value");
-  const probabilityFill = document.getElementById("probability-fill");
   const sensorsContainer = document.getElementById("sensors-container");
   const globalPriorSlider = document.getElementById("global-prior-slider");
   const timePriorSlider = document.getElementById("time-prior-slider");
@@ -967,10 +965,6 @@
   function setProbability(probability) {
     if (probabilityValue) {
       setDisplayText(probabilityValue, formatPercent(probability));
-    }
-
-    if (probabilityFill) {
-      probabilityFill.style.width = `${(probability * 100).toFixed(2)}%`;
     }
 
     addChartPoint(probability);
@@ -1571,7 +1565,6 @@
 
     const area = result.area ?? {};
     if (areaName) {
-      areaName.textContent = area.name ?? "Area";
     }
 
     setProbability(result.probability ?? 0);

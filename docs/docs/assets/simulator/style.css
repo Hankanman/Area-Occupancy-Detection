@@ -64,28 +64,70 @@ sl-details.md-card {
   flex: 1 1 auto;
 }
 
-.sim-prob-value {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  background: var(--md-footer-bg-color, #ffffff);
-  flex: 0 0 25%;
-  min-width: 160px;
-}
-
-.sim-prob-value > h3 {
-  margin: 0;
-}
-
 .sim-prob-chart {
   border-radius: 0.75rem;
   padding: 0;
   background: var(--md-footer-bg-color, #ffffff);
   display: flex;
   align-items: center;
+  position: relative;
   flex: 1 1 auto;
+}
+
+.sim-prob-overlay {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.sim-prob-overlay #probability-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--md-default-fg-color, #000000);
+  margin: 0;
+  text-shadow: 0 2px 4px rgba(255, 255, 255, 0.9);
+}
+
+.sim-header-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+  min-width: 200px;
+  align-items: stretch;
+}
+
+.sim-header-actions sl-button,
+.sim-header-actions sl-select {
+  font-size: 0.75rem;
+}
+
+.sim-header-actions sl-button::part(base) {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  min-height: 2rem;
+  height: auto;
+}
+
+.sim-header-actions sl-button sl-icon {
+  font-size: 0.875rem;
+}
+
+.sim-header-actions sl-select::part(combobox),
+.sim-header-actions sl-select::part(display-input) {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  min-height: 2rem;
+  height: auto;
+}
+
+.sim-header-actions sl-select::part(form-control-label) {
+  font-size: 0.7rem;
 }
 
 .sim-prob-chart canvas {
