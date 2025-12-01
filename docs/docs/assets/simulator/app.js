@@ -712,6 +712,20 @@
     return ["localhost", "127.0.0.1"].includes(window.location.hostname);
   }
 
+  function isLocalhostUrl(url) {
+    if (!url) return false;
+    try {
+      const urlObj = new URL(url);
+      return (
+        urlObj.hostname === "localhost" ||
+        urlObj.hostname === "127.0.0.1" ||
+        urlObj.hostname === "::1"
+      );
+    } catch {
+      return false;
+    }
+  }
+
   function loadStoredBaseUrl() {
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY);
@@ -722,7 +736,18 @@
         // return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
       }
 
-      return normalizeBaseUrl(stored);
+      const normalized = normalizeBaseUrl(stored);
+
+      // If stored URL is localhost but we're not on localhost docs, use remote server
+      // This prevents using localhost API when testing remote server
+      if (isLocalhostUrl(normalized) && !isLocalDocsHost()) {
+        console.log(
+          "Stored localhost URL detected but not on localhost docs, using remote server"
+        );
+        return DEFAULT_API_BASE_URL;
+      }
+
+      return normalized;
     } catch (error) {
       return DEFAULT_API_BASE_URL;
       // Uncomment below to auto-detect localhost:
@@ -798,7 +823,9 @@
     if (contentType.includes("application/json")) {
       try {
         payload = await response.json();
+        console.log("Parsed JSON payload:", payload);
       } catch (error) {
+        console.error("JSON parse error:", error);
         // If aborted, rethrow as AbortError
         if (error.name === "AbortError" || abortSignal?.aborted) {
           const abortError = new Error("Request aborted");
@@ -807,14 +834,19 @@
         }
         payload = null;
       }
+    } else {
+      console.warn("Response is not JSON, content-type:", contentType);
     }
 
+    console.log("Response OK?", response.ok, "Status:", response.status);
     if (!response.ok) {
       const statusMessage = options.errorMessage || `HTTP ${response.status}`;
       const message = payload?.error || statusMessage;
+      console.error("Response not OK, throwing error:", message);
       throw new Error(message);
     }
 
+    console.log("Returning payload:", payload ?? {});
     return payload ?? {};
   }
 
@@ -1581,8 +1613,6 @@
     simulationDisplay.classList.remove("hidden");
 
     const area = result.area ?? {};
-    if (areaName) {
-    }
 
     setProbability(result.probability ?? 0);
 
@@ -1617,7 +1647,9 @@
   }
 
   function updateApiStatus(stateClass, label) {
+    console.log(`updateApiStatus called: ${stateClass} - ${label}`);
     if (!apiStatusBadge) {
+      console.warn("apiStatusBadge element not found!");
       return;
     }
 
@@ -1626,14 +1658,22 @@
     if (stateClass) {
       apiStatusBadge.classList.add(stateClass);
     }
+    console.log(
+      `Status badge updated. Current text: ${apiStatusBadge.textContent}, classes: ${apiStatusBadge.className}`
+    );
   }
 
   async function verifyApiOnline() {
     try {
-      await requestJson("/api/get-purposes");
+      console.log("Verifying API online, calling /api/get-purposes");
+      const result = await requestJson("/api/get-purposes");
+      console.log("API verification successful, result:", result);
       updateApiStatus("online", "API Online");
     } catch (error) {
       console.error("API verification failed:", error);
+      console.error("Error type:", error.constructor.name);
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
       console.error("API Base URL:", state.apiBaseUrl);
       console.error("Full URL:", buildApiUrl("/api/get-purposes"));
       updateApiStatus("offline", "API Offline");
@@ -1778,8 +1818,12 @@
     }
 
     try {
+      console.log("Loading purposes...");
       const payload = await requestJson("/api/get-purposes");
-      state.purposes = Array.isArray(payload.purposes) ? payload.purposes : [];
+      console.log("Purposes payload received:", payload);
+      console.log("payload.purposes:", payload?.purposes);
+      state.purposes = Array.isArray(payload?.purposes) ? payload.purposes : [];
+      console.log("State purposes set to:", state.purposes);
 
       purposeSelect.innerHTML = "";
       state.purposes.forEach((purpose) => {
@@ -1791,6 +1835,7 @@
 
       updateApiStatus("online", "API Online");
     } catch (error) {
+      console.error("Failed to load purposes:", error);
       handleApiFailure(error);
     }
   }
@@ -1835,12 +1880,33 @@
         }
       }
 
-      setSimulation(payload.simulation, payload.result, { resetHistory: true });
+      console.log("About to call setSimulation...");
+      try {
+        setSimulation(payload.simulation, payload.result, {
+          resetHistory: true,
+        });
+        console.log("setSimulation completed successfully");
+      } catch (error) {
+        console.error("Error in setSimulation:", error);
+        throw error;
+      }
+
       // Reset request hash on new simulation load to ensure first auto-update calls API
       resetRequestTracking();
-      startAutoUpdate();
+      console.log("About to start auto-update...");
+      try {
+        startAutoUpdate();
+        console.log("startAutoUpdate completed successfully");
+      } catch (error) {
+        console.error("Error in startAutoUpdate:", error);
+        throw error;
+      }
+
+      console.log("Setting API status to online...");
       updateApiStatus("online", "API Online");
+      console.log("Load simulation completed successfully");
     } catch (error) {
+      console.error("Error in handleLoadSimulation:", error);
       showError(`Error loading simulation: ${getErrorMessage(error)}`);
       updateApiStatus("offline", "API Offline");
     }
