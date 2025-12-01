@@ -541,7 +541,7 @@ def analyze_correlation(  # noqa: C901
         db: Database instance
         area_name: Area name
         entity_id: Sensor entity ID
-        analysis_period_days: Number of days to analyze (legacy, now uses monthly periods)
+        analysis_period_days: Number of days to analyze
         is_binary: Whether the entity is a binary sensor
         active_states: List of active states (required if is_binary is True)
         input_type: InputType of the sensor (e.g., InputType.HUMIDITY)
@@ -559,22 +559,9 @@ def analyze_correlation(  # noqa: C901
 
     try:
         with db.get_session() as session:
-            # Get analysis period - round to start of current month for monthly accumulation
+            # Get analysis period
             period_end = dt_util.utcnow()
-            # Round to start of current month
-            period_start = period_end.replace(
-                day=1, hour=0, minute=0, second=0, microsecond=0
-            )
-            # Extend period_end to end of month for consistency
-            # Calculate last day of current month
-            if period_start.month == 12:
-                next_month = period_start.replace(year=period_start.year + 1, month=1)
-            else:
-                next_month = period_start.replace(month=period_start.month + 1)
-            period_end = next_month - timedelta(days=1)
-            period_end = period_end.replace(
-                hour=23, minute=59, second=59, microsecond=999999
-            )
+            period_start = period_end - timedelta(days=analysis_period_days)
             # Use ensure_timezone_aware to handle both naive and aware inputs consistently
             period_start_utc = ensure_timezone_aware(period_start)
             period_end_utc = ensure_timezone_aware(period_end)
@@ -1241,7 +1228,7 @@ def analyze_and_save_correlation(
         db: Database instance
         area_name: Area name
         entity_id: Sensor entity ID
-        analysis_period_days: Number of days to analyze (legacy, now uses monthly periods)
+        analysis_period_days: Number of days to analyze
         is_binary: Whether the entity is a binary sensor
         active_states: List of active states (required if is_binary is True)
         input_type: InputType of the sensor (e.g., InputType.HUMIDITY)
@@ -1528,14 +1515,16 @@ async def run_correlation_analysis(
                             )
                     else:
                         # Numeric sensors: Use correlation analysis
-                        correlation_result = await coordinator.hass.async_add_executor_job(
-                            coordinator.db.analyze_and_save_correlation,
-                            area_name,
-                            entity_id,
-                            30,  # analysis_period_days (legacy, now uses monthly periods)
-                            False,  # is_binary
-                            None,  # active_states (not used for numeric)
-                            entity_info.get("input_type"),  # Pass input_type
+                        correlation_result = (
+                            await coordinator.hass.async_add_executor_job(
+                                coordinator.db.analyze_and_save_correlation,
+                                area_name,
+                                entity_id,
+                                30,  # analysis_period_days
+                                False,  # is_binary
+                                None,  # active_states (not used for numeric)
+                                entity_info.get("input_type"),  # Pass input_type
+                            )
                         )
 
                         # Apply analysis results to live entities immediately
