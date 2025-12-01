@@ -15,6 +15,9 @@
     availableAreas: [],
     selectedAreaName: null,
     yamlData: null, // Store raw YAML data for area switching
+    pendingRequest: null, // Track current in-flight request
+    requestQueue: [], // Queue for pending requests
+    abortController: null, // AbortController for cancelling requests
   };
 
   document.body.classList.add("aod-simulator-mode");
@@ -118,32 +121,136 @@
     return deepClone(state.simulation.request);
   }
 
-  async function analyzeSimulation({
-    resetHistory = false,
-    silent = false,
-  } = {}) {
-    if (!hasSimulation() || state.isAnalyzing) {
+  async function processRequestQueue() {
+    if (state.isAnalyzing || state.requestQueue.length === 0) {
+      return;
+    }
+
+    // Sort queue: user requests first, then auto requests
+    state.requestQueue.sort((a, b) => {
+      if (a.priority === "user" && b.priority !== "user") return -1;
+      if (a.priority !== "user" && b.priority === "user") return 1;
+      return 0;
+    });
+
+    const nextRequest = state.requestQueue.shift();
+    if (nextRequest) {
+      state.pendingRequest = nextRequest;
+      await analyzeSimulationInternal(
+        nextRequest.options,
+        nextRequest.abortSignal
+      );
+    }
+  }
+
+  async function analyzeSimulationInternal(options = {}, abortSignal = null) {
+    const { resetHistory = false, silent = false } = options;
+
+    if (!hasSimulation()) {
       return false;
     }
 
     state.isAnalyzing = true;
     try {
       const payload = prepareAnalyzePayload();
-      const result = await requestJson("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const result = await requestJson(
+        "/api/analyze",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+        abortSignal
+      );
       updateSimulationResult(result, { resetHistory });
       return true;
     } catch (error) {
+      // Don't show error if request was aborted
+      if (error.name === "AbortError") {
+        return false;
+      }
       handleApiFailure(error, { silent });
       return false;
     } finally {
       state.isAnalyzing = false;
+      state.pendingRequest = null;
+      // Process next request in queue
+      processRequestQueue();
     }
+  }
+
+  async function analyzeSimulation({
+    resetHistory = false,
+    silent = false,
+    priority = "auto",
+  } = {}) {
+    if (!hasSimulation()) {
+      return false;
+    }
+
+    // If user request and there's a pending request, cancel it
+    if (priority === "user" && state.pendingRequest) {
+      // Cancel in-flight auto-update request
+      if (state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+      }
+      // Abort the pending request's signal if it exists
+      if (state.pendingRequest.abortSignal) {
+        state.pendingRequest.abortSignal.abort();
+      }
+      // Remove the cancelled request from queue if it's there
+      state.requestQueue = state.requestQueue.filter(
+        (req) => req !== state.pendingRequest
+      );
+      // Clear pending request - the aborted request will clean up isAnalyzing in its finally block
+      state.pendingRequest = null;
+    }
+
+    // If user request, cancel any queued auto-update requests
+    if (priority === "user" && state.requestQueue.length > 0) {
+      state.requestQueue.forEach((req) => {
+        if (req.priority === "auto" && req.abortSignal) {
+          req.abortSignal.abort();
+        }
+      });
+      // Remove cancelled auto-update requests from queue
+      state.requestQueue = state.requestQueue.filter(
+        (req) => req.priority !== "auto"
+      );
+    }
+
+    // If a request is in progress, queue this one
+    if (state.isAnalyzing || state.pendingRequest) {
+      const abortController = new AbortController();
+      state.requestQueue.push({
+        options: { resetHistory, silent, priority },
+        abortSignal: abortController.signal,
+        priority,
+      });
+      return true; // Return true to indicate request was queued
+    }
+
+    // No request in progress, proceed directly
+
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    if (priority === "auto") {
+      state.abortController = abortController;
+    }
+
+    state.pendingRequest = {
+      options: { resetHistory, silent, priority },
+      abortSignal: abortController.signal,
+      priority,
+    };
+
+    return await analyzeSimulationInternal(
+      { resetHistory, silent, priority },
+      abortController.signal
+    );
   }
 
   function formatPercent(value, digits = 1) {
@@ -276,8 +383,13 @@
     return response;
   }
 
-  async function requestJson(path, options = {}) {
-    const response = await apiFetch(path, options);
+  async function requestJson(path, options = {}, abortSignal = null) {
+    // Merge abort signal into options if provided
+    const fetchOptions = abortSignal
+      ? { ...options, signal: abortSignal }
+      : options;
+
+    const response = await apiFetch(path, fetchOptions);
     const contentType = response.headers.get("content-type") ?? "";
     let payload = null;
 
@@ -285,6 +397,12 @@
       try {
         payload = await response.json();
       } catch (error) {
+        // If aborted, rethrow as AbortError
+        if (error.name === "AbortError" || abortSignal?.aborted) {
+          const abortError = new Error("Request aborted");
+          abortError.name = "AbortError";
+          throw abortError;
+        }
         payload = null;
       }
     }
@@ -583,7 +701,8 @@
     // Show analysis error in details if present
     if (entity.analysis_error) {
       const errorRow = createElementWithClass("div", "sim-card-row");
-      errorRow.style.cssText = "color: var(--md-typeset-a-color, #ff6b6b); font-weight: 500;";
+      errorRow.style.cssText =
+        "color: var(--md-typeset-a-color, #ff6b6b); font-weight: 500;";
       const errorItem = document.createElement("div");
       errorItem.textContent = `Analysis Error: ${entity.analysis_error}`;
       errorRow.appendChild(errorItem);
@@ -680,7 +799,7 @@
 
       try {
         applyEntityToggle(entity, targetAction);
-        const success = await analyzeSimulation();
+        const success = await analyzeSimulation({ priority: "user" });
         if (success) {
           lastKnownChecked = isChecked;
         } else {
@@ -739,7 +858,7 @@
 
       try {
         applyNumericUpdate(entity, numericValue);
-        const success = await analyzeSimulation();
+        const success = await analyzeSimulation({ priority: "user" });
         if (success) {
           lastKnownValue = numericValue.toString();
           input.value = lastKnownValue;
@@ -785,7 +904,7 @@
 
       try {
         applyEntityToggle(entity, action);
-        const success = await analyzeSimulation();
+        const success = await analyzeSimulation({ priority: "user" });
         if (!success) {
           showError("Failed to update sensor state");
         }
@@ -1024,7 +1143,24 @@
         return;
       }
 
-      await analyzeSimulation({ silent: true });
+      // Skip auto-update if user request is queued or in progress
+      if (
+        state.isAnalyzing &&
+        state.pendingRequest &&
+        state.pendingRequest.priority === "user"
+      ) {
+        return;
+      }
+
+      // Skip if there are user requests in queue
+      const hasUserRequestInQueue = state.requestQueue.some(
+        (req) => req.priority === "user"
+      );
+      if (hasUserRequestInQueue) {
+        return;
+      }
+
+      await analyzeSimulation({ silent: true, priority: "auto" });
     }, 1000);
   }
 
@@ -1074,7 +1210,8 @@
       // Handle multiple areas if available
       if (payload.available_areas && Array.isArray(payload.available_areas)) {
         state.availableAreas = payload.available_areas;
-        state.selectedAreaName = payload.selected_area_name || payload.available_areas[0] || null;
+        state.selectedAreaName =
+          payload.selected_area_name || payload.available_areas[0] || null;
         updateAreaSelector();
       } else {
         // Old format: single area
@@ -1187,7 +1324,7 @@
       requestArea.half_life = matchedPurpose.half_life;
     }
 
-    await analyzeSimulation({ resetHistory: true });
+    await analyzeSimulation({ resetHistory: true, priority: "user" });
   }
 
   function initPriorControls() {
@@ -1202,7 +1339,7 @@
         globalPriorSlider.value = numericValue;
         setRangeLabelWithValue(globalPriorSlider, numericValue, "Global Prior");
         if (runAnalysis) {
-          analyzeSimulation({ resetHistory: false });
+          analyzeSimulation({ resetHistory: false, priority: "user" });
         }
       };
 
@@ -1226,7 +1363,7 @@
         timePriorSlider.value = numericValue;
         setRangeLabelWithValue(timePriorSlider, numericValue, "Time Prior");
         if (runAnalysis) {
-          analyzeSimulation({ resetHistory: false });
+          analyzeSimulation({ resetHistory: false, priority: "user" });
         }
       };
 
@@ -1262,7 +1399,7 @@
           formatDecimal
         );
         if (runAnalysis) {
-          analyzeSimulation({ resetHistory: false });
+          analyzeSimulation({ resetHistory: false, priority: "user" });
         }
       };
 
