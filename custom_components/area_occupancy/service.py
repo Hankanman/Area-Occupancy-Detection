@@ -125,6 +125,7 @@ def _build_analysis_data(
 
     data = {
         "area_name": area_name,
+        "purpose": area.purpose.name,
         "current_probability": area.probability(),
         "current_occupied": area.occupied(),
         "current_threshold": area.threshold(),
