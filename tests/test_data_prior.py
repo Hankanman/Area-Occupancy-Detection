@@ -169,6 +169,26 @@ def test_min_prior_override_above_normal_calculation(
         assert result == 0.3, f"Expected 0.3 but got {result}"
 
 
+def test_min_prior_override_when_global_prior_is_none(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """Test min_prior_override is applied when global_prior is None."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    # Set min_prior_override to 0.3
+    area.config.min_prior_override = 0.3
+
+    # Ensure global_prior is None (default state before prior is calculated)
+    prior.global_prior = None
+
+    # When global_prior is None, it should default to MIN_PRIOR
+    # But min_prior_override (0.3) should take precedence
+    result = prior.value
+    assert result == 0.3, f"Expected 0.3 but got {result}"
+
+
 def test_constants_are_properly_defined():
     """Test that all constants are properly defined."""
     assert PRIOR_FACTOR == 1.05
