@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime
 import logging
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request
 from flask_cors import CORS  # type: ignore[import]
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
@@ -45,11 +46,7 @@ if str(PROJECT_ROOT) not in sys.path:
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
-app = Flask(
-    __name__,
-    template_folder=str(BASE_DIR / "templates"),
-    static_folder=str(BASE_DIR / "static"),
-)
+app = Flask(__name__)
 
 
 def get_allowed_origins() -> list[str] | str:
@@ -57,13 +54,25 @@ def get_allowed_origins() -> list[str] | str:
 
     env_value = os.getenv("SIMULATOR_ALLOWED_ORIGINS")
     if env_value is None:
-        return [
+        # Production origins
+        origins = [
             "https://hankanman.github.io",
             "https://hankanman.github.io/Area-Occupancy-Detection",
             "https://hankanman.github.io/Area-Occupancy-Detection/",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
         ]
+        # For development, allow all localhost origins
+        # Note: CORS requires exact match, so we can't use wildcards
+        # But we can use "*" for development if needed
+        # For now, include common localhost ports
+        localhost_ports = [8000, 3000, 8080, 5000, 4000, 9000]
+        for port in localhost_ports:
+            origins.extend(
+                [
+                    f"http://localhost:{port}",
+                    f"http://127.0.0.1:{port}",
+                ]
+            )
+        return origins
 
     origins = [origin.strip() for origin in env_value.split(",") if origin.strip()]
     if not origins:
@@ -129,7 +138,9 @@ def _build_entity_actions(entity: Entity) -> list[dict[str, Any]]:
 
 
 def _serialize_entities(
-    entities: dict[str, Entity], breakdown: dict[str, float] | None = None
+    entities: dict[str, Entity],
+    breakdown: dict[str, float] | None = None,
+    extra_fields: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     serialized: list[dict[str, Any]] = []
 
@@ -155,22 +166,26 @@ def _serialize_entities(
         else:
             likelihood = entity.prob_given_true
 
-        serialized.append(
-            {
-                "entity_id": entity_id,
-                "name": entity.name or _friendly_name(entity_id),
-                "type": entity.type.input_type.value,
-                "weight": entity.weight,
-                "state": entity.state,
-                "state_display": _format_state_display(entity),
-                "details": " • ".join(details_parts),
-                "is_numeric": entity.type.active_range is not None,
-                "actions": _build_entity_actions(entity),
-                "evidence": entity.evidence,
-                "likelihood": likelihood,
-                "contribution": breakdown.get(entity_id) if breakdown else None,
-            }
-        )
+        entity_dict = {
+            "entity_id": entity_id,
+            "name": entity.name or _friendly_name(entity_id),
+            "type": entity.type.input_type.value,
+            "weight": entity.weight,
+            "state": entity.state,
+            "state_display": _format_state_display(entity),
+            "details": " • ".join(details_parts),
+            "is_numeric": entity.type.active_range is not None,
+            "actions": _build_entity_actions(entity),
+            "evidence": entity.evidence,
+            "likelihood": likelihood,
+            "contribution": breakdown.get(entity_id) if breakdown else None,
+        }
+
+        # Merge extra fields if available (analysis_error, analysis_data, correlation_type)
+        if extra_fields and entity_id in extra_fields:
+            entity_dict.update(extra_fields[entity_id])
+
+        serialized.append(entity_dict)
 
     return serialized
 
@@ -242,12 +257,51 @@ def _create_simulator_config():
     return SimulatorConfig()
 
 
+def _normalize_purpose(purpose_str: str | None) -> str | None:
+    """Normalize purpose string from YAML to enum value format.
+
+    Converts purpose names (e.g., "Working", "Food-Prep") to enum values (e.g., "working", "food_prep").
+    Returns None if purpose cannot be matched.
+    """
+    if not purpose_str:
+        return None
+
+    # Normalize input: lowercase and replace hyphens with underscores
+    normalized_input = purpose_str.lower().replace("-", "_")
+
+    # Try direct enum value match
+    try:
+        purpose_enum = AreaPurpose(normalized_input)
+    except ValueError:
+        pass
+    else:
+        return purpose_enum.value
+
+    # Try matching by enum value (already normalized)
+    for purpose_enum in AreaPurpose:
+        if purpose_enum.value == normalized_input:
+            return purpose_enum.value
+
+    # Try matching by name (case-insensitive, handle hyphens)
+    for purpose_enum, purpose_def in PURPOSE_DEFINITIONS.items():
+        normalized_name = purpose_def.name.lower().replace("-", "_")
+        if normalized_name == normalized_input:
+            return purpose_enum.value
+
+    return None
+
+
 def _get_half_life_from_purpose(purpose_str: str | None) -> float:
     if purpose_str is None:
         return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
 
+    # Normalize the purpose first
+    normalized = _normalize_purpose(purpose_str)
+    if not normalized:
+        return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
+
     try:
-        purpose_enum = AreaPurpose(purpose_str)
+        purpose_enum = AreaPurpose(normalized)
         return PURPOSE_DEFINITIONS[purpose_enum].half_life
     except (ValueError, KeyError):
         return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
@@ -523,6 +577,22 @@ def _run_simulation(simulation_input: dict[str, Any]) -> dict[str, Any]:
         weights_map,
     )
 
+    # Extract extra fields (analysis_error, analysis_data, correlation_type) from entity inputs
+    # These are stored in the entity input dicts but not in Entity objects
+    entity_extra_fields: dict[str, dict[str, Any]] = {}
+    for entity_input in simulation_input.get("entities", []):
+        entity_id = entity_input.get("entity_id")
+        if entity_id:
+            extra = {}
+            if "analysis_error" in entity_input:
+                extra["analysis_error"] = entity_input["analysis_error"]
+            if "analysis_data" in entity_input:
+                extra["analysis_data"] = entity_input["analysis_data"]
+            if "correlation_type" in entity_input:
+                extra["correlation_type"] = entity_input["correlation_type"]
+            if extra:
+                entity_extra_fields[entity_id] = extra
+
     update_decay_states(entities)
 
     probability, breakdown = calculate_probability_breakdown(
@@ -555,6 +625,7 @@ def _run_simulation(simulation_input: dict[str, Any]) -> dict[str, Any]:
             "name": area["name"],
             "purpose": area.get("purpose"),
             "half_life": area["half_life"],
+            "threshold": area.get("threshold", 0.5),
             "priors": {
                 "global": area["global_prior"],
                 "time": area["time_prior"],
@@ -564,7 +635,7 @@ def _run_simulation(simulation_input: dict[str, Any]) -> dict[str, Any]:
             },
         },
         "probability": probability,
-        "entities": _serialize_entities(entities, breakdown),
+        "entities": _serialize_entities(entities, breakdown, entity_extra_fields),
         "breakdown": _serialize_breakdown(entities, breakdown),
         "weights": normalized_weights,
         "entity_decay": _serialize_decay_map(entities),
@@ -671,26 +742,84 @@ def _normalize_simulation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_simulation_from_yaml(data: dict[str, Any]) -> dict[str, Any]:
+def _build_simulation_from_yaml(
+    data: dict[str, Any], area_name: str | None = None
+) -> dict[str, Any]:
+    """Build simulation from YAML data, supporting both old and new formats."""
     if not isinstance(data, dict):
         raise TypeError("YAML payload must describe an object")
 
-    area = {
-        "name": data.get("area_name", "Area"),
-        "purpose": data.get("area_purpose"),
-        "global_prior": float(data.get("global_prior", 0.5)),
-        "time_prior": float(data.get("time_prior", 0.5)),
-    }
-    area["half_life"] = _get_half_life_from_purpose(area.get("purpose"))
+    # Check if this is the new multi-area format
+    areas_dict = data.get("areas")
+    if isinstance(areas_dict, dict) and areas_dict:
+        # New format: multiple areas
+        available_areas = list(areas_dict.keys())
+        if not available_areas:
+            raise ValueError("No areas found in YAML data")
 
-    entity_states = data.get("entity_states", {}) or {}
-    likelihoods = data.get("likelihoods", {}) or {}
+        # Select area: use provided area_name, or first area, or first available
+        selected_area_name = area_name or available_areas[0]
+        if selected_area_name not in areas_dict:
+            raise ValueError(
+                f"Area '{selected_area_name}' not found. Available areas: {', '.join(available_areas)}"
+            )
+
+        area_data = areas_dict[selected_area_name]
+        if not isinstance(area_data, dict):
+            raise TypeError(f"Area data for '{selected_area_name}' must be an object")
+
+        # Extract area information from new format
+        purpose_raw = area_data.get("purpose")
+        purpose_normalized = _normalize_purpose(purpose_raw) if purpose_raw else None
+
+        area = {
+            "name": area_data.get("area_name", selected_area_name),
+            "purpose": purpose_normalized,  # Normalized to enum value format
+            "global_prior": float(area_data.get("global_prior", 0.5)),
+            "time_prior": float(area_data.get("time_prior", 0.5)),
+            "threshold": float(area_data.get("current_threshold", 0.5)),
+        }
+        # Try to infer half_life from purpose if available, otherwise use default
+        area["half_life"] = _get_half_life_from_purpose(area.get("purpose"))
+        # Also check if half_life is directly in area_data
+        if "half_life" in area_data:
+            with suppress(TypeError, ValueError):
+                area["half_life"] = float(area_data["half_life"])
+
+        entity_states = area_data.get("entity_states", {}) or {}
+        likelihoods = area_data.get("likelihoods", {}) or {}
+
+    else:
+        # Old format: single area at root level (backward compatibility)
+        purpose_raw = data.get("area_purpose")
+        purpose_normalized = _normalize_purpose(purpose_raw) if purpose_raw else None
+
+        area = {
+            "name": data.get("area_name", "Area"),
+            "purpose": purpose_normalized,  # Normalized to enum value format
+            "global_prior": float(data.get("global_prior", 0.5)),
+            "time_prior": float(data.get("time_prior", 0.5)),
+            "threshold": float(data.get("current_threshold", 0.5)),
+        }
+        area["half_life"] = _get_half_life_from_purpose(area.get("purpose"))
+        # Also check if half_life is directly in data
+        if "half_life" in data:
+            with suppress(TypeError, ValueError):
+                area["half_life"] = float(data["half_life"])
+
+        entity_states = data.get("entity_states", {}) or {}
+        likelihoods = data.get("likelihoods", {}) or {}
+        available_areas = None
+        selected_area_name = None
 
     weights: dict[str, float] = {}
     entities: list[dict[str, Any]] = []
 
     for entity_id, raw_state in entity_states.items():
         likelihood = likelihoods.get(entity_id, {})
+        if not isinstance(likelihood, dict):
+            likelihood = {}
+
         entity_type = likelihood.get("type", "unknown")
 
         weight = likelihood.get("weight")
@@ -702,21 +831,30 @@ def _build_simulation_from_yaml(data: dict[str, Any]) -> dict[str, Any]:
             except (TypeError, ValueError):
                 pass
 
-        entities.append(
-            {
-                "entity_id": entity_id,
-                "type": entity_type,
-                "state": raw_state,
-                "prob_given_true": likelihood.get("prob_given_true"),
-                "prob_given_false": likelihood.get("prob_given_false"),
-                "weight": likelihood.get("weight"),
-                "previous_evidence": None,
-                "decay": {
-                    "is_decaying": False,
-                    "decay_start": dt_util.utcnow().isoformat(),
-                },
-            }
-        )
+        # Build entity with all available fields, including new ones
+        entity_dict = {
+            "entity_id": entity_id,
+            "type": entity_type,
+            "state": raw_state,
+            "prob_given_true": likelihood.get("prob_given_true"),
+            "prob_given_false": likelihood.get("prob_given_false"),
+            "weight": likelihood.get("weight"),
+            "previous_evidence": None,
+            "decay": {
+                "is_decaying": False,
+                "decay_start": dt_util.utcnow().isoformat(),
+            },
+        }
+
+        # Preserve new fields from likelihood if present
+        if "analysis_data" in likelihood:
+            entity_dict["analysis_data"] = likelihood["analysis_data"]
+        if "analysis_error" in likelihood:
+            entity_dict["analysis_error"] = likelihood["analysis_error"]
+        if "correlation_type" in likelihood:
+            entity_dict["correlation_type"] = likelihood["correlation_type"]
+
+        entities.append(entity_dict)
 
     simulation_payload = {
         "area": area,
@@ -724,13 +862,14 @@ def _build_simulation_from_yaml(data: dict[str, Any]) -> dict[str, Any]:
         "entities": entities,
     }
 
-    return _normalize_simulation_payload(simulation_payload)
+    normalized = _normalize_simulation_payload(simulation_payload)
 
+    # Add metadata for new format
+    if available_areas is not None:
+        normalized["available_areas"] = available_areas
+        normalized["selected_area_name"] = selected_area_name
 
-@app.route("/")
-def index():
-    """Serve the simulator shell page."""
-    return render_template("index.html")
+    return normalized
 
 
 @app.route("/api/analyze", methods=["POST"])
@@ -759,15 +898,24 @@ def load_data():
     if not yaml_text:
         return _json_error("No YAML data provided", 400)
 
+    area_name = payload.get("area_name")  # Optional: for selecting specific area
+
     try:
         parsed_yaml = yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
         return _json_error(f"Invalid YAML: {exc!s}", 400)
 
     try:
-        simulation_input = _build_simulation_from_yaml(parsed_yaml or {})
+        simulation_input = _build_simulation_from_yaml(parsed_yaml or {}, area_name)
         result = _run_simulation(simulation_input)
-        return _json_success({"simulation": simulation_input, "result": result})
+
+        # Build response with available areas if in new format
+        response = {"simulation": simulation_input, "result": result}
+        if "available_areas" in simulation_input:
+            response["available_areas"] = simulation_input["available_areas"]
+            response["selected_area_name"] = simulation_input.get("selected_area_name")
+
+        return _json_success(response)
     except ValueError as exc:
         return _json_error(str(exc), 400)
     except Exception as exc:

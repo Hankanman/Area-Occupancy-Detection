@@ -13,13 +13,11 @@ The area occupancy calculation process operates in two main phases:
 
 ### Coordinator Setup
 
-The process begins when Home Assistant loads the integration. The coordinator initializes all areas and their components.
-
-**Code Reference:** ```241:321:custom_components/area_occupancy/coordinator.py```
+The process begins when Home Assistant loads the integration. The system initializes all areas and their components.
 
 Key steps:
 
-1. Load areas from configuration (`_load_areas_from_config()`)
+1. Load areas from configuration
 2. Validate at least one area exists
 3. Initialize each area's components
 4. Load stored data from database
@@ -29,8 +27,6 @@ Key steps:
 ### Area Initialization
 
 Each area is initialized with its configuration and components.
-
-**Code Reference:** ```90:150:custom_components/area_occupancy/area/area.py```
 
 Components created:
 
@@ -43,8 +39,6 @@ Components created:
 
 Historical data is loaded from the database to restore learned priors and likelihoods.
 
-**Code Reference:** ```68:87:custom_components/area_occupancy/coordinator.py``` (async_init_database)
-
 The database stores:
 
 - Global priors for each area
@@ -54,99 +48,53 @@ The database stores:
 
 ### Prior Analysis
 
-The system learns baseline occupancy probabilities from historical sensor data.
+The system learns baseline occupancy probabilities from historical sensor data. This includes calculating both global priors (overall occupancy rate) and time-based priors (occupancy probability for each day-of-week and time-slot combination).
 
-**Code Reference:** ```911:967:custom_components/area_occupancy/data/analysis.py```
-
-Process:
-
-1. **Global Prior Calculation**: Analyzes motion sensor history to determine overall occupancy rate
-   - Calculates total occupied time vs. total time period
-   - If motion prior < 0.10, supplements with media/appliance sensors
-   - Stores result in database
-
-2. **Time-Based Prior Calculation**: Calculates occupancy probability for each day-of-week and time-slot combination
-   - Aggregates intervals by day and time slot
-   - Calculates `P(Occupied | Day, TimeSlot)` for each combination
-   - Stores in `Priors` table
-
-See [Prior Calculation Deep Dive](prior-calculation.md) for detailed explanation.
+See [Prior Learning](../features/prior-learning.md) for detailed explanation of how priors are calculated and used.
 
 ### Likelihood Analysis
 
-The system learns how reliable each sensor is as evidence of occupancy.
+The system learns how reliable each sensor is as evidence of occupancy by analyzing sensor activity relative to occupied intervals determined from motion sensors.
 
-**Code Reference:** ```970:1060:custom_components/area_occupancy/data/analysis.py```
-
-Process:
-
-1. Gets occupied intervals from prior analysis
-2. For each entity, correlates its activity intervals with occupied intervals
-3. Calculates:
-   - `P(Entity Active | Area Occupied)` - How often entity is active when area is occupied
-   - `P(Entity Active | Area Not Occupied)` - How often entity is active when area is empty
-4. Updates entity likelihoods in database and memory
-
-See [Likelihood Calculation Deep Dive](likelihood-calculation.md) for detailed explanation.
+See [Likelihood Calculation](likelihood-calculation.md) for detailed explanation of how likelihoods are learned for different sensor types.
 
 ## Phase 2: Real-Time Calculation
 
 ### Entity State Change Detection
 
-When any monitored sensor changes state, the coordinator detects the change and triggers recalculation.
-
-**Code Reference:** ```585:620:custom_components/area_occupancy/coordinator.py```
+When any monitored sensor changes state, the system detects the change and triggers recalculation.
 
 Flow:
 
 1. Home Assistant fires state change event
-2. Coordinator's `_refresh_on_state_change` callback receives event
+2. System receives the state change event
 3. Finds which area(s) contain the changed entity
-4. Checks if entity has new evidence (`Entity.has_new_evidence()`)
-5. If evidence changed, triggers coordinator refresh
+4. Checks if entity has new evidence
+5. If evidence changed, triggers probability recalculation
 
 ### Evidence Collection
 
-Each entity determines its current evidence state (active/inactive/unavailable).
+Each entity determines its current evidence state (active/inactive/unavailable) by checking its current state against configured active criteria. Entities that are decaying from recent activity may still provide evidence.
 
-**Code Reference:** ```115:134:custom_components/area_occupancy/data/entity.py```
-
-Process:
-
-1. **State Retrieval**: Gets current state from Home Assistant
-2. **Evidence Determination**: Checks if state indicates activity
-   - For binary sensors: checks if state is in `active_states` list
-   - For numeric sensors: checks if value is in `active_range`
-3. **Decay Integration**: If entity was recently active but is now inactive, decay may still provide evidence
-4. **Effective Evidence**: `True` if current evidence is `True` OR decay is active
-
-See [Entity Evidence Collection](entity-evidence.md) for detailed explanation.
+See [Entity Evidence Collection](entity-evidence.md) for detailed explanation of how evidence is collected and integrated with decay.
 
 ### Decay Calculation
 
 When evidence transitions from active to inactive, decay gradually reduces its influence.
 
-**Code Reference:** ```37:50:custom_components/area_occupancy/data/decay.py```
-
 Process:
 
-1. Decay starts when evidence transitions from `True` to `False`
+1. Decay starts when evidence transitions from active to inactive
 2. Decay factor calculated using exponential decay: `0.5^(age/half_life)`
 3. Decay stops when:
    - Evidence becomes active again
    - Decay factor drops below 5% (practical zero)
-
-**Code Reference:** ```175:212:custom_components/area_occupancy/data/entity.py``` (has_new_evidence)
 
 See [Decay Feature](../features/decay.md) for user-facing documentation.
 
 ### Prior Combination
 
 The system combines the global prior with the time-based prior for the current time slot.
-
-**Code Reference:** ```79:116:custom_components/area_occupancy/data/prior.py``` (Prior.value property)
-
-**Code Reference:** ```160:225:custom_components/area_occupancy/utils.py``` (combine_priors)
 
 Process:
 
@@ -165,10 +113,6 @@ The combination uses logit space for better interpolation:
 ### Bayesian Probability Calculation
 
 The core calculation combines all entity evidence with the prior using Bayesian inference.
-
-**Code Reference:** ```55:157:custom_components/area_occupancy/utils.py``` (bayesian_probability)
-
-**Code Reference:** ```188:201:custom_components/area_occupancy/area/area.py``` (Area.probability)
 
 Process:
 
@@ -191,8 +135,6 @@ See [Bayesian Calculation Deep Dive](bayesian-calculation.md) for detailed mathe
 ### Final Probability Output
 
 The calculated probability is exposed through Home Assistant sensors.
-
-**Code Reference:** ```339:372:custom_components/area_occupancy/coordinator.py``` (update method)
 
 Outputs:
 
@@ -226,7 +168,7 @@ The prior is multiplied by 1.05 before use, slightly increasing the baseline pro
 
 ## See Also
 
-- [Prior Calculation Deep Dive](prior-calculation.md) - Detailed prior learning process
+- [Prior Calculation Deep Dive](../features/prior-learning.md) - Detailed prior learning process
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - Detailed likelihood learning process
 - [Entity Evidence Collection](entity-evidence.md) - How evidence is determined
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - Mathematical details

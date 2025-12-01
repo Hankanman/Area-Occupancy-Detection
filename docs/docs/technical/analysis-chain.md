@@ -6,7 +6,7 @@ This document provides a comprehensive breakdown of the sensor analysis chain, f
 
 1. [Complete Flow Overview](#complete-flow-overview)
 2. [Phase-by-Phase Breakdown](#phase-by-phase-breakdown)
-3. [Method Reference](#method-reference)
+3. [Key Operations Reference](#key-operations-reference)
 4. [Unified Architecture](#unified-architecture)
 
 ## Complete Flow Overview
@@ -15,7 +15,7 @@ The analysis chain consists of four main phases:
 
 1. **Data Collection** (Continuous) - Raw sensor data is continuously synced from Home Assistant
 2. **Hourly Analysis Cycle** (Scheduled) - Periodic analysis runs every hour
-3. **Sensor Analysis** (Within Analysis Cycle) - Analyzes sensors using appropriate method:
+3. **Sensor Analysis** (Within Analysis Cycle) - Analyses sensors using appropriate method:
    - **Numeric Sensors**: Correlation analysis with Gaussian PDFs
    - **Binary Sensors**: Duration-based static probability calculation
 4. **Likelihood Calculation** (Runtime) - Retrieves likelihoods using appropriate method based on sensor type
@@ -67,11 +67,7 @@ flowchart TD
 
 ### Phase 1: Data Collection (Continuous)
 
-**Location**: `custom_components/area_occupancy/db/sync.py`
-
 #### Step 1.1: Sync States from Recorder
-
-**Method**: `sync_states()`
 
 **What Happens**:
 
@@ -89,13 +85,9 @@ flowchart TD
 
 ### Phase 2: Hourly Analysis Cycle (Scheduled)
 
-**Location**: `custom_components/area_occupancy/coordinator.py::run_analysis()`
-
-**Method**: `run_analysis()`
-
 **Trigger**: Scheduled timer fires every hour
 
-**Note**: The coordinator's `run_analysis()` method delegates to `run_full_analysis()` in `data/analysis.py`, which orchestrates the complete analysis chain.
+**Note**: The analysis cycle orchestrates the complete analysis chain for all configured areas.
 
 #### Step 2.1: Sync States
 
@@ -107,25 +99,19 @@ Ensures database integrity and removes old data beyond retention period.
 
 #### Step 2.3: Populate OccupiedIntervalsCache
 
-**Location**: `custom_components/area_occupancy/data/analysis.py::ensure_occupied_intervals_cache()`
-
-Calculates occupied intervals from motion sensors (ground truth) and caches them.
+Calculates occupied intervals from motion sensors (ground truth) and caches them for efficient access during analysis.
 
 #### Step 2.4: Interval Aggregation
 
-**Location**: `custom_components/area_occupancy/data/analysis.py::run_interval_aggregation()`
-
-Aggregates raw intervals into daily/weekly/monthly aggregates for trend analysis.
+Aggregates raw intervals into daily/weekly/monthly aggregates for trend analysis and long-term storage.
 
 #### Step 2.5: Prior Analysis
 
-Calculates global prior probability and time-based priors for each area.
+Calculates global prior probability and time-based priors for each area from historical occupancy data.
 
 #### Step 2.6: Correlation Analysis
 
-**Location**: `custom_components/area_occupancy/db/correlation.py::run_correlation_analysis()`
-
-**Main analysis path** - Runs correlation analysis for all configured sensors (excluding motion sensors).
+Runs correlation analysis for all configured sensors (excluding motion sensors) to learn how each sensor correlates with occupancy.
 
 #### Step 2.7: Refresh & Save
 
@@ -135,13 +121,7 @@ Updates coordinator state and persists all changes to database.
 
 ### Phase 3: Correlation Analysis (Step 6 Detail)
 
-**Location**: `custom_components/area_occupancy/db/correlation.py::run_correlation_analysis()`
-
 #### Step 3.1: Get Correlatable Entities
-
-**Location**: `custom_components/area_occupancy/db/correlation.py::get_correlatable_entities_by_area()`
-
-**Method**: `get_correlatable_entities_by_area()`
 
 **What Happens**:
 
@@ -154,23 +134,19 @@ For each entity:
 
 1. **Route by Type**:
 
-   - **Binary Sensors**: Calls `analyze_binary_likelihoods()` for duration-based analysis.
-   - **Numeric Sensors**: Calls `analyze_and_save_correlation()` for correlation analysis.
+   - **Binary Sensors**: Performs duration-based analysis to calculate static probabilities.
+   - **Numeric Sensors**: Performs correlation analysis to learn Gaussian parameters.
 
 2. **Update Live Entity**:
 
-   - **Binary Sensors**: Updates entity with `prob_given_true` and `prob_given_false` via `update_binary_likelihoods()`.
-   - **Numeric Sensors**: Updates entity with `learned_gaussian_params` via `update_correlation()`.
+   - **Binary Sensors**: Updates entity with learned `prob_given_true` and `prob_given_false` values.
+   - **Numeric Sensors**: Updates entity with learned Gaussian parameters (mean, standard deviation) for occupied and unoccupied states.
 
 3. **Persist Results**:
-   - **Binary Sensors**: Saves binary likelihood results (including `analysis_error` if present) to the `Correlations` table via `save_binary_likelihood_result()`.
-   - **Numeric Sensors**: Saves correlation results (including `analysis_error` if present) to the `Correlations` table via `save_correlation_result()`.
-
-**Location**: `custom_components/area_occupancy/db/correlation.py`
+   - **Binary Sensors**: Saves binary likelihood results (including `analysis_error` if present) to the database.
+   - **Numeric Sensors**: Saves correlation results (including `analysis_error` if present) to the database.
 
 #### Step 3.3a: Binary Sensor Analysis
-
-**Method**: `analyze_binary_likelihoods()`
 
 **Process**:
 
@@ -203,10 +179,6 @@ For each entity:
 
 #### Step 3.3b: Numeric Sensor Analysis
 
-**Location**: `custom_components/area_occupancy/db/correlation.py`
-
-**Method**: `analyze_correlation()`
-
 **Process**:
 
 1. **Data Retrieval**:
@@ -235,13 +207,9 @@ For each entity:
 
 ### Phase 4: Likelihood Calculation (Runtime)
 
-**Location**: `custom_components/area_occupancy/data/entity.py::get_likelihoods()`
-
 This phase occurs at runtime whenever the Bayesian probability calculation needs likelihood values.
 
 #### Step 4.1: Get Likelihoods
-
-**Method**: `get_likelihoods()`
 
 **What Happens**:
 
@@ -265,7 +233,63 @@ This phase occurs at runtime whenever the Bayesian probability calculation needs
 3. **Return Probabilities**:
    - Returns the two probabilities for Bayesian update.
 
-## Architecture Overview
+## Key Operations Reference
+
+This section provides a quick reference to the key operations in the analysis chain.
+
+### Data Collection Operations
+
+- **State Synchronization**: Syncs state changes from Home Assistant recorder to local database
+
+### Analysis Operations
+
+- **Full Analysis Orchestration**: Orchestrates the complete analysis chain for all areas
+- **Occupied Intervals Cache Population**: Populates occupied intervals cache from motion sensors
+- **Interval Aggregation**: Aggregates raw intervals into daily/weekly/monthly summaries
+- **Correlation Analysis**: Main correlation analysis entry point for all sensors
+- **Entity Identification**: Identifies entities eligible for correlation analysis
+- **Binary Likelihood Calculation**: Calculates duration-based probabilities for binary sensors
+- **Numeric Correlation Calculation**: Calculates Pearson correlation and Gaussian parameters for numeric sensors
+
+### Runtime Operations
+
+- **Likelihood Retrieval**: Retrieves likelihood values for Bayesian calculation at runtime based on current sensor state
+
+## Unified Architecture
+
+The analysis chain follows a unified architecture that separates concerns by sensor type while maintaining a consistent data flow:
+
+### Data Flow Architecture
+
+1. **Continuous Data Collection**: Raw sensor data flows from Home Assistant recorder into local database tables
+2. **Scheduled Analysis**: Hourly analysis cycle processes collected data through multiple stages
+3. **Type-Specific Analysis**: Sensors are routed to appropriate analysis methods based on their type
+4. **Runtime Calculation**: Learned parameters are used for real-time likelihood calculation
+
+### Analysis Method Architecture
+
+The system uses a **dual-path architecture** for sensor analysis:
+
+- **Binary Path**: Duration-based static probability calculation
+  - Suitable for: motion, media, appliances, doors, windows
+  - Output: Static `prob_given_true` and `prob_given_false` values
+  - Storage: `Correlations` table with `correlation_type="binary_likelihood"`
+
+- **Numeric Path**: Correlation analysis with Gaussian PDFs
+  - Suitable for: temperature, humidity, illuminance, CO2, sound pressure, etc.
+  - Output: Gaussian parameters (mean, std_dev) for occupied/unoccupied states
+  - Storage: `Correlations` table with correlation coefficients and statistics
+
+### Component Architecture
+
+The architecture consists of four main layers:
+
+1. **Database Layer**: Handles data storage, syncing, and correlation analysis
+2. **Analysis Layer**: Orchestrates analysis cycles and prior calculations
+3. **Entity Layer**: Manages entity state and runtime likelihood calculation
+4. **Coordinator Layer**: Coordinates all components and schedules analysis
+
+### Architecture Overview
 
 The system uses different analysis methods optimized for each sensor type:
 
