@@ -87,7 +87,7 @@ For in-depth explanations of specific aspects of the calculation:
 
 ### Prior Calculation
 
-- **Global Prior Calculation:** Analyzes historical data to determine overall occupancy rate
+- **Global Prior Calculation:** Analyses historical data to determine overall occupancy rate
 - **Time-Based Prior Calculation:** Calculates occupancy probability for each day-of-week and time-slot combination
 - **Prior Retrieval and Combination:** Retrieves and combines priors for real-time calculations
 

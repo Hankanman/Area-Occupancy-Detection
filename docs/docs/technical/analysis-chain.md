@@ -15,7 +15,7 @@ The analysis chain consists of four main phases:
 
 1. **Data Collection** (Continuous) - Raw sensor data is continuously synced from Home Assistant
 2. **Hourly Analysis Cycle** (Scheduled) - Periodic analysis runs every hour
-3. **Sensor Analysis** (Within Analysis Cycle) - Analyzes sensors using appropriate method:
+3. **Sensor Analysis** (Within Analysis Cycle) - Analyses sensors using appropriate method:
    - **Numeric Sensors**: Correlation analysis with Gaussian PDFs
    - **Binary Sensors**: Duration-based static probability calculation
 4. **Likelihood Calculation** (Runtime) - Retrieves likelihoods using appropriate method based on sensor type

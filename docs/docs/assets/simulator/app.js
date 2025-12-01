@@ -237,8 +237,8 @@
       state.abortController = null;
     }
 
-    if (state.pendingRequest?.abortSignal) {
-      state.pendingRequest.abortSignal.abort();
+    if (state.pendingRequest?.abortController) {
+      state.pendingRequest.abortController.abort();
     }
 
     state.requestQueue = state.requestQueue.filter(
@@ -249,8 +249,8 @@
 
   function cancelQueuedAutoRequests() {
     state.requestQueue.forEach((req) => {
-      if (req.priority === "auto" && req.abortSignal) {
-        req.abortSignal.abort();
+      if (req.priority === "auto" && req.abortController) {
+        req.abortController.abort();
       }
     });
     state.requestQueue = state.requestQueue.filter(
@@ -609,6 +609,7 @@
       state.requestQueue.push({
         options: { resetHistory, silent, priority },
         abortSignal: abortController.signal,
+        abortController: abortController,
         priority,
       });
       return true; // Return true to indicate request was queued
@@ -625,6 +626,7 @@
     state.pendingRequest = {
       options: { resetHistory, silent, priority },
       abortSignal: abortController.signal,
+      abortController: abortController,
       priority,
     };
 
@@ -858,6 +860,7 @@
   const yamlInput = document.getElementById("yaml-input");
   const loadBtn = document.getElementById("load-btn");
   const areaSelector = document.getElementById("area-selector");
+  const errorAlert = document.getElementById("error-alert");
   const errorMessage = document.getElementById("error-message");
   const simulationDisplay = document.getElementById("simulation-display");
   const probabilityValue = document.getElementById("probability-value");
@@ -914,19 +917,23 @@
   // ============================================================================
 
   function showError(message) {
-    if (!errorMessage) {
-      return;
+    if (errorMessage) {
+      errorMessage.textContent = message;
     }
-    errorMessage.textContent = message;
-    errorMessage.classList.add("show");
+    if (errorAlert) {
+      errorAlert.hidden = false;
+      errorAlert.open = true;
+    }
   }
 
   function hideError() {
-    if (!errorMessage) {
-      return;
+    if (errorMessage) {
+      errorMessage.textContent = "";
     }
-    errorMessage.textContent = "";
-    errorMessage.classList.remove("show");
+    if (errorAlert) {
+      errorAlert.hidden = true;
+      errorAlert.open = false;
+    }
   }
 
   function initChart() {
