@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime
 import logging
 import os
@@ -573,6 +574,7 @@ def _run_simulation(simulation_input: dict[str, Any]) -> dict[str, Any]:
             "name": area["name"],
             "purpose": area.get("purpose"),
             "half_life": area["half_life"],
+            "threshold": area.get("threshold", 0.5),
             "priors": {
                 "global": area["global_prior"],
                 "time": area["time_prior"],
@@ -721,9 +723,14 @@ def _build_simulation_from_yaml(
             "purpose": None,  # New format doesn't include purpose
             "global_prior": float(area_data.get("global_prior", 0.5)),
             "time_prior": float(area_data.get("time_prior", 0.5)),
+            "threshold": float(area_data.get("current_threshold", 0.5)),
         }
         # Try to infer half_life from purpose if available, otherwise use default
         area["half_life"] = _get_half_life_from_purpose(area.get("purpose"))
+        # Also check if half_life is directly in area_data
+        if "half_life" in area_data:
+            with suppress(TypeError, ValueError):
+                area["half_life"] = float(area_data["half_life"])
 
         entity_states = area_data.get("entity_states", {}) or {}
         likelihoods = area_data.get("likelihoods", {}) or {}
@@ -735,8 +742,13 @@ def _build_simulation_from_yaml(
             "purpose": data.get("area_purpose"),
             "global_prior": float(data.get("global_prior", 0.5)),
             "time_prior": float(data.get("time_prior", 0.5)),
+            "threshold": float(data.get("current_threshold", 0.5)),
         }
         area["half_life"] = _get_half_life_from_purpose(area.get("purpose"))
+        # Also check if half_life is directly in data
+        if "half_life" in data:
+            with suppress(TypeError, ValueError):
+                area["half_life"] = float(data["half_life"])
 
         entity_states = data.get("entity_states", {}) or {}
         likelihoods = data.get("likelihoods", {}) or {}
