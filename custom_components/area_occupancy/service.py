@@ -3,316 +3,187 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
-
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .utils import ensure_timezone_aware
+from .utils import get_coordinator
 
 if TYPE_CHECKING:
-    from .coordinator import AreaOccupancyCoordinator
+    from .area.area import Area
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_coordinator(hass: HomeAssistant, entry_id: str) -> "AreaOccupancyCoordinator":
-    """Get coordinator from entry_id with error handling."""
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.entry_id == entry_id:
-            return entry.runtime_data
-    raise HomeAssistantError(f"Config entry {entry_id} not found")
+def _collect_entity_states(hass: HomeAssistant, area: "Area") -> dict[str, str]:
+    """Collect current states for all entities in an area.
+
+    Args:
+        hass: Home Assistant instance
+        area: The area to collect entity states for
+
+    Returns:
+        Dictionary mapping entity_id to state (or "NOT_FOUND" if unavailable)
+    """
+    entity_states = {}
+    for entity_id in area.entities.entities:
+        state = hass.states.get(entity_id)
+        if state:
+            entity_states[entity_id] = state.state
+        else:
+            entity_states[entity_id] = "NOT_FOUND"
+    return entity_states
+
+
+def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
+    """Collect likelihood data for all entities in an area.
+
+    Args:
+        area: The area to collect likelihood data for
+
+    Returns:
+        Dictionary mapping entity_id to likelihood data dict
+    """
+    likelihood_data = {}
+    for entity_id, entity in area.entities.entities.items():
+        # Get runtime likelihood values (uses Gaussian params if available, falls back to defaults)
+        prob_given_true, prob_given_false = entity.get_likelihoods()
+
+        # Prepare active_range for JSON serialization (only for numeric sensors)
+        # Binary sensors shouldn't show active_range
+        active_range_val = None
+        if entity.active_range and not entity.active_states:
+            # Only include active_range for numeric sensors (those without active_states)
+            try:
+                active_range_val = []
+                # Ensure active_range is iterable (tuple or list)
+                # Mock objects might report having active_range but fail iteration if not configured
+                range_iter = entity.active_range
+                if not isinstance(range_iter, (tuple, list)) and not hasattr(
+                    range_iter, "__iter__"
+                ):
+                    # Fallback for unconfigured mocks
+                    active_range_val = None
+                else:
+                    for val in range_iter:
+                        # JSON doesn't support infinity, use None for open bounds
+                        if val == float("inf") or val == float("-inf"):
+                            active_range_val.append(None)
+                        else:
+                            active_range_val.append(val)
+            except TypeError:
+                # Handle case where iteration fails (e.g. non-iterable Mock)
+                active_range_val = None
+
+        raw_data = {
+            "type": entity.type.input_type.value,
+            "weight": entity.type.weight,
+            "prob_given_true": prob_given_true,  # Runtime calculated value
+            "prob_given_false": prob_given_false,  # Runtime calculated value
+            "active_states": entity.active_states,
+            "active_range": active_range_val,
+            "is_active": entity.active,
+        }
+
+        # Always include analysis data and errors (even if None) for visibility
+        analysis_data = getattr(entity, "learned_gaussian_params", None)
+        analysis_error = getattr(entity, "analysis_error", None)
+        correlation_type = getattr(entity, "correlation_type", None)
+
+        raw_data["analysis_data"] = analysis_data
+        raw_data["analysis_error"] = analysis_error
+        raw_data["correlation_type"] = correlation_type
+
+        # Filter out keys with None values, but keep analysis_data, analysis_error, and correlation_type
+        # even if None so users can see which entities have been analyzed
+        filtered_data = {
+            k: v
+            for k, v in raw_data.items()
+            if k in ("analysis_data", "analysis_error", "correlation_type")
+            or v is not None
+        }
+        likelihood_data[entity_id] = filtered_data
+    return likelihood_data
+
+
+def _build_analysis_data(
+    hass: HomeAssistant, area: "Area", area_name: str
+) -> dict[str, Any]:
+    """Build analysis data dictionary for an area.
+
+    Args:
+        hass: Home Assistant instance
+        area: The area to build analysis data for
+        area_name: The name of the area
+
+    Returns:
+        Dictionary containing analysis data for the area
+    """
+    entity_states = _collect_entity_states(hass, area)
+    likelihood_data = _collect_likelihood_data(area)
+
+    data = {
+        "area_name": area_name,
+        "purpose": area.purpose.name,
+        "current_probability": area.probability(),
+        "current_occupied": area.occupied(),
+        "current_threshold": area.threshold(),
+        "current_prior": area.area_prior(),
+        "global_prior": area.prior.global_prior,
+        "time_prior": area.prior.time_prior,
+        "prior_entity_ids": area.prior.sensor_ids,
+        "total_entities": len(area.entities.entities),
+        "entity_states": entity_states,
+        "likelihoods": likelihood_data,
+    }
+    # Filter out keys with None values
+    return {k: v for k, v in data.items() if v is not None}
 
 
 async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Manually trigger an update of sensor likelihoods."""
-    entry_id = call.data["entry_id"]
+    """Manually trigger an update of sensor likelihoods.
 
+    Always runs analysis for all areas.
+    """
     try:
-        coordinator = _get_coordinator(hass, entry_id)
+        coordinator = get_coordinator(hass)
 
-        _LOGGER.info("Running analysis for entry %s", entry_id)
-
+        _LOGGER.info("Running analysis for all areas")
         await coordinator.run_analysis()
 
-        _LOGGER.info("Analysis completed successfully for entry %s", entry_id)
+        # Aggregate data from all areas
+        all_areas_data = {}
+        for area_name_item in coordinator.get_area_names():
+            area = coordinator.get_area(area_name_item)
+            all_areas_data[area_name_item] = _build_analysis_data(
+                hass, area, area_name_item
+            )
 
-        entity_ids = [eid for eid in set(coordinator.config.entity_ids) if eid]
-
-        # Check entity states
-        entity_states = {}
-        for entity_id in entity_ids:
-            state = hass.states.get(entity_id)
-            if state:
-                entity_states[entity_id] = state.state
-            else:
-                entity_states[entity_id] = "NOT_FOUND"
-
-        # Collect the updated likelihoods to return
-        likelihood_data = {}
-
-        for entity_id, entity in coordinator.entities.entities.items():
-            entity_likelihood_data = {
-                "type": entity.type.input_type.value,
-                "weight": entity.type.weight,
-                "prob_given_true": entity.prob_given_true,
-                "prob_given_false": entity.prob_given_false,
-            }
-
-            likelihood_data[entity_id] = entity_likelihood_data
-
-        response_data = {
-            "area_name": coordinator.config.name,
-            "current_prior": coordinator.area_prior,
-            "global_prior": coordinator.prior.global_prior,
-            "time_prior": coordinator.prior.time_prior,
-            "prior_entity_ids": coordinator.prior.sensor_ids,
-            "total_entities": len(coordinator.entities.entities),
-            "entity_states": entity_states,
-            "likelihoods": likelihood_data,
+        return {
+            "areas": all_areas_data,
             "update_timestamp": dt_util.utcnow().isoformat(),
         }
-
     except Exception as err:
-        error_msg = f"Failed to run analysis for {entry_id}: {err}"
+        error_msg = f"Failed to run analysis: {err}"
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
-    else:
-        return response_data
-
-
-async def _reset_entities(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Reset all entity probabilities and learned data."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
-        _LOGGER.info("Resetting entities for entry %s", entry_id)
-
-        # Reset entities to fresh state
-        await coordinator.entities.cleanup()
-
-        await coordinator.async_refresh()
-
-        _LOGGER.info("Entity reset completed successfully for entry %s", entry_id)
-
-    except Exception as err:
-        error_msg = f"Failed to reset entities for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-
-
-async def _get_entity_metrics(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Get basic entity metrics for diagnostics."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-        entities = coordinator.entities.entities
-
-        total_entities = len(entities)
-        active_entities = sum(1 for e in entities.values() if e.evidence)
-        available_entities = sum(1 for e in entities.values() if e.available)
-        unavailable_entities = sum(1 for e in entities.values() if not e.available)
-        decaying_entities = sum(1 for e in entities.values() if e.decay.is_decaying)
-
-        metrics = {
-            "total_entities": total_entities,
-            "active_entities": active_entities,
-            "available_entities": available_entities,
-            "unavailable_entities": unavailable_entities,
-            "decaying_entities": decaying_entities,
-            "availability_percentage": round(
-                (available_entities / total_entities * 100), 1
-            )
-            if total_entities > 0
-            else 0,
-            "activity_percentage": round((active_entities / total_entities * 100), 1)
-            if total_entities > 0
-            else 0,
-            "summary": f"{total_entities} total entities: {active_entities} active, {available_entities} available, {unavailable_entities} unavailable, {decaying_entities} decaying",
-        }
-
-        _LOGGER.info("Retrieved entity metrics for entry %s", entry_id)
-
-    except Exception as err:
-        error_msg = f"Failed to get entity metrics for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-
-    else:
-        return {"metrics": metrics}
-
-
-async def _get_problematic_entities(
-    hass: HomeAssistant, call: ServiceCall
-) -> dict[str, Any]:
-    """Get entities that may need attention."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-        entities = coordinator.entities.entities
-        now = dt_util.utcnow()
-
-        unavailable = [eid for eid, e in entities.items() if not e.available]
-        stale_updates = [
-            eid
-            for eid, e in entities.items()
-            if e.last_updated
-            and (now - ensure_timezone_aware(e.last_updated)).total_seconds() > 3600
-        ]
-
-        problems = {
-            "unavailable": unavailable,
-            "stale_updates": stale_updates,
-            "total_problems": len(unavailable) + len(stale_updates),
-            "summary": f"Found {len(unavailable)} unavailable and {len(stale_updates)} stale entities out of {len(entities)} total",
-        }
-
-        _LOGGER.info("Retrieved problematic entities for entry %s", entry_id)
-
-    except Exception as err:
-        error_msg = f"Failed to get problematic entities for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-
-    else:
-        return {"problems": problems}
-
-
-async def _get_area_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Get current area occupancy status and confidence."""
-    entry_id = call.data["entry_id"]
-
-    try:
-        coordinator = _get_coordinator(hass, entry_id)
-
-        # Get current occupancy state
-        area_name = coordinator.config.name
-        occupancy_probability = coordinator.probability
-
-        # Get entity metrics for additional context
-        entities = coordinator.entities.entities
-        metrics = {
-            "total_entities": len(entities),
-            "active_entities": sum(1 for e in entities.values() if e.evidence),
-            "available_entities": sum(1 for e in entities.values() if e.available),
-            "unavailable_entities": sum(
-                1 for e in entities.values() if not e.available
-            ),
-            "decaying_entities": sum(
-                1 for e in entities.values() if e.decay.is_decaying
-            ),
-        }
-
-        # Format confidence level with more detail
-        if occupancy_probability is not None:
-            if occupancy_probability > 0.8:
-                confidence_level = "high"
-                confidence_description = "Very confident in occupancy status"
-            elif occupancy_probability > 0.6:
-                confidence_level = "medium-high"
-                confidence_description = "Fairly confident in occupancy status"
-            elif occupancy_probability > 0.2:
-                confidence_level = "medium"
-                confidence_description = "Moderate confidence in occupancy status"
-            else:
-                confidence_level = "low"
-                confidence_description = "Low confidence in occupancy status"
-        else:
-            confidence_level = "unknown"
-            confidence_description = "Unable to determine confidence level"
-
-        status = {
-            "area_name": area_name,
-            "occupied": coordinator.occupied,
-            "occupancy_probability": round(occupancy_probability, 4)
-            if occupancy_probability is not None
-            else None,
-            "area_baseline_prior": round(coordinator.prior.value, 4),
-            "confidence_level": confidence_level,
-            "confidence_description": confidence_description,
-            "entity_summary": {
-                "total_entities": metrics["total_entities"],
-                "active_entities": metrics["active_entities"],
-                "available_entities": metrics["available_entities"],
-                "unavailable_entities": metrics["unavailable_entities"],
-                "decaying_entities": metrics["decaying_entities"],
-            },
-            "status_summary": f"Area '{area_name}' is {'occupied' if coordinator.occupied else 'not occupied'} with {confidence_level} confidence ({round(occupancy_probability * 100, 1) if occupancy_probability else 0}% probability)",
-        }
-
-        _LOGGER.info("Retrieved area status for entry %s", entry_id)
-
-    except Exception as err:
-        error_msg = f"Failed to get area status for {entry_id}: {err}"
-        _LOGGER.error(error_msg)
-        raise HomeAssistantError(error_msg) from err
-    else:
-        return {"area_status": status}
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
-    # Service schemas
-    entry_id_schema = vol.Schema({vol.Required("entry_id"): str})
-
-    # Create async wrapper functions to properly handle the service calls
-
+    # Create async wrapper function to properly handle the service call
     async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
         return await _run_analysis(hass, call)
 
-    async def handle_reset_entities(call: ServiceCall) -> None:
-        return await _reset_entities(hass, call)
-
-    async def handle_get_entity_metrics(call: ServiceCall) -> dict[str, Any]:
-        return await _get_entity_metrics(hass, call)
-
-    async def handle_get_problematic_entities(call: ServiceCall) -> dict[str, Any]:
-        return await _get_problematic_entities(hass, call)
-
-    async def handle_get_area_status(call: ServiceCall) -> dict[str, Any]:
-        return await _get_area_status(hass, call)
-
-    # Register services with async wrapper functions
+    # Register service with async wrapper function
     hass.services.async_register(
         DOMAIN,
         "run_analysis",
         handle_run_analysis,
-        schema=entry_id_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN, "reset_entities", handle_reset_entities, schema=entry_id_schema
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "get_entity_metrics",
-        handle_get_entity_metrics,
-        schema=entry_id_schema,
+        schema=None,
         supports_response=SupportsResponse.ONLY,
     )
 
-    hass.services.async_register(
-        DOMAIN,
-        "get_problematic_entities",
-        handle_get_problematic_entities,
-        schema=entry_id_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "get_area_status",
-        handle_get_area_status,
-        schema=entry_id_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    _LOGGER.info("Registered %d services for %s integration", 5, DOMAIN)
+    _LOGGER.info("Registered %d service for %s integration", 1, DOMAIN)

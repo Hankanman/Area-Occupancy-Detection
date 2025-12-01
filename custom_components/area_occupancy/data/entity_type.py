@@ -1,16 +1,19 @@
 """Minimal intelligent entity type builder."""
 
-from dataclasses import dataclass
 from enum import StrEnum
+import logging
 from typing import Any
 
 from homeassistant.const import (
-    STATE_OFF,
+    STATE_CLOSED,
     STATE_ON,
+    STATE_OPEN,
     STATE_PAUSED,
     STATE_PLAYING,
     STATE_STANDBY,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class InputType(StrEnum):
@@ -24,23 +27,119 @@ class InputType(StrEnum):
     TEMPERATURE = "temperature"
     HUMIDITY = "humidity"
     ILLUMINANCE = "illuminance"
+    CO2 = "co2"
+    SOUND_PRESSURE = "sound_pressure"
+    PRESSURE = "pressure"
+    AIR_QUALITY = "air_quality"
+    VOC = "voc"
+    PM25 = "pm25"
+    PM10 = "pm10"
+    ENERGY = "energy"
     ENVIRONMENTAL = "environmental"
     UNKNOWN = "unknown"
 
 
-@dataclass
 class EntityType:
     """Entity type. active_states or active_range must be provided, but not both."""
 
-    input_type: InputType
-    weight: float
-    prob_given_true: float
-    prob_given_false: float
-    active_states: list[str] | None = None
-    active_range: tuple[float, float] | None = None
+    def __init__(
+        self,
+        input_type: InputType,
+        weight: float | None = None,
+        prob_given_true: float | None = None,
+        prob_given_false: float | None = None,
+        active_states: list[str] | None = None,
+        active_range: tuple[float, float] | None = None,
+    ) -> None:
+        """Initialize the entity type.
 
-    def __post_init__(self) -> None:
-        """Post init."""
+        Args:
+            input_type: The input type enum.
+            weight: Weight for this entity type. If None, uses default from DEFAULT_TYPES.
+            prob_given_true: Probability given true occupancy. If None, uses default.
+            prob_given_false: Probability given false occupancy. If None, uses default.
+            active_states: List of active states (mutually exclusive with active_range).
+                If None, uses default. Empty list is treated as "use defaults".
+            active_range: Tuple of (min, max) for active range (mutually exclusive with active_states).
+                If None, uses default.
+
+        Raises:
+            ValueError: If neither or both of active_states and active_range are provided,
+                or if parameter values are invalid.
+        """
+        self.input_type = input_type
+
+        # Validate weight if provided
+        if weight is not None:
+            if not isinstance(weight, (int, float)) or not 0 <= weight <= 1:
+                raise ValueError(f"Invalid weight for {input_type}: {weight}")
+
+        # Validate active_states if provided
+        if active_states is not None:
+            if not isinstance(active_states, list) or not all(
+                isinstance(s, str) for s in active_states
+            ):
+                raise ValueError(
+                    f"Invalid active states for {input_type}: {active_states}"
+                )
+
+        # Validate active_range if provided
+        if active_range is not None:
+            if not isinstance(active_range, tuple) or len(active_range) != 2:
+                raise ValueError(
+                    f"Invalid active range for {input_type}: {active_range}"
+                )
+
+        # Get defaults from DEFAULT_TYPES with safe fallback
+        default_type = DEFAULT_TYPES.get(input_type)
+        if default_type is None:
+            _LOGGER.warning(
+                "InputType %s is missing from DEFAULT_TYPES, falling back to UNKNOWN. "
+                "Please update DEFAULT_TYPES to include this input type.",
+                input_type,
+            )
+            default_type = DEFAULT_TYPES.get(InputType.UNKNOWN)
+            if default_type is None:
+                # Ultimate fallback if UNKNOWN is also missing (should never happen)
+                default_type = {
+                    "weight": 0.5,
+                    "prob_given_true": 0.5,
+                    "prob_given_false": 0.05,
+                    "active_states": [STATE_ON],
+                    "active_range": None,
+                }
+        defaults = dict(default_type)
+
+        # Start with defaults, then override with explicit params if provided
+        self.weight = weight if weight is not None else defaults["weight"]
+        self.prob_given_true = (
+            prob_given_true
+            if prob_given_true is not None
+            else defaults["prob_given_true"]
+        )
+        self.prob_given_false = (
+            prob_given_false
+            if prob_given_false is not None
+            else defaults["prob_given_false"]
+        )
+
+        # Handle active_states and active_range
+        # Empty list for active_states is treated as "use defaults"
+        has_explicit_states = active_states is not None and len(active_states) > 0
+        has_explicit_range = active_range is not None
+
+        if has_explicit_states and has_explicit_range:
+            raise ValueError("Cannot provide both active_states and active_range")
+        if has_explicit_states:
+            self.active_states = active_states
+            self.active_range = None
+        elif has_explicit_range:
+            self.active_range = active_range
+            self.active_states = None
+        else:
+            # Use defaults
+            self.active_states = defaults["active_states"]
+            self.active_range = defaults["active_range"]
 
         # Validate that we have exactly one of active_states or active_range
         has_active_states = (
@@ -52,61 +151,6 @@ class EntityType:
             raise ValueError("Either active_states or active_range must be provided")
         if has_active_states and has_active_range:
             raise ValueError("Cannot provide both active_states and active_range")
-
-    @classmethod
-    def create(cls, input_type: InputType, config: Any = None) -> "EntityType":
-        """Create an EntityType with optional configuration overrides."""
-        # Default data for each input type
-        data = DEFAULT_TYPES
-
-        params = dict(data[input_type])
-
-        # Apply configuration overrides if available
-        if config:
-            # Apply weight override
-            weights = getattr(config, "weights", None)
-            if weights:
-                weight_attr = getattr(weights, input_type.value, None)
-
-                if weight_attr is not None:
-                    if (
-                        not isinstance(weight_attr, (int, float))
-                        or not 0 <= weight_attr <= 1
-                    ):
-                        raise ValueError(
-                            f"Invalid weight for {input_type}: {weight_attr}"
-                        )
-                    params["weight"] = weight_attr
-
-            # Apply active states override
-            sensor_states = getattr(config, "sensor_states", None)
-            if sensor_states:
-                states_attr = getattr(sensor_states, input_type.value, None)
-                if states_attr is not None:
-                    if not isinstance(states_attr, list) or not all(
-                        isinstance(s, str) for s in states_attr
-                    ):
-                        raise ValueError(
-                            f"Invalid active states for {input_type}: {states_attr}"
-                        )
-                    # Only apply override if list is non-empty
-                    if len(states_attr) > 0:
-                        params["active_states"] = states_attr
-                        params["active_range"] = None  # Clear range when states are set
-                    # Empty list is treated as "use defaults" - no override applied
-
-            # Apply active range override
-            range_config_attr = f"{input_type.value}_active_range"
-            range_attr = getattr(config, range_config_attr, None)
-            if range_attr is not None:
-                if not isinstance(range_attr, tuple) or len(range_attr) != 2:
-                    raise ValueError(
-                        f"Invalid active range for {input_type}: {range_attr}"
-                    )
-                params["active_range"] = range_attr
-                params["active_states"] = None  # Clear states when range is set
-
-        return cls(input_type=input_type, **params)
 
 
 DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
@@ -135,14 +179,14 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "weight": 0.3,
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
-        "active_states": [STATE_OFF],
+        "active_states": [STATE_CLOSED],
         "active_range": None,
     },
     InputType.WINDOW: {
         "weight": 0.2,
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
-        "active_states": [STATE_ON],
+        "active_states": [STATE_OPEN],
         "active_range": None,
     },
     InputType.TEMPERATURE: {
@@ -165,6 +209,62 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_false": 0.01,
         "active_states": None,
         "active_range": (30.00, 100000.0),
+    },
+    InputType.CO2: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (400.0, 1200.0),
+    },
+    InputType.SOUND_PRESSURE: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (40.0, 80.0),
+    },
+    InputType.PRESSURE: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (980.0, 1050.0),
+    },
+    InputType.AIR_QUALITY: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (50.0, 150.0),
+    },
+    InputType.VOC: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (200.0, 1000.0),
+    },
+    InputType.PM25: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (12.0, 55.0),
+    },
+    InputType.PM10: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (55.0, 155.0),
+    },
+    InputType.ENERGY: {
+        "weight": 0.3,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": None,
+        "active_range": (0.1, 10.0),
     },
     InputType.ENVIRONMENTAL: {
         "weight": 0.1,

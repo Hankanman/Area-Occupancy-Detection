@@ -15,6 +15,7 @@ coverage.xml
 # Home Assistant configuration
 config/*
 !config/configuration.yaml
+!config/*backup*
 
 # Python Environment
 .venv
@@ -22,3 +23,4 @@ commit_messages.txt
 release_diff.txt
 codex.patch
 testlog.log
+build

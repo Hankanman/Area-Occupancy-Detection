@@ -1,9 +1,11 @@
 # Area Occupancy Detection for Home Assistant
 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?branch=main)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?label=tests)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?branch=main&label=docs)
-![Downloads](https://img.shields.io/badge/Downloads-271-blue)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?style=for-the-badge&branch=main)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?style=for-the-badge&label=tests)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?style=for-the-badge&branch=main&label=docs)
+
+[![version](https://shields.io/github/v/release/Hankanman/Area-Occupancy-Detection?style=for-the-badge)](https://github.com/Hankanman/Area-Occupancy-Detection/releases)
+[![Latest Release](https://img.shields.io/badge/dynamic/json?style=for-the-badge&color=41BDF5&logo=home-assistant&label=installs&cacheSeconds=15600&url=https://analytics.home-assistant.io/custom_integrations.json&query=$.area_occupancy.total)](https://analytics.home-assistant.io/custom_integrations.json)
 
 This integration provides advanced area occupancy detection by combining multiple sensors through probability calculations. It aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, historical data, and learned time-based occupancy patterns.
 
@@ -61,10 +63,6 @@ Automations that feel **predictive, not reactive** — making your smart home fe
 - **Machine Learning Model**: Train a true neural network based on history to predict occupancy, may be needed for the activity detection.
 - **Auto-Adjusting Threshold**: Based on the history of itself and predictions, automatically adjust the threshold for occupancy status so the user doesn't need to.
 - **Numeric Sensor Analysis**: Currently numeric sensors (like environmental ones) are just triggered based on a fixed set of value ranges. This feature will correctly analyse the history and set correct ranges and detect trends.
-- **Additional Input Types**: Add further types of sensors:
-  - CO2
-  - Sound (decibels)
-  - Energy/Power
 - **Location Aware**: Leveraging BLE, WiFi, GPS
 - **Weather-Aware**: If it’s cold and rainy, you might be more likely to be indoors — integrate weather data into priors to influence probabilities.
 - **Occupancy Zone Hierarchies**:
@@ -110,7 +108,6 @@ The integration creates several entities, all prefixed with your configured area
 
     - `active_triggers`: List of sensors currently indicating activity.
     - `sensor_probabilities`: Individual probability details for each sensor.
-    - `type_probabilities`: Per-input-type occupancy probabilities.
     - `time_prior`: Prior probability for the current day/time slot.
     - `threshold`: Current threshold setting.
     - `decay_active`: Whether decay is currently active.

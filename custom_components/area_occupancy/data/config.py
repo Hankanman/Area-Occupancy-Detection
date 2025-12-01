@@ -7,28 +7,43 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    ANALYSIS_INTERVAL,
+    CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_CO2_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_ENERGY_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_MIN_PRIOR_OVERRIDE,
+    CONF_MOTION_PROB_GIVEN_FALSE,
+    CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
-    CONF_NAME,
-    CONF_PRIMARY_OCCUPANCY_SENSOR,
+    CONF_PM10_SENSORS,
+    CONF_PM25_SENSORS,
+    CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
+    CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_VOC_SENSORS,
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
@@ -42,13 +57,19 @@ from ..const import (
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
+    DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_MIN_PRIOR_OVERRIDE,
+    DEFAULT_MOTION_PROB_GIVEN_FALSE,
+    DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SLEEP_END,
+    DEFAULT_SLEEP_START,
     DEFAULT_THRESHOLD,
     DEFAULT_WASP_MAX_DURATION,
     DEFAULT_WASP_MOTION_TIMEOUT,
@@ -56,6 +77,7 @@ from ..const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
+    DEFAULT_WEIGHT_ENERGY,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
@@ -63,6 +85,7 @@ from ..const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     HA_RECORDER_DAYS,
 )
+from .purpose import get_default_decay_half_life
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -71,20 +94,91 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+class IntegrationConfig:
+    """Integration-level configuration for Area Occupancy Detection.
+
+    This class manages global settings that apply to the entire integration,
+    such as coordinator timing intervals, database behavior, and future
+    cross-area coordination features.
+
+    This is separate from AreaConfig, which handles per-area occupancy
+    detection settings like sensors, weights, and thresholds.
+    """
+
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize the integration configuration.
+
+        Args:
+            coordinator: The coordinator instance
+            config_entry: The Home Assistant config entry
+        """
+        self.coordinator = coordinator
+        self.config_entry = config_entry
+        self.hass = coordinator.hass
+
+        # Integration identification
+        self.integration_name = config_entry.title
+
+        # Timing and performance settings
+        self.analysis_interval = ANALYSIS_INTERVAL
+        self.decay_interval = DECAY_INTERVAL
+
+        # Database and storage settings
+        # These could be made configurable in the future if needed
+        # self.database_retention_days = RETENTION_DAYS
+        # self.enable_backups = True
+
+        # Global Settings
+        # self.sleep_start and self.sleep_end are now properties
+
+        # Future: Cross-area coordination settings
+        # self.person_tracking_enabled = False
+        # self.area_transition_detection = False
+        # self.global_occupancy_threshold = 0.5
+
+    @property
+    def sleep_start(self) -> str:
+        """Get sleep start time from config entry options."""
+        return self.config_entry.options.get(CONF_SLEEP_START, DEFAULT_SLEEP_START)
+
+    @property
+    def sleep_end(self) -> str:
+        """Get sleep end time from config entry options."""
+        return self.config_entry.options.get(CONF_SLEEP_END, DEFAULT_SLEEP_END)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the integration config."""
+        return f"IntegrationConfig(name={self.integration_name!r})"
+
+
 @dataclass
 class Sensors:
     """Sensors configuration."""
 
     motion: list[str] = field(default_factory=list)
     motion_timeout: int = DEFAULT_MOTION_TIMEOUT
-    primary_occupancy: str | None = None
+    motion_prob_given_true: float = DEFAULT_MOTION_PROB_GIVEN_TRUE
+    motion_prob_given_false: float = DEFAULT_MOTION_PROB_GIVEN_FALSE
     media: list[str] = field(default_factory=list)
     appliance: list[str] = field(default_factory=list)
     illuminance: list[str] = field(default_factory=list)
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
+    co2: list[str] = field(default_factory=list)
+    sound_pressure: list[str] = field(default_factory=list)
+    pressure: list[str] = field(default_factory=list)
+    air_quality: list[str] = field(default_factory=list)
+    voc: list[str] = field(default_factory=list)
+    pm25: list[str] = field(default_factory=list)
+    pm10: list[str] = field(default_factory=list)
+    energy: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
+    _parent_config: "AreaConfig | None" = field(default=None, repr=False, compare=False)
 
     def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
         """Get motion sensors including wasp sensor if enabled and available.
@@ -100,12 +194,26 @@ class Sensors:
         motion_sensors = self.motion.copy()
 
         # Add wasp sensor if enabled and entity_id is available
-        if (
-            coordinator
-            and coordinator.config.wasp_in_box.enabled
-            and getattr(coordinator, "wasp_entity_id", None)
-        ):
-            wasp_id = coordinator.wasp_entity_id
+        # Use parent config if available, otherwise fall back to checking coordinator
+        if self._parent_config and hasattr(self._parent_config, "wasp_in_box"):
+            wasp_enabled = self._parent_config.wasp_in_box.enabled
+        else:
+            # Fallback for cases where parent config isn't set
+            wasp_enabled = False
+
+        if wasp_enabled:
+            # In multi-area architecture, wasp_entity_id is stored per area
+            wasp_id = None
+            if (
+                self._parent_config
+                and hasattr(self._parent_config, "area_name")
+                and self._parent_config.area_name
+                and self._parent_config.area_name in coordinator.areas
+            ):
+                # Get wasp_entity_id from the area's data
+                area_data = coordinator.areas[self._parent_config.area_name]
+                wasp_id = getattr(area_data, "wasp_entity_id", None)
+
             if wasp_id is not None:
                 motion_sensors.append(wasp_id)
                 _LOGGER.debug(
@@ -139,6 +247,7 @@ class Weights:
     door: float = DEFAULT_WEIGHT_DOOR
     window: float = DEFAULT_WEIGHT_WINDOW
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
+    energy: float = DEFAULT_WEIGHT_ENERGY
     wasp: float = DEFAULT_WASP_WEIGHT
 
 
@@ -161,20 +270,60 @@ class WaspInBox:
     verification_delay: int = DEFAULT_WASP_VERIFICATION_DELAY
 
 
-class Config:
+class AreaConfig:
     """Configuration for Area Occupancy Detection."""
 
-    def __init__(self, coordinator: "AreaOccupancyCoordinator"):
-        """Initialize the config from a coordinator."""
+    def __init__(
+        self,
+        coordinator: "AreaOccupancyCoordinator",
+        area_name: str | None = None,
+        area_data: dict[str, Any] | None = None,
+    ):
+        """Initialize the config from a coordinator.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name identifier (for multi-area support)
+            area_data: Optional area-specific configuration data (if None, uses config_entry)
+        """
         self.coordinator = coordinator
         self.config_entry = coordinator.config_entry
         self.hass = coordinator.hass
         self.db = coordinator.db
+        self.area_name = area_name  # Area identifier for multi-area support
 
-        # Load configuration from the merged entry data
-        if coordinator.config_entry is None:
-            raise ValueError("Coordinator config_entry cannot be None")
-        self._load_config(self._merge_entry(coordinator.config_entry))
+        # Load configuration from the merged entry data or provided area_data
+        if area_data is not None:
+            self._load_config(area_data)
+        else:
+            if coordinator.config_entry is None:
+                raise ValueError("Coordinator config_entry cannot be None")
+            merged = self._merge_entry(coordinator.config_entry)
+
+            # Check if we have CONF_AREAS format (multi-area)
+            if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+                # Validate area_name is provided for multi-area config
+                if area_name is None:
+                    raise ValueError(
+                        "area_name is required when using multi-area configuration format"
+                    )
+                # Extract area data for this specific area
+                area_data = self._extract_area_data_from_areas_list(
+                    merged[CONF_AREAS], area_name, coordinator.hass
+                )
+                if area_data:
+                    self._load_config(area_data)
+                else:
+                    # Area not found in config - log warning and load empty/default config
+                    # to avoid silently ingesting top-level CONF_AREAS structure
+                    _LOGGER.warning(
+                        "Area '%s' not found in configuration. Loading default config.",
+                        area_name,
+                    )
+                    self._load_config({})
+            else:
+                # No areas found in config
+                self._load_config({})
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -187,22 +336,46 @@ class Config:
         threshold = float(data.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)) / 100.0
 
         # Set all configuration attributes
-        self.name = data.get(CONF_NAME, "Area Occupancy")
+        # Area name is resolved from area_id when needed (via coordinator)
         self.purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+        # Get area_id from data
         self.area_id = data.get(CONF_AREA_ID)
+        if not self.area_id:
+            _LOGGER.warning(
+                "Area config missing area_id for area '%s'.",
+                self.area_name,
+            )
+        # The canonical name is normally resolved from area_id via the coordinator,
+        # but we store the provided area_name from the constructor as the local
+        # name/fallback (for legacy or initial display) rather than resolving it here.
+        self.name = self.area_name  # Use area_name passed to constructor
         self.threshold = threshold
 
         self.sensors = Sensors(
             motion=data.get(CONF_MOTION_SENSORS, []),
             motion_timeout=int(data.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)),
-            primary_occupancy=data.get(CONF_PRIMARY_OCCUPANCY_SENSOR),
+            motion_prob_given_true=float(
+                data.get(CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE)
+            ),
+            motion_prob_given_false=float(
+                data.get(CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE)
+            ),
             media=data.get(CONF_MEDIA_DEVICES, []),
             appliance=data.get(CONF_APPLIANCES, []),
             illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
             humidity=data.get(CONF_HUMIDITY_SENSORS, []),
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
+            co2=data.get(CONF_CO2_SENSORS, []),
+            sound_pressure=data.get(CONF_SOUND_PRESSURE_SENSORS, []),
+            pressure=data.get(CONF_PRESSURE_SENSORS, []),
+            air_quality=data.get(CONF_AIR_QUALITY_SENSORS, []),
+            voc=data.get(CONF_VOC_SENSORS, []),
+            pm25=data.get(CONF_PM25_SENSORS, []),
+            pm10=data.get(CONF_PM10_SENSORS, []),
+            energy=data.get(CONF_ENERGY_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
+            _parent_config=self,
         )
 
         self.sensor_states = SensorStates(
@@ -216,18 +389,25 @@ class Config:
         )
 
         self.weights = Weights(
-            motion=data[CONF_WEIGHT_MOTION],
-            media=data[CONF_WEIGHT_MEDIA],
-            appliance=data[CONF_WEIGHT_APPLIANCE],
-            door=data[CONF_WEIGHT_DOOR],
-            window=data[CONF_WEIGHT_WINDOW],
-            environmental=data[CONF_WEIGHT_ENVIRONMENTAL],
-            wasp=data[CONF_WASP_WEIGHT],
+            motion=data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+            media=data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
+            appliance=data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            door=data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            window=data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            environmental=data.get(
+                CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
+            ),
+            wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
         )
 
+        # Resolve half-life: if 0 or not set, use purpose-based value
+        half_life_value = int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE))
+        if half_life_value == 0:
+            half_life_value = int(get_default_decay_half_life(self.purpose))
+
         self.decay = Decay(
+            half_life=half_life_value,
             enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
-            half_life=int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)),
         )
 
         self.wasp_in_box = WaspInBox(
@@ -242,6 +422,10 @@ class Config:
             verification_delay=int(
                 data.get(CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY)
             ),
+        )
+
+        self.min_prior_override = float(
+            data.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE)
         )
 
     @property
@@ -266,6 +450,14 @@ class Config:
             *self.sensors.illuminance,
             *self.sensors.humidity,
             *self.sensors.temperature,
+            *self.sensors.co2,
+            *self.sensors.sound_pressure,
+            *self.sensors.pressure,
+            *self.sensors.air_quality,
+            *self.sensors.voc,
+            *self.sensors.pm25,
+            *self.sensors.pm10,
+            *self.sensors.energy,
         ]
 
     def validate_entity_configuration(self) -> list[str]:
@@ -301,6 +493,13 @@ class Config:
             ("illuminance", self.sensors.illuminance),
             ("humidity", self.sensors.humidity),
             ("temperature", self.sensors.temperature),
+            ("co2", self.sensors.co2),
+            ("sound_pressure", self.sensors.sound_pressure),
+            ("pressure", self.sensors.pressure),
+            ("air_quality", self.sensors.air_quality),
+            ("voc", self.sensors.voc),
+            ("pm25", self.sensors.pm25),
+            ("pm10", self.sensors.pm10),
         ]:
             if entity_list and not all(
                 isinstance(eid, str) and eid.strip() for eid in entity_list
@@ -316,13 +515,74 @@ class Config:
         merged.update(config_entry.options)
         return merged
 
+    @staticmethod
+    def _extract_area_data_from_areas_list(
+        areas_list: list[dict[str, Any]],
+        area_name: str | None,
+        hass: HomeAssistant,
+    ) -> dict[str, Any] | None:
+        """Extract area data from CONF_AREAS list for a specific area.
+
+        Args:
+            areas_list: List of area configuration dictionaries
+            area_name: Area name to find (resolved from area_id)
+            hass: Home Assistant instance for resolving area names
+
+        Returns:
+            Area configuration dictionary if found, None otherwise
+        """
+        if not area_name:
+            return None
+
+        area_reg = ar.async_get(hass)
+
+        # Try to find area by matching area_name with resolved area names
+        for area_data in areas_list:
+            area_id = area_data.get(CONF_AREA_ID)
+            if area_id:
+                # Resolve area name from ID
+                area_entry = area_reg.async_get_area(area_id)
+                if area_entry and area_entry.name == area_name:
+                    return area_data
+
+        # Fallback: if no match found, return None
+        return None
+
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry."""
         # Update the config entry reference
         self.config_entry = config_entry
 
         # Reload configuration from the merged entry data
-        self._load_config(self._merge_entry(config_entry))
+        merged = self._merge_entry(config_entry)
+
+        # Check if we have CONF_AREAS format (multi-area)
+        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+            # Validate area_name is provided for multi-area config
+            if self.area_name is None:
+                raise ValueError(
+                    "area_name is required when using multi-area configuration format"
+                )
+            # Extract area data for this specific area
+            area_data = self._extract_area_data_from_areas_list(
+                merged[CONF_AREAS], self.area_name, self.hass
+            )
+            if area_data:
+                self._load_config(area_data)
+            else:
+                # Area not found in config - log warning and load empty/default config
+                # to avoid silently ingesting top-level CONF_AREAS structure
+                _LOGGER.warning(
+                    "Area '%s' not found in configuration. Loading default config.",
+                    self.area_name,
+                )
+                self._load_config({})
+        else:
+            # No CONF_AREAS format found - load empty/default config
+            _LOGGER.warning(
+                "Configuration must contain CONF_AREAS list. Loading default config."
+            )
+            self._load_config({})
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value by key."""
@@ -344,11 +604,72 @@ class Config:
             if self.config_entry is None:
                 raise ValueError("Config entry is None")
 
+        def _validate_area_name_for_multi_area(data: dict[str, Any]) -> None:
+            """Validate area_name is provided when using multi-area configuration format."""
+            if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
+                if self.area_name is None:
+                    raise ValueError(
+                        "area_name is required when using multi-area configuration format"
+                    )
+
+        def _validate_area_found_in_list(area_id: str, area_updated: bool) -> None:
+            """Validate that area was found in CONF_AREAS list."""
+            if not area_updated:
+                _LOGGER.warning(
+                    "Area with ID '%s' not found in CONF_AREAS list when updating config",
+                    area_id,
+                )
+                raise ValueError(
+                    f"Area with ID '{area_id}' not found in CONF_AREAS list"
+                )
+
+        def _validate_area_id_available(area_id: str | None) -> None:
+            """Validate that area_id is available for config update."""
+            if not area_id:
+                _LOGGER.warning(
+                    "Area ID not available, cannot update area in CONF_AREAS list"
+                )
+                raise ValueError("Area ID not available for config update")
+
+        def _validate_multi_area_format(
+            new_options: dict[str, Any],
+        ) -> None:
+            """Validate that configuration is in multi-area format."""
+            if CONF_AREAS not in new_options or not isinstance(
+                new_options.get(CONF_AREAS), list
+            ):
+                raise ValueError(
+                    "Configuration must be in multi-area format (CONF_AREAS list)"
+                )
+
         try:
             _validate_config_entry()
             # Create new options dict by merging existing with new options
             new_options = dict(self.config_entry.options)  # type: ignore[union-attr]
-            new_options.update(options)
+
+            # Check if we're in multi-area format and need to update area within CONF_AREAS list
+            _validate_multi_area_format(new_options)
+
+            # Multi-area format: update the specific area within CONF_AREAS list
+            areas_list = new_options[CONF_AREAS].copy()
+            area_updated = False
+
+            # Find the area to update by matching area_id
+            area_id = self.area_id
+            _validate_area_id_available(area_id)
+
+            for i, area_data in enumerate(areas_list):
+                if area_data.get(CONF_AREA_ID) == area_id:
+                    # Merge new options into existing area config
+                    updated_area = dict(area_data)
+                    updated_area.update(options)
+                    areas_list[i] = updated_area
+                    area_updated = True
+                    break
+
+            _validate_area_found_in_list(area_id, area_updated)
+            # Update CONF_AREAS list with modified area
+            new_options[CONF_AREAS] = areas_list
 
             # Update the config entry in Home Assistant
             self.hass.config_entries.async_update_entry(
@@ -358,10 +679,34 @@ class Config:
 
             # Merge existing config entry with new options for internal state
             data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
-            data.update(options)
+            # For multi-area format, data already has updated area from new_options
 
-            # Reload configuration with updated data
-            self._load_config(data)
+            # Validate area_name for multi-area config before processing
+            _validate_area_name_for_multi_area(data)
+
+            # Check if we have CONF_AREAS format (multi-area)
+            if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
+                # Extract area data for this specific area
+                area_data = self._extract_area_data_from_areas_list(
+                    data[CONF_AREAS], self.area_name, self.hass
+                )
+                if area_data:
+                    # Reload configuration with extracted area data
+                    self._load_config(area_data)
+                else:
+                    # Area not found in config - log warning and load empty/default config
+                    # to avoid silently ingesting top-level CONF_AREAS structure
+                    _LOGGER.warning(
+                        "Area '%s' not found in configuration. Loading default config.",
+                        self.area_name,
+                    )
+                    self._load_config({})
+            else:
+                # No CONF_AREAS format found - log warning and load empty/default config
+                _LOGGER.warning(
+                    "Configuration must contain CONF_AREAS list. Loading default config."
+                )
+                self._load_config({})
 
             # Request update since threshold affects occupied calculation
             # Only request refresh if setup is complete to avoid debouncer conflicts

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "area-occupancy-detection"
-version = "2025.11.2"
+version = "2025.12.0"
 license = "Apache-2.0"
 description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
 readme = "README.md"  # Assuming you'll have a README.md
@@ -23,64 +23,15 @@ classifiers = [
 ]
 requires-python = ">=3.13.2"
 dependencies = [
-  "aiodns==3.5.0",
-  # Integrations may depend on hassio integration without listing it to
-  # change behavior based on presence of supervisor. Deprecated with #127228
-  # Lib can be removed with 2025.11
-  "aiohasupervisor==0.3.3",
-  "aiohttp==3.13.2",
-  "aiohttp_cors==0.8.1",
-  "aiohttp-fast-zlib==0.3.0",
-  "aiohttp-asyncmdnsresolver==0.1.1",
-  "aiozoneinfo==0.2.3",
-  "annotatedyaml==1.0.2",
-  "astral==3.2",
-  "async-interrupt==1.2.2",
-  "attrs==25.4.0",
-  "atomicwrites-homeassistant==1.4.1",
-  "audioop-lts==0.2.1",
-  "awesomeversion==25.8.0",
-  "bcrypt==5.0.0",
-  "certifi>=2021.5.30",
-  "ciso8601==2.3.3",
-  "cronsim==2.7",
-  "fnv-hash-fast==1.6.0",
-  # hass-nabucasa is imported by helpers which don't depend on the cloud
-  # integration
-  "hass-nabucasa==1.4.0",
-  # When bumping httpx, please check the version pins of
-  # httpcore, anyio, and h11 in gen_requirements_all
-  "httpx==0.28.1",
-  "home-assistant-bluetooth==2.0.0",
-  "ifaddr==0.2.0",
-  "Jinja2==3.1.6",
-  "lru-dict==1.4.1",
-  "PyJWT==2.10.1",
-  # PyJWT has loose dependency. We want the latest one.
-  "cryptography==46.0.2",
-  "Pillow==12.0.0",
-  "propcache==0.4.1",
-  "pyOpenSSL==25.3.0",
-  "orjson==3.11.3",
-  "packaging>=23.1",
-  "psutil-home-assistant==0.0.1",
-  "python-slugify==8.0.4",
-  "PyYAML==6.0.3",
-  "requests==2.32.5",
-  "securetar==2025.2.1",
-  "SQLAlchemy==2.0.44",
-  "standard-aifc==3.13.0",
-  "standard-telnetlib==3.13.0",
-  "typing-extensions>=4.15.0,<5.0",
-  "ulid-transform==1.5.2",
-  "urllib3>=2.0",
-  "uv==0.9.6",
-  "voluptuous==0.15.2",
-  "voluptuous-serialize==2.7.0",
-  "voluptuous-openapi==0.2.0",
-  "yarl==1.22.0",
-  "webrtc-models==0.3.0",
-  "zeroconf==0.148.0",
+  # External dependencies used directly by the component
+  # Home Assistant and its dependencies are managed by the homeassistant package
+  "sqlalchemy>=2.0",
+  "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit==4.3.0",
 ]
 
 [project.urls]
@@ -453,6 +404,16 @@ markers = [
 filterwarnings = [
   "error::sqlalchemy.exc.SAWarning",
   "error:usefixtures\\(\\) in .* without arguments has no effect:UserWarning",  # pytest
+
+  # -- SQLite connection warnings in tests
+  # Python 3.13 is very strict about unclosed resources. SQLite connections
+  # created during test setup/teardown may not be immediately closed, but
+  # they are properly cleaned up by SQLAlchemy's connection pooling.
+  # These warnings come from Python's internal modules (threading, unittest.mock, etc.)
+  # when connections are created during test execution.
+  "ignore::ResourceWarning:.*sqlite3.Connection",
+  "ignore:unclosed.*database.*sqlite3.Connection:ResourceWarning",
+  "ignore:unclosed database:ResourceWarning",
 
   # -- Asyncio warnings in CI environments
   "ignore:coroutine .* was never awaited:RuntimeWarning",

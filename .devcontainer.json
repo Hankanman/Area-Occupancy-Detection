@@ -1,8 +1,8 @@
 {
-  "name": "Area Occupancy",
+  "name": "Home Assistant Custom Integration Development",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
-  "postCreateCommand": "scripts/setup --recreate-venv",
-  "postStartCommand": "echo 'source .venv/bin/activate' >> ~/.bashrc",
+  "postCreateCommand": "scripts/setup",
+  "postStartCommand": "scripts/motd",
   "forwardPorts": [8123],
   "portsAttributes": {
     "8123": {
@@ -14,27 +14,21 @@
     "vscode": {
       "extensions": [
         "charliermarsh.ruff",
-        "ms-python.pylint",
-        "ms-python.vscode-pylance",
-        "visualstudioexptteam.vscodeintellicode",
-        "redhat.vscode-yaml",
-        "esbenp.prettier-vscode",
         "github.vscode-pull-request-github",
-        "github.vscode-github-actions"
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ryanluker.vscode-coverage-gutters"
       ],
       "settings": {
         "files.eol": "\n",
         "editor.tabSize": 4,
-        
-        "python.terminal.activateEnvInCurrentTerminal": true,
         "editor.formatOnPaste": true,
         "editor.formatOnSave": true,
-        "editor.formatOnType": true,
+        "editor.formatOnType": false,
         "files.trimTrailingWhitespace": true,
         "python.analysis.typeCheckingMode": "basic",
         "python.analysis.autoImportCompletions": true,
-        "python.defaultInterpreterPath": ".venv/bin/python",
-        "python.venvPath": ".venv",
+        "python.defaultInterpreterPath": "${containerEnv:PWD}/.venv/bin/python",
         "[python]": {
           "editor.defaultFormatter": "charliermarsh.ruff"
         }
@@ -43,20 +37,8 @@
   },
   "remoteUser": "vscode",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
-      "packages": ["ffmpeg", "libturbojpeg0", "libpcap-dev"]
-    },
-    "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/node:1": {
-      "nodeGypDependencies": true,
-      "installYarnUsingApt": true,
-      "version": "lts",
-      "pnpmVersion": "latest",
-      "nvmVersion": "latest"
+      "packages": "ffmpeg,libturbojpeg0,libpcap-dev"
     }
-  },
-  "containerEnv": {
-    "VIRTUAL_ENV": "/workspaces/Area-Occupancy-Detection/.venv"
   }
 }
