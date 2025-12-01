@@ -8,15 +8,11 @@ Evidence collection is the process of determining whether each configured sensor
 
 ## Entity State Tracking
 
-Each entity is represented by an `Entity` object that tracks its current state and evidence.
-
-**Code Reference:** ```24:62:custom_components/area_occupancy/data/entity.py``` (Entity class)
+Each entity tracks its current state and evidence.
 
 ### State Retrieval
 
-Entities retrieve their current state from Home Assistant:
-
-**Code Reference:** ```81:107:custom_components/area_occupancy/data/entity.py``` (Entity.state property)
+Entities retrieve their current state from Home Assistant.
 
 The state retrieval process:
 1. Gets state from Home Assistant's state registry (`hass.states.get(entity_id)`)
@@ -25,9 +21,7 @@ The state retrieval process:
 
 ### Evidence Determination
 
-The system determines if an entity's current state indicates activity:
-
-**Code Reference:** ```115:134:custom_components/area_occupancy/data/entity.py``` (Entity.evidence property)
+The system determines if an entity's current state indicates activity.
 
 Process:
 1. **Check Availability**: If state is `None` (unavailable), returns `None`
@@ -40,17 +34,13 @@ Process:
    - Returns `False` otherwise
 4. **Default**: Returns `None` if no active criteria are defined
 
-**Code Reference:** ```142:149:custom_components/area_occupancy/data/entity.py``` (active_states and active_range properties)
-
 ### Active State Calculation
 
-The `active` property combines current evidence with decay state:
+The active state combines current evidence with decay state:
 
-**Code Reference:** ```137:140:custom_components/area_occupancy/data/entity.py``` (Entity.active property)
-
-```
-active = evidence OR decay.is_decaying
-```
+\[
+active = evidence \lor decay\_is\_active
+\]
 
 This means an entity is considered "active" if:
 - It currently has evidence (`evidence == True`), OR
@@ -62,28 +52,22 @@ Decay allows entities to continue providing evidence for a period after they bec
 
 ### Decay Start/Stop Triggers
 
-Decay is managed automatically based on evidence transitions:
+Decay is managed automatically based on evidence transitions.
 
-**Code Reference:** ```175:212:custom_components/area_occupancy/data/entity.py``` (Entity.has_new_evidence)
-
-The `has_new_evidence()` method:
+The system detects evidence transitions:
 1. Gets current evidence from state
 2. Compares with previous evidence
 3. Detects transitions:
    - **FALSE → TRUE**: Stops decay (if active), evidence is now present
    - **TRUE → FALSE**: Starts decay, evidence was lost
-4. Updates `previous_evidence` for next comparison
-5. Returns `True` if transition occurred, `False` otherwise
-
-**Code Reference:** ```52:62:custom_components/area_occupancy/data/decay.py``` (Decay.start_decay and stop_decay)
+4. Updates previous evidence state for next comparison
+5. Triggers recalculation if transition occurred
 
 ### Decay Factor Calculation
 
-The decay factor represents how "fresh" the evidence is, ranging from 1.0 (fresh) to 0.0 (expired):
+The decay factor represents how "fresh" the evidence is, ranging from 1.0 (fresh) to 0.0 (expired).
 
-**Code Reference:** ```37:50:custom_components/area_occupancy/data/decay.py``` (Decay.decay_factor property)
-
-Calculation:
+The decay factor is calculated using exponential decay:
 ```
 age = current_time - decay_start_time
 decay_factor = 0.5^(age / half_life)
@@ -94,27 +78,23 @@ The decay factor:
 - Decreases exponentially over time
 - Stops automatically when it drops below 0.05 (5%, practical zero)
 
-**Code Reference:** ```151:160:custom_components/area_occupancy/data/entity.py``` (Entity.decay_factor property)
-
 The entity's decay factor returns 1.0 if evidence is currently `True`, preventing decay from being applied when the entity is actively providing evidence.
 
 ### Effective Evidence Calculation
 
 During probability calculation, the system determines "effective evidence" - whether the entity should be treated as providing evidence:
 
-**Code Reference:** ```115:116:custom_components/area_occupancy/utils.py```
-
-```
-effective_evidence = value OR is_decaying
-```
+\[
+effective\_evidence = current\_evidence \lor decay\_is\_active
+\]
 
 Where:
-- `value` is the current `entity.evidence` (True/False/None)
-- `is_decaying` is whether the entity's decay is active
+- `current_evidence` is the current evidence state (True/False/None)
+- `decay_is_active` is whether the entity's decay is currently active
 
 This means an entity provides effective evidence if:
-- It currently has evidence (`value == True`), OR
-- It is decaying (`is_decaying == True`)
+- It currently has evidence, OR
+- It is decaying
 
 ## Entity Filtering
 
@@ -122,23 +102,11 @@ Before entities are used in probability calculation, they are filtered to exclud
 
 ### Zero Weight Exclusion
 
-Entities with zero weight are excluded from the calculation:
-
-**Code Reference:** ```68:73:custom_components/area_occupancy/utils.py```
-
-```python
-active_entities = {k: v for k, v in entities.items() if v.weight > 0.0}
-```
-
-Entities with `weight == 0.0` contribute nothing to the calculation, so they are filtered out early.
+Entities with zero weight are excluded from the calculation. Entities with `weight == 0.0` contribute nothing to the calculation, so they are filtered out early.
 
 ### Invalid Likelihood Exclusion
 
-Entities with invalid likelihoods are excluded:
-
-**Code Reference:** ```75:93:custom_components/area_occupancy/utils.py```
-
-Invalid likelihoods are:
+Entities with invalid likelihoods are excluded. Invalid likelihoods are:
 - `prob_given_true <= 0.0` or `>= 1.0`
 - `prob_given_false <= 0.0` or `>= 1.0`
 
@@ -146,16 +114,7 @@ These would cause `log(0)` or `log(1)` errors in log-space calculations, so they
 
 ### Unavailable Entity Handling
 
-Entities with unavailable states are handled specially:
-
-**Code Reference:** ```110:113:custom_components/area_occupancy/utils.py```
-
-```python
-if value is None and not is_decaying:
-    continue  # Skip unavailable entities unless decaying
-```
-
-Unavailable entities (`evidence == None`) are skipped unless they are decaying. This prevents unavailable sensors from affecting the calculation while still allowing decaying evidence to contribute.
+Entities with unavailable states are handled specially. Unavailable entities (`evidence == None`) are skipped unless they are decaying. This prevents unavailable sensors from affecting the calculation while still allowing decaying evidence to contribute.
 
 ## Evidence State Machine
 
@@ -257,9 +216,7 @@ Consider a temperature sensor with `active_range = (20.0, 25.0)`:
 
 ## Entity Manager
 
-The `EntityManager` class manages all entities for an area:
-
-**Code Reference:** ```custom_components/area_occupancy/data/entity.py``` (EntityManager class)
+The Entity Manager manages all entities for an area.
 
 Responsibilities:
 - Creates entities from configuration

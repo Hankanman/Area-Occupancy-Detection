@@ -105,25 +105,21 @@ automation:
 ## Tips and Tricks
 
 1. **Optimal Threshold**:
-
-   - Start at 50%
-   - Increase for fewer false positives
-   - Decrease for higher sensitivity
+      - Start at 50%
+      - Increase for fewer false positives
+      - Decrease for higher sensitivity
 
 2. **Sensor Weights**:
-
-   - Adjust based on reliability
-   - Higher weights = stronger influence
-   - Balance multiple sensors
+      - Adjust based on reliability
+      - Higher weights = stronger influence
+      - Balance multiple sensors
 
 3. **Decay Settings**:
-
-   - Match room usage patterns
-   - Longer windows for less traffic
-   - Shorter windows for high traffic
+      - Match room usage patterns
+      - Longer windows for less traffic
+      - Shorter windows for high traffic
 
 4. **Historical Learning**:
-
-   - Enable for better accuracy
-   - Use longer periods when stable
-   - Update regularly
+      - Enable for better accuracy
+      - Use longer periods when stable
+      - Update regularly

@@ -22,23 +22,25 @@ For a complete end-to-end explanation of the calculation process, see [Complete 
 
 ## Data Flow and Components
 
-- **AreaOccupancyCoordinator (`coordinator.py`):** Central orchestrator that tracks entity states, schedules updates, handles decay and stores configuration.
-- **EntityManager (`data/entity.py`):** Creates and maintains `Entity` objects with evidence, likelihoods and decay data.
-- **Prior (`data/prior.py`):** Handles learning priors and likelihoods from historical recorder data and exposes time-based priors.
-- **Bayesian Utilities (`utils.py`):** Provides `bayesian_probability` and helper functions for log-space probability calculations.
-- **Database (`db.py`):** Stores historical state intervals used for learning.
-- **Services (`service.py`):** Exposes services such as `run_analysis` and `get_area_status`.
+The system consists of several conceptual components:
+
+- **Coordinator:** Central orchestrator that tracks entity states, schedules updates, handles decay and stores configuration.
+- **Entity Manager:** Creates and maintains entity objects with evidence, likelihoods and decay data.
+- **Prior Manager:** Handles learning priors and likelihoods from historical recorder data and exposes time-based priors.
+- **Bayesian Calculator:** Performs log-space probability calculations combining evidence with priors.
+- **Database:** Stores historical state intervals used for learning.
+- **Services:** Exposes services such as `run_analysis` for manual analysis triggers.
 
 For visual representations of data flow, see [Data Flow Diagrams](data-flow.md).
 
 ## Processing Steps
 
-1. **Initialization:** Coordinator loads configuration, sets up entities and loads any stored priors from the database.
-2. **State Updates:** When a monitored entity changes state, the coordinator updates the corresponding `Entity` object and triggers a probability recalculation.
-3. **Probability Calculation:** `bayesian_probability` combines entity evidence with the area and time priors in log space, applying the configured weights.
-4. **Decay Handling:** If probability decreases, entity decay objects gradually reduce their influence until new evidence appears.
-5. **Learning Priors:** Periodically or via `run_analysis`, the `Prior` class analyses recorder history to update priors and likelihoods which are stored in the database.
-6. **Outputs:** The coordinator updates Home Assistant entities (probability, status, priors, evidence, decay, threshold) with the latest values.
+1. **Initialization:** System loads configuration, sets up entities and loads any stored priors from the database.
+2. **State Updates:** When a monitored entity changes state, the system updates the corresponding entity object and triggers a probability recalculation.
+3. **Probability Calculation:** Bayesian probability calculation combines entity evidence with the area and time priors in log space, applying the configured weights.
+4. **Decay Handling:** If probability decreases, entity decay gradually reduces their influence until new evidence appears.
+5. **Learning Priors:** Periodically or via `run_analysis` service, the system analyses recorder history to update priors and likelihoods which are stored in the database.
+6. **Outputs:** The system updates Home Assistant entities (probability, status, priors, evidence, decay, threshold) with the latest values.
 
 This architecture allows the integration to react quickly to new sensor data while continuously refining its understanding of each entity's reliability over time.
 
@@ -54,7 +56,7 @@ For in-depth explanations of specific aspects of the calculation:
 
 ### Learning Processes
 
-- **[Prior Calculation Deep Dive](prior-calculation.md)** - How global and time-based priors are calculated from historical data
+- **[Prior Calculation Deep Dive](../features/prior-learning.md)** - How global and time-based priors are calculated from historical data
 - **[Likelihood Calculation Deep Dive](likelihood-calculation.md)** - How sensor reliability likelihoods are learned
 - **[Prior Learning Feature](../features/prior-learning.md)** - User-facing prior learning documentation
 - **[Likelihood Feature](../features/likelihood.md)** - User-facing likelihood documentation
@@ -68,34 +70,33 @@ For in-depth explanations of specific aspects of the calculation:
 
 - **[Data Flow Diagrams](data-flow.md)** - Visual flow diagrams using Mermaid syntax showing initialization, learning, real-time updates, and component interactions
 
-## Key Functions and Files
+## Key Operations
 
 ### Initialization
 
-- `coordinator.py:setup()` - Lines 241-321: Coordinator initialization and area setup
-- `area/area.py:__init__()` - Lines 90-150: Area component initialization
-- `data/analysis.py:start_prior_analysis()` - Lines 911-967: Prior learning orchestration
+- **Coordinator Setup:** Initializes all areas and loads configuration
+- **Area Initialization:** Sets up area components (config, entities, priors, purpose)
+- **Prior Learning Orchestration:** Coordinates the analysis of historical data to learn priors
 
 ### Real-Time Calculation
 
-- `coordinator.py:track_entity_state_changes()` - Lines 585-620: Entity state change detection
-- `data/entity.py:Entity.has_new_evidence()` - Lines 175-220: Evidence transition detection
-- `area/area.py:probability()` - Lines 188-201: Probability calculation entry point
-- `utils.py:bayesian_probability()` - Lines 55-157: Core Bayesian calculation
-- `utils.py:combine_priors()` - Lines 160-225: Prior combination in logit space
+- **Entity State Change Detection:** Monitors sensor state changes and triggers recalculation
+- **Evidence Transition Detection:** Identifies when entities transition between active and inactive states
+- **Probability Calculation:** Core Bayesian calculation combining evidence with priors
+- **Prior Combination:** Combines global and time-based priors in logit space
 
 ### Prior Calculation
 
-- `data/analysis.py:PriorAnalyzer.analyze_area_prior()` - Lines 174-381: Global prior calculation
-- `data/analysis.py:PriorAnalyzer.analyze_time_priors()` - Lines 383-545: Time-based prior calculation
-- `data/prior.py:Prior.value` - Lines 79-116: Prior retrieval and combination
+- **Global Prior Calculation:** Analyzes historical data to determine overall occupancy rate
+- **Time-Based Prior Calculation:** Calculates occupancy probability for each day-of-week and time-slot combination
+- **Prior Retrieval and Combination:** Retrieves and combines priors for real-time calculations
 
 ### Likelihood Calculation
 
-- `db/correlation.py:analyze_correlation()` - Unified correlation analysis for all sensors (numeric and binary)
-- `data/entity.py:Entity.get_likelihoods()` - Dynamic PDF-based likelihood calculation at runtime
+- **Correlation Analysis:** Unified correlation analysis for all sensors (numeric and binary)
+- **Dynamic Likelihood Calculation:** Calculates likelihoods at runtime based on current sensor state
 
 ### Decay
 
-- `data/decay.py:Decay.decay_factor` - Lines 37-50: Decay factor calculation
-- `data/entity.py:Entity.decay_factor` - Lines 151-160: Entity decay factor with evidence check
+- **Decay Factor Calculation:** Calculates exponential decay factor based on time since evidence became inactive
+- **Entity Decay Integration:** Integrates decay factor with entity evidence for probability calculation

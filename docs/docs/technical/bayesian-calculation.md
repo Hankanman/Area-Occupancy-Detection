@@ -1,6 +1,6 @@
 # Bayesian Calculation Deep Dive
 
-This document provides a detailed mathematical and implementation explanation of the Bayesian probability calculation used for area occupancy detection.
+This document provides a detailed mathematical explanation of the Bayesian probability calculation used for area occupancy detection.
 
 ## Mathematical Foundation
 
@@ -79,11 +79,9 @@ P(Occupied) = \frac{e^{\log P(Occupied) - \max_log}}{e^{\log P(Occupied) - \max_
 
 ## Step-by-Step Calculation
 
-**Code Reference:** `55:157:custom_components/area_occupancy/utils.py` (bayesian_probability function)
+The Bayesian probability calculation follows these steps:
 
 ### Step 1: Entity Filtering
-
-**Code Reference:** `64:93:custom_components/area_occupancy/utils.py`
 
 Filter out entities that can't contribute:
 
@@ -97,113 +95,79 @@ These would cause `log(0)` or `log(1)` errors.
 
 ### Step 2: Prior Clamping
 
-**Code Reference:** `95:96:custom_components/area_occupancy/utils.py`
-
-Ensure prior is in valid range:
-
-```python
-prior = clamp_probability(prior)  # Clamp to [MIN_PROBABILITY, MAX_PROBABILITY]
-```
-
-This prevents `log(0)` or `log(1)` when initializing log probabilities.
+Ensure prior is in valid range by clamping it to `[MIN_PROBABILITY, MAX_PROBABILITY]`. This prevents `log(0)` or `log(1)` when initializing log probabilities.
 
 ### Step 3: Log-Space Initialization
 
-**Code Reference:** `98:100:custom_components/area_occupancy/utils.py`
-
 Initialize log probabilities:
 
-```python
-log_true = math.log(prior)
-log_false = math.log(1 - prior)
-```
+\[
+\log P(Occupied) = \log(prior)
+\]
+\[
+\log P(Not Occupied) = \log(1 - prior)
+\]
 
 These represent the log probabilities for "occupied" and "not occupied" hypotheses before considering any entity evidence.
 
 ### Step 4: Entity Processing Loop
 
-**Code Reference:** `102:144:custom_components/area_occupancy/utils.py`
-
 For each entity:
 
 #### 4a. Get Evidence and Decay
 
-```python
-value = entity.evidence  # Current evidence (True/False/None)
-decay_factor = entity.decay.decay_factor
-is_decaying = entity.decay.is_decaying
-```
+Determine the current evidence state (active, inactive, or unavailable) and whether the entity is currently decaying from previous activity.
 
 #### 4b. Skip Unavailable Entities
 
-**Code Reference:** `110:113:custom_components/area_occupancy/utils.py`
-
-```python
-if value is None and not is_decaying:
-    continue  # Skip unavailable entities unless decaying
-```
+Entities with unavailable evidence are skipped unless they're decaying. This prevents unavailable sensors from affecting the calculation.
 
 #### 4c. Determine Effective Evidence
 
-**Code Reference:** `115:116:custom_components/area_occupancy/utils.py`
-
-```python
-effective_evidence = value or is_decaying
-```
-
-Entity provides evidence if currently active OR decaying.
+An entity provides evidence if it is currently active OR decaying. This ensures that recently active entities continue to contribute even after their state becomes inactive.
 
 #### 4d. Get Likelihoods
 
-**Code Reference:** `118:132:custom_components/area_occupancy/utils.py`
+If effective evidence is present, use the learned likelihoods directly. If the entity is decaying, interpolate the likelihoods between their learned values and neutral (0.5) based on the decay factor:
 
-If effective evidence is present:
+\[
+p_{adjusted} = 0.5 + (p_{learned} - 0.5) \times decay\_factor
+\]
 
-```python
-p_t = entity.prob_given_true
-p_f = entity.prob_given_false
+If no effective evidence (inactive sensor), use inverse likelihoods:
 
-# Apply decay interpolation if decaying
-if is_decaying and decay_factor < 1.0:
-    neutral_prob = 0.5
-    p_t = neutral_prob + (p_t - neutral_prob) * decay_factor
-    p_f = neutral_prob + (p_f - neutral_prob) * decay_factor
-```
-
-If no effective evidence (inactive sensor):
-
-```python
-# Use inverse likelihoods for inactive sensors
-# P(Inactive | Occupied) = 1 - P(Active | Occupied)
-# P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
-p_t = 1.0 - entity.prob_given_true
-p_f = 1.0 - entity.prob_given_false
-```
+\[
+p_t = 1.0 - prob\_given\_true \quad \text{(P(Inactive | Occupied))}
+\]
+\[
+p_f = 1.0 - prob\_given\_false \quad \text{(P(Inactive | Not Occupied))}
+\]
 
 This ensures inactive sensors provide proper negative evidence. For example, if a sensor is usually active when occupied (`prob_given_true = 0.8`), then when it's inactive, it suggests the area is likely not occupied (`p_t = 0.2`).
 
 #### 4e. Clamp Likelihoods
 
-**Code Reference:** `134:136:custom_components/area_occupancy/utils.py`
-
-```python
-p_t = clamp_probability(p_t)  # Prevent log(0) or log(1)
-p_f = clamp_probability(p_f)
-```
+Clamp likelihoods to valid range to prevent `log(0)` or `log(1)` errors.
 
 #### 4f. Calculate Weighted Log Contributions
 
-**Code Reference:** `138:144:custom_components/area_occupancy/utils.py`
+Calculate the weighted log contribution for each entity:
 
-```python
-log_p_t = math.log(p_t)
-log_p_f = math.log(p_f)
-contribution_true = log_p_t * entity.weight
-contribution_false = log_p_f * entity.weight
+\[
+contribution\_true = \log(p_t) \times weight
+\]
+\[
+contribution\_false = \log(p_f) \times weight
+\]
 
-log_true += contribution_true
-log_false += contribution_false
-```
+Accumulate into log probabilities:
+
+\[
+\log P(Occupied) += contribution\_true
+\]
+\[
+\log P(Not Occupied) += contribution\_false
+\]
 
 The weight multiplies the log contribution, so:
 
@@ -213,29 +177,20 @@ The weight multiplies the log contribution, so:
 
 ### Step 5: Normalization
 
-**Code Reference:** `146:157:custom_components/area_occupancy/utils.py`
-
 Convert back to probability space:
 
-```python
-max_log = max(log_true, log_false)
-true_prob = math.exp(log_true - max_log)
-false_prob = math.exp(log_false - max_log)
+\[
+\max\_log = \max(\log P(Occupied), \log P(Not Occupied))
+\]
+\[
+P(Occupied) = \frac{e^{\log P(Occupied) - \max\_log}}{e^{\log P(Occupied) - \max\_log} + e^{\log P(Not Occupied) - \max\_log}}
+\]
 
-total_prob = true_prob + false_prob
-if total_prob == 0.0:
-    return prior  # Fallback if both probabilities are zero
-
-return true_prob / total_prob
-```
-
-The subtraction of `max_log` prevents overflow when exponentiating.
+The subtraction of `max_log` prevents overflow when exponentiating. If both probabilities become zero after exponentiation, the calculation returns the prior as a fallback.
 
 ## Inverse Likelihoods for Inactive Sensors
 
-When a sensor is inactive (not providing evidence), the system uses inverse likelihoods instead of neutral probabilities:
-
-**Code Reference:** `129:132:custom_components/area_occupancy/utils.py`
+When a sensor is inactive (not providing evidence), the system uses inverse likelihoods instead of neutral probabilities.
 
 ### Why Inverse Likelihoods?
 
@@ -269,9 +224,7 @@ This ensures inactive sensors contribute meaningful evidence to the calculation 
 
 ## Decay Interpolation
 
-When an entity is decaying, its likelihoods are interpolated toward neutral (0.5):
-
-**Code Reference:** `123:128:custom_components/area_occupancy/utils.py`
+When an entity is decaying, its likelihoods are interpolated toward neutral (0.5).
 
 ### Interpolation Formula
 
@@ -305,9 +258,7 @@ Entity with `prob_given_true = 0.9` (very reliable):
 
 ## Weight Application
 
-Entity weights determine how much each entity's evidence contributes:
-
-**Code Reference:** `140:141:custom_components/area_occupancy/utils.py`
+Entity weights determine how much each entity's evidence contributes.
 
 ### Weighted Log Contribution
 
@@ -394,36 +345,27 @@ The motion sensor's strong positive evidence (active with high `p_t`) significan
 
 ### Clamping Probabilities
 
-**Code Reference:** `49:51:custom_components/area_occupancy/utils.py` (clamp_probability)
-
-All probabilities are clamped to `[MIN_PROBABILITY, MAX_PROBABILITY]` to prevent:
+All probabilities are clamped to a valid range `[MIN_PROBABILITY, MAX_PROBABILITY]` to prevent:
 
 - `log(0)` errors (MIN_PROBABILITY > 0)
 - `log(1)` errors (MAX_PROBABILITY < 1)
 
 ### Max Log Subtraction
 
-**Code Reference:** `147:149:custom_components/area_occupancy/utils.py`
-
 Subtracting the maximum log value before exponentiation prevents overflow:
 
-```python
-max_log = max(log_true, log_false)
-true_prob = math.exp(log_true - max_log)
-```
+\[
+\max\_log = \max(\log P(Occupied), \log P(Not Occupied))
+\]
+\[
+P(Occupied) = e^{\log P(Occupied) - \max\_log}
+\]
 
 This ensures at least one exponentiated value is 1.0, preventing overflow.
 
 ### Edge Case Handling
 
-**Code Reference:** `151:156:custom_components/area_occupancy/utils.py`
-
-If both probabilities become zero after exponentiation (shouldn't happen but handled defensively):
-
-```python
-if total_prob == 0.0:
-    return prior  # Fallback to prior
-```
+If both probabilities become zero after exponentiation (shouldn't happen but handled defensively), the calculation returns the prior as a fallback.
 
 ## Performance Considerations
 
@@ -455,6 +397,6 @@ Prior values are cached to avoid repeated database queries:
 
 - [Complete Calculation Flow](calculation-flow.md) - End-to-end process
 - [Calculation Feature](../features/calculation.md) - User-facing documentation
-- [Prior Calculation Deep Dive](prior-calculation.md) - How priors are calculated
+- [Prior Calculation Deep Dive](../features/prior-learning.md) - How priors are calculated
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - How likelihoods are learned
 - [Entity Evidence Collection](entity-evidence.md) - How evidence is determined

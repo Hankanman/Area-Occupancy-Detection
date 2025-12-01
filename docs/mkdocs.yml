@@ -117,6 +117,12 @@ nav:
   - Technical:
       - Deep Dive: technical/deep-dive.md
       - Analysis Chain: technical/analysis-chain.md
+      - Bayesian Calculation: technical/bayesian-calculation.md
+      - Calculation Flow: technical/calculation-flow.md
+      - Data Flow: technical/data-flow.md
+      - Entity Evidence: technical/entity-evidence.md
+      - Likelihood Calculation: technical/likelihood-calculation.md
+      - Database Schema: technical/database-schema.md
       - Pre-Releases: technical/prerelease.md
       - Debugging: technical/debug.md
   - Simulator: simulator/index.md
