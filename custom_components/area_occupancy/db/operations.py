@@ -219,7 +219,9 @@ async def load_data(db: AreaOccupancyDB) -> None:
             ) = await db.hass.async_add_executor_job(_read_data_operation, area_name)
 
             # Update prior from GlobalPriors table
-            global_prior_data = db.get_global_prior(area_name)
+            global_prior_data = await db.hass.async_add_executor_job(
+                db.get_global_prior, area_name
+            )
             if global_prior_data:
                 area_data.prior.set_global_prior(global_prior_data["prior_value"])
 

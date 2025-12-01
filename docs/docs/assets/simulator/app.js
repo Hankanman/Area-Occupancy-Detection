@@ -24,12 +24,20 @@
 
   document.body.classList.add("aod-simulator-mode");
 
+  // ============================================================================
+  // Constants and State
+  // ============================================================================
+
   function deepClone(value) {
     if (value === undefined) {
       return undefined;
     }
     return JSON.parse(JSON.stringify(value));
   }
+
+  // ============================================================================
+  // State Management
+  // ============================================================================
 
   function hasSimulation() {
     return Boolean(state.simulation?.request && state.simulation?.result);
@@ -55,6 +63,290 @@
       return undefined;
     }
     return state.simulation.entityLookup?.[entityId]?.entity;
+  }
+
+  // ============================================================================
+  // Utility Functions
+  // ============================================================================
+
+  function getErrorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function resetRequestTracking() {
+    state.lastRequestHash = null;
+    state.lastDecayFactors = {};
+  }
+
+  function buildEntityMap(entities) {
+    const map = new Map();
+    entities.forEach((entity) => {
+      if (entity?.entity_id) {
+        map.set(entity.entity_id, entity);
+      }
+    });
+    return map;
+  }
+
+  // ============================================================================
+  // Entity State Logic
+  // ============================================================================
+
+  // ============================================================================
+  // Request Management
+  // ============================================================================
+
+  // ============================================================================
+  // Control Initialization
+  // ============================================================================
+
+  // ============================================================================
+  // Decay Calculation
+  // ============================================================================
+
+  function updateResultWithDecay(decayUpdates, result) {
+    // Update entity_decay in result
+    if (!result.entity_decay) {
+      result.entity_decay = {};
+    }
+
+    Object.keys(decayUpdates).forEach((entityId) => {
+      const update = decayUpdates[entityId];
+      if (result.entity_decay[entityId]) {
+        result.entity_decay[entityId] = {
+          ...result.entity_decay[entityId],
+          ...update,
+        };
+      } else {
+        result.entity_decay[entityId] = {
+          is_decaying: update.is_decaying,
+          decay_factor: update.decay_factor,
+          decay_start: state.simulation.request.entities.find(
+            (e) => e.entity_id === entityId
+          )?.decay?.decay_start,
+          evidence: false,
+        };
+      }
+    });
+
+    // Update entities in result to show updated decay factors
+    if (Array.isArray(result.entities)) {
+      result.entities.forEach((entity) => {
+        const decayUpdate = decayUpdates[entity.entity_id];
+        if (decayUpdate && entity.decay) {
+          entity.decay = {
+            ...entity.decay,
+            ...decayUpdate,
+          };
+        }
+      });
+    }
+  }
+
+  function estimateProbabilityFromDecay(decayUpdates, result) {
+    const lastProbability = result.probability ?? 0;
+    const areaPriors = result.area?.priors ?? {};
+    const prior = areaPriors.final ?? areaPriors.combined ?? 0.5;
+
+    // Calculate average decay impact
+    // Entities with higher weight and contribution have more impact when they decay
+    let totalDecayImpact = 0;
+    let totalWeight = 0;
+
+    if (Array.isArray(result.entities)) {
+      result.entities.forEach((entity) => {
+        const decayUpdate = decayUpdates[entity.entity_id];
+        if (decayUpdate) {
+          // Use stored last decay factor, or current if not stored
+          const originalDecayFactor =
+            state.lastDecayFactors[entity.entity_id] ??
+            entity.decay?.decay_factor ??
+            1.0;
+          const newDecayFactor = decayUpdate.decay_factor ?? 0.0;
+          const decayChange = originalDecayFactor - newDecayFactor;
+
+          if (decayChange > 0) {
+            // Entity is decaying - calculate its impact
+            const entityWeight = entity.weight ?? 0;
+            const contribution = Math.abs(entity.contribution ?? 0);
+            // Impact is proportional to weight and contribution
+            // Decay reduces influence, so we weight by how much it's decaying
+            const impact = decayChange * entityWeight * contribution;
+            totalDecayImpact += impact;
+            totalWeight += entityWeight * contribution;
+          }
+        }
+      });
+    }
+
+    // Estimate new probability
+    // As decay progresses, probability moves toward prior
+    // The amount of movement depends on the decay impact
+    let estimatedProbability = lastProbability;
+    if (totalWeight > 0 && totalDecayImpact > 0) {
+      // Normalize decay impact (0 to 1 scale)
+      const normalizedImpact = Math.min(1.0, totalDecayImpact / totalWeight);
+      // Interpolate between last probability and prior based on decay impact
+      // More decay = closer to prior
+      estimatedProbability =
+        lastProbability * (1 - normalizedImpact * 0.3) +
+        prior * (normalizedImpact * 0.3);
+      // Clamp to valid range
+      estimatedProbability = Math.max(0, Math.min(1, estimatedProbability));
+    }
+
+    return estimatedProbability;
+  }
+
+  function createSliderHandler(config) {
+    const {
+      slider,
+      clampFn,
+      updateState,
+      label,
+      formatter = formatPercent,
+      runAnalysis = true,
+    } = config;
+
+    if (!slider) return;
+
+    const applyValue = (value, { runAnalysis: shouldRun = false } = {}) => {
+      const numericValue = clampFn(Number.parseFloat(value ?? "0"));
+      if (hasSimulation() && updateState) {
+        updateState(numericValue);
+      }
+      slider.value = numericValue;
+      setRangeLabelWithValue(slider, numericValue, label, formatter);
+      if (shouldRun && runAnalysis) {
+        analyzeSimulation({ resetHistory: false, priority: "user" });
+      }
+    };
+
+    slider.addEventListener("sl-input", (event) => {
+      applyValue(getEventValue(event));
+    });
+
+    slider.addEventListener("sl-change", (event) => {
+      applyValue(getEventValue(event), { runAnalysis: true });
+    });
+  }
+
+  function cancelPendingRequests() {
+    if (state.abortController) {
+      state.abortController.abort();
+      state.abortController = null;
+    }
+
+    if (state.pendingRequest?.abortSignal) {
+      state.pendingRequest.abortSignal.abort();
+    }
+
+    state.requestQueue = state.requestQueue.filter(
+      (req) => req !== state.pendingRequest
+    );
+    state.pendingRequest = null;
+  }
+
+  function cancelQueuedAutoRequests() {
+    state.requestQueue.forEach((req) => {
+      if (req.priority === "auto" && req.abortSignal) {
+        req.abortSignal.abort();
+      }
+    });
+    state.requestQueue = state.requestQueue.filter(
+      (req) => req.priority !== "auto"
+    );
+  }
+
+  function determineEvidenceFromState(
+    stateValue,
+    originalEvidence,
+    originalState
+  ) {
+    const stateStr = String(stateValue).toLowerCase();
+    const isActive = ["on", "open", "true", "1"].includes(stateStr);
+    const isInactive = ["off", "closed", "false", "0"].includes(stateStr);
+
+    if (isActive) return true;
+    if (isInactive) return false;
+    if (stateStr === String(originalState || "").toLowerCase()) {
+      return originalEvidence;
+    }
+    return originalEvidence;
+  }
+
+  function formatStateDisplay(stateValue, isNumeric) {
+    if (isNumeric) {
+      const numValue = Number.parseFloat(stateValue);
+      return Number.isFinite(numValue)
+        ? numValue.toFixed(2)
+        : String(stateValue);
+    }
+    return String(stateValue);
+  }
+
+  function captureFocusState(container) {
+    const activeElement = document.activeElement;
+    if (!activeElement || !container.contains(activeElement)) {
+      return null;
+    }
+
+    const card = activeElement.closest(".sim-card");
+    if (!card) return null;
+
+    const entityId = card.getAttribute("data-entity-id");
+    if (!entityId) return null;
+
+    const focusState = { entityId };
+
+    if (
+      activeElement.tagName === "SL-INPUT" &&
+      activeElement.type === "number"
+    ) {
+      focusState.value = activeElement.value;
+      if (activeElement.shadowRoot) {
+        const input = activeElement.shadowRoot.querySelector("input");
+        if (input) {
+          focusState.selectionStart = input.selectionStart;
+          focusState.selectionEnd = input.selectionEnd;
+        }
+      }
+    }
+
+    return focusState;
+  }
+
+  function restoreFocusState(container, focusState) {
+    if (!focusState) return;
+
+    const card = container.querySelector(
+      `[data-entity-id="${focusState.entityId}"]`
+    );
+    if (!card) return;
+
+    const input = card.querySelector('sl-input[type="number"]');
+    if (!input) return;
+
+    if (focusState.value !== null) {
+      input.value = focusState.value;
+    }
+
+    requestAnimationFrame(() => {
+      input.focus();
+      if (
+        focusState.selectionStart !== null &&
+        focusState.selectionEnd !== null &&
+        input.shadowRoot
+      ) {
+        const shadowInput = input.shadowRoot.querySelector("input");
+        if (shadowInput) {
+          shadowInput.setSelectionRange(
+            focusState.selectionStart,
+            focusState.selectionEnd
+          );
+        }
+      }
+    });
   }
 
   function setSimulation(
@@ -85,20 +377,10 @@
     const newEntityInputs = deepClone(entityInputs ?? []);
 
     // Create a lookup map of current entity inputs by entity_id
-    const currentEntityMap = new Map();
-    currentEntities.forEach((entity) => {
-      if (entity?.entity_id) {
-        currentEntityMap.set(entity.entity_id, entity);
-      }
-    });
+    const currentEntityMap = buildEntityMap(currentEntities);
 
     // Create a map of new entity inputs by entity_id
-    const newEntityMap = new Map();
-    newEntityInputs.forEach((entity) => {
-      if (entity?.entity_id) {
-        newEntityMap.set(entity.entity_id, entity);
-      }
-    });
+    const newEntityMap = buildEntityMap(newEntityInputs);
 
     // Merge entities: preserve user-modified states, update other fields
     const mergedEntities = [];
@@ -313,34 +595,12 @@
 
     // If user request and there's a pending request, cancel it
     if (priority === "user" && state.pendingRequest) {
-      // Cancel in-flight auto-update request
-      if (state.abortController) {
-        state.abortController.abort();
-        state.abortController = null;
-      }
-      // Abort the pending request's signal if it exists
-      if (state.pendingRequest.abortSignal) {
-        state.pendingRequest.abortSignal.abort();
-      }
-      // Remove the cancelled request from queue if it's there
-      state.requestQueue = state.requestQueue.filter(
-        (req) => req !== state.pendingRequest
-      );
-      // Clear pending request - the aborted request will clean up isAnalyzing in its finally block
-      state.pendingRequest = null;
+      cancelPendingRequests();
     }
 
     // If user request, cancel any queued auto-update requests
     if (priority === "user" && state.requestQueue.length > 0) {
-      state.requestQueue.forEach((req) => {
-        if (req.priority === "auto" && req.abortSignal) {
-          req.abortSignal.abort();
-        }
-      });
-      // Remove cancelled auto-update requests from queue
-      state.requestQueue = state.requestQueue.filter(
-        (req) => req.priority !== "auto"
-      );
+      cancelQueuedAutoRequests();
     }
 
     // If a request is in progress, queue this one
@@ -430,6 +690,10 @@
     }
     return event?.target?.value;
   }
+
+  // ============================================================================
+  // API Communication
+  // ============================================================================
 
   function normalizeBaseUrl(url) {
     if (!url) {
@@ -537,7 +801,10 @@
     return payload ?? {};
   }
 
-  // DOM references
+  // ============================================================================
+  // DOM References
+  // ============================================================================
+
   const rootEl = document.querySelector(".aod-simulator");
   const yamlInput = document.getElementById("yaml-input");
   const loadBtn = document.getElementById("load-btn");
@@ -594,6 +861,10 @@
       baseLabel: "Temperature",
     },
   };
+
+  // ============================================================================
+  // UI Rendering
+  // ============================================================================
 
   function showError(message) {
     if (!errorMessage) {
@@ -927,8 +1198,7 @@
           control.checked = lastKnownChecked;
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        showError(message);
+        showError(getErrorMessage(error));
         control.checked = lastKnownChecked;
       } finally {
         control.disabled = false;
@@ -987,8 +1257,7 @@
           input.value = lastKnownValue;
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        showError(message);
+        showError(getErrorMessage(error));
         input.value = lastKnownValue;
       } finally {
         setLoadingState(false);
@@ -1030,8 +1299,7 @@
           showError("Failed to update sensor state");
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        showError(message);
+        showError(getErrorMessage(error));
       }
     });
 
@@ -1109,48 +1377,14 @@
     const entityDecay = result.entity_decay ?? {};
 
     // Preserve focus and value of any currently focused numeric input
-    const activeElement = document.activeElement;
-    let focusedEntityId = null;
-    let focusedInputValue = null;
-    let focusedInputSelectionStart = null;
-    let focusedInputSelectionEnd = null;
-
-    if (activeElement && sensorsContainer.contains(activeElement)) {
-      const card = activeElement.closest(".sim-card");
-      if (card) {
-        const entityIdAttr = card.getAttribute("data-entity-id");
-        if (entityIdAttr) {
-          focusedEntityId = entityIdAttr;
-          // If it's a numeric input, preserve its value and selection
-          if (
-            activeElement.tagName === "SL-INPUT" &&
-            activeElement.type === "number"
-          ) {
-            focusedInputValue = activeElement.value;
-            // Try to get selection from shadow DOM
-            if (activeElement.shadowRoot) {
-              const input = activeElement.shadowRoot.querySelector("input");
-              if (input) {
-                focusedInputSelectionStart = input.selectionStart;
-                focusedInputSelectionEnd = input.selectionEnd;
-              }
-            }
-          }
-        }
-      }
-    }
+    const focusState = captureFocusState(sensorsContainer);
 
     sensorsContainer.innerHTML = "";
     sensorsContainer.classList.toggle("empty", entities.length === 0);
 
     // Get request entities to merge user-modified states
     const requestEntities = state.simulation?.request?.entities ?? [];
-    const requestEntityMap = new Map();
-    requestEntities.forEach((reqEntity) => {
-      if (reqEntity?.entity_id) {
-        requestEntityMap.set(reqEntity.entity_id, reqEntity);
-      }
-    });
+    const requestEntityMap = buildEntityMap(requestEntities);
 
     const sorted = [...entities].sort((a, b) => {
       const aId = a.entity_id ?? "";
@@ -1168,74 +1402,30 @@
         // However, if this input is currently focused and being edited,
         // preserve the input's current value instead
         if (
-          focusedEntityId === entity.entity_id &&
-          focusedInputValue !== null &&
+          focusState &&
+          focusState.entityId === entity.entity_id &&
+          focusState.value !== null &&
           entityToRender.is_numeric
         ) {
           // User is typing in this input, preserve their current input value
-          entityToRender.state = focusedInputValue;
+          entityToRender.state = focusState.value;
         } else {
           entityToRender.state = requestEntity.state;
         }
 
         // Update state_display to match the new state
-        // Use the actual state value (which may be from focused input)
         const stateValue = entityToRender.state;
-        if (entityToRender.is_numeric) {
-          // For numeric sensors, format as number
-          try {
-            const numValue = Number.parseFloat(stateValue);
-            if (Number.isFinite(numValue)) {
-              entityToRender.state_display = numValue.toFixed(2);
-            } else {
-              entityToRender.state_display = String(stateValue);
-            }
-          } catch {
-            entityToRender.state_display = String(stateValue);
-          }
-        } else {
-          // For binary sensors, use the state as-is
-          entityToRender.state_display = String(stateValue);
-        }
+        entityToRender.state_display = formatStateDisplay(
+          stateValue,
+          entityToRender.is_numeric
+        );
 
-        // Determine if the user's state represents an active or inactive entity
-        // The user's state might be "on"/"off" (from toggle) or the actual entity state
-        // We need to determine evidence based on the state value
-        // Use the actual state value (which may be from focused input)
-        const userStateStr = String(stateValue).toLowerCase();
-
-        // Check if state represents active (common active states)
-        const isActiveState =
-          userStateStr === "on" ||
-          userStateStr === "open" ||
-          userStateStr === "true" ||
-          userStateStr === "1";
-
-        // Check if state represents inactive (common inactive states)
-        const isInactiveState =
-          userStateStr === "off" ||
-          userStateStr === "closed" ||
-          userStateStr === "false" ||
-          userStateStr === "0";
-
-        // Determine evidence: if we can clearly determine active/inactive, use that
-        // Otherwise, preserve the original entity's evidence if state matches original
-        let newEvidence = entityToRender.evidence; // Default to original
-        if (isActiveState) {
-          newEvidence = true;
-        } else if (isInactiveState) {
-          newEvidence = false;
-        } else {
-          // For unknown states, check if it matches the original entity's state
-          const originalStateStr = String(entity.state || "").toLowerCase();
-          if (userStateStr === originalStateStr) {
-            // State matches original, preserve original evidence
-            newEvidence = entity.evidence;
-          }
-          // Otherwise keep the default (original evidence)
-        }
-
-        entityToRender.evidence = newEvidence;
+        // Determine evidence from state
+        entityToRender.evidence = determineEvidenceFromState(
+          stateValue,
+          entityToRender.evidence,
+          entity.state
+        );
 
         // Update actions to reflect the user's state
         // Actions always have state "on" (active) and "off" (inactive)
@@ -1245,12 +1435,12 @@
               action.state === "on" ||
               action.label?.toLowerCase() === "active"
             ) {
-              return { ...action, active: newEvidence === true };
+              return { ...action, active: entityToRender.evidence === true };
             } else if (
               action.state === "off" ||
               action.label?.toLowerCase() === "inactive"
             ) {
-              return { ...action, active: newEvidence === false };
+              return { ...action, active: entityToRender.evidence === false };
             }
             return action;
           });
@@ -1266,38 +1456,7 @@
     });
 
     // Restore focus to the previously focused input if it exists
-    if (focusedEntityId) {
-      const card = sensorsContainer.querySelector(
-        `[data-entity-id="${focusedEntityId}"]`
-      );
-      if (card) {
-        const input = card.querySelector('sl-input[type="number"]');
-        if (input) {
-          // Restore the value if it was being edited
-          if (focusedInputValue !== null) {
-            input.value = focusedInputValue;
-          }
-          // Use requestAnimationFrame to ensure DOM is ready
-          requestAnimationFrame(() => {
-            input.focus();
-            // Try to restore selection in shadow DOM
-            if (
-              focusedInputSelectionStart !== null &&
-              focusedInputSelectionEnd !== null &&
-              input.shadowRoot
-            ) {
-              const shadowInput = input.shadowRoot.querySelector("input");
-              if (shadowInput) {
-                shadowInput.setSelectionRange(
-                  focusedInputSelectionStart,
-                  focusedInputSelectionEnd
-                );
-              }
-            }
-          });
-        }
-      }
-    }
+    restoreFocusState(sensorsContainer, focusState);
   }
 
   function syncPriorControls(result) {
@@ -1440,9 +1599,8 @@
   }
 
   function handleApiFailure(error, { silent = false } = {}) {
-    const message = error instanceof Error ? error.message : String(error);
     if (!silent) {
-      showError(message);
+      showError(getErrorMessage(error));
     }
 
     updateApiStatus("offline", "API Offline");
@@ -1525,96 +1683,14 @@
     const decayUpdates = calculateLocalDecay();
     const result = state.simulation.result;
 
-    // Update entity_decay in result
-    if (!result.entity_decay) {
-      result.entity_decay = {};
-    }
-
-    Object.keys(decayUpdates).forEach((entityId) => {
-      const update = decayUpdates[entityId];
-      if (result.entity_decay[entityId]) {
-        result.entity_decay[entityId] = {
-          ...result.entity_decay[entityId],
-          ...update,
-        };
-      } else {
-        result.entity_decay[entityId] = {
-          is_decaying: update.is_decaying,
-          decay_factor: update.decay_factor,
-          decay_start: state.simulation.request.entities.find(
-            (e) => e.entity_id === entityId
-          )?.decay?.decay_start,
-          evidence: false,
-        };
-      }
-    });
-
-    // Update entities in result to show updated decay factors
-    if (Array.isArray(result.entities)) {
-      result.entities.forEach((entity) => {
-        const decayUpdate = decayUpdates[entity.entity_id];
-        if (decayUpdate && entity.decay) {
-          entity.decay = {
-            ...entity.decay,
-            ...decayUpdate,
-          };
-        }
-      });
-    }
+    // Update result with decay changes
+    updateResultWithDecay(decayUpdates, result);
 
     // Estimate probability change based on decay
-    // When entities decay, their influence moves toward neutral (0.5),
-    // which tends to move the probability toward the prior
-    const lastProbability = result.probability ?? 0;
-    const areaPriors = result.area?.priors ?? {};
-    const prior = areaPriors.final ?? areaPriors.combined ?? 0.5;
-
-    // Calculate average decay impact
-    // Entities with higher weight and contribution have more impact when they decay
-    let totalDecayImpact = 0;
-    let totalWeight = 0;
-
-    if (Array.isArray(result.entities)) {
-      result.entities.forEach((entity) => {
-        const decayUpdate = decayUpdates[entity.entity_id];
-        if (decayUpdate) {
-          // Use stored last decay factor, or current if not stored
-          const originalDecayFactor =
-            state.lastDecayFactors[entity.entity_id] ??
-            entity.decay?.decay_factor ??
-            1.0;
-          const newDecayFactor = decayUpdate.decay_factor ?? 0.0;
-          const decayChange = originalDecayFactor - newDecayFactor;
-
-          if (decayChange > 0) {
-            // Entity is decaying - calculate its impact
-            const entityWeight = entity.weight ?? 0;
-            const contribution = Math.abs(entity.contribution ?? 0);
-            // Impact is proportional to weight and contribution
-            // Decay reduces influence, so we weight by how much it's decaying
-            const impact = decayChange * entityWeight * contribution;
-            totalDecayImpact += impact;
-            totalWeight += entityWeight * contribution;
-          }
-        }
-      });
-    }
-
-    // Estimate new probability
-    // As decay progresses, probability moves toward prior
-    // The amount of movement depends on the decay impact
-    let estimatedProbability = lastProbability;
-    if (totalWeight > 0 && totalDecayImpact > 0) {
-      // Normalize decay impact (0 to 1 scale)
-      const normalizedImpact = Math.min(1.0, totalDecayImpact / totalWeight);
-      // Interpolate between last probability and prior based on decay impact
-      // More decay = closer to prior
-      estimatedProbability =
-        lastProbability * (1 - normalizedImpact * 0.3) +
-        prior * (normalizedImpact * 0.3);
-      // Clamp to valid range
-      estimatedProbability = Math.max(0, Math.min(1, estimatedProbability));
-    }
+    const estimatedProbability = estimateProbabilityFromDecay(
+      decayUpdates,
+      result
+    );
 
     // Update probability display and chart
     setProbability(estimatedProbability);
@@ -1626,6 +1702,10 @@
       renderSensors(result);
     }
   }
+
+  // ============================================================================
+  // Auto-Update Management
+  // ============================================================================
 
   function stopAutoUpdate() {
     if (state.autoUpdateInterval) {
@@ -1674,6 +1754,10 @@
       await analyzeSimulation({ silent: true, priority: "auto" });
     }, 1000);
   }
+
+  // ============================================================================
+  // Event Handlers
+  // ============================================================================
 
   async function loadPurposes() {
     if (!purposeSelect) {
@@ -1740,14 +1824,11 @@
 
       setSimulation(payload.simulation, payload.result, { resetHistory: true });
       // Reset request hash on new simulation load to ensure first auto-update calls API
-      state.lastRequestHash = null;
-      // Reset decay factors tracking
-      state.lastDecayFactors = {};
+      resetRequestTracking();
       startAutoUpdate();
       updateApiStatus("online", "API Online");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      showError(`Error loading simulation: ${message}`);
+      showError(`Error loading simulation: ${getErrorMessage(error)}`);
       updateApiStatus("offline", "API Offline");
     }
   }
@@ -1810,13 +1891,10 @@
       state.selectedAreaName = newAreaName;
       setSimulation(payload.simulation, payload.result, { resetHistory: true });
       // Reset request hash when switching areas
-      state.lastRequestHash = null;
-      // Reset decay factors tracking
-      state.lastDecayFactors = {};
+      resetRequestTracking();
       updateApiStatus("online", "API Online");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      showError(`Error switching area: ${message}`);
+      showError(`Error switching area: ${getErrorMessage(error)}`);
       updateApiStatus("offline", "API Offline");
       // Revert selector to previous value
       if (areaSelector && state.selectedAreaName) {
@@ -1847,87 +1925,52 @@
   }
 
   function initPriorControls() {
-    if (globalPriorSlider) {
-      const clampPrior = (value) => Math.min(Math.max(value, 0), 1);
+    const clampPrior = (value) => Math.min(Math.max(value, 0), 1);
 
-      const applyValue = (value, { runAnalysis = false } = {}) => {
-        const numericValue = clampPrior(Number.parseFloat(value ?? "0"));
+    createSliderHandler({
+      slider: globalPriorSlider,
+      clampFn: clampPrior,
+      updateState: (value) => {
         if (hasSimulation()) {
-          state.simulation.request.area.global_prior = numericValue;
+          state.simulation.request.area.global_prior = value;
         }
-        globalPriorSlider.value = numericValue;
-        setRangeLabelWithValue(globalPriorSlider, numericValue, "Global Prior");
-        if (runAnalysis) {
-          analyzeSimulation({ resetHistory: false, priority: "user" });
-        }
-      };
+      },
+      label: "Global Prior",
+      formatter: formatPercent,
+    });
 
-      globalPriorSlider.addEventListener("sl-input", (event) => {
-        applyValue(getEventValue(event));
-      });
-
-      globalPriorSlider.addEventListener("sl-change", (event) => {
-        applyValue(getEventValue(event), { runAnalysis: true });
-      });
-    }
-
-    if (timePriorSlider) {
-      const clampPrior = (value) => Math.min(Math.max(value, 0), 1);
-
-      const applyValue = (value, { runAnalysis = false } = {}) => {
-        const numericValue = clampPrior(Number.parseFloat(value ?? "0"));
+    createSliderHandler({
+      slider: timePriorSlider,
+      clampFn: clampPrior,
+      updateState: (value) => {
         if (hasSimulation()) {
-          state.simulation.request.area.time_prior = numericValue;
+          state.simulation.request.area.time_prior = value;
         }
-        timePriorSlider.value = numericValue;
-        setRangeLabelWithValue(timePriorSlider, numericValue, "Time Prior");
-        if (runAnalysis) {
-          analyzeSimulation({ resetHistory: false, priority: "user" });
-        }
-      };
-
-      timePriorSlider.addEventListener("sl-input", (event) => {
-        applyValue(getEventValue(event));
-      });
-
-      timePriorSlider.addEventListener("sl-change", (event) => {
-        applyValue(getEventValue(event), { runAnalysis: true });
-      });
-    }
+      },
+      label: "Time Prior",
+      formatter: formatPercent,
+    });
   }
 
   function initWeightControls() {
+    const clampWeight = (value) => Math.min(Math.max(value, 0.01), 1);
+
     Object.entries(weightControls).forEach(([type, control]) => {
       if (!control.slider) {
         return;
       }
 
-      const clampWeight = (value) => Math.min(Math.max(value, 0.01), 1);
-
-      const applyValue = (value, { runAnalysis = false } = {}) => {
-        const numericValue = clampWeight(Number.parseFloat(value ?? "0"));
-        if (hasSimulation()) {
-          state.simulation.request.weights ??= {};
-          state.simulation.request.weights[type] = numericValue;
-        }
-        control.slider.value = numericValue;
-        setRangeLabelWithValue(
-          control.slider,
-          numericValue,
-          control.baseLabel,
-          formatDecimal
-        );
-        if (runAnalysis) {
-          analyzeSimulation({ resetHistory: false, priority: "user" });
-        }
-      };
-
-      control.slider.addEventListener("sl-input", (event) => {
-        applyValue(getEventValue(event));
-      });
-
-      control.slider.addEventListener("sl-change", (event) => {
-        applyValue(getEventValue(event), { runAnalysis: true });
+      createSliderHandler({
+        slider: control.slider,
+        clampFn: clampWeight,
+        updateState: (value) => {
+          if (hasSimulation()) {
+            state.simulation.request.weights ??= {};
+            state.simulation.request.weights[type] = value;
+          }
+        },
+        label: control.baseLabel,
+        formatter: formatDecimal,
       });
     });
   }
@@ -1975,6 +2018,10 @@
       });
     }
   }
+
+  // ============================================================================
+  // Initialization
+  // ============================================================================
 
   function init() {
     if (!rootEl) {

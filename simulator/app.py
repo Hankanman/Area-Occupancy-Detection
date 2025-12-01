@@ -245,12 +245,51 @@ def _create_simulator_config():
     return SimulatorConfig()
 
 
+def _normalize_purpose(purpose_str: str | None) -> str | None:
+    """Normalize purpose string from YAML to enum value format.
+
+    Converts purpose names (e.g., "Working", "Food-Prep") to enum values (e.g., "working", "food_prep").
+    Returns None if purpose cannot be matched.
+    """
+    if not purpose_str:
+        return None
+
+    # Normalize input: lowercase and replace hyphens with underscores
+    normalized_input = purpose_str.lower().replace("-", "_")
+
+    # Try direct enum value match
+    try:
+        purpose_enum = AreaPurpose(normalized_input)
+    except ValueError:
+        pass
+    else:
+        return purpose_enum.value
+
+    # Try matching by enum value (already normalized)
+    for purpose_enum in AreaPurpose:
+        if purpose_enum.value == normalized_input:
+            return purpose_enum.value
+
+    # Try matching by name (case-insensitive, handle hyphens)
+    for purpose_enum, purpose_def in PURPOSE_DEFINITIONS.items():
+        normalized_name = purpose_def.name.lower().replace("-", "_")
+        if normalized_name == normalized_input:
+            return purpose_enum.value
+
+    return None
+
+
 def _get_half_life_from_purpose(purpose_str: str | None) -> float:
     if purpose_str is None:
         return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
 
+    # Normalize the purpose first
+    normalized = _normalize_purpose(purpose_str)
+    if not normalized:
+        return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
+
     try:
-        purpose_enum = AreaPurpose(purpose_str)
+        purpose_enum = AreaPurpose(normalized)
         return PURPOSE_DEFINITIONS[purpose_enum].half_life
     except (ValueError, KeyError):
         return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
@@ -718,9 +757,12 @@ def _build_simulation_from_yaml(
             raise TypeError(f"Area data for '{selected_area_name}' must be an object")
 
         # Extract area information from new format
+        purpose_raw = area_data.get("purpose")
+        purpose_normalized = _normalize_purpose(purpose_raw) if purpose_raw else None
+
         area = {
             "name": area_data.get("area_name", selected_area_name),
-            "purpose": None,  # New format doesn't include purpose
+            "purpose": purpose_normalized,  # Normalized to enum value format
             "global_prior": float(area_data.get("global_prior", 0.5)),
             "time_prior": float(area_data.get("time_prior", 0.5)),
             "threshold": float(area_data.get("current_threshold", 0.5)),
@@ -737,9 +779,12 @@ def _build_simulation_from_yaml(
 
     else:
         # Old format: single area at root level (backward compatibility)
+        purpose_raw = data.get("area_purpose")
+        purpose_normalized = _normalize_purpose(purpose_raw) if purpose_raw else None
+
         area = {
             "name": data.get("area_name", "Area"),
-            "purpose": data.get("area_purpose"),
+            "purpose": purpose_normalized,  # Normalized to enum value format
             "global_prior": float(data.get("global_prior", 0.5)),
             "time_prior": float(data.get("time_prior", 0.5)),
             "threshold": float(data.get("current_threshold", 0.5)),
