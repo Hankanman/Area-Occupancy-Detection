@@ -117,7 +117,7 @@ The normalization process:
    false_prob = exp(log_false - max_log)
    ```
 
-3. Normalizes: `probability = true_prob / (true_prob + false_prob)`
+3. Normalises: `probability = true_prob / (true_prob + false_prob)`
 4. Handles edge case where both probabilities are zero (returns prior)
 
 ## Output

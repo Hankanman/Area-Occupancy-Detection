@@ -4,10 +4,10 @@ Area Occupancy Detection is configured entirely through the Home Assistant user 
 
 ## Adding a New Area
 
-1.  **Navigate to Integrations:** Go to **Configuration** -> **Devices & Services** -> **Integrations**.
-2.  **Add Integration:** Click the **+ Add Integration** button in the bottom right.
-3.  **Search:** Search for "Area Occupancy Detection" and select it.
-4.  **Configure Area Name:**
+1. **Navigate to Integrations:** Go to **Configuration** -> **Devices & Services** -> **Integrations**.
+2. **Add Integration:** Click the **+ Add Integration** button in the bottom right.
+3. **Search:** Search for "Area Occupancy Detection" and select it.
+4. **Configure Area Name:**
     - Enter a descriptive **Name** for the area this instance will monitor (e.g., "Living Room", "Office"). This name will be used in entity IDs.
 
 ## Configuration Options
@@ -128,10 +128,10 @@ Adjust the influence of different _types_ of sensors on the final probability ca
 
 ## Reconfiguring an Existing Area
 
-1.  Go to **Configuration** -> **Devices & Services** -> **Integrations**.
-2.  Find the Area Occupancy Detection integration card for the area you want to change.
-3.  Click **Configure**.
-4.  You can then step through and modify any of the sensor selections, parameters, or weights.
+1. Go to **Configuration** -> **Devices & Services** -> **Integrations**.
+2. Find the Area Occupancy Detection integration card for the area you want to change.
+3. Click **Configure**.
+4. You can then step through and modify any of the sensor selections, parameters, or weights.
 
 Click **Submit** on each step to save changes.
 
@@ -139,7 +139,7 @@ Click **Submit** on each step to save changes.
 
 The integration automatically:
 
-- Analyzes historical data to determine sensor reliability
+- Analyses historical data to determine sensor reliability
 - Calculates correlation between sensor states and occupancy
 - Adjusts probabilities based on learned patterns
 - Updates calculations in real-time
