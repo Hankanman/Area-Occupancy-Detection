@@ -1,15 +1,8 @@
 <link rel="stylesheet" href="../assets/simulator/style.css" />
-<link
-  rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/light.css"
-  id="shoelace-theme-light"
-/>
-<link
-  rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/dark.css"
-  id="shoelace-theme-dark"
-  disabled
-/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/light.css"
+  id="shoelace-theme-light" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/dark.css"
+  id="shoelace-theme-dark" disabled />
 <div class="aod-simulator sim-stack md-typeset">
   <div id="simulation-display" class="sim-stack">
     <div class="sim-layout">
@@ -22,23 +15,14 @@
             </div>
           </div>
           <div class="sim-header-actions">
-            <sl-select
-              id="area-selector"
-              placeholder="Select area..."
-              disabled
-              style="min-width: 200px"
-            >
+            <sl-select id="area-selector" placeholder="Select area..." disabled style="min-width: 200px">
               <sl-option value="">No areas loaded</sl-option>
             </sl-select>
             <sl-button id="help-dialog-btn" variant="default">
               <sl-icon slot="prefix" name="question-circle"></sl-icon>
               Help
             </sl-button>
-            <sl-dialog
-              label="How to Use the Simulator"
-              id="help-dialog"
-              class="help-dialog"
-            >
+            <sl-dialog label="How to Use the Simulator" id="help-dialog" class="help-dialog">
               <h1>Area Occupancy Detection Simulator</h1>
 
               <p>
@@ -53,9 +37,7 @@
 
               <p>
                 <strong>Step 1:</strong> In Home Assistant, run the
-                <a href="../features/services/#area_occupancyrun_analysis"
-                  >"Run Analysis" service</a
-                >
+                <a href="../features/services/#area_occupancyrun_analysis">"Run Analysis" service</a>
                 for your area(s). This generates YAML output with all your
                 sensors, their states, likelihoods, and current probability
                 calculations.
@@ -304,17 +286,11 @@
                 </li>
               </ul>
 
-              <sl-button
-                slot="footer"
-                variant="primary"
-                onclick="document.getElementById('help-dialog').hide()"
-              >
+              <sl-button slot="footer" variant="primary" onclick="document.getElementById('help-dialog').hide()">
                 Close
               </sl-button>
             </sl-dialog>
-            <sl-button id="load-btn" variant="primary"
-              >Load Simulation</sl-button
-            >
+            <sl-button id="load-btn" variant="primary">Load Simulation</sl-button>
           </div>
         </div>
       </div>
@@ -324,166 +300,64 @@
         </sl-details>
         <sl-details class="md-card sim-section" summary="Prior Probabilities">
           <div class="sim-controls">
-            <sl-range
-              label="Global Prior"
-              data-label="Global Prior"
-              min="0"
-              max="1"
-              step="0.01"
-              value="0.5"
-              id="global-prior-slider"
-              help-text="Base probability before accounting for sensor evidence."
-            ></sl-range>
-            <sl-range
-              label="Time Prior"
-              data-label="Time Prior"
-              min="0"
-              max="1"
-              step="0.01"
-              value="0.5"
+            <sl-range label="Global Prior" data-label="Global Prior" min="0" max="1" step="0.01" value="0.5"
+              id="global-prior-slider" help-text="Base probability before accounting for sensor evidence."></sl-range>
+            <sl-range label="Time Prior" data-label="Time Prior" min="0" max="1" step="0.01" value="0.5"
               id="time-prior-slider"
-              help-text="Learned probability based on schedules or historical activity."
-            ></sl-range>
-            <sl-input
-              label="Combined Prior"
-              value="50.00%"
-              disabled
-              id="combined-prior-input"
-              help-text="Weighted result of global and time priors."
-            ></sl-input>
-            <sl-input
-              label="Final Prior (after factor &amp; clamp)"
-              value="50.00%"
-              disabled
-              id="final-prior-input"
-              help-text="Effective prior after Bayesian factor and clamping are applied."
-            ></sl-input>
-            <sl-select
-              id="purpose-select"
-              label="Area Purpose"
-              clearable
-              help-text="Choose a purpose to auto-populate decay settings."
-            >
+              help-text="Learned probability based on schedules or historical activity."></sl-range>
+            <sl-input label="Combined Prior" value="50.00%" disabled id="combined-prior-input"
+              help-text="Weighted result of global and time priors."></sl-input>
+            <sl-input label="Final Prior (after factor &amp; clamp)" value="50.00%" disabled id="final-prior-input"
+              help-text="Effective prior after Bayesian factor and clamping are applied."></sl-input>
+            <sl-select id="purpose-select" label="Area Purpose" clearable
+              help-text="Choose a purpose to auto-populate decay settings.">
               <sl-option value="">Loading...</sl-option>
             </sl-select>
-            <sl-input
-              id="half-life-display"
-              label="Half-life"
-              value="--"
-              disabled
-              help-text="Half-life returned from analysis."
-            ></sl-input>
+            <sl-input id="half-life-display" label="Half-life" value="--" disabled
+              help-text="Half-life returned from analysis."></sl-input>
           </div>
         </sl-details>
         <sl-details class="md-card sim-section" summary="Entity Type Weights">
           <div class="sim-controls sim-controls--autofit">
-            <sl-range
-              label="Motion"
-              data-label="Motion"
-              min="0.01"
-              max="1.0"
-              step="0.01"
-              value="1.0"
-              id="weight-motion-slider"
-            ></sl-range>
-            <sl-range
-              label="Media"
-              data-label="Media"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.85"
-              id="weight-media-slider"
-            ></sl-range>
-            <sl-range
-              label="Appliance"
-              data-label="Appliance"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.4"
-              id="weight-appliance-slider"
-            ></sl-range>
-            <sl-range
-              label="Door"
-              data-label="Door"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.3"
-              id="weight-door-slider"
-            ></sl-range>
-            <sl-range
-              label="Window"
-              data-label="Window"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.2"
-              id="weight-window-slider"
-            ></sl-range>
-            <sl-range
-              label="Illuminance"
-              data-label="Illuminance"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.1"
-              id="weight-illuminance-slider"
-            ></sl-range>
-            <sl-range
-              label="Humidity"
-              data-label="Humidity"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.1"
-              id="weight-humidity-slider"
-            ></sl-range>
-            <sl-range
-              label="Temperature"
-              data-label="Temperature"
-              min="0.01"
-              max="1"
-              step="0.01"
-              value="0.1"
-              id="weight-temperature-slider"
-            ></sl-range>
+            <sl-range label="Motion" data-label="Motion" min="0.01" max="1.0" step="0.01" value="1.0"
+              id="weight-motion-slider"></sl-range>
+            <sl-range label="Media" data-label="Media" min="0.01" max="1" step="0.01" value="0.85"
+              id="weight-media-slider"></sl-range>
+            <sl-range label="Appliance" data-label="Appliance" min="0.01" max="1" step="0.01" value="0.4"
+              id="weight-appliance-slider"></sl-range>
+            <sl-range label="Door" data-label="Door" min="0.01" max="1" step="0.01" value="0.3"
+              id="weight-door-slider"></sl-range>
+            <sl-range label="Window" data-label="Window" min="0.01" max="1" step="0.01" value="0.2"
+              id="weight-window-slider"></sl-range>
+            <sl-range label="Illuminance" data-label="Illuminance" min="0.01" max="1" step="0.01" value="0.1"
+              id="weight-illuminance-slider"></sl-range>
+            <sl-range label="Humidity" data-label="Humidity" min="0.01" max="1" step="0.01" value="0.1"
+              id="weight-humidity-slider"></sl-range>
+            <sl-range label="Temperature" data-label="Temperature" min="0.01" max="1" step="0.01" value="0.1"
+              id="weight-temperature-slider"></sl-range>
+          </div>
+        </sl-details>
+        <sl-details class="md-card sim-section" summary="Service YAML Input" open>
+          <div class="sim-controls">
+            <span id="api-status-badge" role="status" aria-live="polite">Checking</span>
+            <sl-textarea id="yaml-input" placeholder="Paste your YAML analysis output here..."
+              help-text="Paste the YAML returned from the run_analysis service."></sl-textarea>
+            <sl-alert id="error-alert" variant="danger" closable duration="0" hidden>
+              <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
+              <strong>Something went wrong</strong>
+              <div id="error-message" aria-live="assertive"></div>
+              <sl-button slot="actions" variant="default" id="error-retry" hidden>
+                Retry
+              </sl-button>
+            </sl-alert>
           </div>
         </sl-details>
       </main>
     </div>
   </div>
-  <div class="md-card sim-section">
-    <div class="sim-section-header">
-      <h2>Analysis Output</h2>
-      <span id="api-status-badge" role="status" aria-live="polite"
-        >Checking</span
-      >
-    </div>
-    <sl-textarea
-      id="yaml-input"
-      placeholder="Paste your YAML analysis output here..."
-      help-text="Paste the YAML returned from the run_analysis service."
-    ></sl-textarea>
-    <sl-alert id="error-alert" variant="danger" closable duration="0" hidden>
-      <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
-      <strong>Something went wrong</strong>
-      <div id="error-message" aria-live="assertive"></div>
-      <sl-button slot="actions" variant="default" id="error-retry" hidden>
-        Retry
-      </sl-button>
-    </sl-alert>
-  </div>
 </div>
 
-<script
-  defer
-  src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
-></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script defer src="../assets/simulator/themeDetector.js"></script>
-<script
-  type="module"
-  src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/shoelace.js"
-></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/shoelace.js"></script>
 <script defer src="../assets/simulator/app.js"></script>
