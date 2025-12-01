@@ -18,7 +18,7 @@ While motion sensors directly indicate presence, other sensors often show correl
   - **Appliances** might be running when occupied.
   - **Doors/Windows** might be open more often when occupied.
 
-The system analyzes these patterns differently:
+The system analyses these patterns differently:
 
 - **Numeric sensors** use correlation analysis to learn statistical distributions and calculate dynamic likelihoods.
 - **Binary sensors** use duration-based analysis to calculate static probabilities directly from how long they're active during occupied vs. unoccupied periods.
@@ -31,7 +31,7 @@ The system uses different analysis methods for numeric and binary sensors:
 
 #### 1. Correlation Check (Qualification)
 
-Every hour as part of the analysis cycle, the system analyzes the relationship between the sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
+Every hour as part of the analysis cycle, the system analyses the relationship between the sensor's value and the area's occupancy state using the **Pearson correlation coefficient**.
 
 The system classifies correlations into different types based on their strength:
 
@@ -116,10 +116,10 @@ These static probabilities are stored directly in the `Entities` table as `prob_
 - **$P(Active | Occupied)$**: 0.85 (85% chance it's playing when occupied)
 - **$P(Active | Unoccupied)$**: 0.05 (5% chance it's playing when unoccupied)
 
-| Current State | Result         |
-| :------------ | :------------- | ------------------------------- | ------------------------------------------- |
-| **OFF**       | Uses $P(Active | Occupied) = 0.15$ and $P(Active | Unoccupied) = 0.95$ (inverse probabilities) |
-| **ON**        | Uses $P(Active | Occupied) = 0.85$ and $P(Active | Unoccupied) = 0.05$ (direct probabilities)  |
+| Current State | Occupied Probability Used | Unoccupied Probability Used | Notes                   |
+| :------------ | :------------------------ | :------------------------- | :---------------------- |
+| **OFF**       | 0.15                      | 0.95                       | Inverse probabilities   |
+| **ON**        | 0.85                      | 0.05                       | Direct probabilities    |
 
 ## Benefits
 
