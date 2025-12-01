@@ -30,8 +30,6 @@ See **[Sensor Correlation Analysis Chain](analysis-chain.md)** for the detailed 
 
 During real-time probability calculation, likelihoods are retrieved differently based on sensor type.
 
-**Code Reference:** `custom_components/area_occupancy/data/entity.py::get_likelihoods()`
-
 ### Numeric Sensors: Dynamic PDF Calculation
 
 For numeric sensors with learned Gaussian parameters, the system calculates two probability densities dynamically:
@@ -58,11 +56,7 @@ Motion sensors use the user-configured static probabilities set during area conf
 
 ### Decay-Adjusted Likelihoods
 
-When an entity is decaying (e.g., motion sensor that just turned off), its likelihoods are interpolated toward neutral (0.5).
-
-**Code Reference:** `custom_components/area_occupancy/utils.py`
-
-This gradually reduces the influence of stale evidence as decay progresses.
+When an entity is decaying (e.g., motion sensor that just turned off), its likelihoods are interpolated toward neutral (0.5). This gradually reduces the influence of stale evidence as decay progresses.
 
 ### Weight Application
 
@@ -120,9 +114,7 @@ Stores binary sensor state intervals (on/off periods) used for duration-based an
 
 ## Default Likelihoods
 
-If history-based learning is disabled, insufficient data is available, or correlation fails, the system uses default static likelihoods from the entity type definition:
-
-**Code Reference:** `custom_components/area_occupancy/data/entity_type.py`
+If history-based learning is disabled, insufficient data is available, or correlation fails, the system uses default static likelihoods from the entity type definition.
 
 Default values vary by entity type:
 
@@ -138,5 +130,5 @@ For non-motion sensors, these defaults are replaced by learned values once suffi
 
 - [Sensor Correlation Analysis Chain](analysis-chain.md) - End-to-end process
 - [Sensor Correlation Feature](../features/sensor-correlation.md) - User-facing documentation
-- [Prior Calculation Deep Dive](prior-calculation.md) - Related learning process
+- [Prior Calculation Deep Dive](../features/prior-learning.md) - Related learning process
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - How likelihoods are used

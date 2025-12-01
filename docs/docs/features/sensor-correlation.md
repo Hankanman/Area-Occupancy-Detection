@@ -116,10 +116,10 @@ These static probabilities are stored directly in the `Entities` table as `prob_
 - **$P(Active | Occupied)$**: 0.85 (85% chance it's playing when occupied)
 - **$P(Active | Unoccupied)$**: 0.05 (5% chance it's playing when unoccupied)
 
-| Current State | Result         |
-| :------------ | :------------- | ------------------------------- | ------------------------------------------- |
-| **OFF**       | Uses $P(Active | Occupied) = 0.15$ and $P(Active | Unoccupied) = 0.95$ (inverse probabilities) |
-| **ON**        | Uses $P(Active | Occupied) = 0.85$ and $P(Active | Unoccupied) = 0.05$ (direct probabilities)  |
+| Current State | Occupied Probability Used | Unoccupied Probability Used | Notes                   |
+| :------------ | :------------------------ | :------------------------- | :---------------------- |
+| **OFF**       | 0.15                      | 0.95                       | Inverse probabilities   |
+| **ON**        | 0.85                      | 0.05                       | Direct probabilities    |
 
 ## Benefits
 
