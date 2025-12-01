@@ -18,6 +18,8 @@
     pendingRequest: null, // Track current in-flight request
     requestQueue: [], // Queue for pending requests
     abortController: null, // AbortController for cancelling requests
+    lastRequestHash: null, // Hash of last request sent to API for change detection
+    lastDecayFactors: {}, // Store last decay factors from API for local decay calculation
   };
 
   document.body.classList.add("aod-simulator-mode");
@@ -78,9 +80,66 @@
     if (!hasSimulation()) {
       return;
     }
-    const nextEntities = deepClone(entityInputs ?? []);
-    state.simulation.request.entities = nextEntities;
-    state.simulation.entityLookup = buildEntityLookup(nextEntities);
+
+    const currentEntities = state.simulation.request.entities ?? [];
+    const newEntityInputs = deepClone(entityInputs ?? []);
+
+    // Create a lookup map of current entity inputs by entity_id
+    const currentEntityMap = new Map();
+    currentEntities.forEach((entity) => {
+      if (entity?.entity_id) {
+        currentEntityMap.set(entity.entity_id, entity);
+      }
+    });
+
+    // Create a map of new entity inputs by entity_id
+    const newEntityMap = new Map();
+    newEntityInputs.forEach((entity) => {
+      if (entity?.entity_id) {
+        newEntityMap.set(entity.entity_id, entity);
+      }
+    });
+
+    // Merge entities: preserve user-modified states, update other fields
+    const mergedEntities = [];
+
+    // Process entities from new API response
+    newEntityInputs.forEach((newEntity) => {
+      if (!newEntity?.entity_id) {
+        return;
+      }
+
+      const currentEntity = currentEntityMap.get(newEntity.entity_id);
+      if (currentEntity) {
+        // Entity exists in current: merge, preserving state from current
+        const mergedEntity = {
+          ...newEntity, // Start with new entity (has updated decay, etc.)
+          state: currentEntity.state, // Preserve user-modified state
+          // Preserve previous_evidence if it was set by user action
+          previous_evidence:
+            currentEntity.previous_evidence !== undefined
+              ? currentEntity.previous_evidence
+              : newEntity.previous_evidence,
+        };
+        mergedEntities.push(mergedEntity);
+      } else {
+        // New entity: add as-is
+        mergedEntities.push(newEntity);
+      }
+    });
+
+    // Preserve entities that exist in current but not in new (edge case)
+    currentEntities.forEach((currentEntity) => {
+      if (
+        currentEntity?.entity_id &&
+        !newEntityMap.has(currentEntity.entity_id)
+      ) {
+        mergedEntities.push(deepClone(currentEntity));
+      }
+    });
+
+    state.simulation.request.entities = mergedEntities;
+    state.simulation.entityLookup = buildEntityLookup(mergedEntities);
 
     if (weights && typeof weights === "object") {
       // Merge weights instead of replacing to preserve manually set weights
@@ -111,7 +170,15 @@
     }
 
     state.simulation.result = result;
-    applySimulationResult(result, { resetHistory });
+
+    // Determine if this is a user-initiated request or auto-update
+    // User requests should always update sensors, auto-updates can skip if input is focused
+    // If pendingRequest is null (e.g., initial load), treat as user request to ensure sensors render
+    const isUserRequest =
+      state.pendingRequest?.priority === "user" || !state.pendingRequest;
+    const skipSensors = !isUserRequest && isNumericInputFocused();
+
+    applySimulationResult(result, { resetHistory, skipSensors });
   }
 
   function prepareAnalyzePayload() {
@@ -119,6 +186,50 @@
       return {};
     }
     return deepClone(state.simulation.request);
+  }
+
+  function getRequestHash() {
+    if (!hasSimulation()) {
+      return null;
+    }
+
+    const request = state.simulation.request;
+    // Create a hashable object excluding decay_start times
+    const hashableData = {
+      area: {
+        name: request.area?.name,
+        purpose: request.area?.purpose,
+        global_prior: request.area?.global_prior,
+        time_prior: request.area?.time_prior,
+        half_life: request.area?.half_life,
+        threshold: request.area?.threshold,
+      },
+      weights: request.weights ?? {},
+      entities: (request.entities ?? []).map((entity) => ({
+        entity_id: entity.entity_id,
+        type: entity.type,
+        state: entity.state,
+        prob_given_true: entity.prob_given_true,
+        prob_given_false: entity.prob_given_false,
+        weight: entity.weight,
+        previous_evidence: entity.previous_evidence,
+        // Include decay state but not decay_start (it changes over time)
+        decay: {
+          is_decaying: entity.decay?.is_decaying ?? false,
+        },
+      })),
+    };
+
+    // Create a simple hash from the JSON string
+    const jsonString = JSON.stringify(hashableData);
+    // Simple hash function (not cryptographically secure, but sufficient for change detection)
+    let hash = 0;
+    for (let i = 0; i < jsonString.length; i++) {
+      const char = jsonString.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return hash.toString();
   }
 
   async function processRequestQueue() {
@@ -164,6 +275,16 @@
         },
         abortSignal
       );
+      // Store request hash after successful API call
+      state.lastRequestHash = getRequestHash();
+      // Store decay factors from API result for local decay calculation
+      if (result.entity_decay) {
+        state.lastDecayFactors = {};
+        Object.keys(result.entity_decay).forEach((entityId) => {
+          state.lastDecayFactors[entityId] =
+            result.entity_decay[entityId].decay_factor ?? 1.0;
+        });
+      }
       updateSimulationResult(result, { resetHistory });
       return true;
     } catch (error) {
@@ -965,6 +1086,10 @@
 
   function createSensorCard(entity) {
     const card = createElementWithClass("div", "md-card sim-card entity");
+    // Add entity_id as data attribute for focus restoration
+    if (entity?.entity_id) {
+      card.setAttribute("data-entity-id", entity.entity_id);
+    }
     const actions = buildSensorActions(entity);
 
     if (actions) {
@@ -983,8 +1108,49 @@
     const entities = Array.isArray(result.entities) ? result.entities : [];
     const entityDecay = result.entity_decay ?? {};
 
+    // Preserve focus and value of any currently focused numeric input
+    const activeElement = document.activeElement;
+    let focusedEntityId = null;
+    let focusedInputValue = null;
+    let focusedInputSelectionStart = null;
+    let focusedInputSelectionEnd = null;
+
+    if (activeElement && sensorsContainer.contains(activeElement)) {
+      const card = activeElement.closest(".sim-card");
+      if (card) {
+        const entityIdAttr = card.getAttribute("data-entity-id");
+        if (entityIdAttr) {
+          focusedEntityId = entityIdAttr;
+          // If it's a numeric input, preserve its value and selection
+          if (
+            activeElement.tagName === "SL-INPUT" &&
+            activeElement.type === "number"
+          ) {
+            focusedInputValue = activeElement.value;
+            // Try to get selection from shadow DOM
+            if (activeElement.shadowRoot) {
+              const input = activeElement.shadowRoot.querySelector("input");
+              if (input) {
+                focusedInputSelectionStart = input.selectionStart;
+                focusedInputSelectionEnd = input.selectionEnd;
+              }
+            }
+          }
+        }
+      }
+    }
+
     sensorsContainer.innerHTML = "";
     sensorsContainer.classList.toggle("empty", entities.length === 0);
+
+    // Get request entities to merge user-modified states
+    const requestEntities = state.simulation?.request?.entities ?? [];
+    const requestEntityMap = new Map();
+    requestEntities.forEach((reqEntity) => {
+      if (reqEntity?.entity_id) {
+        requestEntityMap.set(reqEntity.entity_id, reqEntity);
+      }
+    });
 
     const sorted = [...entities].sort((a, b) => {
       const aId = a.entity_id ?? "";
@@ -993,13 +1159,145 @@
     });
 
     sorted.forEach((entity) => {
+      // Merge state from request entity if it exists (preserves user modifications)
+      const requestEntity = requestEntityMap.get(entity.entity_id);
+      let entityToRender = { ...entity };
+
+      if (requestEntity && requestEntity.state !== undefined) {
+        // Update state from request (user's modification)
+        // However, if this input is currently focused and being edited,
+        // preserve the input's current value instead
+        if (
+          focusedEntityId === entity.entity_id &&
+          focusedInputValue !== null &&
+          entityToRender.is_numeric
+        ) {
+          // User is typing in this input, preserve their current input value
+          entityToRender.state = focusedInputValue;
+        } else {
+          entityToRender.state = requestEntity.state;
+        }
+
+        // Update state_display to match the new state
+        // Use the actual state value (which may be from focused input)
+        const stateValue = entityToRender.state;
+        if (entityToRender.is_numeric) {
+          // For numeric sensors, format as number
+          try {
+            const numValue = Number.parseFloat(stateValue);
+            if (Number.isFinite(numValue)) {
+              entityToRender.state_display = numValue.toFixed(2);
+            } else {
+              entityToRender.state_display = String(stateValue);
+            }
+          } catch {
+            entityToRender.state_display = String(stateValue);
+          }
+        } else {
+          // For binary sensors, use the state as-is
+          entityToRender.state_display = String(stateValue);
+        }
+
+        // Determine if the user's state represents an active or inactive entity
+        // The user's state might be "on"/"off" (from toggle) or the actual entity state
+        // We need to determine evidence based on the state value
+        // Use the actual state value (which may be from focused input)
+        const userStateStr = String(stateValue).toLowerCase();
+
+        // Check if state represents active (common active states)
+        const isActiveState =
+          userStateStr === "on" ||
+          userStateStr === "open" ||
+          userStateStr === "true" ||
+          userStateStr === "1";
+
+        // Check if state represents inactive (common inactive states)
+        const isInactiveState =
+          userStateStr === "off" ||
+          userStateStr === "closed" ||
+          userStateStr === "false" ||
+          userStateStr === "0";
+
+        // Determine evidence: if we can clearly determine active/inactive, use that
+        // Otherwise, preserve the original entity's evidence if state matches original
+        let newEvidence = entityToRender.evidence; // Default to original
+        if (isActiveState) {
+          newEvidence = true;
+        } else if (isInactiveState) {
+          newEvidence = false;
+        } else {
+          // For unknown states, check if it matches the original entity's state
+          const originalStateStr = String(entity.state || "").toLowerCase();
+          if (userStateStr === originalStateStr) {
+            // State matches original, preserve original evidence
+            newEvidence = entity.evidence;
+          }
+          // Otherwise keep the default (original evidence)
+        }
+
+        entityToRender.evidence = newEvidence;
+
+        // Update actions to reflect the user's state
+        // Actions always have state "on" (active) and "off" (inactive)
+        if (Array.isArray(entityToRender.actions)) {
+          entityToRender.actions = entityToRender.actions.map((action) => {
+            if (
+              action.state === "on" ||
+              action.label?.toLowerCase() === "active"
+            ) {
+              return { ...action, active: newEvidence === true };
+            } else if (
+              action.state === "off" ||
+              action.label?.toLowerCase() === "inactive"
+            ) {
+              return { ...action, active: newEvidence === false };
+            }
+            return action;
+          });
+        }
+      }
+
       // Attach decay data to entity for display
       const entityWithDecay = {
-        ...entity,
+        ...entityToRender,
         decay: entityDecay[entity.entity_id] ?? null,
       };
       sensorsContainer.appendChild(createSensorCard(entityWithDecay));
     });
+
+    // Restore focus to the previously focused input if it exists
+    if (focusedEntityId) {
+      const card = sensorsContainer.querySelector(
+        `[data-entity-id="${focusedEntityId}"]`
+      );
+      if (card) {
+        const input = card.querySelector('sl-input[type="number"]');
+        if (input) {
+          // Restore the value if it was being edited
+          if (focusedInputValue !== null) {
+            input.value = focusedInputValue;
+          }
+          // Use requestAnimationFrame to ensure DOM is ready
+          requestAnimationFrame(() => {
+            input.focus();
+            // Try to restore selection in shadow DOM
+            if (
+              focusedInputSelectionStart !== null &&
+              focusedInputSelectionEnd !== null &&
+              input.shadowRoot
+            ) {
+              const shadowInput = input.shadowRoot.querySelector("input");
+              if (shadowInput) {
+                shadowInput.setSelectionRange(
+                  focusedInputSelectionStart,
+                  focusedInputSelectionEnd
+                );
+              }
+            }
+          });
+        }
+      }
+    }
   }
 
   function syncPriorControls(result) {
@@ -1071,7 +1369,41 @@
     });
   }
 
-  function renderSimulationResult(result) {
+  function isNumericInputFocused() {
+    const activeElement = document.activeElement;
+    if (!activeElement) {
+      return false;
+    }
+
+    // Check if active element is a sl-input with type="number"
+    if (
+      activeElement.tagName === "SL-INPUT" &&
+      activeElement.type === "number"
+    ) {
+      // Verify it's within the sensors container
+      if (sensorsContainer && sensorsContainer.contains(activeElement)) {
+        return true;
+      }
+    }
+
+    // Also check if focus is within a shadow DOM input
+    if (activeElement.shadowRoot) {
+      const shadowInput = activeElement.shadowRoot.querySelector(
+        'input[type="number"]'
+      );
+      if (
+        shadowInput &&
+        sensorsContainer &&
+        sensorsContainer.contains(activeElement)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function renderSimulationResult(result, { skipSensors = false } = {}) {
     if (!simulationDisplay || !result) {
       return;
     }
@@ -1084,17 +1416,26 @@
     }
 
     setProbability(result.probability ?? 0);
-    renderSensors(result);
+
+    // Skip rendering sensors if a numeric input is focused (user is typing)
+    // or if explicitly requested to skip
+    if (!skipSensors && !isNumericInputFocused()) {
+      renderSensors(result);
+    }
+
     syncPriorControls(result);
   }
 
-  function applySimulationResult(result, { resetHistory = false } = {}) {
+  function applySimulationResult(
+    result,
+    { resetHistory = false, skipSensors = false } = {}
+  ) {
     if (resetHistory) {
       state.probabilityHistory = [];
       initChart();
     }
 
-    renderSimulationResult(result);
+    renderSimulationResult(result, { skipSensors });
     hideError();
   }
 
@@ -1125,6 +1466,164 @@
       updateApiStatus("online", "API Online");
     } catch (error) {
       updateApiStatus("offline", "API Offline");
+    }
+  }
+
+  function calculateLocalDecay() {
+    if (!hasSimulation()) {
+      return {};
+    }
+
+    const entities = state.simulation.request.entities ?? [];
+    const areaHalfLife = state.simulation.request.area?.half_life ?? 300; // Default 5 minutes
+    const now = new Date();
+    const decayUpdates = {};
+
+    entities.forEach((entity) => {
+      if (!entity.decay?.is_decaying) {
+        return;
+      }
+
+      const decayStart = entity.decay.decay_start;
+      if (!decayStart) {
+        return;
+      }
+
+      // Parse decay_start (ISO string) and calculate age in seconds
+      const decayStartTime = new Date(decayStart);
+      const ageSeconds = (now - decayStartTime) / 1000;
+
+      if (ageSeconds <= 0) {
+        return;
+      }
+
+      // Calculate decay_factor: 0.5^(age / half_life)
+      const decayFactor = Math.pow(0.5, ageSeconds / areaHalfLife);
+
+      if (decayFactor < 0.05) {
+        // Practical zero - decay is complete
+        decayUpdates[entity.entity_id] = {
+          is_decaying: false,
+          decay_factor: 0.0,
+        };
+      } else {
+        decayUpdates[entity.entity_id] = {
+          is_decaying: true,
+          decay_factor: decayFactor,
+        };
+      }
+    });
+
+    return decayUpdates;
+  }
+
+  function updateProbabilityWithLocalDecay() {
+    if (!hasSimulation() || !state.simulation.result) {
+      return;
+    }
+
+    const decayUpdates = calculateLocalDecay();
+    const result = state.simulation.result;
+
+    // Update entity_decay in result
+    if (!result.entity_decay) {
+      result.entity_decay = {};
+    }
+
+    Object.keys(decayUpdates).forEach((entityId) => {
+      const update = decayUpdates[entityId];
+      if (result.entity_decay[entityId]) {
+        result.entity_decay[entityId] = {
+          ...result.entity_decay[entityId],
+          ...update,
+        };
+      } else {
+        result.entity_decay[entityId] = {
+          is_decaying: update.is_decaying,
+          decay_factor: update.decay_factor,
+          decay_start: state.simulation.request.entities.find(
+            (e) => e.entity_id === entityId
+          )?.decay?.decay_start,
+          evidence: false,
+        };
+      }
+    });
+
+    // Update entities in result to show updated decay factors
+    if (Array.isArray(result.entities)) {
+      result.entities.forEach((entity) => {
+        const decayUpdate = decayUpdates[entity.entity_id];
+        if (decayUpdate && entity.decay) {
+          entity.decay = {
+            ...entity.decay,
+            ...decayUpdate,
+          };
+        }
+      });
+    }
+
+    // Estimate probability change based on decay
+    // When entities decay, their influence moves toward neutral (0.5),
+    // which tends to move the probability toward the prior
+    const lastProbability = result.probability ?? 0;
+    const areaPriors = result.area?.priors ?? {};
+    const prior = areaPriors.final ?? areaPriors.combined ?? 0.5;
+
+    // Calculate average decay impact
+    // Entities with higher weight and contribution have more impact when they decay
+    let totalDecayImpact = 0;
+    let totalWeight = 0;
+
+    if (Array.isArray(result.entities)) {
+      result.entities.forEach((entity) => {
+        const decayUpdate = decayUpdates[entity.entity_id];
+        if (decayUpdate) {
+          // Use stored last decay factor, or current if not stored
+          const originalDecayFactor =
+            state.lastDecayFactors[entity.entity_id] ??
+            entity.decay?.decay_factor ??
+            1.0;
+          const newDecayFactor = decayUpdate.decay_factor ?? 0.0;
+          const decayChange = originalDecayFactor - newDecayFactor;
+
+          if (decayChange > 0) {
+            // Entity is decaying - calculate its impact
+            const entityWeight = entity.weight ?? 0;
+            const contribution = Math.abs(entity.contribution ?? 0);
+            // Impact is proportional to weight and contribution
+            // Decay reduces influence, so we weight by how much it's decaying
+            const impact = decayChange * entityWeight * contribution;
+            totalDecayImpact += impact;
+            totalWeight += entityWeight * contribution;
+          }
+        }
+      });
+    }
+
+    // Estimate new probability
+    // As decay progresses, probability moves toward prior
+    // The amount of movement depends on the decay impact
+    let estimatedProbability = lastProbability;
+    if (totalWeight > 0 && totalDecayImpact > 0) {
+      // Normalize decay impact (0 to 1 scale)
+      const normalizedImpact = Math.min(1.0, totalDecayImpact / totalWeight);
+      // Interpolate between last probability and prior based on decay impact
+      // More decay = closer to prior
+      estimatedProbability =
+        lastProbability * (1 - normalizedImpact * 0.3) +
+        prior * (normalizedImpact * 0.3);
+      // Clamp to valid range
+      estimatedProbability = Math.max(0, Math.min(1, estimatedProbability));
+    }
+
+    // Update probability display and chart
+    setProbability(estimatedProbability);
+    // Note: We don't update lastDecayFactors here - they should only be updated
+    // after API calls to preserve the baseline for calculating decay changes
+
+    // Re-render sensors to show updated decay factors (but skip if input is focused)
+    if (!isNumericInputFocused()) {
+      renderSensors(result);
     }
   }
 
@@ -1160,6 +1659,18 @@
         return;
       }
 
+      // Check if inputs have changed since last API call
+      const currentHash = getRequestHash();
+      if (
+        currentHash === state.lastRequestHash &&
+        state.lastRequestHash !== null
+      ) {
+        // No changes - simulate decay locally instead of calling API
+        updateProbabilityWithLocalDecay();
+        return;
+      }
+
+      // Inputs have changed or this is the first call - call API
       await analyzeSimulation({ silent: true, priority: "auto" });
     }, 1000);
   }
@@ -1228,6 +1739,10 @@
       }
 
       setSimulation(payload.simulation, payload.result, { resetHistory: true });
+      // Reset request hash on new simulation load to ensure first auto-update calls API
+      state.lastRequestHash = null;
+      // Reset decay factors tracking
+      state.lastDecayFactors = {};
       startAutoUpdate();
       updateApiStatus("online", "API Online");
     } catch (error) {
@@ -1294,6 +1809,10 @@
 
       state.selectedAreaName = newAreaName;
       setSimulation(payload.simulation, payload.result, { resetHistory: true });
+      // Reset request hash when switching areas
+      state.lastRequestHash = null;
+      // Reset decay factors tracking
+      state.lastDecayFactors = {};
       updateApiStatus("online", "API Online");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
