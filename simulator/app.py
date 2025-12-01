@@ -54,13 +54,25 @@ def get_allowed_origins() -> list[str] | str:
 
     env_value = os.getenv("SIMULATOR_ALLOWED_ORIGINS")
     if env_value is None:
-        return [
+        # Production origins
+        origins = [
             "https://hankanman.github.io",
             "https://hankanman.github.io/Area-Occupancy-Detection",
             "https://hankanman.github.io/Area-Occupancy-Detection/",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
         ]
+        # For development, allow all localhost origins
+        # Note: CORS requires exact match, so we can't use wildcards
+        # But we can use "*" for development if needed
+        # For now, include common localhost ports
+        localhost_ports = [8000, 3000, 8080, 5000, 4000, 9000]
+        for port in localhost_ports:
+            origins.extend(
+                [
+                    f"http://localhost:{port}",
+                    f"http://127.0.0.1:{port}",
+                ]
+            )
+        return origins
 
     origins = [origin.strip() for origin in env_value.split(",") if origin.strip()]
     if not origins:

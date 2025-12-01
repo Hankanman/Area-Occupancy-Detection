@@ -716,12 +716,17 @@
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY);
       if (!stored) {
-        return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
+        // Default to remote server for testing; change to LOCAL_API_BASE_URL for local dev
+        return DEFAULT_API_BASE_URL;
+        // Uncomment below to auto-detect localhost:
+        // return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
       }
 
       return normalizeBaseUrl(stored);
     } catch (error) {
-      return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
+      return DEFAULT_API_BASE_URL;
+      // Uncomment below to auto-detect localhost:
+      // return isLocalDocsHost() ? LOCAL_API_BASE_URL : DEFAULT_API_BASE_URL;
     }
   }
 
@@ -764,8 +769,20 @@
 
   async function apiFetch(path, options = {}) {
     const url = buildApiUrl(path);
-    const response = await fetch(url, options);
-    return response;
+    console.log("Fetching:", url, "from origin:", window.location.origin);
+    try {
+      const response = await fetch(url, options);
+      console.log("Response status:", response.status, response.statusText);
+      return response;
+    } catch (error) {
+      console.error("Fetch error:", error);
+      console.error("Error details:", {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      });
+      throw error;
+    }
   }
 
   async function requestJson(path, options = {}, abortSignal = null) {
@@ -1616,6 +1633,9 @@
       await requestJson("/api/get-purposes");
       updateApiStatus("online", "API Online");
     } catch (error) {
+      console.error("API verification failed:", error);
+      console.error("API Base URL:", state.apiBaseUrl);
+      console.error("Full URL:", buildApiUrl("/api/get-purposes"));
       updateApiStatus("offline", "API Offline");
     }
   }
