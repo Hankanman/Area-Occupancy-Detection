@@ -46,6 +46,134 @@ mkdocs serve
 
 5. Paste your `area_occupancy.run_analysis` YAML output, click **Load Simulation**, and interact with the sensor controls to see live probability updates.
 
+## Docker Deployment to IBM Cloud Container Registry
+
+### Prerequisites
+
+- [IBM Cloud CLI](https://cloud.ibm.com/docs/cli?topic=cli-getting-started) installed and configured
+- Docker installed and running
+- Access to IBM Cloud Container Registry
+
+### Build and Push Instructions
+
+1. **Log in to IBM Cloud:**
+
+   ```bash
+   ibmcloud login
+   ```
+
+   If you need to target a specific region or account, use:
+
+   ```bash
+   ibmcloud login -r <region> -a <account-id>
+   ```
+
+2. **Log in to IBM Cloud Container Registry:**
+
+   ```bash
+   ibmcloud cr login
+   ```
+
+   This authenticates Docker with the IBM Cloud Container Registry.
+
+3. **Verify your namespace exists:**
+
+   ```bash
+   ibmcloud cr namespace-list
+   ```
+
+   If the namespace `area-occupancy-detection` doesn't exist, create it:
+
+   ```bash
+   ibmcloud cr namespace-add area-occupancy-detection
+   ```
+
+4. **Determine your registry region:**
+
+   Check your registry region:
+
+   ```bash
+   ibmcloud cr region
+   ```
+
+   Common regions are: `us`, `eu`, `uk`, `ap`, `jp`, `au`, etc.
+
+5. **Build the Docker image:**
+
+   From the repository root directory:
+
+   ```bash
+   docker build -f simulator/Dockerfile -t area-occupancy-simulator:latest .
+   ```
+
+   Or using docker-compose:
+
+   ```bash
+   cd simulator
+   docker-compose build
+   ```
+
+6. **Tag the image for IBM Cloud Container Registry:**
+
+   Replace `<region>` with your registry region (e.g., `us`, `eu`, `uk`):
+
+   ```bash
+   docker tag area-occupancy-simulator:latest uk.icr.io/area-occupancy-detection/area-occupancy-simulator:latest
+   ```
+
+   Example for UK region:
+
+   ```bash
+   docker tag area-occupancy-simulator:latest uk.icr.io/area-occupancy-detection/area-occupancy-simulator:latest
+   ```
+
+   You can also tag with a specific version:
+
+   ```bash
+   docker tag area-occupancy-simulator:latest uk.icr.io/area-occupancy-detection/area-occupancy-simulator:v1.0.0
+   ```
+
+7. **Push the image to IBM Cloud Container Registry:**
+
+   ```bash
+   docker push uk.icr.io/area-occupancy-detection/area-occupancy-simulator:latest
+   ```
+
+8. **Verify the image in the registry:**
+
+   ```bash
+   ibmcloud cr image-list
+   ```
+
+   Or view images in your specific namespace:
+
+   ```bash
+   ibmcloud cr image-list --namespace area-occupancy-detection
+   ```
+
+### Running the Container from IBM Cloud Container Registry
+
+Once pushed, you can pull and run the container:
+
+```bash
+# Pull the image
+docker pull uk.icr.io/area-occupancy-detection/area-occupancy-simulator:latest
+
+# Run the container
+docker run -d \
+  --name area-occupancy-simulator \
+  -p 10000:10000 \
+  -e PORT=10000 \
+  -e FLASK_DEBUG=0 \
+  -e SIMULATOR_ALLOWED_ORIGINS=https://hankanman.github.io,https://hankanman.github.io/Area-Occupancy-Detection \
+  uk.icr.io/area-occupancy-detection/area-occupancy-simulator:latest
+```
+
+### Additional Resources
+
+- [IBM Cloud Container Registry Documentation](https://cloud.ibm.com/docs/Registry?topic=Registry-getting-started)
+- [IBM Cloud CLI Reference](https://cloud.ibm.com/docs/cli?topic=cli-ibmcloud_cli)
+
 ## Configuration
 
 - `SIMULATOR_ALLOWED_ORIGINS`: Comma-separated list of origins allowed to access the API (defaults include GitHub Pages and `http://localhost:8000`). Use `*` during private testing.
@@ -82,6 +210,7 @@ update_timestamp: "2025-11-06T17:55:00.730200+00:00"
 ## How It Works
 
 The simulator uses the real integration code:
+
 - `bayesian_probability()` from `custom_components/area_occupancy/utils.py`
 - `EntityType` definitions from `custom_components/area_occupancy/data/entity_type.py`
 - Same probability calculation logic as the actual integration
@@ -101,4 +230,3 @@ This ensures that the simulator results match what you would see in Home Assista
 - The simulator does not include time-based decay (decay_factor is always 1.0)
 - Sensor states are updated immediately when toggled
 - The chart tracks the last 50 probability updates
-

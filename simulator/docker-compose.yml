@@ -1,0 +1,21 @@
+services:
+  simulator:
+    build:
+      context: ..
+      dockerfile: simulator/Dockerfile
+    container_name: area-occupancy-simulator
+    ports:
+      - "10000:10000"
+    environment:
+      - PORT=10000
+      - FLASK_DEBUG=0
+      - FLASK_HOST=0.0.0.0
+      - SIMULATOR_ALLOWED_ORIGINS=https://hankanman.github.io,https://hankanman.github.io/Area-Occupancy-Detection,https://hankanman.github.io/Area-Occupancy-Detection/
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:10000/api/get-purposes').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
