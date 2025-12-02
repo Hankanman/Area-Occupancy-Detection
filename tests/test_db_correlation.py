@@ -5,7 +5,11 @@ import math
 
 import pytest
 
-from custom_components.area_occupancy.const import CORRELATION_MONTHS_TO_KEEP
+from custom_components.area_occupancy.const import (
+    AGGREGATION_PERIOD_HOURLY,
+    CORRELATION_MONTHS_TO_KEEP,
+    RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity, EntityType
@@ -16,6 +20,7 @@ from custom_components.area_occupancy.db.correlation import (
     analyze_binary_likelihoods,
     analyze_correlation,
     calculate_pearson_correlation,
+    convert_hourly_aggregates_to_samples,
     get_correlation_for_entity,
     save_correlation_result,
 )
@@ -1611,3 +1616,280 @@ class TestCorrelationBugFixes:
         assert 0.05 <= result["prob_given_false"] <= 0.95
         # Unoccupied overlap should be non-negative and valid
         # (validated internally by the max/min clamping we added)
+
+
+class TestNumericAggregatesInCorrelation:
+    """Test correlation analysis using numeric aggregates for historical data."""
+
+    def test_correlation_uses_recent_samples_only(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that correlation uses only raw samples when all data is within retention."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+
+        # Create samples within retention period (last 3 days)
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 50, lambda i: 20.0 + (i % 10)
+        )
+
+        # Create occupied intervals
+        intervals = [
+            (now - timedelta(days=2), now - timedelta(days=1)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Analyze correlation - should use only raw samples
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+        assert result["sample_count"] == 50
+
+    def test_correlation_uses_aggregates_only(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that correlation uses only aggregates when all data is older than retention."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        old_date = dt_util.utcnow() - timedelta(
+            days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS + 10
+        )
+
+        # Ensure area and entity exist
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id=entity_id,
+                entity_type="temperature",
+            )
+            session.add(entity)
+
+            # Create hourly aggregates (older than retention)
+            for i in range(24):  # 24 hours of aggregates
+                hour_start = old_date + timedelta(hours=i)
+                aggregate = db.NumericAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    aggregation_period=AGGREGATION_PERIOD_HOURLY,
+                    period_start=hour_start,
+                    period_end=hour_start + timedelta(hours=1),
+                    min_value=20.0,
+                    max_value=25.0,
+                    avg_value=22.5,
+                    median_value=22.5,
+                    sample_count=10,
+                    first_value=20.0,
+                    last_value=25.0,
+                    std_deviation=1.5,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        # Create occupied intervals
+        intervals = [
+            (old_date, old_date + timedelta(hours=12)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Analyze correlation - should use only aggregates
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+        assert result["sample_count"] == 24  # 24 hourly aggregates
+
+    def test_correlation_combines_both_sources(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that correlation combines raw samples and aggregates when period spans both."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+        old_date = now - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS + 5)
+
+        # Ensure area and entity exist
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id=entity_id,
+                entity_type="temperature",
+            )
+            session.add(entity)
+
+            # Create recent raw samples (within retention)
+            for i in range(20):
+                sample = db.NumericSamples(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    timestamp=now - timedelta(hours=20 - i),
+                    value=20.0 + (i % 10),
+                )
+                session.add(sample)
+
+            # Create old hourly aggregates (older than retention)
+            for i in range(24):  # 24 hours of aggregates
+                hour_start = old_date + timedelta(hours=i)
+                aggregate = db.NumericAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    aggregation_period=AGGREGATION_PERIOD_HOURLY,
+                    period_start=hour_start,
+                    period_end=hour_start + timedelta(hours=1),
+                    min_value=20.0,
+                    max_value=25.0,
+                    avg_value=22.5,
+                    median_value=22.5,
+                    sample_count=10,
+                    first_value=20.0,
+                    last_value=25.0,
+                    std_deviation=1.5,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        # Create occupied intervals spanning both periods
+        intervals = [
+            (old_date, old_date + timedelta(hours=12)),
+            (now - timedelta(hours=10), now - timedelta(hours=5)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Analyze correlation - should combine both sources
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+        # Should have both recent samples (20) and aggregates (24)
+        assert result["sample_count"] == 44
+
+    def test_convert_hourly_aggregates_to_samples(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test conversion of hourly aggregates to sample objects."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+        period_start = now - timedelta(days=10)
+        period_end = now - timedelta(days=5)
+
+        # Ensure area and entity exist
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id=entity_id,
+                entity_type="temperature",
+            )
+            session.add(entity)
+
+            # Create hourly aggregates
+            for i in range(24):  # 24 hours of aggregates
+                hour_start = period_start + timedelta(hours=i)
+                aggregate = db.NumericAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    aggregation_period=AGGREGATION_PERIOD_HOURLY,
+                    period_start=hour_start,
+                    period_end=hour_start + timedelta(hours=1),
+                    min_value=20.0,
+                    max_value=25.0,
+                    avg_value=22.5 + i,  # Varying avg_value
+                    median_value=22.5,
+                    sample_count=10,
+                    first_value=20.0,
+                    last_value=25.0,
+                    std_deviation=1.5,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        # Convert aggregates to samples
+        with db.get_session() as session:
+            samples = convert_hourly_aggregates_to_samples(
+                db, area_name, entity_id, period_start, period_end, session
+            )
+
+        # Verify conversion
+        assert len(samples) == 24
+        # Verify samples are sorted by timestamp
+        timestamps = [s.timestamp for s in samples]
+        assert timestamps == sorted(timestamps)
+        # Verify values match avg_value from aggregates
+        assert samples[0].value == 22.5  # First aggregate avg_value
+        assert samples[-1].value == 22.5 + 23  # Last aggregate avg_value
+
+    def test_correlation_timestamp_ordering(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that combined samples are properly sorted by timestamp."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+        old_date = now - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS + 2)
+
+        # Ensure area and entity exist
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id=entity_id,
+                entity_type="temperature",
+            )
+            session.add(entity)
+
+            # Create recent raw samples
+            for i in range(5):
+                sample = db.NumericSamples(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    timestamp=now - timedelta(hours=5 - i),
+                    value=20.0 + i,
+                )
+                session.add(sample)
+
+            # Create old hourly aggregates
+            for i in range(3):
+                hour_start = old_date + timedelta(hours=i)
+                aggregate = db.NumericAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    aggregation_period=AGGREGATION_PERIOD_HOURLY,
+                    period_start=hour_start,
+                    period_end=hour_start + timedelta(hours=1),
+                    min_value=20.0,
+                    max_value=25.0,
+                    avg_value=22.5,
+                    median_value=22.5,
+                    sample_count=10,
+                    first_value=20.0,
+                    last_value=25.0,
+                    std_deviation=1.5,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        # Create occupied intervals
+        intervals = [
+            (old_date, old_date + timedelta(hours=2)),
+            (now - timedelta(hours=3), now - timedelta(hours=1)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Analyze correlation
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+        # Should have both sources combined
+        assert result["sample_count"] == 8  # 5 recent + 3 aggregates

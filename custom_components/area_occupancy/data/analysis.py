@@ -32,11 +32,12 @@ async def run_full_analysis(
     2. Database health check and pruning
     3. Populate occupied intervals cache
     4. Run interval aggregation
-    5. Recalculate priors for all areas
-    6. Run correlation analysis
-    7. Save data (preserve decay state before refresh)
-    8. Refresh coordinator
-    9. Save data (persist all changes)
+    5. Run numeric aggregation
+    6. Recalculate priors for all areas
+    7. Run correlation analysis
+    8. Save data (preserve decay state before refresh)
+    9. Refresh coordinator
+    10. Save data (persist all changes)
 
     Args:
         coordinator: The coordinator instance containing areas and database
@@ -99,42 +100,48 @@ async def run_full_analysis(
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         _LOGGER.info("Step 4: Interval aggregation completed in %.2f ms", elapsed_ms)
 
-        # Step 5: Recalculate priors with new data for all areas
+        # Step 5: Run numeric aggregation
+        start_time = time.perf_counter()
+        await run_numeric_aggregation(coordinator, _now)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        _LOGGER.info("Step 5: Numeric aggregation completed in %.2f ms", elapsed_ms)
+
+        # Step 6: Recalculate priors with new data for all areas
         start_time = time.perf_counter()
         for area in coordinator.areas.values():
             await area.run_prior_analysis()
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         _LOGGER.info(
-            "Step 5: Recalculate priors for all areas completed in %.2f ms", elapsed_ms
+            "Step 6: Recalculate priors for all areas completed in %.2f ms", elapsed_ms
         )
 
-        # Step 6: Run correlation analysis (requires OccupiedIntervalsCache)
+        # Step 7: Run correlation analysis (requires OccupiedIntervalsCache)
         start_time = time.perf_counter()
         await run_correlation_analysis(coordinator)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info("Step 6: Correlation analysis completed in %.2f ms", elapsed_ms)
+        _LOGGER.info("Step 7: Correlation analysis completed in %.2f ms", elapsed_ms)
 
-        # Step 7: Save data (preserve decay state before refresh)
+        # Step 8: Save data (preserve decay state before refresh)
         # This ensures decay state is saved before async_refresh() potentially resets it
         start_time = time.perf_counter()
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         _LOGGER.info(
-            "Step 7: Save data (before refresh) completed in %.2f ms", elapsed_ms
+            "Step 8: Save data (before refresh) completed in %.2f ms", elapsed_ms
         )
 
-        # Step 8: Refresh the coordinator
+        # Step 9: Refresh the coordinator
         start_time = time.perf_counter()
         await coordinator.async_refresh()
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info("Step 8: Refresh coordinator completed in %.2f ms", elapsed_ms)
+        _LOGGER.info("Step 9: Refresh coordinator completed in %.2f ms", elapsed_ms)
 
-        # Step 9: Save data (persist all changes after refresh)
+        # Step 10: Save data (persist all changes after refresh)
         start_time = time.perf_counter()
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         _LOGGER.info(
-            "Step 9: Save data (after refresh) completed in %.2f ms", elapsed_ms
+            "Step 10: Save data (after refresh) completed in %.2f ms", elapsed_ms
         )
 
         final_elapsed_ms = (time.perf_counter() - analysis_start_time) * 1000
@@ -377,7 +384,8 @@ class PriorAnalyzer:
 
         # Initialize slot tracking: (day_of_week, time_slot) -> (occupied_seconds, weeks_with_data)
         slot_occupied_seconds: dict[tuple[int, int], float] = {}
-        slot_weeks: dict[tuple[int, int], set[int]] = {}
+        # Track calendar weeks as (year, week_number) tuples using ISO calendar
+        slot_weeks: dict[tuple[int, int], set[tuple[int, int]]] = {}
 
         # Process each occupied interval
         for start_time, end_time in occupied_intervals:
@@ -414,12 +422,13 @@ class PriorAnalyzer:
                     # Add occupied seconds
                     slot_occupied_seconds[slot_key] += overlap_seconds
 
-                    # Track which week this data point belongs to
-                    # Use week number since period_start to identify unique weeks
-                    # Use overlap_start to get the correct week for this overlap
-                    days_since_start = (overlap_start.date() - period_start.date()).days
-                    week_number = days_since_start // 7
-                    slot_weeks[slot_key].add(week_number)
+                    # Track which calendar week this data point belongs to
+                    # Use ISO calendar week (year, week_number) to properly handle
+                    # week boundaries and year transitions
+                    # This ensures intervals on the same calendar week are grouped together
+                    year, week_number, _ = overlap_start.isocalendar()
+                    week_key = (year, week_number)
+                    slot_weeks[slot_key].add(week_key)
 
                 # Move to next slot
                 current_time = slot_end
@@ -564,6 +573,51 @@ async def run_interval_aggregation(
         area_names = format_area_names(coordinator)
         _LOGGER.error(
             "Interval aggregation failed for areas %s: %s",
+            area_names,
+            err,
+        )
+        # Don't raise - allow analysis to continue even if aggregation fails
+        return None
+    else:
+        return results if return_results else None
+
+
+async def run_numeric_aggregation(
+    coordinator: AreaOccupancyCoordinator,
+    _now: datetime | None = None,
+    return_results: bool = False,
+) -> dict[str, int] | None:
+    """Run numeric aggregation.
+
+    This function aggregates raw numeric samples older than the retention period
+    into hourly/weekly aggregates for seasonal trend analysis.
+
+    Args:
+        coordinator: The coordinator instance containing areas and database
+        _now: Optional timestamp for the aggregation run
+        return_results: If True, returns aggregation results dictionary
+
+    Returns:
+        Dictionary with aggregation results (hourly, weekly counts) if
+        return_results is True, None otherwise.
+    """
+    if _now is None:
+        _now = dt_util.utcnow()
+
+    try:
+        results = await coordinator.hass.async_add_executor_job(
+            coordinator.db.run_numeric_aggregation
+        )
+        area_names = format_area_names(coordinator)
+        _LOGGER.debug(
+            "Numeric aggregation completed for areas %s: %s",
+            area_names,
+            results,
+        )
+    except Exception as err:  # noqa: BLE001
+        area_names = format_area_names(coordinator)
+        _LOGGER.error(
+            "Numeric aggregation failed for areas %s: %s",
             area_names,
             err,
         )
