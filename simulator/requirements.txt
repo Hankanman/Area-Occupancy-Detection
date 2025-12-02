@@ -1,4 +1,13 @@
+# Flask web framework and CORS support
 Flask>=3.0.0
-PyYAML>=6.0
 Flask-Cors>=4.0
 
+# Home Assistant (provides homeassistant.const, homeassistant.util.dt, PyYAML, SQLAlchemy, etc.)
+# See https://raw.githubusercontent.com/home-assistant/core/refs/heads/dev/requirements.txt
+# for full list of dependencies included with Home Assistant
+homeassistant>=2025.12.0b3
+
+# numpy is required by custom_components.area_occupancy.db.correlation
+# Even though the simulator doesn't use db modules directly, Python imports them
+# transitively when loading custom_components, so numpy must be available
+numpy>=2.3.2
