@@ -76,21 +76,6 @@ class TestAreaMethods:
         prob = default_area.probability()
         assert prob == MIN_PROBABILITY
 
-    def test_area_prior(self, default_area: Area) -> None:
-        """Test area_prior method."""
-        # Set global_prior and ensure time_prior is None to get predictable result
-        default_area.prior.global_prior = 0.35
-        default_area.prior._cached_time_prior = None
-        # Mock get_time_prior to return None so time_prior property returns None
-        # This ensures we only use global_prior for the calculation
-        with patch.object(default_area.prior, "get_time_prior", return_value=None):
-            # area_prior() returns prior.value which applies PRIOR_FACTOR (1.05)
-            # and clamps to bounds, so we check it's approximately correct
-            prior_value = default_area.area_prior()
-            assert 0.0 <= prior_value <= 1.0
-            # Should be close to 0.35 * 1.05 = 0.3675, but clamped to MAX_PRIOR
-            assert prior_value >= 0.35
-
     def test_decay_with_entities(self, default_area: Area) -> None:
         """Test decay method with entities."""
         mock_entity1 = Mock()

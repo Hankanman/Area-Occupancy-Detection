@@ -89,6 +89,7 @@ def _create_delegated_methods() -> dict[str, Any]:
         "ensure_area_exists": operations.ensure_area_exists,
         "prune_old_intervals": operations.prune_old_intervals,
         "save_global_prior": operations.save_global_prior,
+        "save_time_priors": operations.save_time_priors,
         "save_occupied_intervals_cache": operations.save_occupied_intervals_cache,
         # Utility methods
         "is_intervals_empty": utils.is_intervals_empty,
@@ -106,8 +107,12 @@ def _create_delegated_methods() -> dict[str, Any]:
         "aggregate_daily_to_weekly": aggregation.aggregate_daily_to_weekly,
         "aggregate_weekly_to_monthly": aggregation.aggregate_weekly_to_monthly,
         "run_interval_aggregation": aggregation.run_interval_aggregation,
+        "aggregate_numeric_samples_to_hourly": aggregation.aggregate_numeric_samples_to_hourly,
+        "aggregate_hourly_to_weekly": aggregation.aggregate_hourly_to_weekly,
+        "run_numeric_aggregation": aggregation.run_numeric_aggregation,
         "prune_old_aggregates": aggregation.prune_old_aggregates,
         "prune_old_numeric_samples": aggregation.prune_old_numeric_samples,
+        "prune_old_numeric_aggregates": aggregation.prune_old_numeric_aggregates,
         # Correlation methods
         "analyze_correlation": correlation.analyze_correlation,
         "save_correlation_result": correlation.save_correlation_result,
@@ -297,6 +302,28 @@ class AreaOccupancyDB:
             area_name,
             day_of_week,
             time_slot,
+            default_prior,
+        )
+
+    def get_all_time_priors(
+        self,
+        area_name: str,
+        default_prior: float = 0.5,
+    ) -> dict[tuple[int, int], float]:
+        """Get all time priors for an area (all 168 slots).
+
+        Args:
+            area_name: The area name to filter by
+            default_prior: Default prior value for slots not found
+
+        Returns:
+            Dictionary mapping (day_of_week, time_slot) to prior_value.
+            All 168 slots are included, using default_prior for missing slots.
+        """
+        return queries.get_all_time_priors(
+            self,
+            self.coordinator.entry_id,
+            area_name,
             default_prior,
         )
 

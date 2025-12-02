@@ -110,31 +110,62 @@ Stores state change intervals for all sensors.
 
 ### `priors`
 
-Stores time-slot priors (day of week × time slot).
+Stores time-slot priors (day of week × time slot). These are calculated from historical motion sensor data during the analysis cycle and provide time-of-day and day-of-week specific occupancy probabilities.
 
-| Column                  | Type            | Description                             |
-| ----------------------- | --------------- | --------------------------------------- |
-| `entry_id`              | String          | Integration entry ID                    |
-| `area_name`             | String (PK, FK) | Area name                               |
-| `day_of_week`           | Integer (PK)    | Day of week (0=Monday, 6=Sunday)        |
-| `time_slot`             | Integer (PK)    | Time slot (0-23 for hourly slots)       |
-| `prior_value`           | Float           | Prior probability for this slot         |
-| `data_points`           | Integer         | Number of data points used              |
-| `confidence`            | Float           | Confidence in the calculation (0.0-1.0) |
-| `last_calculation_date` | DateTime        | When prior was last calculated          |
-| `sample_period_start`   | DateTime        | Start of data period used               |
-| `sample_period_end`     | DateTime        | End of data period used                 |
-| `calculation_method`    | String          | Method used (e.g., "interval_analysis") |
-| `last_updated`          | DateTime        | Last update timestamp                   |
+**Purpose**: Provides time-of-day and day-of-week specific occupancy probabilities. Each area has 168 time slots (7 days × 24 hours), allowing the system to learn patterns like "living room is usually occupied on weekdays at 7 PM" or "bedroom is rarely occupied on weekdays at 2 PM".
+
+| Column                  | Type            | Description                                                                 |
+| ----------------------- | --------------- | --------------------------------------------------------------------------- |
+| `entry_id`              | String          | Integration entry ID (same for all priors in the integration)               |
+| `area_name`             | String (PK, FK) | Area name (foreign key to `areas.area_name`)                                |
+| `day_of_week`           | Integer (PK)    | Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)                            |
+| `time_slot`             | Integer (PK)    | Time slot index (0=00:00-01:00, 1=01:00-02:00, ..., 23=23:00-24:00)        |
+| `prior_value`           | Float           | Prior probability for this slot (0.0-1.0), clamped to [0.1, 0.9] at runtime |
+| `data_points`           | Integer         | Number of data points (weeks) used in calculation                           |
+| `confidence`            | Float           | Confidence in the calculation (0.0-1.0, nullable)                          |
+| `last_calculation_date` | DateTime        | When prior was last calculated (nullable)                                   |
+| `sample_period_start`   | DateTime        | Start of data period used for calculation (nullable)                       |
+| `sample_period_end`     | DateTime        | End of data period used for calculation (nullable)                          |
+| `calculation_method`    | String          | Method used (e.g., "interval_analysis", nullable)                           |
+| `last_updated`          | DateTime        | Last update timestamp                                                       |
+
+**Primary Key**: Composite of `(area_name, day_of_week, time_slot)`
+
+- Ensures one prior value per area per time slot
+- Allows efficient lookup by area and time slot
 
 **Indexes:**
 
-- Composite primary key on `(area_name, day_of_week, time_slot)`
-- Indexes on `entry_id`, `area_name`, `(day_of_week, time_slot)`
+- `idx_priors_entry` on `entry_id`: Fast filtering by integration entry
+- `idx_priors_area` on `area_name`: Fast filtering by area
+- `idx_priors_entry_area` on `(entry_id, area_name)`: Composite index for area-based queries
+- `idx_priors_day_slot` on `(day_of_week, time_slot)`: Fast lookup by time slot pattern
+- `idx_priors_last_updated` on `last_updated`: For tracking when priors were last recalculated
 
 **Relationships:**
 
-- Many-to-one with `areas`
+- Many-to-one with `areas` table via `area_name` foreign key
+
+**Data Model**:
+
+- Each area has 168 records (7 days × 24 hours)
+- Records are created/updated during analysis cycles
+- Missing records default to 0.5 (neutral prior) at runtime
+
+**Retrieval**:
+
+- Queried via `queries.py:get_time_prior()` function
+- Filtered by `entry_id`, `area_name`, `day_of_week`, `time_slot`
+- Returns `prior_value` or default (0.5) if not found
+- Values are clamped to [0.1, 0.9] range at retrieval time
+
+**Current Status**:
+
+- Schema exists and is fully defined
+- Retrieval mechanism is implemented
+- Calculation and storage logic is **fully implemented**
+- Time priors are calculated during the analysis cycle and stored automatically
+- See [Time Prior Flow](time-prior-flow.md) for complete implementation details
 
 ## New Tables for Advanced Features
 
@@ -195,12 +226,24 @@ Stores precomputed occupied intervals for fast prior calculations.
 
 Stores global prior values with calculation metadata and history. **This is the only source of truth for global priors** - the `areas` table no longer contains an `area_prior` field.
 
+**Purpose:** Stores the global prior for each area with full history and metadata. The global prior represents the overall occupancy probability for an area, calculated from historical motion sensor data. It serves as the baseline for Bayesian probability calculations.
+
+**Calculation Method:** The global prior is calculated as the ratio of total occupied time to total period duration:
+
+```
+global_prior = total_occupied_seconds / total_period_seconds
+```
+
+The period is determined from actual data availability (first interval start to last interval end or current time), not a fixed lookback window. Values are clamped to the range `[0.01, 0.99]` to prevent extreme values.
+
+**Relationship to Time Priors:** The global prior is combined with time priors (stored in `priors` table) to create a more accurate baseline probability. See [Global Prior Flow](global-prior-flow.md) for complete details.
+
 | Column                   | Type            | Description                              |
 | ------------------------ | --------------- | ---------------------------------------- |
 | `id`                     | Integer (PK)    | Auto-increment primary key               |
 | `entry_id`               | String          | Integration entry ID                     |
 | `area_name`              | String (Unique) | Area name                                |
-| `prior_value`            | Float           | Global prior probability                 |
+| `prior_value`            | Float           | Global prior probability (0.01-0.99)    |
 | `calculation_date`       | DateTime        | When prior was calculated                |
 | `data_period_start`      | DateTime        | Start of data period used                |
 | `data_period_end`        | DateTime        | End of data period used                  |
@@ -208,19 +251,36 @@ Stores global prior values with calculation metadata and history. **This is the 
 | `total_period_seconds`   | Float           | Total period duration                    |
 | `interval_count`         | Integer         | Number of intervals used                 |
 | `confidence`             | Float           | Confidence in calculation (0.0-1.0)      |
-| `calculation_method`     | String          | Method used                              |
+| `calculation_method`     | String          | Method used (default: "interval_analysis") |
 | `underlying_data_hash`   | String          | Hash of underlying data (for validation) |
 | `created_at`             | DateTime        | Creation timestamp                       |
 | `updated_at`             | DateTime        | Last update timestamp                    |
 
 **Indexes:**
 
-- Unique constraint on `area_name`
-- Index on `calculation_date`
+- Unique constraint on `area_name` (ensures one global prior per area)
+- Index on `calculation_date` (for history tracking and pruning)
 
-**Purpose:** Stores the global prior for each area with full history and metadata. Only the most recent calculation is kept per area (older calculations are pruned).
+**Retrieval:**
 
-**Retention:** Last 15 calculations per area are retained.
+- Queried via `queries.py:get_global_prior()` function
+- Filtered by `area_name`
+- Returns dictionary with prior metadata, or `None` if not found
+- Loaded during `load_data()` operation on integration startup
+
+**Storage:**
+
+- Saved via `operations.py:save_global_prior()` function
+- Called after global prior calculation in `PriorAnalyzer.calculate_and_update_prior()`
+- Updates existing record or creates new one
+- Prunes old history (keeps last 15 calculations per area)
+
+**Retention:** Last 15 calculations per area are retained. Older calculations are automatically pruned when new ones are saved.
+
+**See Also:**
+
+- [Global Prior Flow](global-prior-flow.md) - Complete calculation and data flow documentation
+- [Time Prior Flow](time-prior-flow.md) - Time-of-day specific priors
 
 ### `numeric_samples`
 

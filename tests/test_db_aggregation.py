@@ -7,11 +7,15 @@ import pytest
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.aggregation import (
     aggregate_daily_to_weekly,
+    aggregate_hourly_to_weekly,
+    aggregate_numeric_samples_to_hourly,
     aggregate_raw_to_daily,
     aggregate_weekly_to_monthly,
     prune_old_aggregates,
+    prune_old_numeric_aggregates,
     prune_old_numeric_samples,
     run_interval_aggregation,
+    run_numeric_aggregation,
 )
 from homeassistant.util import dt as dt_util
 
@@ -54,8 +58,10 @@ class TestAggregateRawToDaily:
                 session.add(interval)
             session.commit()
 
-        result = aggregate_raw_to_daily(db, area_name)
-        assert result > 0
+        result_count, result_ids = aggregate_raw_to_daily(db, area_name)
+        assert result_count > 0
+        assert isinstance(result_ids, list)
+        assert len(result_ids) == result_count
 
         # Verify daily aggregates were created
         with db.get_session() as session:
@@ -72,8 +78,9 @@ class TestAggregateRawToDaily:
         """Test aggregation with no raw data."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
-        result = aggregate_raw_to_daily(db, area_name)
-        assert result == 0
+        result_count, result_ids = aggregate_raw_to_daily(db, area_name)
+        assert result_count == 0
+        assert result_ids == []
 
 
 class TestAggregateDailyToWeekly:
@@ -115,8 +122,10 @@ class TestAggregateDailyToWeekly:
                 session.add(aggregate)
             session.commit()
 
-        result = aggregate_daily_to_weekly(db, area_name)
-        assert result > 0
+        result_count, result_ids = aggregate_daily_to_weekly(db, area_name)
+        assert result_count > 0
+        assert isinstance(result_ids, list)
+        assert len(result_ids) == result_count
 
         # Verify weekly aggregates were created
         with db.get_session() as session:
@@ -332,4 +341,238 @@ class TestPruneOldNumericSamples:
             assert len(samples) == 0 or all(
                 sample.timestamp > dt_util.utcnow() - timedelta(days=30)
                 for sample in samples
+            )
+
+
+class TestAggregateNumericSamplesToHourly:
+    """Test aggregate_numeric_samples_to_hourly function."""
+
+    def test_aggregate_numeric_samples_to_hourly_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test successful aggregation from numeric samples to hourly."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        # Use 8 days ago to ensure samples are older than retention period (7 days)
+        old_date = dt_util.utcnow() - timedelta(days=8)
+
+        # Ensure area and entity exist first (foreign key requirements)
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="sensor.temperature",
+                entity_type="temperature",
+            )
+            session.add(entity)
+            session.commit()
+
+        with db.get_session() as session:
+            # Create samples across multiple hours
+            for i in range(5):
+                sample = db.NumericSamples(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="sensor.temperature",
+                    timestamp=old_date + timedelta(hours=i),
+                    value=20.0 + i,
+                    unit_of_measurement="°C",
+                )
+                session.add(sample)
+            session.commit()
+
+        result_count, result_ids = aggregate_numeric_samples_to_hourly(db, area_name)
+        assert result_count > 0
+        assert isinstance(result_ids, list)
+        assert len(result_ids) == result_count
+
+        # Verify hourly aggregates were created
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.NumericAggregates)
+                .filter_by(area_name=area_name, aggregation_period="hourly")
+                .all()
+            )
+            assert len(aggregates) > 0
+            # Verify statistics are calculated
+            for agg in aggregates:
+                assert agg.min_value is not None
+                assert agg.max_value is not None
+                assert agg.avg_value is not None
+                assert agg.median_value is not None
+                assert agg.sample_count > 0
+
+    def test_aggregate_numeric_samples_to_hourly_no_data(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test aggregation with no numeric samples."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        result_count, result_ids = aggregate_numeric_samples_to_hourly(db, area_name)
+        assert result_count == 0
+        assert result_ids == []
+
+
+class TestAggregateHourlyToWeekly:
+    """Test aggregate_hourly_to_weekly function."""
+
+    def test_aggregate_hourly_to_weekly_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test successful aggregation from hourly to weekly."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        old_date = dt_util.utcnow() - timedelta(days=35)
+
+        # Ensure area and entity exist first (foreign key requirements)
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="sensor.temperature",
+                entity_type="temperature",
+            )
+            session.add(entity)
+            session.commit()
+
+        with db.get_session() as session:
+            # Create hourly aggregates spanning a week
+            for i in range(7 * 24):  # 7 days * 24 hours
+                hour_start = old_date + timedelta(hours=i)
+                aggregate = db.NumericAggregates(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="sensor.temperature",
+                    aggregation_period="hourly",
+                    period_start=hour_start,
+                    period_end=hour_start + timedelta(hours=1),
+                    min_value=20.0,
+                    max_value=25.0,
+                    avg_value=22.5,
+                    median_value=22.5,
+                    sample_count=10,
+                    first_value=20.0,
+                    last_value=25.0,
+                    std_deviation=1.5,
+                )
+                session.add(aggregate)
+            session.commit()
+
+        result_count, result_ids = aggregate_hourly_to_weekly(db, area_name)
+        assert result_count > 0
+        assert isinstance(result_ids, list)
+        assert len(result_ids) == result_count
+
+        # Verify weekly aggregates were created
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.NumericAggregates)
+                .filter_by(area_name=area_name, aggregation_period="weekly")
+                .all()
+            )
+            assert len(aggregates) > 0
+
+
+class TestRunNumericAggregation:
+    """Test run_numeric_aggregation function."""
+
+    def test_run_numeric_aggregation_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test running full tiered numeric aggregation process."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        # Use 8 days ago to ensure samples are older than retention period (7 days)
+        old_date = dt_util.utcnow() - timedelta(days=8)
+
+        # Ensure area and entity exist first (foreign key requirements)
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="sensor.temperature",
+                entity_type="temperature",
+            )
+            session.add(entity)
+            session.commit()
+
+        with db.get_session() as session:
+            sample = db.NumericSamples(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="sensor.temperature",
+                timestamp=old_date,
+                value=25.5,
+                unit_of_measurement="°C",
+            )
+            session.add(sample)
+            session.commit()
+
+        results = run_numeric_aggregation(db, area_name, force=False)
+        assert isinstance(results, dict)
+        assert "hourly" in results
+        assert "weekly" in results
+
+
+class TestPruneOldNumericAggregates:
+    """Test prune_old_numeric_aggregates function."""
+
+    def test_prune_old_numeric_aggregates_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test pruning old numeric aggregates successfully."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        old_date = dt_util.utcnow() - timedelta(days=35)
+
+        # Ensure area and entity exist first (foreign key requirements)
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="sensor.temperature",
+                entity_type="temperature",
+            )
+            session.add(entity)
+            session.commit()
+
+        with db.get_session() as session:
+            aggregate = db.NumericAggregates(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="sensor.temperature",
+                aggregation_period="hourly",
+                period_start=old_date,
+                period_end=old_date + timedelta(hours=1),
+                min_value=20.0,
+                max_value=25.0,
+                avg_value=22.5,
+                median_value=22.5,
+                sample_count=10,
+                first_value=20.0,
+                last_value=25.0,
+                std_deviation=1.5,
+            )
+            session.add(aggregate)
+            session.commit()
+
+        results = prune_old_numeric_aggregates(db, area_name)
+        assert isinstance(results, dict)
+        assert "hourly" in results
+        assert "weekly" in results
+
+        # Verify old aggregate was pruned
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.NumericAggregates).filter_by(area_name=area_name).all()
+            )
+            # Should be pruned based on retention policy
+            assert len(aggregates) == 0 or all(
+                agg.period_start > dt_util.utcnow() - timedelta(days=30)
+                for agg in aggregates
+                if agg.aggregation_period == "hourly"
             )

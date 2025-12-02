@@ -1,6 +1,7 @@
 /* eslint-disable no-undef */
 (function () {
-  const DEFAULT_API_BASE_URL = "https://aod-simulator.onrender.com";
+  const DEFAULT_API_BASE_URL =
+    "https://area-occupancy-simulator.23ffgm1eszu1.eu-gb.codeengine.appdomain.cloud";
   const LOCAL_API_BASE_URL = "http://127.0.0.1:5000";
   const STORAGE_KEY = "aodSimulatorApiBaseUrl";
 
