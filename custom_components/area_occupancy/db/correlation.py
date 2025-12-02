@@ -269,11 +269,7 @@ def convert_hourly_aggregates_to_samples(
         if midpoint < period_start_utc or midpoint > period_end_utc:
             continue
 
-        # Skip if avg_value is None (shouldn't happen, but defensive check)
-        if aggregate.avg_value is None:
-            continue
-
-        # Use avg_value as the representative value for the hour
+        # avg_value is guaranteed by the aggregator (always computed from raw samples)
         samples.append(SimpleSample(midpoint, float(aggregate.avg_value)))
 
     return samples
