@@ -107,8 +107,12 @@ def _create_delegated_methods() -> dict[str, Any]:
         "aggregate_daily_to_weekly": aggregation.aggregate_daily_to_weekly,
         "aggregate_weekly_to_monthly": aggregation.aggregate_weekly_to_monthly,
         "run_interval_aggregation": aggregation.run_interval_aggregation,
+        "aggregate_numeric_samples_to_hourly": aggregation.aggregate_numeric_samples_to_hourly,
+        "aggregate_hourly_to_weekly": aggregation.aggregate_hourly_to_weekly,
+        "run_numeric_aggregation": aggregation.run_numeric_aggregation,
         "prune_old_aggregates": aggregation.prune_old_aggregates,
         "prune_old_numeric_samples": aggregation.prune_old_numeric_samples,
+        "prune_old_numeric_aggregates": aggregation.prune_old_numeric_aggregates,
         # Correlation methods
         "analyze_correlation": correlation.analyze_correlation,
         "save_correlation_result": correlation.save_correlation_result,

@@ -17,10 +17,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    AGGREGATION_PERIOD_HOURLY,
     CORRELATION_MODERATE_THRESHOLD,
     CORRELATION_MONTHS_TO_KEEP,
     CORRELATION_WEAK_THRESHOLD,
     MIN_CORRELATION_SAMPLES,
+    RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
 )
 from ..data.entity_type import InputType
 from ..utils import clamp_probability, ensure_timezone_aware
@@ -198,6 +200,81 @@ def convert_intervals_to_samples(
         value = 1.0 if is_active else 0.0
 
         samples.append(SimpleSample(midpoint, value))
+
+    return samples
+
+
+def convert_hourly_aggregates_to_samples(
+    db: AreaOccupancyDB,
+    area_name: str,
+    entity_id: str,
+    period_start: datetime,
+    period_end: datetime,
+    session: Any,
+) -> list[SimpleSample]:
+    """Convert hourly numeric aggregates to sample objects.
+
+    For numeric sensors, creates samples from hourly aggregates using avg_value
+    as the representative value for each hour. Uses hour midpoint as timestamp.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        entity_id: Entity ID
+        period_start: Analysis period start
+        period_end: Analysis period end
+        session: Database session
+
+    Returns:
+        List of SimpleSample objects created from hourly aggregates
+    """
+    # Ensure period boundaries are timezone-aware UTC for SQL query
+    period_start_utc = ensure_timezone_aware(period_start)
+    period_end_utc = ensure_timezone_aware(period_end)
+
+    # Query hourly aggregates for the entity that overlap with the analysis period
+    aggregates = (
+        session.query(db.NumericAggregates)
+        .filter(
+            db.NumericAggregates.entry_id == db.coordinator.entry_id,
+            db.NumericAggregates.area_name == area_name,
+            db.NumericAggregates.entity_id == entity_id,
+            db.NumericAggregates.aggregation_period == AGGREGATION_PERIOD_HOURLY,
+            # Include aggregates that overlap with the period:
+            # - period_start before aggregate period_end (aggregate starts before period ends)
+            # - period_end after aggregate period_start (aggregate ends after period starts)
+            db.NumericAggregates.period_start < period_end_utc,
+            db.NumericAggregates.period_end > period_start_utc,
+        )
+        .order_by(db.NumericAggregates.period_start)
+        .all()
+    )
+
+    samples = []
+
+    for aggregate in aggregates:
+        # SQLite returns naive datetimes, but they're stored as UTC
+        # Use ensure_timezone_aware to assume UTC for naive datetimes
+        agg_start = ensure_timezone_aware(aggregate.period_start)
+        agg_end = ensure_timezone_aware(aggregate.period_end)
+
+        # Clamp aggregate bounds to period boundaries
+        clamped_start = max(agg_start, period_start_utc)
+        clamped_end = min(agg_end, period_end_utc)
+
+        # Calculate midpoint of clamped aggregate period
+        midpoint = clamped_start + (clamped_end - clamped_start) / 2
+
+        # Ensure midpoint falls within the analysis window
+        if midpoint < period_start_utc or midpoint > period_end_utc:
+            continue
+
+        # Skip if avg_value is None (shouldn't happen, but defensive check)
+        if aggregate.avg_value is None:
+            continue
+
+        # Use avg_value as the representative value for the hour
+        samples.append(SimpleSample(midpoint, float(aggregate.avg_value)))
 
     return samples
 
@@ -420,7 +497,7 @@ def analyze_binary_likelihoods(
             # Check if sensor has intervals but none are active
             if not found_active_intervals:
                 # Sensor has intervals but none match active_states
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Sensor %s in area %s has %d intervals but none match active_states %s. "
                     "Found states: %s",
                     entity_id,
@@ -466,7 +543,7 @@ def analyze_binary_likelihoods(
                     )
                 else:
                     # Sensor was never active at all (should have been caught earlier, but defensive check)
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "Sensor %s in area %s has active intervals but zero active duration. "
                         "This should have been caught earlier. Using type defaults.",
                         entity_id,
@@ -606,19 +683,55 @@ def analyze_correlation(  # noqa: C901
                     area_name,
                 )
             else:
-                # Get numeric samples for the entity
-                samples = (
+                # Get numeric samples from both raw samples and hourly aggregates
+                # Split period at retention cutoff to use appropriate data source
+                retention_cutoff = period_end_utc - timedelta(
+                    days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS
+                )
+
+                # Recent period: Use raw NumericSamples (within retention period)
+                recent_start = max(period_start_utc, retention_cutoff)
+                recent_samples = (
                     session.query(db.NumericSamples)
                     .filter(
                         db.NumericSamples.entry_id == db.coordinator.entry_id,
                         db.NumericSamples.area_name == area_name,
                         db.NumericSamples.entity_id == entity_id,
-                        db.NumericSamples.timestamp >= period_start_utc,
+                        db.NumericSamples.timestamp >= recent_start,
                         db.NumericSamples.timestamp <= period_end_utc,
                     )
                     .order_by(db.NumericSamples.timestamp)
                     .all()
                 )
+
+                # Historical period: Use hourly NumericAggregates (older than retention)
+                aggregate_samples: list[SimpleSample] = []
+                if period_start_utc < retention_cutoff:
+                    historical_end = min(period_end_utc, retention_cutoff)
+                    aggregate_samples = convert_hourly_aggregates_to_samples(
+                        db,
+                        area_name,
+                        entity_id,
+                        period_start_utc,
+                        historical_end,
+                        session,
+                    )
+
+                # Combine both sources
+                # Convert raw samples to SimpleSample objects for consistency
+                all_samples: list[SimpleSample] = [
+                    SimpleSample(
+                        ensure_timezone_aware(sample.timestamp), float(sample.value)
+                    )
+                    for sample in recent_samples
+                ]
+                all_samples.extend(aggregate_samples)
+
+                # Sort by timestamp to ensure chronological order
+                all_samples.sort(key=lambda s: s.timestamp)
+
+                # Use combined samples for correlation analysis
+                samples = all_samples
 
             if error := validate_sample_count(samples):
                 base_result.update(error)
