@@ -1,0 +1,68 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing
+tests/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.pytest_cache/
+
+# Documentation
+docs/
+*.md
+!simulator/README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+config/
+blueprints/
+scripts/
+hacs.json
+LICENSE
+CONTRIBUTING.md
+commit_messages.txt
+release_diff.txt
+repomix.config.json
+mypy.ini
+pylint/
+uv.lock
+area_occupancy_detection.egg-info/
+
+# Logs
+*.log
+test_output.log
+
+# Docker (keep Dockerfile and docker-compose.yml for reference, but exclude from build)
+# Note: Dockerfile and docker-compose.yml in simulator/ are needed for building
+
