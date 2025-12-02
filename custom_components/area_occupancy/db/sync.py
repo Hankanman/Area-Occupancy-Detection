@@ -320,7 +320,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                 if new_intervals:
                     session.bulk_insert_mappings(db.Intervals, new_intervals)
                     session.commit()
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Synced %d new intervals from recorder", len(new_intervals)
                     )
 
@@ -354,7 +354,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                 if new_samples:
                     session.bulk_insert_mappings(db.NumericSamples, new_samples)
                     session.commit()
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Synced %d numeric samples from recorder", len(new_samples)
                     )
 

@@ -8,13 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
 from ..const import (
-    DEFAULT_CACHE_TTL_SECONDS,
-    DEFAULT_LOOKBACK_DAYS,
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
     MAX_PROBABILITY,
@@ -54,15 +52,6 @@ class Prior:
         self.coordinator = coordinator
         self.db = coordinator.db
         self.area_name = area_name
-        # Validate area_name and retrieve config from coordinator.areas
-        if not area_name:
-            raise ValueError("Area name is required in multi-area architecture")
-        if area_name not in coordinator.areas:
-            available = list(coordinator.areas.keys())
-            raise ValueError(
-                f"Area '{area_name}' not found. "
-                f"Available areas: {available if available else '(none)'}"
-            )
         self.config = coordinator.areas[area_name].config
         self.sensor_ids = self.config.sensors.motion
         self.media_sensor_ids = self.config.sensors.media
@@ -70,13 +59,8 @@ class Prior:
         self.hass = coordinator.hass
         self.global_prior: float | None = None
         self._last_updated: datetime | None = None
-        # Cache for time_prior
-        self._cached_time_prior: float | None = None
-        self._cached_time_prior_day: int | None = None
-        self._cached_time_prior_slot: int | None = None
-        # Cache for occupied intervals
-        self._cached_occupied_intervals: list[tuple[datetime, datetime]] | None = None
-        self._cached_intervals_timestamp: datetime | None = None
+        # Cache for all 168 time priors: (day_of_week, time_slot) -> prior_value
+        self._cached_time_priors: dict[tuple[int, int], float] | None = None
 
     @property
     def value(self) -> float:
@@ -97,12 +81,6 @@ class Prior:
 
             # Validate that prior is within reasonable bounds before applying factor
             if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
-                _LOGGER.warning(
-                    "Prior %.10f is outside valid range [%.10f, %.10f], clamping to bounds",
-                    prior,
-                    MIN_PROBABILITY,
-                    MAX_PROBABILITY,
-                )
                 prior = clamp_probability(prior)
                 was_clamped = True
 
@@ -120,37 +98,23 @@ class Prior:
         # Apply minimum prior override if configured
         # This check must run for all code paths, including when global_prior is None
         if self.config.min_prior_override > 0.0:
-            original_result = result
-            if result < self.config.min_prior_override:
-                result = self.config.min_prior_override
-                _LOGGER.debug(
-                    "Applied minimum prior override in runtime: %.4f -> %.4f",
-                    original_result,
-                    result,
-                )
+            result = max(result, self.config.min_prior_override)
 
         return result
 
     @property
     def time_prior(self) -> float:
         """Return the current time prior value or minimum if not calculated."""
+        # Load all time priors if cache is empty
+        if self._cached_time_priors is None:
+            self._load_time_priors()
+
         current_day = self.day_of_week
         current_slot = self.time_slot
+        slot_key = (current_day, current_slot)
 
-        # Check if we have a valid cache for the current time slot
-        if (
-            self._cached_time_prior is not None
-            and self._cached_time_prior_day == current_day
-            and self._cached_time_prior_slot == current_slot
-        ):
-            return self._cached_time_prior
-
-        # Cache miss - get from database and cache the result
-        self._cached_time_prior = self.get_time_prior()
-        self._cached_time_prior_day = current_day
-        self._cached_time_prior_slot = current_slot
-
-        return self._cached_time_prior
+        # Get from cache (guaranteed to exist after _load_time_priors)
+        return self._cached_time_priors.get(slot_key, DEFAULT_TIME_PRIOR)
 
     @property
     def day_of_week(self) -> int:
@@ -163,28 +127,11 @@ class Prior:
         now = dt_util.utcnow()
         return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
 
-    @property
-    def last_updated(self) -> datetime | None:
-        """Return the last updated timestamp."""
-        return self._last_updated
-
     def set_global_prior(self, prior: float) -> None:
         """Set the global prior value."""
         self.global_prior = prior
         self._invalidate_time_prior_cache()
-        self._invalidate_occupied_intervals_cache()
         self._last_updated = dt_util.utcnow()
-
-    def _invalidate_time_prior_cache(self) -> None:
-        """Invalidate the time_prior cache."""
-        self._cached_time_prior = None
-        self._cached_time_prior_day = None
-        self._cached_time_prior_slot = None
-
-    def _invalidate_occupied_intervals_cache(self) -> None:
-        """Invalidate the occupied intervals cache."""
-        self._cached_occupied_intervals = None
-        self._cached_intervals_timestamp = None
 
     def clear_cache(self) -> None:
         """Clear all cached data to release memory.
@@ -194,98 +141,27 @@ class Prior:
         """
         _LOGGER.debug("Clearing all caches for area: %s", self.area_name)
         self._invalidate_time_prior_cache()
-        self._invalidate_occupied_intervals_cache()
         # Also clear global_prior and last_updated to release references
         self.global_prior = None
         self._last_updated = None
 
-    def get_time_prior(self) -> float:
-        """Get the time prior for the current time slot.
+    def _invalidate_time_prior_cache(self) -> None:
+        """Invalidate the time_prior cache."""
+        self._cached_time_priors = None
 
-        Returns:
-            float: Time prior value or default 0.5 if not found
+    def _load_time_priors(self) -> None:
+        """Load all 168 time priors from database into cache.
 
+        This method loads time priors for the area in a single database query,
+        eliminating the need for individual queries when accessing time priors.
         """
-        _LOGGER.debug("Getting time prior")
-        time_prior = self.db.get_time_prior(
+        self._cached_time_priors = self.db.get_all_time_priors(
             area_name=self.area_name,
-            day_of_week=self.day_of_week,
-            time_slot=self.time_slot,
             default_prior=DEFAULT_TIME_PRIOR,
         )
-
-        # Clamp the retrieved time prior between safety bounds
-        # This prevents extreme values (like 0.01 or 0.99) from disproportionately
-        # affecting the global prior, while still allowing meaningful influence.
-        # We bound it to [0.1, 0.9] to avoid "black hole" probabilities.
-        return max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, time_prior))
-
-    def get_occupied_intervals(
-        self,
-        lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    ) -> list[tuple[datetime, datetime]]:
-        """Get occupied time intervals from motion sensors only.
-
-        This method provides a single source of truth for determining occupancy
-        intervals that can be used by both prior and likelihood calculations.
-        Delegates to PriorAnalyzer for the actual calculation but maintains caching.
-
-        Occupied intervals are determined exclusively by motion sensors to ensure
-        consistent ground truth for prior calculations.
-
-        Args:
-            lookback_days: Number of days to look back for interval data (default: 90)
-
-        Returns:
-            List of (start_time, end_time) tuples representing occupied periods
-
-        """
-        # Check cache first
-        now = dt_util.utcnow()
-        if (
-            self._cached_occupied_intervals is not None
-            and self._cached_intervals_timestamp is not None
-            and (now - self._cached_intervals_timestamp).total_seconds()
-            < DEFAULT_CACHE_TTL_SECONDS
-        ):
-            _LOGGER.debug(
-                "Returning cached occupied intervals (%d intervals)",
-                len(self._cached_occupied_intervals),
+        # Apply safety bounds to all cached values
+        for slot_key, prior_value in self._cached_time_priors.items():
+            self._cached_time_priors[slot_key] = max(
+                TIME_PRIOR_MIN_BOUND,
+                min(TIME_PRIOR_MAX_BOUND, prior_value),
             )
-            return self._cached_occupied_intervals
-
-        # Delegate to analyzer for calculation
-        # Import here to avoid circular dependency (analysis.py imports Prior)
-        from .analysis import PriorAnalyzer  # noqa: PLC0415
-
-        analyzer = PriorAnalyzer(self.coordinator, self.area_name)
-        intervals = analyzer.get_occupied_intervals(lookback_days)
-
-        # Cache the result
-        self._cached_occupied_intervals = intervals
-        self._cached_intervals_timestamp = now
-
-        return intervals
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert prior to dictionary for storage."""
-        return {
-            "value": self.global_prior,
-            "last_updated": (
-                self._last_updated.isoformat() if self._last_updated else None
-            ),
-        }
-
-    @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], coordinator: AreaOccupancyCoordinator, area_name: str
-    ) -> Prior:
-        """Create prior from dictionary."""
-        prior = cls(coordinator, area_name=area_name)
-        prior.global_prior = data["value"]
-        prior._last_updated = (
-            datetime.fromisoformat(data["last_updated"])
-            if data["last_updated"]
-            else None
-        )
-        return prior

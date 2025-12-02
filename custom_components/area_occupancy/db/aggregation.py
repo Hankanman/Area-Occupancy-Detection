@@ -510,7 +510,7 @@ def run_interval_aggregation(
     Returns:
         Dictionary with counts of aggregates created at each level
     """
-    _LOGGER.info(
+    _LOGGER.debug(
         "Running tiered interval aggregation for area: %s", area_name or "all areas"
     )
 
@@ -530,7 +530,7 @@ def run_interval_aggregation(
         # Step 3: Aggregate weekly to monthly
         results["monthly"] = aggregate_weekly_to_monthly(db, area_name)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "Interval aggregation complete: %d daily, %d weekly, %d monthly aggregates created",
             results["daily"],
             results["weekly"],
