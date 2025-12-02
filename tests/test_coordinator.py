@@ -337,7 +337,7 @@ class TestAreaOccupancyCoordinator:
             patch.object(
                 coordinator.db, "load_data", new=AsyncMock(return_value=stored_data)
             ),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(coordinator.db, "is_intervals_empty", return_value=False),
             patch.object(coordinator, "run_analysis", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
@@ -367,7 +367,6 @@ class TestAreaOccupancyCoordinator:
                 "load_data",
                 new=AsyncMock(side_effect=HomeAssistantError("Storage failed")),
             ),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(
                 coordinator,
                 "_start_decay_timer",
@@ -497,7 +496,6 @@ class TestAreaOccupancyCoordinator:
             patch.object(area, "async_cleanup", new=AsyncMock()),
             patch.object(coordinator.db, "load_data", new=AsyncMock(return_value=None)),
             patch.object(coordinator.db, "save_data", new=Mock()),
-            patch.object(coordinator.db, "save_area_data", new=Mock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(
                 coordinator,
@@ -932,7 +930,7 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(coordinator.db, "save_area_data"),  # Now sync, no AsyncMock
+            patch.object(coordinator.db, "save_data"),  # Now sync, no AsyncMock
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(
@@ -961,7 +959,6 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
             patch.object(coordinator.db, "save_data", return_value=None),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
             patch.object(
@@ -1017,7 +1014,7 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(
@@ -1046,9 +1043,7 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(
-                coordinator.db, "save_area_data", side_effect=OSError("DB Error")
-            ),
+            patch.object(coordinator.db, "save_data", side_effect=OSError("DB Error")),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=False),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
             patch.object(
@@ -1075,7 +1070,7 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(
                 coordinator.db,
                 "safe_is_intervals_empty",
@@ -1108,7 +1103,7 @@ class TestAreaOccupancyCoordinator:
 
         with (
             patch.object(coordinator.db, "load_data", new=AsyncMock()),
-            patch.object(coordinator.db, "save_area_data", new=AsyncMock()),
+            patch.object(coordinator.db, "save_data", new=AsyncMock()),
             patch.object(coordinator.db, "safe_is_intervals_empty", return_value=True),
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),

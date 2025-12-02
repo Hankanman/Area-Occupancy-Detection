@@ -28,6 +28,8 @@ from ..const import (
     MIN_PROBABILITY,
     MIN_WEIGHT,
     RETENTION_DAYS,
+    TIME_PRIOR_MAX_BOUND,
+    TIME_PRIOR_MIN_BOUND,
 )
 from . import maintenance, queries
 
@@ -989,6 +991,111 @@ def save_global_prior(
 
         except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
             _LOGGER.error("Error saving global prior: %s", e)
+            session.rollback()
+            return False
+        else:
+            return True
+
+
+def save_time_priors(
+    db: AreaOccupancyDB,
+    area_name: str,
+    time_priors: dict[tuple[int, int], float],
+    data_period_start: datetime,
+    data_period_end: datetime,
+    data_points_per_slot: dict[tuple[int, int], int],
+    calculation_method: str = "interval_analysis",
+) -> bool:
+    """Save time priors for all slots to Priors table.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        time_priors: Dictionary mapping (day_of_week, time_slot) to prior_value
+        data_period_start: Start of data period used
+        data_period_end: End of data period used
+        data_points_per_slot: Dictionary mapping (day_of_week, time_slot) to data_points
+        calculation_method: Method used for calculation
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    _LOGGER.debug(
+        "Saving time priors for area: %s, %d slots", area_name, len(time_priors)
+    )
+
+    with db.get_session() as session:
+        try:
+            saved_count = 0
+            updated_count = 0
+
+            for (day_of_week, time_slot), prior_value in time_priors.items():
+                data_points = data_points_per_slot.get((day_of_week, time_slot), 0)
+
+                # Apply safety bounds as a safeguard (should already be applied in calculation)
+                # This ensures no values outside [0.1, 0.9] are saved to the database
+                prior_value = max(
+                    TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, prior_value)
+                )
+
+                # Check if prior already exists
+                existing = (
+                    session.query(db.Priors)
+                    .filter_by(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        day_of_week=day_of_week,
+                        time_slot=time_slot,
+                    )
+                    .first()
+                )
+
+                if existing:
+                    # Update existing record
+                    existing.prior_value = prior_value
+                    existing.data_points = data_points
+                    existing.last_calculation_date = dt_util.utcnow()
+                    existing.sample_period_start = data_period_start
+                    existing.sample_period_end = data_period_end
+                    existing.calculation_method = calculation_method
+                    existing.last_updated = dt_util.utcnow()
+                    # Calculate confidence based on data points (more weeks = higher confidence)
+                    # Use min(1.0, data_points / 4) where 4 weeks = full confidence
+                    existing.confidence = (
+                        min(1.0, data_points / 4.0) if data_points > 0 else None
+                    )
+                    updated_count += 1
+                else:
+                    # Create new record
+                    prior = db.Priors(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        day_of_week=day_of_week,
+                        time_slot=time_slot,
+                        prior_value=prior_value,
+                        data_points=data_points,
+                        last_calculation_date=dt_util.utcnow(),
+                        sample_period_start=data_period_start,
+                        sample_period_end=data_period_end,
+                        calculation_method=calculation_method,
+                        confidence=min(1.0, data_points / 4.0)
+                        if data_points > 0
+                        else None,
+                    )
+                    session.add(prior)
+                    saved_count += 1
+
+            session.commit()
+
+            _LOGGER.debug(
+                "Time priors saved successfully for area %s: %d created, %d updated",
+                area_name,
+                saved_count,
+                updated_count,
+            )
+
+        except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+            _LOGGER.error("Error saving time priors: %s", e)
             session.rollback()
             return False
         else:
