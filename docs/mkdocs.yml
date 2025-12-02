@@ -120,6 +120,7 @@ nav:
       - Bayesian Calculation: technical/bayesian-calculation.md
       - Calculation Flow: technical/calculation-flow.md
       - Data Flow: technical/data-flow.md
+      - Time Prior Flow: technical/time-prior-flow.md
       - Entity Evidence: technical/entity-evidence.md
       - Likelihood Calculation: technical/likelihood-calculation.md
       - Database Schema: technical/database-schema.md

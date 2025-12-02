@@ -262,19 +262,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Load data from database
             await self.db.load_data()
 
-            # Ensure areas exist in database and persist configuration/state
-            for area_name in self.areas:
-                try:
-                    # Save area data to database for this specific area
-                    await self.hass.async_add_executor_job(
-                        self.db.save_area_data, area_name
-                    )
-                except (HomeAssistantError, OSError, RuntimeError) as e:
-                    _LOGGER.warning(
-                        "Failed to save area data for %s, continuing setup: %s",
-                        area_name,
-                        e,
-                    )
+            # Ensure areas and entities exist in database and persist configuration/state
+            # This must happen before analysis runs so that get_occupied_intervals() can
+            # properly JOIN Intervals with Entities table
+            try:
+                # Save both area and entity data for all areas in one operation
+                await self.hass.async_add_executor_job(self.db.save_data)
+            except (HomeAssistantError, OSError, RuntimeError) as e:
+                _LOGGER.warning(
+                    "Failed to save area and entity data, continuing setup: %s", e
+                )
 
             # Track entity state changes for all areas
             all_entity_ids = []
