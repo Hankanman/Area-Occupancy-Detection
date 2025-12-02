@@ -377,7 +377,8 @@ class PriorAnalyzer:
 
         # Initialize slot tracking: (day_of_week, time_slot) -> (occupied_seconds, weeks_with_data)
         slot_occupied_seconds: dict[tuple[int, int], float] = {}
-        slot_weeks: dict[tuple[int, int], set[int]] = {}
+        # Track calendar weeks as (year, week_number) tuples using ISO calendar
+        slot_weeks: dict[tuple[int, int], set[tuple[int, int]]] = {}
 
         # Process each occupied interval
         for start_time, end_time in occupied_intervals:
@@ -414,12 +415,13 @@ class PriorAnalyzer:
                     # Add occupied seconds
                     slot_occupied_seconds[slot_key] += overlap_seconds
 
-                    # Track which week this data point belongs to
-                    # Use week number since period_start to identify unique weeks
-                    # Use overlap_start to get the correct week for this overlap
-                    days_since_start = (overlap_start.date() - period_start.date()).days
-                    week_number = days_since_start // 7
-                    slot_weeks[slot_key].add(week_number)
+                    # Track which calendar week this data point belongs to
+                    # Use ISO calendar week (year, week_number) to properly handle
+                    # week boundaries and year transitions
+                    # This ensures intervals on the same calendar week are grouped together
+                    year, week_number, _ = overlap_start.isocalendar()
+                    week_key = (year, week_number)
+                    slot_weeks[slot_key].add(week_key)
 
                 # Move to next slot
                 current_time = slot_end
