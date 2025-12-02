@@ -226,12 +226,24 @@ Stores precomputed occupied intervals for fast prior calculations.
 
 Stores global prior values with calculation metadata and history. **This is the only source of truth for global priors** - the `areas` table no longer contains an `area_prior` field.
 
+**Purpose:** Stores the global prior for each area with full history and metadata. The global prior represents the overall occupancy probability for an area, calculated from historical motion sensor data. It serves as the baseline for Bayesian probability calculations.
+
+**Calculation Method:** The global prior is calculated as the ratio of total occupied time to total period duration:
+
+```
+global_prior = total_occupied_seconds / total_period_seconds
+```
+
+The period is determined from actual data availability (first interval start to last interval end or current time), not a fixed lookback window. Values are clamped to the range `[0.01, 0.99]` to prevent extreme values.
+
+**Relationship to Time Priors:** The global prior is combined with time priors (stored in `priors` table) to create a more accurate baseline probability. See [Global Prior Flow](global-prior-flow.md) for complete details.
+
 | Column                   | Type            | Description                              |
 | ------------------------ | --------------- | ---------------------------------------- |
 | `id`                     | Integer (PK)    | Auto-increment primary key               |
 | `entry_id`               | String          | Integration entry ID                     |
 | `area_name`              | String (Unique) | Area name                                |
-| `prior_value`            | Float           | Global prior probability                 |
+| `prior_value`            | Float           | Global prior probability (0.01-0.99)    |
 | `calculation_date`       | DateTime        | When prior was calculated                |
 | `data_period_start`      | DateTime        | Start of data period used                |
 | `data_period_end`        | DateTime        | End of data period used                  |
@@ -239,19 +251,36 @@ Stores global prior values with calculation metadata and history. **This is the 
 | `total_period_seconds`   | Float           | Total period duration                    |
 | `interval_count`         | Integer         | Number of intervals used                 |
 | `confidence`             | Float           | Confidence in calculation (0.0-1.0)      |
-| `calculation_method`     | String          | Method used                              |
+| `calculation_method`     | String          | Method used (default: "interval_analysis") |
 | `underlying_data_hash`   | String          | Hash of underlying data (for validation) |
 | `created_at`             | DateTime        | Creation timestamp                       |
 | `updated_at`             | DateTime        | Last update timestamp                    |
 
 **Indexes:**
 
-- Unique constraint on `area_name`
-- Index on `calculation_date`
+- Unique constraint on `area_name` (ensures one global prior per area)
+- Index on `calculation_date` (for history tracking and pruning)
 
-**Purpose:** Stores the global prior for each area with full history and metadata. Only the most recent calculation is kept per area (older calculations are pruned).
+**Retrieval:**
 
-**Retention:** Last 15 calculations per area are retained.
+- Queried via `queries.py:get_global_prior()` function
+- Filtered by `area_name`
+- Returns dictionary with prior metadata, or `None` if not found
+- Loaded during `load_data()` operation on integration startup
+
+**Storage:**
+
+- Saved via `operations.py:save_global_prior()` function
+- Called after global prior calculation in `PriorAnalyzer.calculate_and_update_prior()`
+- Updates existing record or creates new one
+- Prunes old history (keeps last 15 calculations per area)
+
+**Retention:** Last 15 calculations per area are retained. Older calculations are automatically pruned when new ones are saved.
+
+**See Also:**
+
+- [Global Prior Flow](global-prior-flow.md) - Complete calculation and data flow documentation
+- [Time Prior Flow](time-prior-flow.md) - Time-of-day specific priors
 
 ### `numeric_samples`
 
