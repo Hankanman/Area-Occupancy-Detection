@@ -307,7 +307,37 @@ class PriorAnalyzer:
                 len(occupied_intervals),
             )
 
-            # 4. Calculate and save time priors
+            # 4. Save global prior to database
+            try:
+                success = self.db.save_global_prior(
+                    area_name=self.area_name,
+                    prior_value=global_prior,
+                    data_period_start=first_interval_start,
+                    data_period_end=actual_period_end,
+                    total_occupied_seconds=occupied_duration,
+                    total_period_seconds=actual_period_duration,
+                    interval_count=len(occupied_intervals),
+                    calculation_method="interval_analysis",
+                )
+                if success:
+                    _LOGGER.info(
+                        "Global prior saved for area %s: %.3f (period: %.1f days, %d intervals)",
+                        self.area_name,
+                        global_prior,
+                        actual_period_duration / 86400,
+                        len(occupied_intervals),
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Failed to save global prior for area %s", self.area_name
+                    )
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Failed to save global prior for area %s: %s", self.area_name, e
+                )
+                # Don't fail the entire prior calculation if save fails
+
+            # 5. Calculate and save time priors
             try:
                 time_priors, data_points_per_slot = self.calculate_time_priors(
                     occupied_intervals,
