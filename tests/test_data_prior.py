@@ -1,35 +1,21 @@
 """Tests for the Prior class (updated for improved implementation)."""
 
-from datetime import timedelta
-import logging
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 
 from custom_components.area_occupancy.const import (
-    DEFAULT_CACHE_TTL_SECONDS,
+    DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
-    MAX_PROBABILITY,
     MIN_PRIOR,
-    MIN_PROBABILITY,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.prior import (
-    DEFAULT_PRIOR,
     DEFAULT_SLOT_MINUTES,
     PRIOR_FACTOR,
-    SIGNIFICANT_CHANGE_THRESHOLD,
     Prior,
 )
 from homeassistant.util import dt as dt_util
-
-# Constants used in tests
-DAYS_PER_WEEK = 7
-DEFAULT_OCCUPIED_SECONDS = 0.0
-HOURS_PER_DAY = 24
-MINUTES_PER_DAY = 1440
-MINUTES_PER_HOUR = 60
-SQLITE_TO_PYTHON_WEEKDAY_OFFSET = 6
 
 
 # ruff: noqa: SLF001
@@ -75,98 +61,72 @@ def test_value_property_clamping(
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
     prior.global_prior = global_prior
-    # Mock get_time_prior to return None to avoid database calls
-    with patch.object(prior, "get_time_prior", return_value=None):
+    # Mock time_prior property to return None to avoid database calls
+    # This simulates the case where time_prior is not available
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
         assert prior.value == expected_value, f"Failed for {description}"
 
 
-def test_min_prior_override_with_global_prior_below_threshold(
+@pytest.mark.parametrize(
+    (
+        "global_prior",
+        "time_prior_value",
+        "min_override",
+        "expected_result",
+        "description",
+    ),
+    [
+        # Test 1: global_prior below threshold, no time_prior
+        (0.2, None, 0.3, 0.3, "global_prior below threshold, no time_prior"),
+        # Test 2: global_prior below threshold after PRIOR_FACTOR
+        (0.25, None, 0.3, 0.3, "global_prior below threshold after PRIOR_FACTOR"),
+        # Test 3: combined prior below threshold
+        (0.25, 0.1, 0.3, 0.3, "combined prior below threshold"),
+        # Test 4: min_override disabled (0.0)
+        (0.05, None, 0.0, MIN_PRIOR, "min_override disabled"),
+    ],
+)
+def test_min_prior_override_scenarios(
     coordinator: AreaOccupancyCoordinator,
+    global_prior: float | None,
+    time_prior_value: float | None,
+    min_override: float,
+    expected_result: float,
+    description: str,
 ):
-    """Test min_prior_override is applied when global_prior is below threshold."""
+    """Test min_prior_override in various scenarios."""
     area_name = coordinator.get_area_names()[0]
     area = coordinator.get_area(area_name)
     prior = Prior(coordinator, area_name=area_name)
 
-    # Set min_prior_override to 0.3
-    area.config.min_prior_override = 0.3
+    # Set min_prior_override
+    area.config.min_prior_override = min_override
 
-    # Set global_prior to 0.2 (below min_prior_override)
-    prior.global_prior = 0.2
+    # Set global_prior
+    prior.global_prior = global_prior
 
-    # Mock get_time_prior to return None to avoid database calls
-    with patch.object(prior, "get_time_prior", return_value=None):
-        # After applying PRIOR_FACTOR: 0.2 * 1.05 = 0.21
-        # But min_prior_override (0.3) should take precedence
+    # Set up time_prior
+    if time_prior_value is None:
+        # Mock time_prior property to return None
+        with patch.object(
+            Prior, "time_prior", new_callable=PropertyMock, return_value=None
+        ):
+            result = prior.value
+            assert result == expected_result, (
+                f"Failed for {description}: expected {expected_result}, got {result}"
+            )
+    else:
+        # Set time_prior via cache
+        current_day = prior.day_of_week
+        current_slot = prior.time_slot
+        slot_key = (current_day, current_slot)
+        prior._cached_time_priors = {slot_key: time_prior_value}
         result = prior.value
-        assert result == 0.3, f"Expected 0.3 but got {result}"
-
-
-def test_min_prior_override_with_combined_prior_below_threshold(
-    coordinator: AreaOccupancyCoordinator,
-):
-    """Test min_prior_override is applied when combined prior is below threshold."""
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area(area_name)
-    prior = Prior(coordinator, area_name=area_name)
-
-    # Set min_prior_override to 0.3
-    area.config.min_prior_override = 0.3
-
-    # Set global_prior to 0.25
-    prior.global_prior = 0.25
-
-    # Mock time_prior to return a low value that would lower the combined prior
-    # Combined prior will be less than 0.3, so min_prior_override should apply
-    with patch.object(prior, "get_time_prior", return_value=0.1):
-        # Combined prior will be less than min_prior_override
-        # After PRIOR_FACTOR it could still be below, so min_prior_override should apply
-        result = prior.value
-        assert result >= 0.3, f"Expected at least 0.3 but got {result}"
-
-
-def test_min_prior_override_disabled_when_zero(
-    coordinator: AreaOccupancyCoordinator,
-):
-    """Test min_prior_override has no effect when set to 0.0 (disabled)."""
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area(area_name)
-    prior = Prior(coordinator, area_name=area_name)
-
-    # Set min_prior_override to 0.0 (disabled)
-    area.config.min_prior_override = 0.0
-
-    # Set global_prior to a low value
-    prior.global_prior = 0.05
-
-    # Mock get_time_prior to return None to avoid database calls
-    with patch.object(prior, "get_time_prior", return_value=None):
-        # Should use normal calculation without override
-        result = prior.value
-        # After PRIOR_FACTOR: 0.05 * 1.05 = 0.0525, clamped to MIN_PRIOR
-        assert result == MIN_PRIOR, f"Expected MIN_PRIOR ({MIN_PRIOR}) but got {result}"
-
-
-def test_min_prior_override_above_normal_calculation(
-    coordinator: AreaOccupancyCoordinator,
-):
-    """Test min_prior_override when final prior after PRIOR_FACTOR is below threshold."""
-    area_name = coordinator.get_area_names()[0]
-    area = coordinator.get_area(area_name)
-    prior = Prior(coordinator, area_name=area_name)
-
-    # Set min_prior_override to 0.3
-    area.config.min_prior_override = 0.3
-
-    # Set global_prior to 0.25
-    # After PRIOR_FACTOR: 0.25 * 1.05 = 0.2625 (below min_prior_override)
-    prior.global_prior = 0.25
-
-    # Mock get_time_prior to return None to avoid database calls
-    with patch.object(prior, "get_time_prior", return_value=None):
-        result = prior.value
-        # Should be raised to min_prior_override (0.3) even though calculation gives 0.2625
-        assert result == 0.3, f"Expected 0.3 but got {result}"
+        assert result >= expected_result, (
+            f"Failed for {description}: expected at least {expected_result}, got {result}"
+        )
 
 
 def test_min_prior_override_when_global_prior_is_none(
@@ -189,55 +149,6 @@ def test_min_prior_override_when_global_prior_is_none(
     assert result == 0.3, f"Expected 0.3 but got {result}"
 
 
-def test_constants_are_properly_defined():
-    """Test that all constants are properly defined."""
-    assert PRIOR_FACTOR == 1.05
-    assert DEFAULT_PRIOR == 0.5
-    assert MIN_PROBABILITY == 0.01
-    assert MAX_PROBABILITY == 0.99
-    assert SIGNIFICANT_CHANGE_THRESHOLD == 0.1
-    assert DEFAULT_SLOT_MINUTES == 60
-    assert MINUTES_PER_HOUR == 60
-    assert HOURS_PER_DAY == 24
-    assert MINUTES_PER_DAY == 1440
-    assert DAYS_PER_WEEK == 7
-    assert SQLITE_TO_PYTHON_WEEKDAY_OFFSET == 6
-    assert DEFAULT_OCCUPIED_SECONDS == 0.0
-
-
-@pytest.mark.parametrize(
-    ("sqlite_weekday", "expected_python_weekday"),
-    [
-        (0, 6),  # Sunday
-        (1, 0),  # Monday
-        (2, 1),  # Tuesday
-        (3, 2),  # Wednesday
-        (4, 3),  # Thursday
-        (5, 4),  # Friday
-        (6, 5),  # Saturday
-    ],
-)
-def test_weekday_conversion(sqlite_weekday, expected_python_weekday):
-    """Test SQLite to Python weekday conversion."""
-    result = (sqlite_weekday + SQLITE_TO_PYTHON_WEEKDAY_OFFSET) % DAYS_PER_WEEK
-    assert result == expected_python_weekday
-
-
-def test_to_dict_and_from_dict(coordinator: AreaOccupancyCoordinator):
-    """Test Prior serialization and deserialization."""
-    area_name = coordinator.get_area_names()[0]
-    prior = Prior(coordinator, area_name=area_name)
-    now = dt_util.utcnow()
-    prior.global_prior = 0.42
-    prior._last_updated = now
-    d = prior.to_dict()
-    assert d["value"] == 0.42
-    assert d["last_updated"] == now.isoformat()
-    restored = Prior.from_dict(d, coordinator, area_name=area_name)
-    assert restored.global_prior == 0.42
-    assert restored._last_updated == now
-
-
 def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
     """Test set_global_prior method."""
     area_name = coordinator.get_area_names()[0]
@@ -250,108 +161,78 @@ def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
         prior.set_global_prior(0.75)
         assert prior.global_prior == 0.75
         assert prior._last_updated == now
+        # Verify cache is invalidated
+        assert prior._cached_time_priors is None
 
 
-def test_last_updated_property(coordinator: AreaOccupancyCoordinator):
-    """Test last_updated property."""
+def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
+    """Test time_prior property loads from cache correctly."""
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
-    assert prior.last_updated is None
 
+    # Initially cache is None, should load from database
+    # Mock _load_time_priors to avoid database call
+    test_cache = {(0, 14): 0.6, (1, 10): 0.4}
+    with patch.object(
+        prior,
+        "_load_time_priors",
+        side_effect=lambda: setattr(prior, "_cached_time_priors", test_cache),
+    ):
+        # Set cache manually to simulate loaded state
+        prior._cached_time_priors = test_cache.copy()
+
+        # Test getting time_prior for a slot in cache
+        current_day = prior.day_of_week
+        current_slot = prior.time_slot
+        slot_key = (current_day, current_slot)
+
+        if slot_key in test_cache:
+            assert prior.time_prior == test_cache[slot_key]
+        else:
+            # If current slot not in test cache, should return DEFAULT_TIME_PRIOR
+            assert prior.time_prior == DEFAULT_TIME_PRIOR
+
+
+def test_day_of_week_property(coordinator: AreaOccupancyCoordinator):
+    """Test day_of_week property returns correct weekday."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    # Should return Python weekday (0=Monday, 6=Sunday)
+    weekday = prior.day_of_week
+    assert 0 <= weekday <= 6
+    # Verify it matches Python's weekday
+    assert weekday == dt_util.utcnow().weekday()
+
+
+def test_time_slot_property(coordinator: AreaOccupancyCoordinator):
+    """Test time_slot property calculates correct slot."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    # Should return hour-based slot (0-23)
+    slot = prior.time_slot
+    assert 0 <= slot <= 23
+    # Verify it matches expected calculation
     now = dt_util.utcnow()
-    prior._last_updated = now
-    assert prior.last_updated == now
+    expected_slot = (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
+    assert slot == expected_slot
 
 
-# New tests for performance optimization features
-
-
-def test_get_occupied_intervals_caching(
-    coordinator: AreaOccupancyCoordinator,
-):
-    """Test caching behavior of get_occupied_intervals."""
+def test_clear_cache(coordinator: AreaOccupancyCoordinator):
+    """Test clear_cache method clears all cached data."""
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
 
-    # Test cache invalidation method directly
-    # Set up cache
-    test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
-    prior._cached_occupied_intervals = test_intervals
-    prior._cached_intervals_timestamp = dt_util.utcnow()
+    # Set up some cached data
+    prior.global_prior = 0.5
+    prior._last_updated = dt_util.utcnow()
+    prior._cached_time_priors = {(0, 0): 0.3}
 
-    # Verify cache is set
-    assert prior._cached_occupied_intervals is not None
-    assert prior._cached_intervals_timestamp is not None
+    # Clear cache
+    prior.clear_cache()
 
-    # Test cache invalidation
-    prior._invalidate_occupied_intervals_cache()
-
-    # Verify cache is cleared
-    assert prior._cached_occupied_intervals is None
-    assert prior._cached_intervals_timestamp is None
-
-
-def test_get_occupied_intervals_cache_expiry(
-    coordinator: AreaOccupancyCoordinator,
-):
-    """Test cache expiry after DEFAULT_CACHE_TTL_SECONDS."""
-    area_name = coordinator.get_area_names()[0]
-    prior = Prior(coordinator, area_name=area_name)
-
-    # Test cache expiry logic directly
-    test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
-    prior._cached_occupied_intervals = test_intervals
-
-    # Set cache timestamp to expired time
-    prior._cached_intervals_timestamp = dt_util.utcnow() - timedelta(
-        seconds=DEFAULT_CACHE_TTL_SECONDS + 1
-    )
-
-    # Verify cache is expired
-    now = dt_util.utcnow()
-    cache_age = (now - prior._cached_intervals_timestamp).total_seconds()
-    assert cache_age > DEFAULT_CACHE_TTL_SECONDS
-
-
-def test_invalidate_occupied_intervals_cache(
-    coordinator: AreaOccupancyCoordinator,
-):
-    """Test cache invalidation method."""
-    area_name = coordinator.get_area_names()[0]
-    prior = Prior(coordinator, area_name=area_name)
-
-    # Set up cache
-    prior._cached_occupied_intervals = [(dt_util.utcnow(), dt_util.utcnow())]
-    prior._cached_intervals_timestamp = dt_util.utcnow()
-
-    # Verify cache is set
-    assert prior._cached_occupied_intervals is not None
-    assert prior._cached_intervals_timestamp is not None
-
-    # Invalidate cache
-    prior._invalidate_occupied_intervals_cache()
-
-    # Verify cache is cleared
-    assert prior._cached_occupied_intervals is None
-    assert prior._cached_intervals_timestamp is None
-
-
-def test_get_occupied_intervals_cache_hit_logging(
-    coordinator: AreaOccupancyCoordinator, caplog
-):
-    """Test cache hit logging."""
-    area_name = coordinator.get_area_names()[0]
-    prior = Prior(coordinator, area_name=area_name)
-
-    # Test cache hit logging by setting up cache and calling the actual method
-    test_intervals = [(dt_util.utcnow() - timedelta(hours=1), dt_util.utcnow())]
-    prior._cached_occupied_intervals = test_intervals
-    prior._cached_intervals_timestamp = dt_util.utcnow()
-
-    with caplog.at_level(logging.DEBUG):
-        # Call the actual method - it should hit cache
-        result = prior.get_occupied_intervals()
-
-    # Check for cache hit logging
-    assert "Returning cached occupied intervals" in caplog.text
-    assert result == test_intervals
+    # Verify all caches are cleared
+    assert prior.global_prior is None
+    assert prior._last_updated is None
+    assert prior._cached_time_priors is None

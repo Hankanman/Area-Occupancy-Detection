@@ -45,13 +45,10 @@ flowchart TD
     Prune --> PriorAnalysis[Run Prior Analysis]
 
     PriorAnalysis --> GetMotion[Get Motion Intervals]
-    GetMotion --> CalcMotion[Calculate Motion Prior]
-    CalcMotion --> CheckLow{Prior < 0.10?}
-    CheckLow -->|Yes| GetMedia[Get Media/Appliance Intervals]
-    CheckLow -->|No| SaveGlobal[Save Global Prior]
-    GetMedia --> CalcAll[Calculate Combined Prior]
-    CalcAll --> SaveGlobal
-
+    GetMotion --> CalcPeriod[Calculate Data Period]
+    CalcPeriod --> CalcGlobal[Calculate Global Prior]
+    CalcGlobal --> SetMemory[Set in Prior Object]
+    SetMemory --> SaveGlobal[Save Global Prior to DB]
     SaveGlobal --> TimePrior[Calculate Time Priors]
     TimePrior --> Aggregate[Aggregate by Day/Slot]
     Aggregate --> CalcTime[Calculate Prior per Slot]
@@ -286,7 +283,8 @@ flowchart LR
     Save -->|Store Config| Entities
     Save -->|Store State| Entities
 
-    Analysis -->|Prior Values| Save
+    Analysis -->|Global Prior| Save
+    Analysis -->|Time Priors| Save
     Save -->|Store Global| GlobalPriors
     Save -->|Store Time| Priors
     Analysis -->|Likelihoods| Save
@@ -347,6 +345,8 @@ flowchart TD
 
 - [Complete Calculation Flow](calculation-flow.md) - Detailed text explanation
 - [Prior Calculation Deep Dive](../features/prior-learning.md) - Prior learning details
+- [Global Prior Flow](global-prior-flow.md) - Complete global prior calculation flow
+- [Time Prior Flow](time-prior-flow.md) - Complete time prior feature documentation
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - Likelihood learning details
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - Calculation details
 - [Entity Evidence Collection](entity-evidence.md) - Evidence collection details

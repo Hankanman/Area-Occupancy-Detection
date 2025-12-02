@@ -5,6 +5,7 @@ from .analysis import (
     ensure_occupied_intervals_cache,
     run_full_analysis,
     run_interval_aggregation,
+    run_numeric_aggregation,
     start_prior_analysis,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "ensure_occupied_intervals_cache",
     "run_full_analysis",
     "run_interval_aggregation",
+    "run_numeric_aggregation",
     "start_prior_analysis",
 ]

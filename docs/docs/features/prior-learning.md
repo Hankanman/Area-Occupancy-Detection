@@ -29,13 +29,17 @@ The Global Prior is determined by analyzing the history of your sensors over a l
 
 ### 2. Time-Based Prior Calculation
 
-The Time-Based Prior provides granularity by breaking the week into 1-hour slots (e.g., "Monday 09:00-10:00", "Tuesday 14:00-15:00").
+The Time-Based Prior provides granularity by breaking the week into 1-hour slots (e.g., "Monday 09:00-10:00", "Tuesday 14:00-15:00"). This allows the system to learn time-of-day patterns specific to your usage.
 
-- **Grid**: It creates a schedule of 168 slots (24 hours $\times$ 7 days).
-- **History Analysis**: For each slot, it looks at historical data to see how often the room was occupied during that specific hour on that day of the week.
-- **Smart Fallback**: Just like the Global Prior, if motion data is scarce, it will automatically consider **Media Players** and **Appliances** as indicators of occupancy. This ensures that "quiet" activities like watching TV are correctly learned as occupied times.
+- **Grid**: It creates a schedule of 168 slots (24 hours × 7 days).
+- **History Analysis**: For each slot, it analyzes historical motion sensor data to determine how often the room was occupied during that specific hour on that day of the week.
+- **Data Source**: Only motion sensors are used for time prior calculation (no media/appliance fallback).
+- **Calculation Method**: The system processes occupied intervals from the lookback period (default: 60 days), groups them by day of week and time slot, and calculates the occupancy percentage for each slot.
 - **Safety Bounds**: The system bounds these time-specific probabilities between 10% and 90%. This prevents extreme values (like 1% or 99%) from dominating the calculation, ensuring that the system remains responsive to new sensor evidence even if the schedule suggests the room "should" be empty.
 - **Result**: This produces a unique probability for every hour of the week, allowing the system to "expect" occupancy at usual times (like evening TV time) and "expect" vacancy at others (like work hours).
+- **Storage**: Time priors are calculated during the analysis cycle and stored in the database. They are automatically recalculated as new historical data becomes available.
+
+See [Time Prior Flow](../../technical/time-prior-flow.md) for complete implementation details.
 
 ## Ground Truth: Defining "Occupancy"
 
@@ -72,4 +76,20 @@ You can configure a `min_prior_override` for each area.
 When data is missing or insufficient, the system uses these defaults:
 
 - **Neutral (0.5)**: Used when historical data is completely missing or invalid (e.g., during initial setup).
-- **Time Slot Default (0.5)**: Used for specific time slots that have no recorded history.
+- **Time Slot Default (0.5)**: Used for specific time slots that have no recorded history. As historical data accumulates, these slots will be populated with calculated values during the analysis cycle.
+
+## Troubleshooting
+
+### Time Priors Not Learning
+
+**Symptom**: Time priors always return 0.5 (neutral) regardless of time of day.
+
+**Possible Causes**:
+
+1. **Insufficient Historical Data**: Time priors require at least some historical data to calculate. If you've just installed the integration, wait for the first analysis cycle to complete (runs hourly by default).
+2. **No Motion Sensor Activity**: If motion sensors haven't detected activity during a specific time slot, that slot will default to 0.5 until data is available.
+3. **Analysis Cycle Not Running**: Check that the analysis cycle is running successfully. Time priors are calculated during the analysis cycle.
+
+**How to Verify**: Check the Home Assistant logs for messages like "Time priors saved for area X: Y slots populated" after an analysis cycle completes.
+
+**See Also**: [Time Prior Flow](../../technical/time-prior-flow.md) for complete implementation details.

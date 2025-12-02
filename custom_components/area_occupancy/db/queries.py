@@ -108,6 +108,66 @@ def get_time_prior(
         return default_prior
 
 
+def get_all_time_priors(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    default_prior: float = DEFAULT_TIME_PRIOR,
+) -> dict[tuple[int, int], float]:
+    """Get all time priors for an area (all 168 slots).
+
+    Args:
+        db: Database instance
+        entry_id: The area entry ID to filter by
+        area_name: The area name to filter by
+        default_prior: Default prior value for slots not found
+
+    Returns:
+        Dictionary mapping (day_of_week, time_slot) to prior_value.
+        All 168 slots are included, using default_prior for missing slots.
+    """
+    try:
+        with db.get_session() as session:
+            priors = (
+                session.query(db.Priors)
+                .filter_by(
+                    entry_id=entry_id,
+                    area_name=area_name,
+                )
+                .all()
+            )
+
+            # Build dictionary from database results
+            result: dict[tuple[int, int], float] = {}
+            for prior in priors:
+                slot_key = (prior.day_of_week, prior.time_slot)
+                result[slot_key] = float(prior.prior_value)
+
+            # Fill in missing slots with default (all 168 slots: 7 days × 24 hours)
+            for day_of_week in range(7):  # 0-6 (Monday-Sunday)
+                for time_slot in range(24):  # 0-23 (hourly slots)
+                    slot_key = (day_of_week, time_slot)
+                    if slot_key not in result:
+                        result[slot_key] = default_prior
+
+            return result
+
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error getting all time priors: %s", e)
+        # Return default dict with all slots set to default_prior
+        return {
+            (day_of_week, time_slot): default_prior
+            for day_of_week in range(7)
+            for time_slot in range(24)
+        }
+
+
 def get_occupied_intervals(
     db: AreaOccupancyDB,
     entry_id: str,

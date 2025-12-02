@@ -191,12 +191,12 @@ MAX_INTERVAL_SECONDS: Final = (
 
 # Database retention and aggregation constants
 # Raw data retention (before aggregation)
-RETENTION_RAW_INTERVALS_DAYS: Final = 60  # Days to keep raw intervals
-RETENTION_RAW_NUMERIC_SAMPLES_DAYS: Final = 14  # Days to keep raw numeric samples
+RETENTION_RAW_INTERVALS_DAYS: Final = 28  # Days to keep raw intervals
+RETENTION_RAW_NUMERIC_SAMPLES_DAYS: Final = 7  # Days to keep raw numeric samples
 
 # Aggregation retention periods
-RETENTION_DAILY_AGGREGATES_DAYS: Final = 90  # Days to keep daily aggregates
-RETENTION_WEEKLY_AGGREGATES_DAYS: Final = 365  # Days to keep weekly aggregates
+RETENTION_DAILY_AGGREGATES_DAYS: Final = 28  # Days to keep daily aggregates
+RETENTION_WEEKLY_AGGREGATES_DAYS: Final = 56  # Days to keep weekly aggregates
 RETENTION_MONTHLY_AGGREGATES_YEARS: Final = (
     5  # Years to keep monthly aggregates (indefinite for trends)
 )
