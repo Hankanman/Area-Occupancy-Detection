@@ -110,31 +110,62 @@ Stores state change intervals for all sensors.
 
 ### `priors`
 
-Stores time-slot priors (day of week × time slot).
+Stores time-slot priors (day of week × time slot). These are calculated from historical motion sensor data during the analysis cycle and provide time-of-day and day-of-week specific occupancy probabilities.
 
-| Column                  | Type            | Description                             |
-| ----------------------- | --------------- | --------------------------------------- |
-| `entry_id`              | String          | Integration entry ID                    |
-| `area_name`             | String (PK, FK) | Area name                               |
-| `day_of_week`           | Integer (PK)    | Day of week (0=Monday, 6=Sunday)        |
-| `time_slot`             | Integer (PK)    | Time slot (0-23 for hourly slots)       |
-| `prior_value`           | Float           | Prior probability for this slot         |
-| `data_points`           | Integer         | Number of data points used              |
-| `confidence`            | Float           | Confidence in the calculation (0.0-1.0) |
-| `last_calculation_date` | DateTime        | When prior was last calculated          |
-| `sample_period_start`   | DateTime        | Start of data period used               |
-| `sample_period_end`     | DateTime        | End of data period used                 |
-| `calculation_method`    | String          | Method used (e.g., "interval_analysis") |
-| `last_updated`          | DateTime        | Last update timestamp                   |
+**Purpose**: Provides time-of-day and day-of-week specific occupancy probabilities. Each area has 168 time slots (7 days × 24 hours), allowing the system to learn patterns like "living room is usually occupied on weekdays at 7 PM" or "bedroom is rarely occupied on weekdays at 2 PM".
+
+| Column                  | Type            | Description                                                                 |
+| ----------------------- | --------------- | --------------------------------------------------------------------------- |
+| `entry_id`              | String          | Integration entry ID (same for all priors in the integration)               |
+| `area_name`             | String (PK, FK) | Area name (foreign key to `areas.area_name`)                                |
+| `day_of_week`           | Integer (PK)    | Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)                            |
+| `time_slot`             | Integer (PK)    | Time slot index (0=00:00-01:00, 1=01:00-02:00, ..., 23=23:00-24:00)        |
+| `prior_value`           | Float           | Prior probability for this slot (0.0-1.0), clamped to [0.1, 0.9] at runtime |
+| `data_points`           | Integer         | Number of data points (weeks) used in calculation                           |
+| `confidence`            | Float           | Confidence in the calculation (0.0-1.0, nullable)                          |
+| `last_calculation_date` | DateTime        | When prior was last calculated (nullable)                                   |
+| `sample_period_start`   | DateTime        | Start of data period used for calculation (nullable)                       |
+| `sample_period_end`     | DateTime        | End of data period used for calculation (nullable)                          |
+| `calculation_method`    | String          | Method used (e.g., "interval_analysis", nullable)                           |
+| `last_updated`          | DateTime        | Last update timestamp                                                       |
+
+**Primary Key**: Composite of `(area_name, day_of_week, time_slot)`
+
+- Ensures one prior value per area per time slot
+- Allows efficient lookup by area and time slot
 
 **Indexes:**
 
-- Composite primary key on `(area_name, day_of_week, time_slot)`
-- Indexes on `entry_id`, `area_name`, `(day_of_week, time_slot)`
+- `idx_priors_entry` on `entry_id`: Fast filtering by integration entry
+- `idx_priors_area` on `area_name`: Fast filtering by area
+- `idx_priors_entry_area` on `(entry_id, area_name)`: Composite index for area-based queries
+- `idx_priors_day_slot` on `(day_of_week, time_slot)`: Fast lookup by time slot pattern
+- `idx_priors_last_updated` on `last_updated`: For tracking when priors were last recalculated
 
 **Relationships:**
 
-- Many-to-one with `areas`
+- Many-to-one with `areas` table via `area_name` foreign key
+
+**Data Model**:
+
+- Each area has 168 records (7 days × 24 hours)
+- Records are created/updated during analysis cycles
+- Missing records default to 0.5 (neutral prior) at runtime
+
+**Retrieval**:
+
+- Queried via `queries.py:get_time_prior()` function
+- Filtered by `entry_id`, `area_name`, `day_of_week`, `time_slot`
+- Returns `prior_value` or default (0.5) if not found
+- Values are clamped to [0.1, 0.9] range at retrieval time
+
+**Current Status**:
+
+- Schema exists and is fully defined
+- Retrieval mechanism is implemented
+- Calculation and storage logic is **fully implemented**
+- Time priors are calculated during the analysis cycle and stored automatically
+- See [Time Prior Flow](time-prior-flow.md) for complete implementation details
 
 ## New Tables for Advanced Features
 

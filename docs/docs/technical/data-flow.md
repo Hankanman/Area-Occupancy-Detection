@@ -347,6 +347,7 @@ flowchart TD
 
 - [Complete Calculation Flow](calculation-flow.md) - Detailed text explanation
 - [Prior Calculation Deep Dive](../features/prior-learning.md) - Prior learning details
+- [Time Prior Flow](time-prior-flow.md) - Complete time prior feature documentation
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - Likelihood learning details
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - Calculation details
 - [Entity Evidence Collection](entity-evidence.md) - Evidence collection details

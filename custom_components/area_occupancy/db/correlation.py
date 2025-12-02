@@ -926,7 +926,7 @@ def analyze_correlation(  # noqa: C901
                 "calculation_date": dt_util.utcnow(),
             }
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Correlation analysis for %s: coefficient=%.3f, type=%s, confidence=%.3f",
                 entity_id,
                 correlation,
@@ -1459,7 +1459,7 @@ async def run_correlation_analysis(
     results: list[dict[str, Any]] = []
 
     if correlatable_entities:
-        _LOGGER.info(
+        _LOGGER.debug(
             "Starting sensor analysis for %d area(s)",
             len(correlatable_entities),
         )
