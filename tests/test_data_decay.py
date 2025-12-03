@@ -233,13 +233,19 @@ class TestDecay:
             assert 0.0 <= factor <= 1.0
 
         # Now test negative age: decay_start is in the future relative to current time
-        future_decay_start = dt_util.utcnow() + timedelta(seconds=10)
-        decay = Decay(half_life=60.0, decay_start=future_decay_start, is_decaying=True)
-        # Current time is before decay_start, so age is negative
-        factor = decay.decay_factor
-        # Should return 1.0 (no decay has occurred yet)
-        assert factor == 1.0
-        assert decay.is_decaying is True  # Should still be decaying
+        # Use fixed mocked time to ensure deterministic behavior
+        mocked_now = datetime(2023, 1, 15, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_decay_start = mocked_now + timedelta(seconds=10)
+        # Mock current time to be before future_decay_start
+        with patch("homeassistant.util.dt.utcnow", return_value=mocked_now):
+            decay = Decay(
+                half_life=60.0, decay_start=future_decay_start, is_decaying=True
+            )
+            # Current time is before decay_start, so age is negative
+            factor = decay.decay_factor
+            # Should return 1.0 (no decay has occurred yet)
+            assert factor == 1.0
+            assert decay.is_decaying is True  # Should still be decaying
 
     @pytest.mark.parametrize(
         ("half_life", "is_decaying", "expected_factor", "expected_is_decaying"),
