@@ -599,11 +599,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     config_entry.entry_id,
                     target_entry.entry_id,
                 )
+                return False  # noqa: TRY300
 
             except Exception:
                 _LOGGER.exception("Unexpected error during migration")
-                return False
-            else:
                 return False
 
         # Perform migration (in async loop, protected by lock)

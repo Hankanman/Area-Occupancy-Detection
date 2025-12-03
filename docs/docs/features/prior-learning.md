@@ -39,7 +39,7 @@ The Time-Based Prior provides granularity by breaking the week into 1-hour slots
 - **Result**: This produces a unique probability for every hour of the week, allowing the system to "expect" occupancy at usual times (like evening TV time) and "expect" vacancy at others (like work hours).
 - **Storage**: Time priors are calculated during the analysis cycle and stored in the database. They are automatically recalculated as new historical data becomes available.
 
-See [Time Prior Flow](../../technical/time-prior-flow.md) for complete implementation details.
+See [Time Prior Flow](../technical/time-prior-flow.md) for complete implementation details.
 
 ## Ground Truth: Defining "Occupancy"
 
@@ -92,4 +92,4 @@ When data is missing or insufficient, the system uses these defaults:
 
 **How to Verify**: Check the Home Assistant logs for messages like "Time priors saved for area X: Y slots populated" after an analysis cycle completes.
 
-**See Also**: [Time Prior Flow](../../technical/time-prior-flow.md) for complete implementation details.
+**See Also**: [Time Prior Flow](../technical/time-prior-flow.md) for complete implementation details.

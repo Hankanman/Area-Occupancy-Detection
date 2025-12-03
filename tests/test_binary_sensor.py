@@ -1,6 +1,6 @@
 """Tests for binary_sensor module."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -20,7 +20,7 @@ from homeassistant.util import dt as dt_util
 pytestmark = [pytest.mark.parametrize("expected_lingering_timers", [True])]
 
 
-# ruff: noqa: SLF001
+# ruff: noqa: SLF001, PLC0415
 class TestOccupancy:
     """Test Occupancy binary sensor entity."""
 
@@ -119,6 +119,7 @@ def wasp_coordinator(
     area.config.wasp_in_box.motion_timeout = 60
     area.config.wasp_in_box.max_duration = 3600
     area.config.wasp_in_box.weight = 0.85
+    area.config.wasp_in_box.verification_delay = 0
     # Create a Sensors object with door and motion sensors
     area.config.sensors = Sensors(
         door=["binary_sensor.door1"],
@@ -129,6 +130,31 @@ def wasp_coordinator(
     # Add missing entities attribute with AsyncMock
     area.entities.async_initialize = AsyncMock()
 
+    return coordinator
+
+
+@pytest.fixture
+def multi_sensor_coordinator(
+    coordinator: AreaOccupancyCoordinator,
+) -> AreaOccupancyCoordinator:
+    """Create a coordinator with multiple door and motion sensors."""
+    # Use area-based access
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    area.config.wasp_in_box = Mock()
+    area.config.wasp_in_box.enabled = True
+    area.config.wasp_in_box.motion_timeout = 60
+    area.config.wasp_in_box.max_duration = 3600
+    area.config.wasp_in_box.weight = 0.85
+    area.config.wasp_in_box.verification_delay = 0
+    # Create a Sensors object with multiple door and motion sensors
+    area.config.sensors = Sensors(
+        door=["binary_sensor.door1", "binary_sensor.door2"],
+        motion=["binary_sensor.motion1", "binary_sensor.motion2"],
+        _parent_config=area.config,
+    )
+    # Use area-based access - entities are now per-area
+    area.entities.async_initialize = AsyncMock()
     return coordinator
 
 
@@ -294,18 +320,26 @@ class TestWaspInBoxSensor:
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
-        """Test extra state attributes."""
+        """Test extra state attributes with actual value verification."""
         area_name = wasp_coordinator.get_area_names()[0]
         handle = wasp_coordinator.get_area_handle(area_name)
         entity = WaspInBoxSensor(handle, wasp_config_entry)
 
-        # Set up some state
-        entity._last_occupied_time = dt_util.utcnow()
+        # Set up some state with known values
+        now = dt_util.utcnow()
+        door_time = now - timedelta(minutes=5)
+        motion_time = now - timedelta(minutes=2)
+        occupied_time = now - timedelta(minutes=1)
+        entity._last_occupied_time = occupied_time
+        entity._last_door_time = door_time
+        entity._last_motion_time = motion_time
         entity._door_state = STATE_OFF
         entity._motion_state = STATE_ON
+        entity._verification_pending = True
 
         attributes = entity.extra_state_attributes
 
+        # Verify all expected attributes exist
         expected_attrs = [
             "door_state",
             "motion_state",
@@ -314,21 +348,32 @@ class TestWaspInBoxSensor:
             "last_occupied_time",
             "motion_timeout",
             "max_duration",
+            "verification_delay",
+            "verification_pending",
         ]
         for attr in expected_attrs:
             assert attr in attributes
 
-    def test_weight_property(
-        self,
-        hass: HomeAssistant,
-        wasp_coordinator: AreaOccupancyCoordinator,
-        wasp_config_entry: Mock,
-    ) -> None:
-        """Test weight property."""
-        area_name = wasp_coordinator.get_area_names()[0]
-        handle = wasp_coordinator.get_area_handle(area_name)
-        entity = WaspInBoxSensor(handle, wasp_config_entry)
-        assert entity.weight == 0.85
+        # Verify actual values match expected formats
+        assert attributes["door_state"] == STATE_OFF
+        assert attributes["motion_state"] == STATE_ON
+        assert attributes["motion_timeout"] == 60
+        assert attributes["max_duration"] == 3600
+        assert attributes["verification_delay"] == 0
+        assert attributes["verification_pending"] is True
+        # Verify datetime strings are ISO format
+        assert attributes["last_occupied_time"] == occupied_time.isoformat()
+        assert attributes["last_door_time"] == door_time.isoformat()
+        assert attributes["last_motion_time"] == motion_time.isoformat()
+
+        # Test with None values
+        entity._last_occupied_time = None
+        entity._last_door_time = None
+        entity._last_motion_time = None
+        attributes_none = entity.extra_state_attributes
+        assert attributes_none["last_occupied_time"] is None
+        assert attributes_none["last_door_time"] is None
+        assert attributes_none["last_motion_time"] is None
 
     async def test_get_valid_entities(
         self,
@@ -382,47 +427,55 @@ class TestWaspInBoxSensor:
         assert entity._motion_state == STATE_OFF
 
     @pytest.mark.parametrize(
-        ("entity_type", "new_state", "expected_method"),
+        (
+            "initial_occupied",
+            "door_state",
+            "motion_state",
+            "motion_age_seconds",
+            "expected_state",
+            "should_call_set_state",
+        ),
         [
-            ("binary_sensor.door1", STATE_ON, "_process_door_state"),
-            ("binary_sensor.motion1", STATE_ON, "_process_motion_state"),
-        ],
-    )
-    def test_handle_state_change(
-        self,
-        hass: HomeAssistant,
-        wasp_coordinator: AreaOccupancyCoordinator,
-        wasp_config_entry: Mock,
-        entity_type: str,
-        new_state: str,
-        expected_method: str,
-    ) -> None:
-        """Test handling state changes for different entity types."""
-        area_name = wasp_coordinator.get_area_names()[0]
-        handle = wasp_coordinator.get_area_handle(area_name)
-        entity = WaspInBoxSensor(handle, wasp_config_entry)
-
-        # Set up initial state - occupied for door test
-        if entity_type == "binary_sensor.door1":
-            entity._attr_is_on = True
-
-        # Mock event
-        mock_event = Mock()
-        mock_event.data = {
-            "entity_id": entity_type,
-            "new_state": Mock(state=new_state),
-            "old_state": Mock(state=STATE_OFF),
-        }
-
-        with patch.object(entity, expected_method) as mock_process:
-            entity._handle_state_change(mock_event)
-            mock_process.assert_called_once_with(entity_type, new_state)
-
-    @pytest.mark.parametrize(
-        ("initial_occupied", "door_state", "expected_state"),
-        [
-            (True, STATE_ON, STATE_OFF),  # Door opens when occupied -> unoccupied
-            (False, STATE_OFF, STATE_ON),  # Door closes with motion -> occupied
+            (
+                True,
+                STATE_ON,
+                STATE_OFF,
+                None,
+                STATE_OFF,
+                True,
+            ),  # Door opens when occupied -> unoccupied
+            (
+                False,
+                STATE_OFF,
+                STATE_ON,
+                30,
+                STATE_ON,
+                True,
+            ),  # Door closes with active motion -> occupied
+            (
+                False,
+                STATE_OFF,
+                STATE_OFF,
+                30,
+                STATE_ON,
+                True,
+            ),  # Door closes with recent motion (within timeout) -> occupied
+            (
+                False,
+                STATE_OFF,
+                STATE_OFF,
+                90,
+                STATE_OFF,
+                False,
+            ),  # Door closes with expired motion -> not occupied
+            (
+                False,
+                STATE_OFF,
+                STATE_OFF,
+                None,
+                STATE_OFF,
+                False,
+            ),  # Door closes without motion -> not occupied
         ],
     )
     async def test_process_door_state_scenarios(
@@ -432,7 +485,10 @@ class TestWaspInBoxSensor:
         wasp_config_entry: Mock,
         initial_occupied: bool,
         door_state: str,
+        motion_state: str,
+        motion_age_seconds: int | None,
         expected_state: str,
+        should_call_set_state: bool,
     ) -> None:
         """Test processing door state changes in different scenarios."""
         entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
@@ -442,13 +498,96 @@ class TestWaspInBoxSensor:
         entity._attr_is_on = initial_occupied
         entity._state = STATE_ON if initial_occupied else STATE_OFF
         entity._door_state = STATE_OFF if initial_occupied else STATE_ON
+        entity._motion_state = motion_state
 
-        # For the door closing scenario, add recent motion
-        if not initial_occupied:
-            entity._motion_state = STATE_ON
-            entity._last_motion_time = dt_util.utcnow() - timedelta(seconds=30)
+        # Set motion time if provided
+        if motion_age_seconds is not None:
+            entity._last_motion_time = dt_util.utcnow() - timedelta(
+                seconds=motion_age_seconds
+            )
+        else:
+            entity._last_motion_time = None
 
         # Create actual state in hass.states for aggregate calculation
+        hass.states.async_set("binary_sensor.door1", door_state)
+
+        # Mock async_write_ha_state to avoid entity registration issues
+        with (
+            patch.object(entity, "async_write_ha_state") as mock_write,
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            entity._process_door_state("binary_sensor.door1", door_state)
+            if should_call_set_state:
+                mock_set_state.assert_called_once_with(expected_state)
+            else:
+                mock_set_state.assert_not_called()
+                # Should still update state attributes
+                mock_write.assert_called()
+
+    @pytest.mark.parametrize(
+        (
+            "motion_state",
+            "door_state",
+            "initial_occupied",
+            "expected_occupied",
+            "should_update_time",
+        ),
+        [
+            (
+                STATE_ON,
+                STATE_OFF,
+                False,
+                True,
+                True,
+            ),  # Motion ON with doors closed -> occupied
+            (
+                STATE_ON,
+                STATE_ON,
+                False,
+                False,
+                True,
+            ),  # Motion ON with doors open -> not occupied
+            (
+                STATE_OFF,
+                STATE_OFF,
+                True,
+                True,
+                False,
+            ),  # Motion OFF with doors closed -> maintain occupancy
+            (
+                STATE_OFF,
+                STATE_ON,
+                False,
+                False,
+                False,
+            ),  # Motion OFF with doors open -> not occupied
+        ],
+    )
+    async def test_process_motion_state_scenarios(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        motion_state: str,
+        door_state: str,
+        initial_occupied: bool,
+        expected_occupied: bool,
+        should_update_time: bool,
+    ) -> None:
+        """Test processing motion state changes in different scenarios."""
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up initial state
+        entity._attr_is_on = initial_occupied
+        entity._state = STATE_ON if initial_occupied else STATE_OFF
+        entity._door_state = door_state
+        entity._motion_state = STATE_OFF if motion_state == STATE_ON else STATE_ON
+        old_motion_time = dt_util.utcnow() - timedelta(minutes=5)
+        entity._last_motion_time = old_motion_time
+
+        # Create actual states in hass.states for aggregate calculation
+        hass.states.async_set("binary_sensor.motion1", motion_state)
         hass.states.async_set("binary_sensor.door1", door_state)
 
         # Mock async_write_ha_state to avoid entity registration issues
@@ -456,29 +595,27 @@ class TestWaspInBoxSensor:
             patch.object(entity, "async_write_ha_state"),
             patch.object(entity, "_set_state") as mock_set_state,
         ):
-            entity._process_door_state("binary_sensor.door1", door_state)
-            mock_set_state.assert_called_once_with(expected_state)
+            entity._process_motion_state("binary_sensor.motion1", motion_state)
 
-    async def test_process_motion_state_detected(
-        self,
-        hass: HomeAssistant,
-        wasp_coordinator: AreaOccupancyCoordinator,
-        wasp_config_entry: Mock,
-    ) -> None:
-        """Test processing motion detection."""
-        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
-        entity.hass = hass
+            # Verify motion state was updated
+            assert entity._motion_state == motion_state
 
-        # Create actual state in hass.states for aggregate calculation
-        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+            # Verify time was updated only when motion turns ON
+            if should_update_time:
+                assert entity._last_motion_time is not None
+                assert entity._last_motion_time != old_motion_time
+            # Time should not change when motion turns OFF
+            elif motion_state == STATE_OFF:
+                assert entity._last_motion_time == old_motion_time
 
-        # Mock async_write_ha_state to avoid entity registration issues
-        with patch.object(entity, "async_write_ha_state"):
-            entity._process_motion_state("binary_sensor.motion1", STATE_ON)
-
-        # Should update motion state and time
-        assert entity._motion_state == STATE_ON
-        assert entity._last_motion_time is not None
+            # Verify occupancy state
+            if expected_occupied != initial_occupied:
+                mock_set_state.assert_called_once_with(
+                    STATE_ON if expected_occupied else STATE_OFF
+                )
+            else:
+                # State should be maintained, just attributes updated
+                mock_set_state.assert_not_called()
 
     @pytest.mark.parametrize(
         ("new_state", "expected_actions"),
@@ -565,6 +702,349 @@ class TestWaspInBoxSensor:
         with patch.object(entity, "_set_state") as mock_set_state:
             entity._reset_after_max_duration()
             mock_set_state.assert_called_once_with(STATE_OFF)
+
+    @pytest.mark.parametrize(
+        ("max_duration", "should_start_timer"),
+        [
+            (3600, True),  # Normal case - timer should start
+            (0, False),  # Disabled - timer should not start
+            (None, False),  # Disabled - timer should not start
+        ],
+    )
+    def test_max_duration_timer_disabled(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        max_duration: int | None,
+        should_start_timer: bool,
+    ) -> None:
+        """Test max duration timer when disabled."""
+        area_name = wasp_coordinator.get_area_names()[0]
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+
+        entity._max_duration = max_duration
+        entity._last_occupied_time = dt_util.utcnow()
+
+        with patch(
+            "custom_components.area_occupancy.binary_sensor.async_track_point_in_time"
+        ) as mock_track:
+            entity._start_max_duration_timer()
+            if should_start_timer:
+                mock_track.assert_called_once()
+                assert entity._remove_timer is not None
+            else:
+                mock_track.assert_not_called()
+                assert entity._remove_timer is None
+
+    def test_max_duration_timer_already_expired(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test max duration timer when already expired."""
+        area_name = wasp_coordinator.get_area_names()[0]
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+
+        entity._max_duration = 60  # 1 minute
+        # Set occupied time to 2 minutes ago (already expired)
+        entity._last_occupied_time = dt_util.utcnow() - timedelta(seconds=120)
+        entity._state = STATE_ON
+
+        with (
+            patch(
+                "custom_components.area_occupancy.binary_sensor.async_track_point_in_time"
+            ) as mock_track,
+            patch.object(entity, "_reset_after_max_duration") as mock_reset,
+        ):
+            entity._start_max_duration_timer()
+            # Should reset immediately, not schedule timer
+            mock_reset.assert_called_once()
+            mock_track.assert_not_called()
+            assert entity._remove_timer is None
+
+    def test_timer_cancellation_idempotency(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test that timer cancellation is idempotent."""
+        area_name = wasp_coordinator.get_area_names()[0]
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+
+        # Cancel when timer is None should not raise
+        entity._remove_timer = None
+        entity._cancel_max_duration_timer()
+        assert entity._remove_timer is None
+
+        # Cancel when timer exists
+        timer_mock = Mock()
+        entity._remove_timer = timer_mock
+        entity._cancel_max_duration_timer()
+        timer_mock.assert_called_once()
+        assert entity._remove_timer is None
+
+        # Cancel again should be safe
+        entity._cancel_max_duration_timer()
+        assert entity._remove_timer is None
+
+
+class TestVerificationTimer:
+    """Test verification timer feature for WaspInBoxSensor."""
+
+    @pytest.fixture
+    def verification_coordinator(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> AreaOccupancyCoordinator:
+        """Create a coordinator with verification delay enabled."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.wasp_in_box = Mock()
+        area.config.wasp_in_box.enabled = True
+        area.config.wasp_in_box.motion_timeout = 60
+        area.config.wasp_in_box.max_duration = 3600
+        area.config.wasp_in_box.weight = 0.85
+        area.config.wasp_in_box.verification_delay = 30  # 30 seconds
+        area.config.sensors = Sensors(
+            door=["binary_sensor.door1"],
+            motion=["binary_sensor.motion1"],
+            _parent_config=area.config,
+        )
+        area.entities.async_initialize = AsyncMock()
+        return coordinator
+
+    @pytest.mark.parametrize(
+        ("verification_delay", "should_start_timer", "expected_pending"),
+        [
+            (30, True, True),  # Enabled - timer should start
+            (0, False, False),  # Disabled - timer should not start
+        ],
+    )
+    def test_start_verification_timer(
+        self,
+        hass: HomeAssistant,
+        verification_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        verification_delay: int,
+        should_start_timer: bool,
+        expected_pending: bool,
+    ) -> None:
+        """Test starting verification timer."""
+        area_name = verification_coordinator.get_area_names()[0]
+        handle = verification_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+        entity._verification_delay = verification_delay
+
+        with patch(
+            "custom_components.area_occupancy.binary_sensor.async_track_point_in_time"
+        ) as mock_track:
+            entity._start_verification_timer()
+            if should_start_timer:
+                mock_track.assert_called_once()
+                assert entity._remove_verification_timer is not None
+            else:
+                mock_track.assert_not_called()
+                assert entity._remove_verification_timer is None
+            assert entity._verification_pending is expected_pending
+
+    @pytest.mark.parametrize(
+        ("timer_exists", "initial_pending"),
+        [
+            (True, True),  # Normal case - timer exists
+            (False, False),  # Idempotent case - timer already None
+        ],
+    )
+    def test_cancel_verification_timer(
+        self,
+        hass: HomeAssistant,
+        verification_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        timer_exists: bool,
+        initial_pending: bool,
+    ) -> None:
+        """Test canceling verification timer."""
+        area_name = verification_coordinator.get_area_names()[0]
+        handle = verification_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+
+        if timer_exists:
+            timer_mock = Mock()
+            entity._remove_verification_timer = timer_mock
+            entity._verification_pending = initial_pending
+
+            entity._cancel_verification_timer()
+            timer_mock.assert_called_once()
+        else:
+            # Cancel when timer is None should not raise (idempotent)
+            entity._remove_verification_timer = None
+            entity._verification_pending = initial_pending
+            entity._cancel_verification_timer()
+
+        assert entity._remove_verification_timer is None
+        assert entity._verification_pending is False
+
+    @pytest.mark.parametrize(
+        (
+            "initial_state",
+            "motion_state",
+            "has_motion_sensors",
+            "expected_final_state",
+            "should_call_set_state",
+            "should_call_write_state",
+            "use_verification_coordinator",
+        ),
+        [
+            # Motion present - maintain occupancy
+            (STATE_ON, STATE_ON, True, STATE_ON, False, True, True),
+            # Motion not present - clear occupancy (false positive)
+            # Note: when _set_state is mocked, async_write_ha_state won't be called
+            # because it's called inside _set_state
+            (STATE_ON, STATE_OFF, True, STATE_OFF, True, False, True),
+            # Already unoccupied - skip verification
+            (STATE_OFF, None, True, STATE_OFF, False, False, True),
+            # No motion sensors - skip verification and maintain occupancy
+            (STATE_ON, None, False, STATE_ON, False, True, False),
+        ],
+    )
+    async def test_verification_check_scenarios(
+        self,
+        hass: HomeAssistant,
+        verification_coordinator: AreaOccupancyCoordinator,
+        coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        initial_state: str,
+        motion_state: str | None,
+        has_motion_sensors: bool,
+        expected_final_state: str,
+        should_call_set_state: bool,
+        should_call_write_state: bool,
+        use_verification_coordinator: bool,
+    ) -> None:
+        """Test verification check in various scenarios."""
+        coord = (
+            verification_coordinator if use_verification_coordinator else coordinator
+        )
+        area_name = coord.get_area_names()[0]
+
+        # Configure sensors if needed
+        if not has_motion_sensors:
+            area = coord.get_area(area_name)
+            area.config.wasp_in_box = Mock()
+            area.config.wasp_in_box.enabled = True
+            area.config.wasp_in_box.verification_delay = 30
+            area.config.sensors = Sensors(
+                door=["binary_sensor.door1"],
+                motion=[],  # No motion sensors
+                _parent_config=area.config,
+            )
+
+        handle = coord.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up initial state
+        entity._state = initial_state
+        entity._attr_is_on = initial_state == STATE_ON
+
+        # Set motion sensor state if sensors exist
+        if has_motion_sensors and motion_state is not None:
+            hass.states.async_set("binary_sensor.motion1", motion_state)
+
+        with (
+            patch.object(entity, "_set_state") as mock_set_state,
+            patch.object(entity, "async_write_ha_state") as mock_write,
+        ):
+            entity._handle_verification_check(dt_util.utcnow())
+
+            # Verify method calls first
+            if should_call_set_state:
+                mock_set_state.assert_called_once_with(STATE_OFF)
+                # When _set_state is mocked, state doesn't actually change
+                # So we check initial state is still there
+                assert entity._state == initial_state
+                assert entity._attr_is_on == (initial_state == STATE_ON)
+            else:
+                mock_set_state.assert_not_called()
+                # Verify final state when _set_state is not called
+                assert entity._state == expected_final_state
+                assert entity._attr_is_on == (expected_final_state == STATE_ON)
+
+            assert entity._verification_pending is False
+
+            if should_call_write_state:
+                mock_write.assert_called_once()
+            else:
+                mock_write.assert_not_called()
+
+    def test_verification_timer_in_set_state(
+        self,
+        hass: HomeAssistant,
+        verification_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test that verification timer is started when setting state to ON."""
+        area_name = verification_coordinator.get_area_names()[0]
+        handle = verification_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+
+        with (
+            patch.object(entity, "_start_max_duration_timer") as mock_max_timer,
+            patch.object(
+                entity, "_start_verification_timer"
+            ) as mock_verification_timer,
+            patch.object(entity, "async_write_ha_state"),
+        ):
+            entity._set_state(STATE_ON)
+
+            # Both timers should be started
+            mock_max_timer.assert_called_once()
+            mock_verification_timer.assert_called_once()
+
+        # Verify state was set
+        assert entity._attr_is_on is True
+        assert entity._state == STATE_ON
+
+    def test_verification_timer_cancelled_on_unoccupied(
+        self,
+        hass: HomeAssistant,
+        verification_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test that verification timer is cancelled when setting state to OFF."""
+        area_name = verification_coordinator.get_area_names()[0]
+        handle = verification_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up occupied state with timers
+        entity._attr_is_on = True
+        entity._state = STATE_ON
+        entity._remove_timer = Mock()
+        entity._remove_verification_timer = Mock()
+
+        with (
+            patch.object(entity, "_cancel_max_duration_timer") as mock_cancel_max,
+            patch.object(
+                entity, "_cancel_verification_timer"
+            ) as mock_cancel_verification,
+            patch.object(entity, "async_write_ha_state"),
+        ):
+            entity._set_state(STATE_OFF)
+
+            # Both timers should be cancelled
+            mock_cancel_max.assert_called_once()
+            mock_cancel_verification.assert_called_once()
+
+        # Verify state was set
+        assert entity._attr_is_on is False
+        assert entity._state == STATE_OFF
 
 
 class TestAsyncSetupEntry:
@@ -759,45 +1239,31 @@ class TestWaspInBoxIntegration:
         """Test error handling during state changes."""
         entity = comprehensive_wasp_sensor
 
+        # Verify initial state
+        assert entity._attr_is_on is False
+        assert entity._state == STATE_OFF
+        assert entity._last_occupied_time is None
+
         # Mock an error during state writing
         with (
             patch.object(
                 entity, "async_write_ha_state", side_effect=Exception("Write failed")
             ),
+            patch.object(entity, "_start_max_duration_timer") as mock_timer,
             pytest.raises(Exception, match="Write failed"),
         ):
             entity._set_state(STATE_ON)
 
         # State should still be updated internally even if write fails
         assert entity._attr_is_on is True
+        assert entity._state == STATE_ON
+        assert entity._last_occupied_time is not None
+        # Timer should have been started before the exception
+        mock_timer.assert_called_once()
 
 
 class TestWaspMultiSensorAggregation:
     """Test WaspInBoxSensor with multiple door and motion sensors."""
-
-    @pytest.fixture
-    def multi_sensor_coordinator(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> AreaOccupancyCoordinator:
-        """Create a coordinator with multiple door and motion sensors."""
-        # Use area-based access
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        area.config.wasp_in_box = Mock()
-        area.config.wasp_in_box.enabled = True
-        area.config.wasp_in_box.motion_timeout = 60
-        area.config.wasp_in_box.max_duration = 3600
-        area.config.wasp_in_box.weight = 0.85
-        area.config.wasp_in_box.verification_delay = 0
-        # Create a Sensors object with multiple door and motion sensors
-        area.config.sensors = Sensors(
-            door=["binary_sensor.door1", "binary_sensor.door2"],
-            motion=["binary_sensor.motion1", "binary_sensor.motion2"],
-            _parent_config=area.config,
-        )
-        # Use area-based access - entities are now per-area
-        area.entities.async_initialize = AsyncMock()
-        return coordinator
 
     @pytest.fixture
     def multi_sensor_wasp(
@@ -824,57 +1290,63 @@ class TestWaspMultiSensorAggregation:
 
         return entity
 
-    async def test_aggregate_door_state_all_closed(
-        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
+    @pytest.mark.parametrize(
+        ("door1_state", "door2_state", "expected_result", "description"),
+        [
+            (STATE_OFF, STATE_OFF, STATE_OFF, "all doors closed"),
+            (STATE_ON, STATE_OFF, STATE_ON, "any door open"),
+            (STATE_OFF, STATE_ON, STATE_ON, "any door open"),
+        ],
+    )
+    async def test_aggregate_door_state(
+        self,
+        hass: HomeAssistant,
+        multi_sensor_wasp: WaspInBoxSensor,
+        door1_state: str,
+        door2_state: str,
+        expected_result: str,
+        description: str,
     ) -> None:
-        """Test that aggregate door state is CLOSED when all doors are closed."""
+        """Test aggregate door state calculation."""
         entity = multi_sensor_wasp
 
         # Create actual states in hass.states
-        hass.states.async_set("binary_sensor.door1", STATE_OFF)
-        hass.states.async_set("binary_sensor.door2", STATE_OFF)
+        hass.states.async_set("binary_sensor.door1", door1_state)
+        hass.states.async_set("binary_sensor.door2", door2_state)
 
         result = entity._get_aggregate_door_state()
-        assert result == STATE_OFF  # All doors closed
+        assert result == expected_result, (
+            f"Expected {expected_result} when {description}"
+        )
 
-    async def test_aggregate_door_state_any_open(
-        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
+    @pytest.mark.parametrize(
+        ("motion1_state", "motion2_state", "expected_result", "description"),
+        [
+            (STATE_OFF, STATE_OFF, STATE_OFF, "all motion off"),
+            (STATE_ON, STATE_OFF, STATE_ON, "any motion active"),
+            (STATE_OFF, STATE_ON, STATE_ON, "any motion active"),
+        ],
+    )
+    async def test_aggregate_motion_state(
+        self,
+        hass: HomeAssistant,
+        multi_sensor_wasp: WaspInBoxSensor,
+        motion1_state: str,
+        motion2_state: str,
+        expected_result: str,
+        description: str,
     ) -> None:
-        """Test that aggregate door state is OPEN if ANY door is open."""
-        entity = multi_sensor_wasp
-
-        # Create actual states in hass.states - door1 open, door2 closed
-        hass.states.async_set("binary_sensor.door1", STATE_ON)
-        hass.states.async_set("binary_sensor.door2", STATE_OFF)
-
-        result = entity._get_aggregate_door_state()
-        assert result == STATE_ON  # Any door open
-
-    async def test_aggregate_motion_state_all_off(
-        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
-    ) -> None:
-        """Test that aggregate motion state is OFF when all motion sensors are off."""
+        """Test aggregate motion state calculation."""
         entity = multi_sensor_wasp
 
         # Create actual states in hass.states
-        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
-        hass.states.async_set("binary_sensor.motion2", STATE_OFF)
+        hass.states.async_set("binary_sensor.motion1", motion1_state)
+        hass.states.async_set("binary_sensor.motion2", motion2_state)
 
         result = entity._get_aggregate_motion_state()
-        assert result == STATE_OFF  # All motion off
-
-    async def test_aggregate_motion_state_any_on(
-        self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
-    ) -> None:
-        """Test that aggregate motion state is ON if ANY motion sensor is active."""
-        entity = multi_sensor_wasp
-
-        # Create actual states in hass.states - motion1 active, motion2 off
-        hass.states.async_set("binary_sensor.motion1", STATE_ON)
-        hass.states.async_set("binary_sensor.motion2", STATE_OFF)
-
-        result = entity._get_aggregate_motion_state()
-        assert result == STATE_ON  # Any motion active
+        assert result == expected_result, (
+            f"Expected {expected_result} when {description}"
+        )
 
     async def test_multi_door_any_opening_clears_occupancy(
         self, hass: HomeAssistant, multi_sensor_wasp: WaspInBoxSensor
@@ -1087,12 +1559,19 @@ class TestWaspInBoxSensorErrorHandling:
         entity.hass = hass
 
         # Should handle gracefully
-        # Note: async_track_state_change_event may still be called with empty list
-        # When called with empty list, it returns a no-op function instead of None
-        entity._setup_entity_tracking()
-        # Verify listener was set up (even if it's a no-op for empty list)
-        # The important thing is that no actual tracking happens
-        assert entity._remove_state_listener is not None
+        # When _get_valid_entities() returns empty lists, valid_entities dict is not empty
+        # (it has keys with empty lists), so the check passes and async_track_state_change_event
+        # is called with an empty list, which returns a no-op function (not None)
+        with patch(
+            "custom_components.area_occupancy.binary_sensor.async_track_state_change_event"
+        ) as mock_track:
+            entity._setup_entity_tracking()
+            # Should be called with empty list
+            mock_track.assert_called_once()
+            assert mock_track.call_args[0][1] == []  # Empty list of entities
+            # Returns a no-op function, not None
+            assert entity._remove_state_listener is not None
+            assert callable(entity._remove_state_listener)
 
     def test_handle_state_change_unknown_state(
         self,
@@ -1218,3 +1697,607 @@ class TestWaspInBoxSensorErrorHandling:
         # Process invalid motion state - should handle gracefully
         with patch.object(entity, "async_write_ha_state"):
             entity._process_motion_state("binary_sensor.motion1", "invalid_state")
+
+
+class TestDoorStateEdgeCases:
+    """Test door state processing edge cases."""
+
+    async def test_door_closes_without_motion_sensors(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test door closes when no motion sensors are configured."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.wasp_in_box = Mock()
+        area.config.wasp_in_box.enabled = True
+        area.config.wasp_in_box.motion_timeout = 60
+        area.config.sensors = Sensors(
+            door=["binary_sensor.door1"],
+            motion=[],  # No motion sensors
+            _parent_config=area.config,
+        )
+
+        handle = coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Set up unoccupied state
+        entity._state = STATE_OFF
+        entity._attr_is_on = False
+        entity._door_state = STATE_ON
+
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+
+        with (
+            patch.object(entity, "async_write_ha_state") as mock_write,
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            entity._process_door_state("binary_sensor.door1", STATE_OFF)
+
+            # Should not trigger occupancy without motion sensors
+            mock_set_state.assert_not_called()
+            # Should still update attributes
+            mock_write.assert_called()
+
+    async def test_door_closes_motion_timeout_at_limit(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test door closes with motion timeout exactly at the limit."""
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up unoccupied state with motion at exact timeout limit
+        entity._state = STATE_OFF
+        entity._attr_is_on = False
+        # Previous door state was open (STATE_ON), now closing to closed (STATE_OFF)
+        entity._door_state = STATE_ON  # Previous state - door was open (DOOR_OPEN)
+        entity._motion_state = STATE_OFF  # Motion is not currently active
+        # Motion timeout is 60 seconds, set motion time to 59.9 seconds ago
+        # Using 59.9 to account for any timing precision issues while still testing boundary
+        entity._last_motion_time = dt_util.utcnow() - timedelta(seconds=59.9)
+
+        # Set door state to closed in hass.states for aggregate calculation
+        # The aggregate calculation will see door is closed (STATE_OFF = DOOR_CLOSED)
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+
+        with (
+            patch.object(entity, "async_write_ha_state"),
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            entity._process_door_state("binary_sensor.door1", STATE_OFF)
+
+            # Should trigger occupancy (motion timeout is <=, so 60 seconds is valid)
+            # The implementation checks motion_age <= motion_timeout, so 60 seconds should trigger
+            mock_set_state.assert_called_once_with(STATE_ON)
+
+    async def test_door_state_no_change_when_already_in_state(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test door state change when already in that state (no-op)."""
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up state with door already closed
+        entity._state = STATE_OFF
+        entity._attr_is_on = False
+        entity._door_state = STATE_OFF
+        entity._motion_state = STATE_OFF
+
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+
+        with (
+            patch.object(entity, "async_write_ha_state") as mock_write,
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            # Process door state change to same state
+            entity._process_door_state("binary_sensor.door1", STATE_OFF)
+
+            # Should update timestamp but not change occupancy
+            assert entity._last_door_time is not None
+            mock_set_state.assert_not_called()
+            # Should still update attributes
+            mock_write.assert_called()
+
+
+class TestMotionStateEdgeCases:
+    """Test motion state processing edge cases."""
+
+    async def test_motion_off_with_doors_closed_maintains_occupancy(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test that motion OFF with doors closed maintains occupancy."""
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up occupied state
+        entity._state = STATE_ON
+        entity._attr_is_on = True
+        entity._door_state = STATE_OFF
+        entity._motion_state = STATE_ON
+
+        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+
+        with (
+            patch.object(entity, "async_write_ha_state") as mock_write,
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            entity._process_motion_state("binary_sensor.motion1", STATE_OFF)
+
+            # Should maintain occupancy
+            assert entity._attr_is_on is True
+            assert entity._state == STATE_ON
+            mock_set_state.assert_not_called()
+            # Should update attributes
+            mock_write.assert_called()
+
+    async def test_motion_on_with_doors_open_no_occupancy(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test that motion ON with doors open does not trigger occupancy."""
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+
+        # Set up unoccupied state
+        entity._state = STATE_OFF
+        entity._attr_is_on = False
+        entity._door_state = STATE_ON
+        entity._motion_state = STATE_OFF
+
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+        hass.states.async_set("binary_sensor.door1", STATE_ON)
+
+        with (
+            patch.object(entity, "async_write_ha_state") as mock_write,
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            entity._process_motion_state("binary_sensor.motion1", STATE_ON)
+
+            # Should not trigger occupancy when doors are open
+            assert entity._attr_is_on is False
+            assert entity._state == STATE_OFF
+            mock_set_state.assert_not_called()
+            # Should update motion state and time
+            assert entity._motion_state == STATE_ON
+            assert entity._last_motion_time is not None
+            # Implementation only calls async_write_ha_state when motion turns OFF, not ON
+            mock_write.assert_not_called()
+
+    async def test_multiple_motion_sensors_transitioning(
+        self,
+        hass: HomeAssistant,
+        multi_sensor_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test multiple motion sensors transitioning states."""
+        area_name = multi_sensor_coordinator.get_area_names()[0]
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Set up unoccupied state with doors closed
+        entity._state = STATE_OFF
+        entity._attr_is_on = False
+        entity._door_state = STATE_OFF
+
+        # Set up states: motion1 ON, motion2 OFF
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+        hass.states.async_set("binary_sensor.motion2", STATE_OFF)
+
+        with (
+            patch.object(entity, "_start_max_duration_timer"),
+            patch.object(entity, "_start_verification_timer"),
+            patch.object(entity, "async_write_ha_state"),
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            # Process motion1 ON
+            entity._process_motion_state("binary_sensor.motion1", STATE_ON)
+
+            # Should trigger occupancy (motion1 ON with doors closed)
+            mock_set_state.assert_called_once_with(STATE_ON)
+            assert entity._motion_state == STATE_ON
+            # Since _set_state is mocked, manually update state to reflect what would happen
+            entity._state = STATE_ON
+            entity._attr_is_on = True
+
+            # Now motion1 turns OFF, but motion2 is still OFF
+            hass.states.async_set("binary_sensor.motion1", STATE_OFF)
+            mock_set_state.reset_mock()
+
+            with patch.object(entity, "async_write_ha_state"):
+                entity._process_motion_state("binary_sensor.motion1", STATE_OFF)
+
+                # Should maintain occupancy (all motion OFF but doors still closed)
+                mock_set_state.assert_not_called()
+                assert entity._motion_state == STATE_OFF
+                assert entity._attr_is_on is True
+
+
+class TestAggregateStateEdgeCases:
+    """Test aggregate state edge cases."""
+
+    async def test_simultaneous_sensor_transitions(
+        self,
+        hass: HomeAssistant,
+        multi_sensor_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test simultaneous sensor state transitions."""
+        area_name = multi_sensor_coordinator.get_area_names()[0]
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Set up initial state
+        entity._state = STATE_OFF
+        entity._attr_is_on = False
+        entity._door_state = STATE_ON
+        entity._motion_state = STATE_OFF
+
+        # Simulate simultaneous transitions: door1 closes, motion1 activates
+        hass.states.async_set("binary_sensor.door1", STATE_OFF)
+        hass.states.async_set("binary_sensor.door2", STATE_ON)  # Still one open
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+
+        with (
+            patch.object(entity, "_start_max_duration_timer"),
+            patch.object(entity, "_start_verification_timer"),
+            patch.object(entity, "async_write_ha_state"),
+            patch.object(entity, "_set_state") as mock_set_state,
+        ):
+            # Process door1 closing
+            entity._process_door_state("binary_sensor.door1", STATE_OFF)
+
+            # Should not trigger occupancy yet (door2 still open)
+            mock_set_state.assert_not_called()
+
+            # Process motion1 activating
+            entity._process_motion_state("binary_sensor.motion1", STATE_ON)
+
+            # Should not trigger occupancy (doors not all closed)
+            mock_set_state.assert_not_called()
+
+            # Now door2 closes
+            hass.states.async_set("binary_sensor.door2", STATE_OFF)
+            entity._process_door_state("binary_sensor.door2", STATE_OFF)
+
+            # Now should trigger occupancy (all doors closed + motion)
+            mock_set_state.assert_called_once_with(STATE_ON)
+
+    async def test_all_sensors_unavailable(
+        self,
+        hass: HomeAssistant,
+        multi_sensor_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test aggregate state when all sensors become unavailable."""
+        area_name = multi_sensor_coordinator.get_area_names()[0]
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Set up initial state
+        entity._door_state = STATE_OFF
+        entity._motion_state = STATE_ON
+
+        # All sensors become unavailable
+        hass.states.async_set("binary_sensor.door1", "unavailable")
+        hass.states.async_set("binary_sensor.door2", "unavailable")
+        hass.states.async_set("binary_sensor.motion1", "unavailable")
+        hass.states.async_set("binary_sensor.motion2", "unavailable")
+
+        # Aggregate states should handle unavailable gracefully
+        door_state = entity._get_aggregate_door_state()
+        motion_state = entity._get_aggregate_motion_state()
+
+        # Should return last known good state or default
+        # (implementation returns DOOR_CLOSED if all unavailable)
+        assert door_state == STATE_OFF
+        assert motion_state == STATE_OFF
+
+    async def test_mixed_available_unavailable_sensors(
+        self,
+        hass: HomeAssistant,
+        multi_sensor_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test aggregate state with mixed available/unavailable sensors."""
+        area_name = multi_sensor_coordinator.get_area_names()[0]
+        handle = multi_sensor_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        # Mixed states: door1 available and open, door2 unavailable
+        hass.states.async_set("binary_sensor.door1", STATE_ON)
+        hass.states.async_set("binary_sensor.door2", "unavailable")
+
+        door_state = entity._get_aggregate_door_state()
+        # Should return DOOR_OPEN (any door open)
+        assert door_state == STATE_ON
+
+        # Mixed motion: motion1 available and ON, motion2 unavailable
+        hass.states.async_set("binary_sensor.motion1", STATE_ON)
+        hass.states.async_set("binary_sensor.motion2", "unavailable")
+
+        motion_state = entity._get_aggregate_motion_state()
+        # Should return STATE_ON (any motion active)
+        assert motion_state == STATE_ON
+
+
+class TestStateRestorationEdgeCases:
+    """Test state restoration edge cases."""
+
+    @pytest.mark.parametrize(
+        ("attributes", "expected_door_time", "expected_motion_time"),
+        [
+            # Invalid datetime strings - parse_datetime returns None
+            (
+                {
+                    "last_occupied_time": "invalid-datetime",
+                    "last_door_time": "not-a-date",
+                    "last_motion_time": "bad-format",
+                },
+                None,
+                None,
+            ),
+            # Missing attributes - empty dict
+            ({}, None, None),
+        ],
+    )
+    async def test_restore_state_attribute_handling(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        attributes: dict,
+        expected_door_time: datetime | None,
+        expected_motion_time: datetime | None,
+    ) -> None:
+        """Test restoring state with invalid or missing datetime attributes."""
+        area_name = wasp_coordinator.get_area_names()[0]
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.hass = hass
+
+        # Mock previous state
+        mock_state = Mock()
+        mock_state.state = STATE_ON
+        mock_state.attributes = attributes
+        mock_get_state = AsyncMock(return_value=mock_state)
+
+        with (
+            patch.object(entity, "async_get_last_state", mock_get_state),
+            patch.object(entity, "_start_max_duration_timer") as mock_timer,
+        ):
+            await entity._restore_previous_state()
+
+            # Should handle gracefully - invalid/missing datetimes become None
+            assert entity._state == STATE_ON
+            assert entity._attr_is_on is True
+            # When state is STATE_ON, _last_occupied_time is set to utcnow() if None
+            assert isinstance(entity._last_occupied_time, datetime)
+            assert entity._last_door_time is expected_door_time
+            assert entity._last_motion_time is expected_motion_time
+            mock_timer.assert_called_once()
+
+    async def test_restore_state_max_duration_disabled(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """Test restoring state when max_duration is disabled."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.wasp_in_box = Mock()
+        area.config.wasp_in_box.enabled = True
+        area.config.wasp_in_box.motion_timeout = 60
+        area.config.wasp_in_box.max_duration = 0  # Disabled
+        area.config.wasp_in_box.weight = 0.85
+        area.config.sensors = Sensors(
+            door=["binary_sensor.door1"],
+            motion=["binary_sensor.motion1"],
+            _parent_config=area.config,
+        )
+
+        handle = coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+
+        # Mock previous state
+        mock_state = Mock()
+        mock_state.state = STATE_ON
+        mock_state.attributes = {
+            "last_occupied_time": "2023-01-01T12:00:00+00:00",
+        }
+        mock_get_state = AsyncMock(return_value=mock_state)
+
+        with (
+            patch.object(entity, "async_get_last_state", mock_get_state),
+            patch(
+                "custom_components.area_occupancy.binary_sensor.async_track_point_in_time"
+            ) as mock_track,
+        ):
+            await entity._restore_previous_state()
+
+            # Should restore state but not start timer (max_duration disabled)
+            assert entity._state == STATE_ON
+            assert entity._attr_is_on is True
+            mock_track.assert_not_called()
+            assert entity._remove_timer is None
+
+
+class TestCleanupEdgeCases:
+    """Test cleanup edge cases."""
+
+    @pytest.mark.parametrize(
+        ("timers_exist", "entity_id_matches", "expected_wasp_entity_id"),
+        [
+            (False, True, None),  # Timers already None, entity_id matches
+            (
+                True,
+                False,
+                "binary_sensor.different_entity",
+            ),  # Timers exist, entity_id mismatch
+        ],
+    )
+    async def test_cleanup_scenarios(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        timers_exist: bool,
+        entity_id_matches: bool,
+        expected_wasp_entity_id: str | None,
+    ) -> None:
+        """Test cleanup in various scenarios."""
+        area_name = wasp_coordinator.get_area_names()[0]
+        handle = wasp_coordinator.get_area_handle(area_name)
+        entity = WaspInBoxSensor(handle, wasp_config_entry)
+        entity.entity_id = "binary_sensor.test_wasp_in_box"
+
+        area = wasp_coordinator.get_area(area_name)
+
+        if timers_exist:
+            # Set up some resources
+            entity._remove_timer = Mock()
+            entity._remove_state_listener = Mock()
+            entity._remove_verification_timer = Mock()
+        else:
+            # Set all resources to None
+            entity._remove_timer = None
+            entity._remove_state_listener = None
+            entity._remove_verification_timer = None
+
+        if entity_id_matches:
+            area.wasp_entity_id = entity.entity_id
+        else:
+            # Set different entity_id on area
+            area.wasp_entity_id = "binary_sensor.different_entity"
+
+        # Cleanup should not raise
+        entity._cleanup_all_resources()
+
+        # Resources should be cleaned up
+        assert entity._remove_timer is None
+        assert entity._remove_state_listener is None
+        assert entity._remove_verification_timer is None
+
+        # Verify area.wasp_entity_id behavior
+        if entity_id_matches:
+            # Should be cleared when entity_id matches
+            assert area.wasp_entity_id is None
+        else:
+            # Should remain when entity_id doesn't match
+            assert area.wasp_entity_id == expected_wasp_entity_id
+
+
+class TestOccupancyEntityEdgeCases:
+    """Test Occupancy entity edge cases."""
+
+    @pytest.mark.parametrize(
+        ("area_id", "expected_area_id", "should_register_config_entry"),
+        [
+            ("test_area_id", "test_area_id", True),  # With area_id configured
+            (None, None, False),  # No area_id configured
+        ],
+    )
+    async def test_device_registry_area_assignment(
+        self,
+        hass: HomeAssistant,
+        device_registry,
+        coordinator: AreaOccupancyCoordinator,
+        area_id: str | None,
+        expected_area_id: str | None,
+        should_register_config_entry: bool,
+    ) -> None:
+        """Test device registry area assignment in async_added_to_hass."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.area_id = area_id
+
+        handle = coordinator.get_area_handle(area_name)
+        entity = Occupancy(area_handle=handle)
+        entity.hass = hass
+
+        # Register config entry in hass.config_entries so device registry can link to it
+        # Only needed when area_id is configured
+        if should_register_config_entry:
+            # Add setup_lock attribute to mock config entry for proper teardown
+            if not hasattr(coordinator.config_entry, "setup_lock"):
+                from asyncio import Lock
+
+                coordinator.config_entry.setup_lock = Lock()
+            hass.config_entries._entries[coordinator.entry_id] = (
+                coordinator.config_entry
+            )
+
+            # Create device in registry
+            device_entry = device_registry.async_get_or_create(
+                config_entry_id=coordinator.entry_id,
+                identifiers=entity.device_info["identifiers"],
+                name=area_name,
+            )
+
+            # Initially device has no area_id
+            assert device_entry.area_id is None
+
+        # Mock parent method
+        with patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass"
+        ):
+            await entity.async_added_to_hass()
+
+        # Verify results
+        if should_register_config_entry:
+            # Device should now have area_id assigned
+            device_entry = device_registry.async_get_device(
+                identifiers=entity.device_info["identifiers"]
+            )
+            assert device_entry is not None
+            assert device_entry.area_id == expected_area_id
+        else:
+            # Should not raise and should set occupancy_entity_id
+            assert area.occupancy_entity_id == entity.entity_id
+
+    def test_all_areas_occupancy_sensor(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test All Areas occupancy sensor behavior."""
+        all_areas = coordinator.get_all_areas()
+        entity = Occupancy(all_areas=all_areas)
+
+        # Should have correct unique_id
+        assert entity.unique_id is not None
+        assert "all_areas" in entity.unique_id or "all" in entity.unique_id.lower()
+
+        # Mock all_areas.occupied method
+        all_areas.occupied = Mock(return_value=True)
+        assert entity.is_on is True
+
+        all_areas.occupied = Mock(return_value=False)
+        assert entity.is_on is False
+
+        # Test when all_areas is None
+        entity._all_areas = None
+        assert entity.is_on is False

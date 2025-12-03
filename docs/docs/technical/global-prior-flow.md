@@ -16,11 +16,12 @@ The global prior represents the baseline probability that an area is occupied, c
 
 The global prior is calculated using a simple ratio:
 
-```
+```python
 global_prior = total_occupied_time / total_period_duration
 ```
 
 Where:
+
 - `total_occupied_time`: Sum of all occupied interval durations (from motion sensors)
 - `total_period_duration`: Duration from first interval to last interval (or current time)
 
@@ -111,6 +112,7 @@ occupied_intervals = self.get_occupied_intervals(days)
 - Returns list of `(start_time, end_time)` tuples
 
 **Data Source**: `Intervals` table filtered by:
+
 - Motion sensor entities only (`entity_type == "motion"`)
 - State == "on"
 - Within lookback period (default: 90 days)
@@ -133,6 +135,7 @@ actual_period_duration = (actual_period_end - first_interval_start).total_second
 ```
 
 **Rationale**: Using actual data period instead of fixed lookback ensures:
+
 - Prior reflects actual data availability
 - No artificial inflation from empty periods
 - More accurate representation of occupancy patterns
@@ -157,6 +160,7 @@ global_prior = max(
 **Calculation**: Simple ratio of occupied time to total period duration.
 
 **Clamping**: Values are clamped to `[0.01, 0.99]` to prevent:
+
 - Zero priors (would make Bayesian calculation impossible)
 - Extreme priors (would dominate Bayesian updates)
 
@@ -190,6 +194,7 @@ success = self.db.save_global_prior(
 ```
 
 **Storage**: Saves to `GlobalPriors` table with full metadata:
+
 - Prior value
 - Calculation date
 - Data period (start/end)
@@ -225,6 +230,7 @@ success = self.db.save_global_prior(
 | `updated_at`             | DateTime        | Last update timestamp                    |
 
 **Indexes**:
+
 - Unique constraint on `area_name` (one global prior per area)
 - Index on `calculation_date` (for history tracking)
 
@@ -358,11 +364,13 @@ sequenceDiagram
 **Symptom**: Prior always returns `MIN_PRIOR` (0.01).
 
 **Possible Causes**:
+
 1. No motion sensor intervals found
 2. Intervals not synced from recorder
 3. Database query failing
 
 **Solution**:
+
 - Check motion sensors are configured
 - Verify intervals exist in database
 - Check logs for query errors
@@ -380,6 +388,7 @@ sequenceDiagram
 **Symptom**: Prior defaults to `MIN_PRIOR` even though it was calculated.
 
 **Possible Causes**:
+
 1. `load_data()` not called
 2. Database query failing
 3. Prior not saved previously
@@ -403,4 +412,3 @@ sequenceDiagram
 - [Data Flow](data-flow.md) - Overall data flow through system
 - [Prior Learning](../features/prior-learning.md) - User-facing prior learning documentation
 - [Bayesian Calculation](bayesian-calculation.md) - How priors are used in calculations
-

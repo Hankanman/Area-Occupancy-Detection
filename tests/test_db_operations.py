@@ -17,10 +17,10 @@ from custom_components.area_occupancy.db.correlation import (
     save_correlation_result,
 )
 from custom_components.area_occupancy.db.operations import (
+    _cleanup_orphaned_entities,
     _create_data_hash,
     _prune_old_global_priors,
     _validate_area_data,
-    cleanup_orphaned_entities,
     delete_area_data,
     ensure_area_exists,
     load_data,
@@ -473,7 +473,7 @@ class TestSaveEntityData:
 
         # Mock cleanup to fail, but save should still succeed
         with patch(
-            "custom_components.area_occupancy.db.operations.cleanup_orphaned_entities",
+            "custom_components.area_occupancy.db.operations._cleanup_orphaned_entities",
             side_effect=RuntimeError("Cleanup error"),
         ):
             # Should still save successfully even if cleanup fails
@@ -522,7 +522,7 @@ class TestCleanupOrphanedEntities:
         db.save_entity_data()
 
         # Run cleanup
-        count = cleanup_orphaned_entities(db)
+        count = _cleanup_orphaned_entities(db)
         assert count == 0
 
     def test_cleanup_orphaned_entities_with_orphans(
@@ -565,7 +565,7 @@ class TestCleanupOrphanedEntities:
             session.commit()
 
         # Run cleanup - should remove orphaned entity
-        count = cleanup_orphaned_entities(db)
+        count = _cleanup_orphaned_entities(db)
         assert count == 1
 
         # Verify orphaned entity was deleted
