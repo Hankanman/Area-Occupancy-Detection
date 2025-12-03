@@ -230,7 +230,7 @@ Stores global prior values with calculation metadata and history. **This is the 
 
 **Calculation Method:** The global prior is calculated as the ratio of total occupied time to total period duration:
 
-```
+```python
 global_prior = total_occupied_seconds / total_period_seconds
 ```
 
