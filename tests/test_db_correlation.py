@@ -1,7 +1,6 @@
 """Tests for database correlation analysis functions."""
 
 from datetime import datetime, timedelta
-import math
 
 import pytest
 
@@ -12,19 +11,24 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
-from custom_components.area_occupancy.data.entity import Entity, EntityType
-from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.data.entity import Entity
+from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.db.correlation import (
+    _map_binary_state_to_semantic,
     _prune_old_correlations,
     analyze_and_save_correlation,
     analyze_binary_likelihoods,
     analyze_correlation,
     calculate_pearson_correlation,
     convert_hourly_aggregates_to_samples,
+    convert_intervals_to_samples,
+    get_correlatable_entities_by_area,
     get_correlation_for_entity,
+    run_correlation_analysis,
+    save_binary_likelihood_result,
     save_correlation_result,
 )
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
 
@@ -169,52 +173,46 @@ class TestCalculatePearsonCorrelation:
     """Test calculate_pearson_correlation function."""
 
     @pytest.mark.parametrize(
-        ("x_values", "y_values", "expected_corr", "expected_p", "p_tolerance"),
+        ("x_values", "y_values", "expected_corr", "corr_tolerance", "description"),
         [
-            # Positive correlation
             (
                 list(range(1, 51)),
                 [x * 2 for x in range(1, 51)],
                 1.0,
-                None,
                 0.01,
+                "positive correlation",
             ),
-            # Negative correlation
             (
                 list(range(1, 51)),
                 [101 - x for x in range(1, 51)],
                 -1.0,
-                None,
                 0.01,
+                "negative correlation",
             ),
-            # No correlation (random values)
-            ([1, 2, 3, 4, 5], [5, 2, 8, 1, 9], None, None, None),
-            # Very close to perfect correlation
             (
-                list(range(1, 51)),
-                [x * 2 + 0.0000001 for x in range(1, 51)],
+                [1, 2, 3, 4, 5],
+                [5, 2, 8, 1, 9],
+                None,  # No specific expected value, just check range
                 None,
-                None,
-                0.01,
+                "no correlation",
             ),
         ],
     )
-    def test_calculate_pearson_correlation_variations(
-        self, x_values, y_values, expected_corr, expected_p, p_tolerance
+    def test_calculate_pearson_correlation(
+        self, x_values, y_values, expected_corr, corr_tolerance, description
     ):
         """Test correlation calculation with various correlation types."""
         correlation, p_value = calculate_pearson_correlation(x_values, y_values)
 
         if expected_corr is not None:
-            assert abs(correlation - expected_corr) < p_tolerance
+            # Verify correlation matches expected value within tolerance
+            assert abs(correlation - expected_corr) < corr_tolerance
         else:
-            # For no correlation or very close to one, just check bounds
+            # For no correlation, just verify it's in valid range
             assert -1.0 <= correlation <= 1.0
 
-        if expected_p is not None:
-            assert abs(p_value - expected_p) < 0.01
-        else:
-            assert 0.0 <= p_value <= 1.0
+        # P-value should always be in valid range
+        assert 0.0 <= p_value <= 1.0
 
     @pytest.mark.parametrize(
         ("x_values", "y_values"),
@@ -268,6 +266,18 @@ class TestAnalyzeCorrelation:
         assert isinstance(result, dict)
         assert "correlation_coefficient" in result
         assert "sample_count" in result
+        # Verify correlation coefficient is in valid range
+        assert -1.0 <= result["correlation_coefficient"] <= 1.0
+        # Verify sample_count matches input data
+        assert result["sample_count"] == 100
+        # Verify mean/std values are reasonable
+        assert result["mean_value_when_occupied"] is not None
+        assert result["mean_value_when_unoccupied"] is not None
+        assert result["std_dev_when_occupied"] is not None
+        assert result["std_dev_when_unoccupied"] is not None
+        # Verify mean values are reasonable (should be around 20-30 based on generator)
+        assert 15.0 <= result["mean_value_when_occupied"] <= 35.0
+        assert 15.0 <= result["mean_value_when_unoccupied"] <= 35.0
 
     def test_analyze_correlation_no_data(self, coordinator: AreaOccupancyCoordinator):
         """Test correlation analysis with no data."""
@@ -408,25 +418,43 @@ class TestAnalyzeCorrelation:
     def test_analyze_correlation_negative_correlation(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test analysis with negative correlation."""
+        """Test analysis with negative correlation.
+
+        Creates data where values are LOW during occupied periods and HIGH during
+        unoccupied periods, resulting in negative correlation.
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
 
+        # Create occupied interval: hours 50-40 ago (samples 50-59)
+        # For negative correlation: LOW values during occupied, HIGH values when unoccupied
+        def value_generator(i):
+            # Samples are created with timestamp: now - timedelta(hours=100-i)
+            # Occupied period is hours 50-40 ago, which corresponds to i=50-59
+            if 50 <= i <= 59:
+                return 15.0  # LOW value during occupied period
+            return 25.0  # HIGH value during unoccupied period
+
         _create_numeric_entity_with_samples(
-            db, area_name, entity_id, 100, lambda i: 30.0 - (i % 10)
+            db, area_name, entity_id, 100, value_generator
         )
 
         intervals = [(now - timedelta(hours=50), now - timedelta(hours=40))]
         _create_occupied_intervals_cache(db, area_name, intervals)
 
         result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
-        # With negative correlation pattern, may return None or dict with negative correlation
-        if result is not None:
-            assert isinstance(result, dict)
-            # If correlation is found, verify it's a valid result
-            assert "correlation_coefficient" in result
+        # With negative correlation pattern, should return dict with negative correlation
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "correlation_coefficient" in result
+        # Verify negative correlation was detected
+        assert result["correlation_coefficient"] < 0
+        # Verify correlation_type reflects negative correlation
+        assert result["correlation_type"] in ("negative", "strong_negative")
+        # Verify sample_count matches input
+        assert result["sample_count"] == 100
 
 
 class TestSaveCorrelationResult:
@@ -581,6 +609,27 @@ class TestAnalyzeAndSaveCorrelation:
         assert isinstance(result, dict)
         assert result["area_name"] == area_name
         assert result["entity_id"] == entity_id
+
+        # Verify data was actually saved to database
+        with db.get_session() as session:
+            correlation = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .first()
+            )
+            assert correlation is not None
+            assert (
+                correlation.correlation_coefficient == result["correlation_coefficient"]
+            )
+            assert correlation.sample_count == result["sample_count"]
+            assert (
+                correlation.mean_value_when_occupied
+                == result["mean_value_when_occupied"]
+            )
+            assert (
+                correlation.mean_value_when_unoccupied
+                == result["mean_value_when_unoccupied"]
+            )
 
     def test_analyze_and_save_correlation_no_data(
         self, coordinator: AreaOccupancyCoordinator
@@ -1000,13 +1049,51 @@ class TestAnalyzeBinaryLikelihoods:
         assert result["prob_given_false"] is None
         assert result["analysis_error"] == "no_active_during_occupied"
 
-    def test_analyze_binary_likelihoods_state_mapping_door(
-        self, coordinator: AreaOccupancyCoordinator
+    @pytest.mark.parametrize(
+        (
+            "entity_id",
+            "states",
+            "active_states",
+            "expected_active_count",
+            "description",
+        ),
+        [
+            (
+                "binary_sensor.door_contact",
+                [
+                    "off",
+                    "off",
+                    "on",
+                ],  # Door: 'off'=closed (active), 'on'=open (inactive)
+                ["closed"],  # Semantic state
+                2,  # Closed during 2 of 3 occupied periods
+                "door sensors (off/on → closed/open)",
+            ),
+            (
+                "binary_sensor.window_contact",
+                [
+                    "on",
+                    "on",
+                    "off",
+                ],  # Window: 'on'=open (active), 'off'=closed (inactive)
+                ["open"],  # Semantic state
+                2,  # Open during 2 of 3 occupied periods
+                "window sensors (off/on → closed/open)",
+            ),
+        ],
+    )
+    def test_analyze_binary_likelihoods_state_mapping(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entity_id,
+        states,
+        active_states,
+        expected_active_count,
+        description,
     ):
-        """Test binary likelihood analysis with state mapping for door sensors (off/on → closed/open)."""
+        """Test binary likelihood analysis with state mapping for door/window sensors."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
-        entity_id = "binary_sensor.door_contact"
         now = dt_util.utcnow()
 
         db.save_area_data(area_name)
@@ -1019,14 +1106,11 @@ class TestAnalyzeBinaryLikelihoods:
         )
         db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
 
-        # Create door intervals using binary states ('off'/'on') but config expects semantic states ('closed'/'open')
-        # Door is 'off' (closed) during first 2 occupied periods, 'on' (open) during third
+        # Create intervals using binary states but config expects semantic states
         with db.get_session() as session:
-            for i in range(3):
+            for i, state in enumerate(states):
                 start = base_time - timedelta(hours=3 - i)
                 end = start + timedelta(hours=1)
-                # 'off' means closed (active for door), 'on' means open (inactive)
-                state = "off" if i < 2 else "on"
                 interval = db.Intervals(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
@@ -1039,452 +1123,28 @@ class TestAnalyzeBinaryLikelihoods:
                 session.add(interval)
             session.commit()
 
-        # Analyze with semantic states - should map 'off' → 'closed'
+        # Analyze with semantic states - should map binary states to semantic states
         result = analyze_binary_likelihoods(
             db,
             area_name,
             entity_id,
             analysis_period_days=1,
-            active_states=["closed"],  # Semantic state
+            active_states=active_states,
         )
 
         assert result is not None
         assert result["prob_given_true"] is not None
         assert result["prob_given_false"] is not None
         assert result["analysis_error"] is None
-        # Door was closed ('off') during 2 of 3 occupied periods
+        # Entity was active during expected_active_count of 3 occupied periods
         assert result["prob_given_true"] > 0.0
-
-    def test_analyze_binary_likelihoods_state_mapping_window(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test binary likelihood analysis with state mapping for window sensors (off/on → closed/open)."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        entity_id = "binary_sensor.window_contact"
-        now = dt_util.utcnow()
-
-        db.save_area_data(area_name)
-
-        # Create motion sensor intervals (occupied periods)
-        base_time = now - timedelta(seconds=30)
-        motion_entity_id = db.coordinator.get_area(area_name).config.sensors.motion[0]
-        motion_intervals = _create_motion_intervals(
-            db, area_name, motion_entity_id, 3, now=base_time
-        )
-        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
-
-        # Create window intervals using binary states ('off'/'on') but config expects semantic states ('closed'/'open')
-        # Window is 'on' (open) during first 2 occupied periods, 'off' (closed) during third
-        with db.get_session() as session:
-            for i in range(3):
-                start = base_time - timedelta(hours=3 - i)
-                end = start + timedelta(hours=1)
-                # 'on' means open (active for window), 'off' means closed (inactive)
-                state = "on" if i < 2 else "off"
-                interval = db.Intervals(
-                    entry_id=db.coordinator.entry_id,
-                    area_name=area_name,
-                    entity_id=entity_id,
-                    start_time=start,
-                    end_time=end,
-                    state=state,
-                    duration_seconds=3600,
-                )
-                session.add(interval)
-            session.commit()
-
-        # Analyze with semantic states - should map 'on' → 'open'
-        result = analyze_binary_likelihoods(
-            db,
-            area_name,
-            entity_id,
-            analysis_period_days=1,
-            active_states=["open"],  # Semantic state
-        )
-
-        assert result is not None
-        assert result["prob_given_true"] is not None
-        assert result["prob_given_false"] is not None
-        assert result["analysis_error"] is None
-        # Window was open ('on') during 2 of 3 occupied periods
-        assert result["prob_given_true"] > 0.0
-
-
-# ruff: noqa: SLF001
-@pytest.fixture
-def mock_numeric_entity():
-    """Create a mock numeric entity for testing."""
-    entity_type = EntityType(
-        input_type=InputType.TEMPERATURE,
-        weight=0.1,
-        prob_given_true=0.5,
-        prob_given_false=0.5,
-        active_range=None,
-    )
-    decay = Decay(half_life=60.0)
-
-    return Entity(
-        entity_id="sensor.temp",
-        type=entity_type,
-        prob_given_true=0.5,
-        prob_given_false=0.5,
-        decay=decay,
-        state_provider=lambda x: "20.0",
-        last_updated=dt_util.utcnow(),
-    )
-
-
-@pytest.fixture
-def mock_binary_entity():
-    """Create a mock binary entity for testing."""
-    entity_type = EntityType(
-        input_type=InputType.MEDIA,
-        weight=0.7,
-        prob_given_true=0.5,
-        prob_given_false=0.5,
-        active_states=[STATE_ON],
-    )
-    decay = Decay(half_life=60.0)
-
-    return Entity(
-        entity_id="media_player.tv",
-        type=entity_type,
-        prob_given_true=0.5,
-        prob_given_false=0.5,
-        decay=decay,
-        state_provider=lambda x: STATE_ON,
-        last_updated=dt_util.utcnow(),
-    )
-
-
-class TestGaussianLikelihood:
-    """Test Gaussian likelihood calculation."""
-
-    def test_is_continuous_likelihood_property(self, mock_numeric_entity):
-        """Test is_continuous_likelihood property."""
-        # Initially false
-        assert not mock_numeric_entity.is_continuous_likelihood
-
-        # Set gaussian params
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-
-        # Now true
-        assert mock_numeric_entity.is_continuous_likelihood
-
-    @pytest.mark.parametrize(
-        ("value", "mean", "std", "expected_density", "tolerance"),
-        [
-            # Peak density (at mean): 1 / (sqrt(2*pi) * 1) ≈ 0.3989
-            (20.0, 20.0, 1.0, 0.3989, 0.0001),
-            # 1 std dev away: 0.3989 * exp(-0.5 * 1^2) ≈ 0.2420
-            (21.0, 20.0, 1.0, 0.2420, 0.0001),
-            # 2 std dev away: 0.3989 * exp(-0.5 * 2^2) ≈ 0.0540
-            (22.0, 20.0, 1.0, 0.0540, 0.0001),
-            # Small std dev (higher peak): 1 / (sqrt(2*pi) * 0.1) ≈ 3.989
-            (20.0, 20.0, 0.1, 3.989, 0.001),
-        ],
-    )
-    def test_calculate_gaussian_density(
-        self, mock_numeric_entity, value, mean, std, expected_density, tolerance
-    ):
-        """Test _calculate_gaussian_density method."""
-        density = mock_numeric_entity._calculate_gaussian_density(value, mean, std)
-        assert abs(density - expected_density) < tolerance
-
-    @pytest.mark.parametrize(
-        ("value", "expected_p_t", "expected_p_f", "comparison"),
-        [
-            # Value = 22 (Occupied Mean): P(val|Occ) peak (~0.3989), P(val|Unocc) 2 std (~0.054)
-            ("22.0", 0.3989, 0.0540, "gt"),
-            # Value = 20 (Unoccupied Mean): P(val|Occ) 2 std (~0.054), P(val|Unocc) peak (~0.3989)
-            ("20.0", 0.0540, 0.3989, "lt"),
-            # Value = 21 (Middle): equal distance from both means, densities equal (~0.2420)
-            ("21.0", 0.2420, 0.2420, "eq"),
-        ],
-    )
-    def test_get_likelihoods_continuous_numeric(
-        self, mock_numeric_entity, value, expected_p_t, expected_p_f, comparison
-    ):
-        """Test get_likelihoods with continuous parameters for numeric sensor."""
-        # Setup: Occupied Mean 22, Std 1; Unoccupied Mean 20, Std 1
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-
-        mock_numeric_entity.state_provider = lambda x: value
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        assert abs(p_t - expected_p_t) < 0.001
-        assert abs(p_f - expected_p_f) < 0.001
-
-        if comparison == "gt":
-            assert p_t > p_f  # Favors occupied
-        elif comparison == "lt":
-            assert p_t < p_f  # Favors unoccupied
-        else:  # eq
-            assert abs(p_t - p_f) < 0.0001  # Equal densities
-
-    @pytest.mark.parametrize(
-        ("state", "analysis_error", "expected_p_t", "expected_p_f"),
-        [
-            # Analyzed successfully - should return learned probabilities regardless of state
-            (STATE_ON, None, 0.8, 0.1),
-            (STATE_OFF, None, 0.8, 0.1),
-            # Not analyzed - should use EntityType defaults
-            (STATE_ON, "not_analyzed", 0.5, 0.5),
-        ],
-    )
-    def test_get_likelihoods_binary_sensor_static(
-        self, mock_binary_entity, state, analysis_error, expected_p_t, expected_p_f
-    ):
-        """Test get_likelihoods for binary sensor using static probabilities."""
-        # Binary sensors use static probabilities, not Gaussian PDF
-        mock_binary_entity.prob_given_true = 0.8
-        mock_binary_entity.prob_given_false = 0.1
-        mock_binary_entity.analysis_error = analysis_error
-        mock_binary_entity.learned_gaussian_params = None
-
-        mock_binary_entity.state_provider = lambda x: state
-        p_t, p_f = mock_binary_entity.get_likelihoods()
-
-        if analysis_error is None:
-            # Should return learned probabilities
-            assert p_t == expected_p_t
-            assert p_f == expected_p_f
-        else:
-            # Should use EntityType defaults
-            assert p_t == mock_binary_entity.type.prob_given_true
-            assert p_f == mock_binary_entity.type.prob_given_false
-
-    def test_get_likelihoods_fallback(self, mock_numeric_entity):
-        """Test get_likelihoods fallback behavior uses EntityType defaults."""
-        # No params -> returns EntityType defaults (not stored prob_given_true/false)
-        mock_numeric_entity.learned_gaussian_params = None
-        # Change stored values to verify we use EntityType defaults
-        mock_numeric_entity.prob_given_true = 0.9
-        mock_numeric_entity.prob_given_false = 0.1
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-        # Should use EntityType defaults (0.5, 0.5), not stored values
-        assert p_t == 0.5
-        assert p_f == 0.5
-
-        # With params but invalid state -> uses representative value (average of means)
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-        mock_numeric_entity.state_provider = lambda x: "unavailable"
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-        # Should use representative value (average of means = 21.0) to calculate probabilities
-        # This will give non-zero probabilities based on Gaussian PDF
-        assert p_t > 0.0
-        assert p_f > 0.0
-        assert p_t != 0.5  # Should be calculated, not default
-        assert p_f != 0.5  # Should be calculated, not default
-
-    def test_update_correlation_populates_params(self, mock_numeric_entity):
-        """Test update_correlation populates Gaussian params."""
-        correlation_data = {
-            "confidence": 0.8,
-            "correlation_type": "strong_positive",
-            "mean_value_when_occupied": 22.0,
-            "mean_value_when_unoccupied": 20.0,
-            "std_dev_when_occupied": 1.5,
-            "std_dev_when_unoccupied": 1.2,
-        }
-
-        mock_numeric_entity.update_correlation(correlation_data)
-
-        assert mock_numeric_entity.learned_gaussian_params is not None
-        assert mock_numeric_entity.learned_gaussian_params["mean_occupied"] == 22.0
-        assert mock_numeric_entity.learned_gaussian_params["std_occupied"] == 1.5
-        assert mock_numeric_entity.learned_gaussian_params["mean_unoccupied"] == 20.0
-        assert mock_numeric_entity.learned_gaussian_params["std_unoccupied"] == 1.2
-
-        # Should also populate learned_active_range for UI
-        assert mock_numeric_entity.learned_active_range is not None
-
-    def test_update_correlation_missing_params(self, mock_numeric_entity):
-        """Test update_correlation handles missing occupied stats."""
-        correlation_data = {
-            "confidence": 0.8,
-            "correlation_type": "strong_positive",
-            "mean_value_when_unoccupied": 20.0,
-            "std_dev_when_unoccupied": 1.2,
-            # Missing occupied stats
-        }
-
-        mock_numeric_entity.update_correlation(correlation_data)
-
-        # Should NOT populate gaussian params
-        assert mock_numeric_entity.learned_gaussian_params is None
-        # Should still populate active range (open-ended)
-        assert mock_numeric_entity.learned_active_range is not None
-        assert mock_numeric_entity.learned_active_range[1] == float("inf")
-        # Should NOT update stored prob_given_true/false (no fallback)
-
-    def test_get_likelihoods_nan_mean_occupied(self, mock_numeric_entity):
-        """Test get_likelihoods with NaN mean_occupied falls back to EntityType defaults."""
-
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": float("nan"),
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        # Should fallback to EntityType defaults
-        assert p_t == mock_numeric_entity.type.prob_given_true
-        assert p_f == mock_numeric_entity.type.prob_given_false
-
-    def test_get_likelihoods_nan_mean_unoccupied(self, mock_numeric_entity):
-        """Test get_likelihoods with NaN mean_unoccupied falls back to EntityType defaults."""
-
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": float("nan"),
-            "std_unoccupied": 1.0,
-        }
-
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        # Should fallback to EntityType defaults
-        assert p_t == mock_numeric_entity.type.prob_given_true
-        assert p_f == mock_numeric_entity.type.prob_given_false
-
-    def test_get_likelihoods_inf_mean_occupied(self, mock_numeric_entity):
-        """Test get_likelihoods with inf mean_occupied falls back to EntityType defaults."""
-
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": float("inf"),
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        # Should fallback to EntityType defaults
-        assert p_t == mock_numeric_entity.type.prob_given_true
-        assert p_f == mock_numeric_entity.type.prob_given_false
-
-    def test_get_likelihoods_inf_mean_unoccupied(self, mock_numeric_entity):
-        """Test get_likelihoods with inf mean_unoccupied falls back to EntityType defaults."""
-
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": float("inf"),
-            "std_unoccupied": 1.0,
-        }
-
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        # Should fallback to EntityType defaults
-        assert p_t == mock_numeric_entity.type.prob_given_true
-        assert p_f == mock_numeric_entity.type.prob_given_false
-
-    def test_get_likelihoods_nan_state_value(self, mock_numeric_entity):
-        """Test get_likelihoods with NaN state value uses mean of means."""
-
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-
-        # Set state to NaN
-        mock_numeric_entity.state_provider = lambda x: float("nan")
-
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        # Should use mean of means (21.0) and calculate valid densities
-        assert not math.isnan(p_t)
-        assert not math.isnan(p_f)
-        assert not math.isinf(p_t)
-        assert not math.isinf(p_f)
-        assert p_t > 0.0
-        assert p_f > 0.0
-
-    def test_get_likelihoods_inf_state_value(self, mock_numeric_entity):
-        """Test get_likelihoods with inf state value uses mean of means."""
-
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
-
-        # Set state to inf
-        mock_numeric_entity.state_provider = lambda x: float("inf")
-
-        p_t, p_f = mock_numeric_entity.get_likelihoods()
-
-        # Should use mean of means (21.0) and calculate valid densities
-        assert not math.isnan(p_t)
-        assert not math.isnan(p_f)
-        assert not math.isinf(p_t)
-        assert not math.isinf(p_f)
-        assert p_t > 0.0
-        assert p_f > 0.0
-
-    def test_get_likelihoods_motion_sensor_uses_configured_values(self):
-        """Test that motion sensors always use configured prob_given_true/false."""
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=0.85,
-            prob_given_true=0.95,  # EntityType default
-            prob_given_false=0.02,  # EntityType default
-            active_states=[STATE_ON],
-        )
-        decay = Decay(half_life=60.0)
-
-        # Create motion sensor with different configured values
-        motion_entity = Entity(
-            entity_id="binary_sensor.motion",
-            type=entity_type,
-            prob_given_true=0.9,  # Configured value (different from EntityType)
-            prob_given_false=0.05,  # Configured value (different from EntityType)
-            decay=decay,
-            state_provider=lambda x: STATE_ON,
-            last_updated=dt_util.utcnow(),
-        )
-
-        # Even with Gaussian params, motion sensors should use configured values
-        motion_entity.learned_gaussian_params = {
-            "mean_occupied": 0.9,
-            "std_occupied": 0.3,
-            "mean_unoccupied": 0.1,
-            "std_unoccupied": 0.3,
-        }
-
-        p_t, p_f = motion_entity.get_likelihoods()
-        # Should use configured values, not Gaussian params or EntityType defaults
-        assert p_t == 0.9
-        assert p_f == 0.05
 
 
 class TestCorrelationBugFixes:
     """Test fixes for correlation logic bugs."""
 
     def test_timezone_aware_numeric_query(self, coordinator: AreaOccupancyCoordinator):
-        """Test that numeric sensor query uses timezone-aware datetimes."""
+        """Test that numeric sensor query uses timezone-aware datetimes correctly."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
@@ -1506,6 +1166,20 @@ class TestCorrelationBugFixes:
         assert result is not None
         assert "correlation_coefficient" in result
         assert result["sample_count"] > 0
+
+        # Verify timezone-aware datetimes are handled correctly
+        # The function should handle both naive and aware datetimes via ensure_timezone_aware
+        # Verify samples were found (proves timezone handling worked)
+        assert result["sample_count"] == 50
+
+        # Verify the analysis period boundaries are timezone-aware
+        # This is tested implicitly by the successful query, but we can verify
+        # that the result contains valid timestamps
+        assert result["analysis_period_start"] is not None
+        assert result["analysis_period_end"] is not None
+        # Verify these are datetime objects (timezone-aware)
+        assert isinstance(result["analysis_period_start"], datetime)
+        assert isinstance(result["analysis_period_end"], datetime)
 
     def test_entry_id_filtering(self, coordinator: AreaOccupancyCoordinator):
         """Test that numeric samples query filters by entry_id to prevent cross-entry leakage."""
@@ -1614,8 +1288,18 @@ class TestCorrelationBugFixes:
         # Probabilities should be valid (clamped between 0.05 and 0.95)
         assert 0.05 <= result["prob_given_true"] <= 0.95
         assert 0.05 <= result["prob_given_false"] <= 0.95
-        # Unoccupied overlap should be non-negative and valid
-        # (validated internally by the max/min clamping we added)
+
+        # Verify overlap calculations are correct:
+        # The interval spans from base_time - 6h to base_time - 4h + 30m (2.5 hours total)
+        # Motion intervals are at base_time - 5h to base_time - 4h (1 hour)
+        # So occupied overlap should be ~1 hour, unoccupied overlap should be ~1.5 hours
+        # This means prob_given_true should be > prob_given_false (more time active during occupied)
+        # But since the interval spans both occupied and unoccupied, both probabilities should be > 0
+        assert result["prob_given_true"] > 0.0
+        assert result["prob_given_false"] > 0.0
+        # The interval overlaps with occupied period, so prob_given_true should be meaningful
+        # (not just clamped minimum)
+        assert result["prob_given_true"] >= 0.05
 
 
 class TestNumericAggregatesInCorrelation:
@@ -1641,10 +1325,38 @@ class TestNumericAggregatesInCorrelation:
         ]
         _create_occupied_intervals_cache(db, area_name, intervals)
 
+        # Verify no aggregates exist in retention period
+        with db.get_session() as session:
+            aggregate_count = (
+                session.query(db.NumericAggregates)
+                .filter(
+                    db.NumericAggregates.entry_id == db.coordinator.entry_id,
+                    db.NumericAggregates.area_name == area_name,
+                    db.NumericAggregates.entity_id == entity_id,
+                    db.NumericAggregates.period_start
+                    >= now - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS),
+                )
+                .count()
+            )
+            assert aggregate_count == 0
+
         # Analyze correlation - should use only raw samples
         result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
         assert result is not None
         assert result["sample_count"] == 50
+
+        # Verify all samples are from NumericSamples table (not aggregates)
+        with db.get_session() as session:
+            sample_count = (
+                session.query(db.NumericSamples)
+                .filter(
+                    db.NumericSamples.entry_id == db.coordinator.entry_id,
+                    db.NumericSamples.area_name == area_name,
+                    db.NumericSamples.entity_id == entity_id,
+                )
+                .count()
+            )
+            assert sample_count == 50
 
     def test_correlation_uses_aggregates_only(
         self, coordinator: AreaOccupancyCoordinator
@@ -1696,10 +1408,39 @@ class TestNumericAggregatesInCorrelation:
         ]
         _create_occupied_intervals_cache(db, area_name, intervals)
 
+        # Verify no raw samples exist in old period
+        with db.get_session() as session:
+            raw_sample_count = (
+                session.query(db.NumericSamples)
+                .filter(
+                    db.NumericSamples.entry_id == db.coordinator.entry_id,
+                    db.NumericSamples.area_name == area_name,
+                    db.NumericSamples.entity_id == entity_id,
+                    db.NumericSamples.timestamp
+                    < dt_util.utcnow()
+                    - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS),
+                )
+                .count()
+            )
+            assert raw_sample_count == 0
+
         # Analyze correlation - should use only aggregates
         result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
         assert result is not None
         assert result["sample_count"] == 24  # 24 hourly aggregates
+
+        # Verify all samples are from NumericAggregates table (not raw samples)
+        with db.get_session() as session:
+            aggregate_count = (
+                session.query(db.NumericAggregates)
+                .filter(
+                    db.NumericAggregates.entry_id == db.coordinator.entry_id,
+                    db.NumericAggregates.area_name == area_name,
+                    db.NumericAggregates.entity_id == entity_id,
+                )
+                .count()
+            )
+            assert aggregate_count == 24
 
     def test_correlation_combines_both_sources(
         self, coordinator: AreaOccupancyCoordinator
@@ -1893,3 +1634,489 @@ class TestNumericAggregatesInCorrelation:
         assert result is not None
         # Should have both sources combined
         assert result["sample_count"] == 8  # 5 recent + 3 aggregates
+
+
+class TestConvertIntervalsToSamples:
+    """Test convert_intervals_to_samples function."""
+
+    def test_convert_intervals_to_samples_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test successful conversion of intervals to samples."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.door"
+        now = dt_util.utcnow()
+        period_start = now - timedelta(hours=10)
+        period_end = now
+
+        # Create binary entity with intervals
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entity_id=entity_id,
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="door",
+            )
+            session.add(entity)
+
+            # Create 5 intervals, 3 active ("on") and 2 inactive ("off")
+            for i in range(5):
+                start = now - timedelta(hours=5 - i)
+                end = start + timedelta(hours=1)
+                state = "on" if i < 3 else "off"
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    start_time=start,
+                    end_time=end,
+                    state=state,
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Convert intervals to samples
+        with db.get_session() as session:
+            samples = convert_intervals_to_samples(
+                db,
+                area_name,
+                entity_id,
+                period_start,
+                period_end,
+                ["on"],
+                session,
+            )
+
+        # Should have 5 samples (one per interval)
+        assert len(samples) == 5
+        # First 3 should be active (value=1.0), last 2 inactive (value=0.0)
+        assert samples[0].value == 1.0
+        assert samples[1].value == 1.0
+        assert samples[2].value == 1.0
+        assert samples[3].value == 0.0
+        assert samples[4].value == 0.0
+        # Samples should be sorted by timestamp
+        timestamps = [s.timestamp for s in samples]
+        assert timestamps == sorted(timestamps)
+
+    def test_convert_intervals_to_samples_no_active_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test conversion with no active states returns empty list."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.door"
+        now = dt_util.utcnow()
+
+        with db.get_session() as session:
+            samples = convert_intervals_to_samples(
+                db,
+                area_name,
+                entity_id,
+                now - timedelta(hours=10),
+                now,
+                None,
+                session,
+            )
+        assert samples == []
+
+    def test_convert_intervals_to_samples_period_boundary_clamping(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that intervals are clamped to period boundaries."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "binary_sensor.door"
+        now = dt_util.utcnow()
+        period_start = now - timedelta(hours=5)
+        period_end = now - timedelta(hours=1)
+
+        # Create interval that spans before, during, and after period
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entity_id=entity_id,
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="door",
+            )
+            session.add(entity)
+
+            # Interval starts before period, ends after period
+            interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id=entity_id,
+                start_time=now - timedelta(hours=10),
+                end_time=now,
+                state="on",
+                duration_seconds=36000,
+            )
+            session.add(interval)
+            session.commit()
+
+        # Convert intervals to samples
+        with db.get_session() as session:
+            samples = convert_intervals_to_samples(
+                db,
+                area_name,
+                entity_id,
+                period_start,
+                period_end,
+                ["on"],
+                session,
+            )
+
+        # Should have 1 sample at the midpoint of the clamped interval
+        assert len(samples) == 1
+        # Midpoint should be within period boundaries
+        assert period_start <= samples[0].timestamp <= period_end
+
+
+class TestMapBinaryStateToSemantic:
+    """Test _map_binary_state_to_semantic function."""
+
+    @pytest.mark.parametrize(
+        ("input_state", "active_states", "expected_result", "description"),
+        [
+            ("off", ["closed"], "closed", "door closed (off → closed)"),
+            ("on", ["open"], "open", "door open (on → open)"),
+            ("on", ["open"], "open", "window open (on → open)"),
+            ("off", ["closed"], "closed", "window closed (off → closed)"),
+        ],
+    )
+    def test_map_binary_state_to_semantic(
+        self, input_state, active_states, expected_result, description
+    ):
+        """Test mapping binary states to semantic states."""
+        result = _map_binary_state_to_semantic(input_state, active_states)
+        assert result == expected_result
+
+    @pytest.mark.parametrize(
+        ("input_state", "active_states", "expected_result"),
+        [
+            ("off", ["on"], "off"),  # No mapping when semantic not in active_states
+            ("on", ["off"], "on"),  # No mapping when semantic not in active_states
+        ],
+    )
+    def test_no_mapping_when_semantic_not_present(
+        self, input_state, active_states, expected_result
+    ):
+        """Test that no mapping occurs when semantic states not in active_states."""
+        result = _map_binary_state_to_semantic(input_state, active_states)
+        assert result == expected_result
+
+    def test_mapping_preserves_other_states(self):
+        """Test that non-binary states are preserved."""
+        result = _map_binary_state_to_semantic("playing", ["playing", "paused"])
+        assert result == "playing"
+
+
+class TestSaveBinaryLikelihoodResult:
+    """Test save_binary_likelihood_result function."""
+
+    def test_save_binary_likelihood_result_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test saving binary likelihood result successfully."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "light.test_light"
+
+        _create_entity(db, area_name, entity_id)
+
+        likelihood_data = {
+            "entry_id": db.coordinator.entry_id,
+            "area_name": area_name,
+            "entity_id": entity_id,
+            "prob_given_true": 0.75,
+            "prob_given_false": 0.15,
+            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+            "analysis_period_end": dt_util.utcnow(),
+            "analysis_error": None,
+            "calculation_date": dt_util.utcnow(),
+        }
+
+        result = save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
+        assert result is True
+
+        # Verify likelihood was saved
+        with db.get_session() as session:
+            correlation = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .first()
+            )
+            assert correlation is not None
+            assert correlation.correlation_type == "binary_likelihood"
+            assert correlation.mean_value_when_occupied == 0.75
+            assert correlation.mean_value_when_unoccupied == 0.15
+
+    def test_save_binary_likelihood_result_updates_existing(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that saving updates existing record."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "light.test_light"
+
+        _create_entity(db, area_name, entity_id)
+
+        period_start = dt_util.utcnow() - timedelta(days=30)
+        likelihood_data = {
+            "entry_id": db.coordinator.entry_id,
+            "area_name": area_name,
+            "entity_id": entity_id,
+            "prob_given_true": 0.75,
+            "prob_given_false": 0.15,
+            "analysis_period_start": period_start,
+            "analysis_period_end": dt_util.utcnow(),
+            "analysis_error": None,
+            "calculation_date": dt_util.utcnow(),
+        }
+
+        # Save first time
+        save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
+
+        # Update and save again
+        likelihood_data["prob_given_true"] = 0.80
+        result = save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
+        assert result is True
+
+        # Verify updated value
+        with db.get_session() as session:
+            correlation = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .first()
+            )
+            assert correlation.mean_value_when_occupied == 0.80
+
+
+class TestGetCorrelatableEntitiesByArea:
+    """Test get_correlatable_entities_by_area function."""
+
+    @pytest.mark.parametrize(
+        (
+            "entity_id",
+            "input_type",
+            "is_binary",
+            "active_states",
+            "active_range",
+            "state_provider",
+            "description",
+        ),
+        [
+            (
+                "media_player.tv",
+                InputType.MEDIA,
+                True,
+                [STATE_ON],
+                None,
+                lambda x: STATE_ON,
+                "binary sensors",
+            ),
+            (
+                "sensor.temperature",
+                InputType.TEMPERATURE,
+                False,
+                None,
+                None,
+                lambda x: "20.0",
+                "numeric sensors",
+            ),
+        ],
+    )
+    def test_get_correlatable_entities(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entity_id,
+        input_type,
+        is_binary,
+        active_states,
+        active_range,
+        state_provider,
+        description,
+    ):
+        """Test discovery of correlatable entities (binary and numeric)."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Create entity type
+        entity_type = EntityType(
+            input_type=input_type,
+            weight=0.7 if is_binary else 0.1,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            active_states=active_states,
+            active_range=active_range,
+        )
+
+        # Create entity
+        entity = Entity(
+            entity_id=entity_id,
+            type=entity_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=state_provider,
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities[entity_id] = entity
+
+        result = get_correlatable_entities_by_area(coordinator)
+
+        assert area_name in result
+        assert entity_id in result[area_name]
+        assert result[area_name][entity_id]["is_binary"] is is_binary
+        assert result[area_name][entity_id]["active_states"] == active_states
+
+    def test_get_correlatable_entities_excludes_motion(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that motion sensors are excluded from correlatable entities."""
+        area_name = coordinator.get_area_names()[0]
+
+        # Motion sensors should not appear in correlatable entities
+        result = get_correlatable_entities_by_area(coordinator)
+
+        # Check that motion sensors are not included
+        if area_name in result:
+            for entity_id in result[area_name]:
+                entity_info = result[area_name][entity_id]
+                # Should not have motion sensors
+                assert entity_info["input_type"] != InputType.MOTION
+
+
+class TestRunCorrelationAnalysis:
+    """Test run_correlation_analysis function."""
+
+    async def test_run_correlation_analysis_binary_sensor(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test correlation analysis for binary sensors."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Add a media player entity
+        media_type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.7,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            active_states=[STATE_ON],
+        )
+        media_entity = Entity(
+            entity_id="media_player.tv",
+            type=media_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda x: STATE_ON,
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities["media_player.tv"] = media_entity
+
+        # Create motion intervals for occupied periods
+        db = coordinator.db
+        now = dt_util.utcnow()
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = area.config.sensors.motion[0]
+        motion_intervals = _create_motion_intervals(
+            db, area_name, motion_entity_id, 5, now=base_time
+        )
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create media player intervals
+        with db.get_session() as session:
+            for i in range(5):
+                start = base_time - timedelta(hours=5 - i)
+                end = start + timedelta(hours=1)
+                state = "on" if i < 3 else "off"
+                interval = db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="media_player.tv",
+                    start_time=start,
+                    end_time=end,
+                    state=state,
+                    duration_seconds=3600,
+                )
+                session.add(interval)
+            session.commit()
+
+        # Run correlation analysis
+        results = await run_correlation_analysis(coordinator, return_results=True)
+
+        # Should have analyzed the media player
+        assert results is not None
+        assert len(results) > 0
+        media_result = next(
+            (r for r in results if r.get("entity_id") == "media_player.tv"), None
+        )
+        assert media_result is not None
+        assert media_result["type"] == "binary_likelihood"
+        assert media_result["success"] is True
+
+    async def test_run_correlation_analysis_numeric_sensor(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test correlation analysis for numeric sensors."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        entity_id = "sensor.temperature"
+
+        # Add temperature sensor entity
+        temp_type = EntityType(
+            input_type=InputType.TEMPERATURE,
+            weight=0.1,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            active_range=None,
+        )
+        temp_entity = Entity(
+            entity_id=entity_id,
+            type=temp_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda x: "20.0",
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities[entity_id] = temp_entity
+
+        # Create numeric samples
+        now = dt_util.utcnow()
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 100, lambda i: 20.0 + (i % 10)
+        )
+
+        # Create occupied intervals
+        intervals = [
+            (now - timedelta(hours=50), now - timedelta(hours=40)),
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Run correlation analysis
+        results = await run_correlation_analysis(coordinator, return_results=True)
+
+        # Should have analyzed the temperature sensor
+        assert results is not None
+        assert len(results) > 0
+        temp_result = next(
+            (r for r in results if r.get("entity_id") == entity_id), None
+        )
+        assert temp_result is not None
+        assert temp_result["type"] == "correlation"
+        assert temp_result["success"] is True
+
+    async def test_run_correlation_analysis_no_results_flag(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that return_results=False returns None."""
+        result = await run_correlation_analysis(coordinator, return_results=False)
+        assert result is None

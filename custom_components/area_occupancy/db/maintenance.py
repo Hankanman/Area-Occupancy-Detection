@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..const import DB_VERSION
+from ..const import CONF_VERSION
 from .schema import Base
 
 if TYPE_CHECKING:
@@ -52,13 +52,13 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
         if not verify_all_tables_exist(db):
             _LOGGER.debug("Not all tables exist, initializing database")
             init_db(db)
-            set_db_version(db)
+            _set_db_version(db)
         else:
             # Tables exist - verify schema is up to date
             _ensure_schema_up_to_date(db)
     except sa.exc.SQLAlchemyError as e:
         # Check if this is a corruption error
-        if is_database_corrupted(db, e):
+        if _is_database_corrupted(db, e):
             _LOGGER.warning(
                 "Database may be corrupted (error: %s), will attempt recovery in background",
                 e,
@@ -70,7 +70,7 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
         _LOGGER.debug("Database error during table check, initializing database: %s", e)
         try:
             init_db(db)
-            set_db_version(db)
+            _set_db_version(db)
         except (
             sa.exc.SQLAlchemyError,
             OSError,
@@ -82,7 +82,7 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
             _LOGGER.debug("Database initialization failed, will attempt recovery")
 
 
-def check_database_integrity(db: AreaOccupancyDB) -> bool:
+def _check_database_integrity(db: AreaOccupancyDB) -> bool:
     """Check if the database is healthy and not corrupted.
 
     Returns:
@@ -100,30 +100,6 @@ def check_database_integrity(db: AreaOccupancyDB) -> bool:
     except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
         _LOGGER.error("Failed to run database integrity check: %s", e)
         return False
-
-
-def check_database_accessibility(db: AreaOccupancyDB) -> bool:
-    """Check if the database file is accessible and readable.
-
-    Returns:
-        bool: True if database is accessible, False otherwise
-    """
-    if not db.db_path or not db.db_path.exists():
-        return False
-
-    try:
-        # Try to open the file to check if it's readable
-        with open(db.db_path, "rb") as f:
-            # Read first few bytes to check if file is accessible
-            header = f.read(16)
-            if not header.startswith(b"SQLite format 3"):
-                _LOGGER.error("Database file is not a valid SQLite database")
-                return False
-    except (OSError, PermissionError, FileNotFoundError) as e:
-        _LOGGER.error("Database file is not accessible: %s", e)
-        return False
-    else:
-        return True
 
 
 def _get_required_tables() -> set[str]:
@@ -193,24 +169,24 @@ def get_missing_tables(db: AreaOccupancyDB) -> set[str]:
 def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
     """Ensure database schema matches current version.
 
-    If version doesn't match DB_VERSION, delete and recreate from scratch.
+    If version doesn't match CONF_VERSION, delete and recreate from scratch.
     """
     try:
         db_version = get_db_version(db)
-        if db_version != DB_VERSION:
+        if db_version != CONF_VERSION:
             _LOGGER.info(
                 "Database version mismatch (found %d, expected %d). "
                 "Deleting existing database and recreating from scratch.",
                 db_version,
-                DB_VERSION,
+                CONF_VERSION,
             )
             delete_db(db)
             # Recreate database with new schema
             init_db(db)
-            set_db_version(db)
+            _set_db_version(db)
             _LOGGER.info(
-                "Database recreated with DB_VERSION %d schema. All previous data has been cleared.",
-                DB_VERSION,
+                "Database recreated with CONF_VERSION %d schema. All previous data has been cleared.",
+                CONF_VERSION,
             )
 
     except (SQLAlchemyError, OSError, RuntimeError) as e:
@@ -220,13 +196,13 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
         try:
             delete_db(db)
             init_db(db)
-            set_db_version(db)
+            _set_db_version(db)
         except Exception as recreate_err:
             _LOGGER.error("Failed to recreate database: %s", recreate_err)
             raise
 
 
-def is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
+def _is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
     """Check if an error indicates database corruption.
 
     Args:
@@ -248,7 +224,7 @@ def is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
     return any(indicator in error_str for indicator in corruption_indicators)
 
 
-def attempt_database_recovery(db: AreaOccupancyDB) -> bool:
+def _attempt_database_recovery(db: AreaOccupancyDB) -> bool:
     """Attempt to recover from database corruption.
 
     Returns:
@@ -307,7 +283,7 @@ def attempt_database_recovery(db: AreaOccupancyDB) -> bool:
             temp_engine.dispose()
 
 
-def backup_database(db: AreaOccupancyDB) -> bool:
+def _backup_database(db: AreaOccupancyDB) -> bool:
     """Create a backup of the current database.
 
     Returns:
@@ -328,7 +304,7 @@ def backup_database(db: AreaOccupancyDB) -> bool:
         return True
 
 
-def restore_database_from_backup(db: AreaOccupancyDB) -> bool:
+def _restore_database_from_backup(db: AreaOccupancyDB) -> bool:
     """Restore database from backup if available.
 
     Returns:
@@ -370,7 +346,7 @@ def restore_database_from_backup(db: AreaOccupancyDB) -> bool:
         return True
 
 
-def handle_database_corruption(db: AreaOccupancyDB) -> bool:
+def _handle_database_corruption(db: AreaOccupancyDB) -> bool:
     """Handle database corruption with automatic recovery attempts.
 
     Returns:
@@ -384,17 +360,17 @@ def handle_database_corruption(db: AreaOccupancyDB) -> bool:
 
     # First, try to create a backup if possible
     if db.enable_periodic_backups:
-        backup_database(db)
+        _backup_database(db)
 
     # Try database recovery first
-    if attempt_database_recovery(db):
-        if check_database_integrity(db):
+    if _attempt_database_recovery(db):
+        if _check_database_integrity(db):
             _LOGGER.info("Database recovery successful")
             return True
 
     # If recovery failed, try to restore from backup
-    if db.enable_periodic_backups and restore_database_from_backup(db):
-        if check_database_integrity(db):
+    if db.enable_periodic_backups and _restore_database_from_backup(db):
+        if _check_database_integrity(db):
             _LOGGER.info("Database restore from backup successful")
             return True
 
@@ -403,7 +379,7 @@ def handle_database_corruption(db: AreaOccupancyDB) -> bool:
     try:
         delete_db(db)
         init_db(db)
-        set_db_version(db)
+        _set_db_version(db)
         _LOGGER.info("Database recreated successfully")
     except (sa.exc.SQLAlchemyError, OSError, PermissionError) as e:
         _LOGGER.error("Failed to recreate database: %s", e)
@@ -422,9 +398,9 @@ def periodic_health_check(db: AreaOccupancyDB) -> bool:
     """
     try:
         # Check database integrity
-        if not check_database_integrity(db):
+        if not _check_database_integrity(db):
             _LOGGER.warning("Periodic health check found database corruption")
-            if handle_database_corruption(db):
+            if _handle_database_corruption(db):
                 _LOGGER.info("Database recovered during periodic health check")
                 return True
             _LOGGER.error("Failed to recover database during periodic health check")
@@ -440,7 +416,7 @@ def periodic_health_check(db: AreaOccupancyDB) -> bool:
             # Attempt recovery using the same path as ensure_db_exists
             try:
                 init_db(db)
-                set_db_version(db)
+                _set_db_version(db)
                 _LOGGER.info(
                     "Database tables recovered during periodic health check. "
                     "Recreated missing tables: %s",
@@ -467,7 +443,7 @@ def periodic_health_check(db: AreaOccupancyDB) -> bool:
                 not backup_path.exists()
                 or (time.time() - backup_path.stat().st_mtime) > backup_interval_seconds
             ):
-                if backup_database(db):
+                if _backup_database(db):
                     _LOGGER.debug("Periodic database backup created")
                 else:
                     _LOGGER.warning("Failed to create periodic database backup")
@@ -487,7 +463,7 @@ def periodic_health_check(db: AreaOccupancyDB) -> bool:
         return True
 
 
-def set_db_version(db: AreaOccupancyDB) -> None:
+def _set_db_version(db: AreaOccupancyDB) -> None:
     """Set the database version in the metadata table."""
     # Use session for ORM operations during initialization
     with db.get_session() as session:
@@ -499,10 +475,10 @@ def set_db_version(db: AreaOccupancyDB) -> None:
                 )
                 if metadata_entry:
                     # Update existing entry
-                    metadata_entry.value = str(DB_VERSION)
+                    metadata_entry.value = str(CONF_VERSION)
                 else:
                     # Insert new entry
-                    session.add(db.Metadata(key="db_version", value=str(DB_VERSION)))
+                    session.add(db.Metadata(key="db_version", value=str(CONF_VERSION)))
         except Exception as e:
             _LOGGER.error("Failed to set db_version in metadata table: %s", e)
             raise
@@ -544,13 +520,6 @@ def delete_db(db: AreaOccupancyDB) -> None:
             _LOGGER.info("Deleted database at %s", db.db_path)
         except (OSError, PermissionError) as e:
             _LOGGER.error("Failed to delete database file: %s", e)
-
-
-def force_reinitialize(db: AreaOccupancyDB) -> None:
-    """Force reinitialization of the database tables."""
-    _LOGGER.debug("Forcing database reinitialization")
-    init_db(db)
-    set_db_version(db)
 
 
 def get_last_prune_time(db: AreaOccupancyDB) -> datetime | None:

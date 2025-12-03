@@ -1,6 +1,7 @@
 """Tests for data.entity module."""
 
 from datetime import timedelta
+import math
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -12,12 +13,8 @@ from custom_components.area_occupancy.data.entity import (
     EntityFactory,
     EntityManager,
 )
-from custom_components.area_occupancy.data.entity_type import (
-    DEFAULT_TYPES,
-    EntityType,
-    InputType,
-)
-from homeassistant.const import STATE_ON
+from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
@@ -156,49 +153,60 @@ class TestEntity:
         assert entity.decay == decay
         assert entity.hass == coordinator.hass
 
-    @patch("custom_components.area_occupancy.data.entity.Decay")
-    @patch("custom_components.area_occupancy.data.entity.EntityType")
-    def test_from_dict(
-        self,
-        mock_entity_type_class: Mock,
-        mock_decay_class: Mock,
-        coordinator: AreaOccupancyCoordinator,
+    def test_initialization_both_hass_and_state_provider_raises_error(
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test creating entity from dictionary."""
-        mock_entity_type = Mock()
-        mock_entity_type_class.return_value = mock_entity_type
-        mock_decay = Mock()
-        mock_decay_class.return_value = mock_decay
-
-        entity_data = {
-            "entity_id": "test",
-            "type": {"input_type": "motion", "weight": 0.8},
-            "prob_given_true": DEFAULT_TYPES[InputType.MOTION]["prob_given_true"],
-            "prob_given_false": DEFAULT_TYPES[InputType.MOTION]["prob_given_false"],
-            "decay": {"is_decaying": False},
-        }
-
-        # Create entity directly since there's no from_dict method
-        entity = create_test_entity(
-            entity_id=entity_data["entity_id"],
-            entity_type=mock_entity_type,
-            prob_given_true=entity_data["prob_given_true"],
-            prob_given_false=entity_data["prob_given_false"],
-            decay=mock_decay,
-            coordinator=coordinator,
+        """Test that providing both hass and state_provider raises ValueError."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.8,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
+            active_states=[STATE_ON],
         )
+        decay = Decay(half_life=60.0)
 
-        assert entity.entity_id == "test"
-        assert entity.type == mock_entity_type
-        assert (
-            entity.prob_given_true == DEFAULT_TYPES[InputType.MOTION]["prob_given_true"]
+        def state_provider(_):
+            return None
+
+        with pytest.raises(
+            ValueError, match="Cannot provide both hass and state_provider"
+        ):
+            Entity(
+                entity_id="test",
+                type=entity_type,
+                prob_given_true=0.25,
+                prob_given_false=0.05,
+                decay=decay,
+                hass=coordinator.hass,
+                state_provider=state_provider,
+            )
+
+    def test_initialization_neither_hass_nor_state_provider_raises_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that providing neither hass nor state_provider raises ValueError."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.8,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
+            active_states=[STATE_ON],
         )
-        assert (
-            entity.prob_given_false
-            == DEFAULT_TYPES[InputType.MOTION]["prob_given_false"]
-        )
-        assert entity.decay == mock_decay
-        assert entity.hass == coordinator.hass
+        decay = Decay(half_life=60.0)
+
+        with pytest.raises(
+            ValueError, match="Either hass or state_provider must be provided"
+        ):
+            Entity(
+                entity_id="test",
+                type=entity_type,
+                prob_given_true=0.25,
+                prob_given_false=0.05,
+                decay=decay,
+                hass=None,
+                state_provider=None,
+            )
 
 
 class TestEntityManager:
@@ -212,22 +220,22 @@ class TestEntityManager:
         assert manager.coordinator == coordinator
         assert manager._entities == {}
 
-    def test_entities_property(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Test entities property."""
-        area_name = coordinator.get_area_names()[0]
-        manager = create_test_entity_manager(coordinator, area_name)
-        test_entity = Mock()
-        manager._entities = {"test": test_entity}
-
-        assert manager.entities == {"test": test_entity}
-
-    def test_entity_ids_property(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Test entity_ids property."""
-        area_name = coordinator.get_area_names()[0]
-        manager = create_test_entity_manager(coordinator, area_name)
-        manager._entities = {"entity1": Mock(), "entity2": Mock()}
-
-        assert set(manager.entity_ids) == {"entity1", "entity2"}
+    @pytest.mark.parametrize(
+        ("area_name", "error_message"),
+        [
+            (None, "Area name is required in multi-area architecture"),
+            ("nonexistent", "Area 'nonexistent' not found"),
+        ],
+    )
+    def test_initialization_invalid_area_name(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str | None,
+        error_message: str,
+    ) -> None:
+        """Test EntityManager initialization with invalid area_name raises ValueError."""
+        with pytest.raises(ValueError, match=error_message):
+            EntityManager(coordinator, area_name=area_name)
 
     @pytest.mark.parametrize(
         ("property_name", "expected_entities"),
@@ -315,6 +323,109 @@ class TestEntityPropertiesAndMethods:
             assert test_entity.state == "test_state"
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_state_property_with_state_provider(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test state property with state_provider instead of hass."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.8,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
+            active_states=[STATE_ON],
+        )
+        decay = Decay(half_life=60.0)
+
+        # Create state provider that returns object with .state attribute
+        mock_state_obj = Mock()
+        mock_state_obj.state = "on"
+
+        def state_provider(entity_id):
+            if entity_id == "test":
+                return mock_state_obj
+            return None
+
+        entity = Entity(
+            entity_id="test",
+            type=entity_type,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
+            decay=decay,
+            hass=None,
+            state_provider=state_provider,
+        )
+
+        assert entity.state == "on"
+
+        # Test with state_provider returning direct value
+        def state_provider_direct(entity_id):
+            if entity_id == "test":
+                return "off"
+            return None
+
+        entity.state_provider = state_provider_direct
+        assert entity.state == "off"
+
+        # Test with state_provider returning None
+        def state_provider_none(entity_id):
+            return None
+
+        entity.state_provider = state_provider_none
+        assert entity.state is None
+
+    def test_name_property_with_state_provider(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test name property with state_provider."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.8,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
+            active_states=[STATE_ON],
+        )
+        decay = Decay(half_life=60.0)
+
+        # Create state provider that returns object with .name attribute
+        mock_state_obj = Mock()
+        mock_state_obj.name = "Test Sensor"
+
+        def state_provider(entity_id):
+            if entity_id == "test":
+                return mock_state_obj
+            return None
+
+        entity = Entity(
+            entity_id="test",
+            type=entity_type,
+            prob_given_true=0.25,
+            prob_given_false=0.05,
+            decay=decay,
+            hass=None,
+            state_provider=state_provider,
+        )
+
+        assert entity.name == "Test Sensor"
+
+        # Test with state_provider returning object without name
+        mock_state_obj_no_name = Mock()
+        del mock_state_obj_no_name.name
+
+        def state_provider_no_name(entity_id):
+            if entity_id == "test":
+                return mock_state_obj_no_name
+            return None
+
+        entity.state_provider = state_provider_no_name
+        assert entity.name is None
+
+        # Test with state_provider returning None
+        def state_provider_none(entity_id):
+            return None
+
+        entity.state_provider = state_provider_none
+        assert entity.name is None
 
     @pytest.mark.parametrize(
         ("state_value", "expected_available"),
@@ -621,6 +732,125 @@ class TestEntityPropertiesAndMethods:
             decay_call_args = mock_decay_class.call_args
             assert decay_call_args.kwargs.get("half_life") == 300.0
 
+    @pytest.mark.parametrize(
+        ("field_name", "invalid_value", "exception_type", "error_message"),
+        [
+            (
+                "entity_id",
+                "",
+                ValueError,
+                "Entity ID cannot be empty",
+            ),
+            (
+                "entity_type",
+                "",
+                ValueError,
+                "Entity type cannot be empty",
+            ),
+            (
+                "prob_given_true",
+                "invalid",
+                TypeError,
+                "Failed to convert numeric fields",
+            ),
+        ],
+    )
+    def test_create_from_db_validation_errors(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        field_name: str,
+        invalid_value: str,
+        exception_type: type[Exception],
+        error_message: str,
+    ) -> None:
+        """Test create_from_db validation errors."""
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+
+        mock_db_entity = Mock()
+
+        # Build base dict with valid values
+        base_dict = {
+            "entity_id": "test",
+            "entity_type": "motion",
+            "prob_given_true": 0.8,
+            "prob_given_false": 0.1,
+            "weight": 0.5,
+        }
+        # Override the invalid field
+        base_dict[field_name] = invalid_value
+
+        def mock_to_dict():
+            return base_dict
+
+        mock_db_entity.to_dict = mock_to_dict
+
+        with pytest.raises(exception_type, match=error_message):
+            factory.create_from_db(mock_db_entity)
+
+    @pytest.mark.parametrize(
+        "creation_method", ["create_from_db", "create_from_config_spec"]
+    )
+    def test_wasp_entity_sets_half_life(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        creation_method: str,
+    ) -> None:
+        """Test WASP entity sets half_life to 0.1 regardless of creation method."""
+        with (
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityType"
+            ) as mock_entity_type_class,
+            patch(
+                "custom_components.area_occupancy.data.entity.Decay"
+            ) as mock_decay_class,
+        ):
+            mock_entity_type = Mock()
+            mock_entity_type_class.return_value = mock_entity_type
+            mock_decay = Mock()
+            mock_decay_class.return_value = mock_decay
+
+            area_name = coordinator.get_area_names()[0]
+            area = coordinator.get_area(area_name)
+            # Set WASP entity ID
+            area.wasp_entity_id = "binary_sensor.wasp"
+
+            factory = EntityFactory(coordinator, area_name=area_name)
+            area.config.decay.half_life = 300.0
+
+            if creation_method == "create_from_db":
+                mock_db_entity = Mock()
+                mock_db_entity.entity_id = "binary_sensor.wasp"
+                mock_db_entity.entity_type = "motion"
+                mock_db_entity.prob_given_true = 0.8
+                mock_db_entity.prob_given_false = 0.1
+                mock_db_entity.decay_start = dt_util.utcnow()
+                mock_db_entity.is_decaying = False
+                mock_db_entity.last_updated = dt_util.utcnow()
+                mock_db_entity.evidence = True
+
+                def mock_to_dict():
+                    return {
+                        "entity_id": "binary_sensor.wasp",
+                        "entity_type": "motion",
+                        "prob_given_true": 0.8,
+                        "prob_given_false": 0.1,
+                        "decay_start": mock_db_entity.decay_start,
+                        "is_decaying": False,
+                        "last_updated": mock_db_entity.last_updated,
+                        "evidence": True,
+                        "weight": 0.5,
+                    }
+
+                mock_db_entity.to_dict = mock_to_dict
+                factory.create_from_db(mock_db_entity)
+            else:  # create_from_config_spec
+                factory.create_from_config_spec("binary_sensor.wasp", "motion")
+
+            # Verify Decay was created with half_life=0.1 for WASP entity
+            decay_call_args = mock_decay_class.call_args
+            assert decay_call_args.kwargs.get("half_life") == 0.1
+
     def test_entity_manager_get_entities_by_input_type(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
@@ -775,6 +1005,156 @@ class TestEntityPropertiesAndMethods:
         entity.update_correlation(None)
         assert entity.learned_active_range is None
 
+    def test_update_correlation_with_occupied_stats(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test update_correlation with occupied stats stores Gaussian params."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        # Test with occupied stats provided
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "strong_positive",
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+            "mean_value_when_occupied": 20.0,
+            "std_dev_when_occupied": 3.0,
+        }
+
+        entity.update_correlation(correlation_data)
+
+        # Should store Gaussian params
+        assert entity.learned_gaussian_params is not None
+        assert entity.learned_gaussian_params["mean_occupied"] == 20.0
+        assert entity.learned_gaussian_params["std_occupied"] == 3.0
+        assert entity.learned_gaussian_params["mean_unoccupied"] == 10.0
+        assert entity.learned_gaussian_params["std_unoccupied"] == 2.0
+
+        # Should also set learned_active_range
+        assert entity.learned_active_range == (14.0, 26.0)  # 10+2*2, 20+2*3
+
+    def test_update_correlation_binary_sensor(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test update_correlation with binary sensor type doesn't set learned_active_range."""
+        # Create a binary sensor entity (APPLIANCE)
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.APPLIANCE),
+        )
+
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "strong_positive",
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+            "mean_value_when_occupied": 20.0,
+            "std_dev_when_occupied": 3.0,
+        }
+
+        entity.update_correlation(correlation_data)
+
+        # Binary sensors shouldn't have learned_active_range
+        assert entity.learned_active_range is None
+        # But should still store Gaussian params if provided
+        assert entity.learned_gaussian_params is not None
+
+    @pytest.mark.parametrize(
+        ("correlation_type", "expected_range"),
+        [
+            ("positive", (14.0, float("inf"))),
+            ("negative", (float("-inf"), 6.0)),
+        ],
+    )
+    def test_update_correlation_weak_correlation_types(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        correlation_type: str,
+        expected_range: tuple[float, float],
+    ) -> None:
+        """Test update_correlation with weak correlation types (positive/negative, not just strong_*)."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        correlation_data = {
+            "confidence": 0.6,
+            "correlation_type": correlation_type,
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+        }
+
+        entity.update_correlation(correlation_data)
+
+        # Should set range same as strong_* types
+        assert entity.learned_active_range == expected_range
+
+    @pytest.mark.parametrize(
+        ("correlation_type", "mean_occupied", "std_occupied", "expected_range"),
+        [
+            # Positive correlation: upper_bound <= lower_bound -> fallback to open-ended
+            # unoccupied: mean=10, std=2 -> lower_bound = 10 + 2*2 = 14
+            # occupied: mean=12, std=1 -> upper_bound = 12 + 2*1 = 14
+            # Since upper_bound (14) <= lower_bound (14), should fallback to open-ended
+            (
+                "strong_positive",
+                12.0,
+                1.0,
+                (14.0, float("inf")),
+            ),
+            # Negative correlation: lower_bound >= upper_bound -> fallback to open-ended
+            # unoccupied: mean=10, std=2 -> upper_bound = 10 - 2*2 = 6
+            # occupied: mean=8, std=1 -> lower_bound = 8 - 2*1 = 6
+            # Since lower_bound (6) >= upper_bound (6), should fallback to open-ended
+            (
+                "strong_negative",
+                8.0,
+                1.0,
+                (float("-inf"), 6.0),
+            ),
+        ],
+    )
+    def test_update_correlation_overlapping_stats(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        correlation_type: str,
+        mean_occupied: float,
+        std_occupied: float,
+        expected_range: tuple[float, float],
+    ) -> None:
+        """Test update_correlation with overlapping stats falls back to open-ended range."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": correlation_type,
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+            "mean_value_when_occupied": mean_occupied,  # Very close to unoccupied
+            "std_dev_when_occupied": std_occupied,  # Small std
+        }
+
+        entity.update_correlation(correlation_data)
+
+        # Should fallback to open-ended range when stats overlap
+        assert entity.learned_active_range == expected_range
+
+    def test_update_correlation_unknown_type(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test update_correlation with unknown/invalid correlation_type."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "invalid_type",  # Unknown correlation type
+            "mean_value_when_unoccupied": 10.0,
+            "std_dev_when_unoccupied": 2.0,
+        }
+
+        entity.update_correlation(correlation_data)
+
+        # Should set learned_active_range to None for unknown types
+        assert entity.learned_active_range is None
+
     def test_update_binary_likelihoods(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
@@ -790,6 +1170,7 @@ class TestEntityPropertiesAndMethods:
             "prob_given_true": 0.75,
             "prob_given_false": 0.15,
             "analysis_error": None,
+            "correlation_type": "binary_likelihood",
         }
 
         entity.update_binary_likelihoods(likelihood_data)
@@ -797,6 +1178,7 @@ class TestEntityPropertiesAndMethods:
         assert entity.prob_given_true == 0.75
         assert entity.prob_given_false == 0.15
         assert entity.analysis_error is None
+        assert entity.correlation_type == "binary_likelihood"
         assert entity.learned_gaussian_params is None
         assert entity.learned_active_range is None
 
@@ -815,6 +1197,29 @@ class TestEntityPropertiesAndMethods:
         assert entity.analysis_error == "no_occupied_intervals"
         assert entity.learned_gaussian_params is None
         assert entity.learned_active_range is None
+
+    @pytest.mark.parametrize("empty_input", [{}, None])
+    def test_update_binary_likelihoods_empty_input(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        empty_input: dict | None,
+    ) -> None:
+        """Test update_binary_likelihoods with empty input returns early."""
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.APPLIANCE),
+        )
+
+        # Set some initial values
+        entity.prob_given_true = 0.8
+        entity.prob_given_false = 0.2
+
+        # Call with empty input (empty dict or None)
+        entity.update_binary_likelihoods(empty_input)
+
+        # Values should remain unchanged (early return)
+        assert entity.prob_given_true == 0.8
+        assert entity.prob_given_false == 0.2
 
     def test_get_likelihoods_binary_sensor(
         self, coordinator: AreaOccupancyCoordinator
@@ -858,6 +1263,404 @@ class TestEntityPropertiesAndMethods:
         assert prob_true == entity.type.prob_given_true
         assert prob_false == entity.type.prob_given_false
 
+    def test_get_likelihoods_motion_sensor(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods for motion sensors - always uses configured values."""
+        # Create a motion sensor entity
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.MOTION),
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+        )
+
+        # Motion sensors always use configured values, not EntityType defaults
+        prob_true, prob_false = entity.get_likelihoods()
+        assert prob_true == 0.95
+        assert prob_false == 0.02
+
+        # Even if analysis_error changes, motion sensors still use configured values
+        entity.analysis_error = "some_error"
+        prob_true, prob_false = entity.get_likelihoods()
+        assert prob_true == 0.95
+        assert prob_false == 0.02
+
+    def test_get_likelihoods_numeric_sensor_with_gaussian(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods for numeric sensor with Gaussian params."""
+        # Create a numeric sensor entity (CO2)
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        # Set up Gaussian parameters
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        # Set current state value
+        original_states = coordinator.hass.states
+        mock_state = Mock()
+        mock_state.state = "800.0"  # Between occupied and unoccupied means
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+
+            # Should calculate Gaussian PDFs
+            # Both probabilities should be positive
+            assert prob_true > 0.0
+            assert prob_false > 0.0
+            # Value 800 is between means (400 and 1000), so both PDFs should be reasonable
+            # The exact relationship depends on std devs, so just verify they're calculated
+            assert isinstance(prob_true, float)
+            assert isinstance(prob_false, float)
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_get_likelihoods_numeric_sensor_nan_in_mean(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods with NaN/inf in mean values falls back to defaults."""
+
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        # Set Gaussian params with NaN in mean_occupied
+        entity.learned_gaussian_params = {
+            "mean_occupied": float("nan"),
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        prob_true, prob_false = entity.get_likelihoods()
+        # Should fall back to EntityType defaults
+        assert prob_true == entity.type.prob_given_true
+        assert prob_false == entity.type.prob_given_false
+
+        # Test with inf in mean_unoccupied
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": float("inf"),
+            "std_unoccupied": 50.0,
+        }
+
+        prob_true, prob_false = entity.get_likelihoods()
+        assert prob_true == entity.type.prob_given_true
+        assert prob_false == entity.type.prob_given_false
+
+    def test_get_likelihoods_numeric_sensor_nan_in_state(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods with NaN/inf in state value uses mean of means."""
+
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        original_states = coordinator.hass.states
+        # Test with NaN state (string that converts to NaN float)
+        mock_state = Mock()
+        mock_state.state = "nan"  # Lowercase nan converts to NaN float
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should use mean of means (1000 + 400) / 2 = 700
+            assert prob_true > 0.0
+            assert prob_false > 0.0
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+        # Test with inf state (string that converts to inf float)
+        mock_state_inf = Mock()
+        mock_state_inf.state = "inf"
+        _set_states_get(coordinator.hass, lambda _: mock_state_inf)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should use mean of means when state is inf
+            assert prob_true > 0.0
+            assert prob_false > 0.0
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_get_likelihoods_numeric_sensor_invalid_state(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods with invalid (non-numeric) state uses mean of means."""
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        original_states = coordinator.hass.states
+        # Test with non-numeric state
+        mock_state = Mock()
+        mock_state.state = "invalid"
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should use mean of means as fallback
+            assert prob_true > 0.0
+            assert prob_false > 0.0
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_get_likelihoods_numeric_sensor_no_state(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods with no state available uses mean of means."""
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        original_states = coordinator.hass.states
+        _set_states_get(coordinator.hass, lambda _: None)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should use mean of means when state is unavailable
+            assert prob_true > 0.0
+            assert prob_false > 0.0
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_get_likelihoods_numeric_sensor_std_zero(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods with std <= 0 clamps to minimum 0.05."""
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 0.0,  # Zero std - will be clamped to 0.05
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": -1.0,  # Negative std - will be clamped to 0.05
+        }
+
+        original_states = coordinator.hass.states
+        mock_state = Mock()
+        mock_state.state = "800.0"
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should handle zero/negative std by clamping to 0.05
+            # Both probabilities should be valid floats (not NaN/inf)
+            assert isinstance(prob_true, float)
+            assert isinstance(prob_false, float)
+            assert prob_true >= 0.0
+            assert prob_false >= 0.0
+            # With clamped std, calculations should succeed
+            # (exact values depend on Gaussian PDF calculation)
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_get_likelihoods_numeric_sensor_nan_in_density(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods with NaN/inf in calculated densities falls back to defaults."""
+
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        # Mock _calculate_gaussian_density to return inf for p_true to test inf handling
+        original_calc = entity._calculate_gaussian_density
+
+        def mock_calc_inf(value, mean, std):
+            if mean == entity.learned_gaussian_params["mean_occupied"]:
+                return float("inf")
+            return original_calc(value, mean, std)
+
+        entity._calculate_gaussian_density = mock_calc_inf
+
+        original_states = coordinator.hass.states
+        mock_state = Mock()
+        mock_state.state = "800.0"
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should fall back to EntityType defaults when p_true is inf
+            assert prob_true == entity.type.prob_given_true
+            assert prob_false == entity.type.prob_given_false
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+            entity._calculate_gaussian_density = original_calc
+
+    @pytest.mark.parametrize(
+        ("target_mean", "mean_key"),
+        [
+            ("mean_occupied", "mean_occupied"),
+            ("mean_unoccupied", "mean_unoccupied"),
+        ],
+    )
+    def test_get_likelihoods_numeric_sensor_nan_density(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        target_mean: str,
+        mean_key: str,
+    ) -> None:
+        """Test get_likelihoods when density is NaN/inf falls back to defaults."""
+
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+
+        # Mock _calculate_gaussian_density to return NaN for target mean
+        original_calc = entity._calculate_gaussian_density
+
+        def mock_calc_nan(value, mean, std):
+            if mean == entity.learned_gaussian_params[mean_key]:
+                return float("nan")
+            return original_calc(value, mean, std)
+
+        entity._calculate_gaussian_density = mock_calc_nan
+
+        original_states = coordinator.hass.states
+        mock_state = Mock()
+        mock_state.state = "800.0"
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            prob_true, prob_false = entity.get_likelihoods()
+            # Should fall back to EntityType defaults when density is NaN
+            assert prob_true == entity.type.prob_given_true
+            assert prob_false == entity.type.prob_given_false
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+            entity._calculate_gaussian_density = original_calc
+
+    def test_get_likelihoods_numeric_sensor_no_gaussian_params(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test get_likelihoods for numeric sensor without Gaussian params uses defaults."""
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        # No Gaussian params set
+        assert entity.learned_gaussian_params is None
+
+        prob_true, prob_false = entity.get_likelihoods()
+        # Should use EntityType defaults
+        assert prob_true == entity.type.prob_given_true
+        assert prob_false == entity.type.prob_given_false
+
+    def test_is_continuous_likelihood_property(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test is_continuous_likelihood property."""
+        entity = create_test_entity(
+            coordinator=coordinator,
+            entity_type=EntityType(input_type=InputType.CO2),
+        )
+
+        # Without Gaussian params, should be False
+        assert entity.is_continuous_likelihood is False
+
+        # With Gaussian params, should be True
+        entity.learned_gaussian_params = {
+            "mean_occupied": 1000.0,
+            "std_occupied": 100.0,
+            "mean_unoccupied": 400.0,
+            "std_unoccupied": 50.0,
+        }
+        assert entity.is_continuous_likelihood is True
+
+    def test_calculate_gaussian_density_std_zero(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _calculate_gaussian_density with std <= 0 returns 0.0."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        # Test with std = 0
+        density = entity._calculate_gaussian_density(100.0, 50.0, 0.0)
+        assert density == 0.0
+
+        # Test with std < 0
+        density = entity._calculate_gaussian_density(100.0, 50.0, -1.0)
+        assert density == 0.0
+
+    def test_calculate_gaussian_density_normal_calculation(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _calculate_gaussian_density with normal values."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        # Test with value equal to mean (should give highest density)
+        density_at_mean = entity._calculate_gaussian_density(50.0, 50.0, 10.0)
+        assert density_at_mean > 0.0
+
+        # Test with value away from mean (should give lower density)
+        density_away = entity._calculate_gaussian_density(70.0, 50.0, 10.0)
+        assert density_away > 0.0
+        assert density_away < density_at_mean
+
+    def test_calculate_gaussian_density_extreme_values(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test _calculate_gaussian_density with extreme values."""
+        entity = create_test_entity(coordinator=coordinator)
+
+        # Test with very large numbers
+        density = entity._calculate_gaussian_density(1e100, 1e100, 1e50)
+        assert isinstance(density, float)
+        assert density >= 0.0
+
+        # Test with very small numbers
+        density = entity._calculate_gaussian_density(1e-100, 1e-100, 1e-50)
+        assert isinstance(density, float)
+        assert density >= 0.0
+
     @pytest.mark.asyncio
     async def test_entity_manager_cleanup(
         self, coordinator: AreaOccupancyCoordinator
@@ -867,22 +1670,38 @@ class TestEntityPropertiesAndMethods:
         with patch(
             "custom_components.area_occupancy.data.entity.EntityFactory"
         ) as mock_factory_class:
-            mock_factory = Mock()
+            original_entity = Mock()
+            original_entity.entity_id = "original"
             new_entity = Mock()
+            new_entity.entity_id = "new"
+
+            mock_factory = Mock()
+            # First call during initialization
             mock_factory.create_all_from_config.return_value = {
-                "new_entity": new_entity
+                "original": original_entity
             }
             mock_factory_class.return_value = mock_factory
 
-            # Create manager and verify it uses the factory
             # EntityManager requires area_name
             area_name = coordinator.get_area_names()[0]
             manager = EntityManager(coordinator, area_name=area_name)
 
-            # Test cleanup method - this should call the factory again
+            # Verify initial state
+            assert "original" in manager._entities
+            assert manager._entities["original"] == original_entity
+
+            # Update factory to return new entities after cleanup
+            mock_factory.create_all_from_config.return_value = {"new": new_entity}
+
+            # Test cleanup method - should clear and recreate entities
             await manager.cleanup()
-            # The cleanup method calls create_all_from_config again
-            assert mock_factory.create_all_from_config.call_count >= 2
+
+            # Verify entities were cleared and recreated
+            assert "original" not in manager._entities
+            assert "new" in manager._entities
+            assert manager._entities["new"] == new_entity
+            # Verify factory was called (initialization + cleanup)
+            assert mock_factory.create_all_from_config.call_count == 2
 
 
 class TestEntityFactory:
@@ -894,6 +1713,13 @@ class TestEntityFactory:
         area_name = coordinator.get_area_names()[0]
         factory = EntityFactory(coordinator, area_name=area_name)
         assert factory.coordinator == coordinator
+
+    def test_initialization_invalid_area_name(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test EntityFactory initialization with invalid area_name raises ValueError."""
+        with pytest.raises(ValueError, match="Area 'nonexistent' not found"):
+            EntityFactory(coordinator, area_name="nonexistent")
 
     @patch("custom_components.area_occupancy.data.entity.EntityType")
     @patch("custom_components.area_occupancy.data.entity.Decay")
@@ -949,38 +1775,403 @@ class TestEntityFactory:
         assert "binary_sensor.motion1" in entities
         assert "media_player.tv" in entities
 
-    @patch("custom_components.area_occupancy.data.entity.EntityType")
-    @patch("custom_components.area_occupancy.data.entity.Decay")
-    def test_create_entity_without_stored_data(
-        self,
-        mock_decay_class: Mock,
-        mock_entity_type_class: Mock,
-        coordinator: AreaOccupancyCoordinator,
+    def test_get_entity_type_mapping(
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test creating entity without stored data."""
-        mock_entity_type = Mock()
-        mock_entity_type.prob_given_true = DEFAULT_TYPES[InputType.MOTION][
-            "prob_given_true"
-        ]
-        mock_entity_type.prob_given_false = DEFAULT_TYPES[InputType.MOTION][
-            "prob_given_false"
-        ]
-        # EntityType is instantiated directly, not via create()
-        mock_entity_type_class.return_value = mock_entity_type
-        mock_decay = Mock()
-        mock_decay_class.return_value = mock_decay  # Decay uses __init__, not create()
-
-        # EntityFactory requires area_name
+        """Test get_entity_type_mapping method."""
         area_name = coordinator.get_area_names()[0]
-        factory = EntityFactory(coordinator, area_name=area_name)
-        entity = factory.create_from_config_spec("test_entity", "motion")
+        area = coordinator.get_area(area_name)
+        area.config.sensors.motion = ["binary_sensor.motion1", "binary_sensor.motion2"]
+        area.config.sensors.media = ["media_player.tv"]
+        area.config.sensors.appliance = ["switch.light"]
+        area.config.sensors.door = ["binary_sensor.door"]
+        area.config.sensors.window = ["binary_sensor.window"]
+        area.config.sensors.co2 = ["sensor.co2"]
 
-        # Should use default values when no stored data is available
-        assert (
-            entity.prob_given_true == DEFAULT_TYPES[InputType.MOTION]["prob_given_true"]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        mapping = factory.get_entity_type_mapping()
+
+        # Verify mapping contains all configured sensors
+        assert "binary_sensor.motion1" in mapping
+        assert mapping["binary_sensor.motion1"] == "motion"
+        assert "binary_sensor.motion2" in mapping
+        assert mapping["binary_sensor.motion2"] == "motion"
+        assert "media_player.tv" in mapping
+        assert mapping["media_player.tv"] == "media"
+        assert "switch.light" in mapping
+        assert mapping["switch.light"] == "appliance"
+        assert "binary_sensor.door" in mapping
+        assert mapping["binary_sensor.door"] == "door"
+        assert "binary_sensor.window" in mapping
+        assert mapping["binary_sensor.window"] == "window"
+        assert "sensor.co2" in mapping
+        assert mapping["sensor.co2"] == "co2"
+
+
+# ruff: noqa: SLF001
+@pytest.fixture
+def mock_numeric_entity():
+    """Create a mock numeric entity for testing."""
+    entity_type = EntityType(
+        input_type=InputType.TEMPERATURE,
+        weight=0.1,
+        prob_given_true=0.5,
+        prob_given_false=0.5,
+        active_range=None,
+    )
+    decay = Decay(half_life=60.0)
+
+    return Entity(
+        entity_id="sensor.temp",
+        type=entity_type,
+        prob_given_true=0.5,
+        prob_given_false=0.5,
+        decay=decay,
+        state_provider=lambda x: "20.0",
+        last_updated=dt_util.utcnow(),
+    )
+
+
+@pytest.fixture
+def mock_binary_entity():
+    """Create a mock binary entity for testing."""
+    entity_type = EntityType(
+        input_type=InputType.MEDIA,
+        weight=0.7,
+        prob_given_true=0.5,
+        prob_given_false=0.5,
+        active_states=[STATE_ON],
+    )
+    decay = Decay(half_life=60.0)
+
+    return Entity(
+        entity_id="media_player.tv",
+        type=entity_type,
+        prob_given_true=0.5,
+        prob_given_false=0.5,
+        decay=decay,
+        state_provider=lambda x: STATE_ON,
+        last_updated=dt_util.utcnow(),
+    )
+
+
+class TestGaussianLikelihood:
+    """Test Gaussian likelihood calculation for Entity class."""
+
+    def test_is_continuous_likelihood_property(self, mock_numeric_entity):
+        """Test is_continuous_likelihood property."""
+        # Initially false
+        assert not mock_numeric_entity.is_continuous_likelihood
+
+        # Set gaussian params
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        # Now true
+        assert mock_numeric_entity.is_continuous_likelihood
+
+    @pytest.mark.parametrize(
+        ("value", "mean", "std", "expected_density", "tolerance"),
+        [
+            # Peak density (at mean): 1 / (sqrt(2*pi) * 1) ≈ 0.3989
+            (20.0, 20.0, 1.0, 0.3989, 0.0001),
+            # 1 std dev away: 0.3989 * exp(-0.5 * 1^2) ≈ 0.2420
+            (21.0, 20.0, 1.0, 0.2420, 0.0001),
+            # 2 std dev away: 0.3989 * exp(-0.5 * 2^2) ≈ 0.0540
+            (22.0, 20.0, 1.0, 0.0540, 0.0001),
+            # Small std dev (higher peak): 1 / (sqrt(2*pi) * 0.1) ≈ 3.989
+            (20.0, 20.0, 0.1, 3.989, 0.001),
+        ],
+    )
+    def test_calculate_gaussian_density(
+        self, mock_numeric_entity, value, mean, std, expected_density, tolerance
+    ):
+        """Test _calculate_gaussian_density method."""
+        density = mock_numeric_entity._calculate_gaussian_density(value, mean, std)
+        assert abs(density - expected_density) < tolerance
+
+    @pytest.mark.parametrize(
+        ("value", "expected_p_t", "expected_p_f", "comparison"),
+        [
+            # Value = 22 (Occupied Mean): P(val|Occ) peak (~0.3989), P(val|Unocc) 2 std (~0.054)
+            ("22.0", 0.3989, 0.0540, "gt"),
+            # Value = 20 (Unoccupied Mean): P(val|Occ) 2 std (~0.054), P(val|Unocc) peak (~0.3989)
+            ("20.0", 0.0540, 0.3989, "lt"),
+            # Value = 21 (Middle): equal distance from both means, densities equal (~0.2420)
+            ("21.0", 0.2420, 0.2420, "eq"),
+        ],
+    )
+    def test_get_likelihoods_continuous_numeric(
+        self, mock_numeric_entity, value, expected_p_t, expected_p_f, comparison
+    ):
+        """Test get_likelihoods with continuous parameters for numeric sensor."""
+        # Setup: Occupied Mean 22, Std 1; Unoccupied Mean 20, Std 1
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        mock_numeric_entity.state_provider = lambda x: value
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        assert abs(p_t - expected_p_t) < 0.001
+        assert abs(p_f - expected_p_f) < 0.001
+
+        if comparison == "gt":
+            assert p_t > p_f  # Favors occupied
+        elif comparison == "lt":
+            assert p_t < p_f  # Favors unoccupied
+        else:  # eq
+            assert abs(p_t - p_f) < 0.0001  # Equal densities
+
+    @pytest.mark.parametrize(
+        ("state", "analysis_error", "expected_p_t", "expected_p_f"),
+        [
+            # Analyzed successfully - should return learned probabilities regardless of state
+            (STATE_ON, None, 0.8, 0.1),
+            (STATE_OFF, None, 0.8, 0.1),
+            # Not analyzed - should use EntityType defaults
+            (STATE_ON, "not_analyzed", 0.5, 0.5),
+        ],
+    )
+    def test_get_likelihoods_binary_sensor_static(
+        self, mock_binary_entity, state, analysis_error, expected_p_t, expected_p_f
+    ):
+        """Test get_likelihoods for binary sensor using static probabilities."""
+        # Binary sensors use static probabilities, not Gaussian PDF
+        mock_binary_entity.prob_given_true = 0.8
+        mock_binary_entity.prob_given_false = 0.1
+        mock_binary_entity.analysis_error = analysis_error
+        mock_binary_entity.learned_gaussian_params = None
+
+        mock_binary_entity.state_provider = lambda x: state
+        p_t, p_f = mock_binary_entity.get_likelihoods()
+
+        if analysis_error is None:
+            # Should return learned probabilities
+            assert p_t == expected_p_t
+            assert p_f == expected_p_f
+        else:
+            # Should use EntityType defaults
+            assert p_t == mock_binary_entity.type.prob_given_true
+            assert p_f == mock_binary_entity.type.prob_given_false
+
+    def test_get_likelihoods_fallback(self, mock_numeric_entity):
+        """Test get_likelihoods fallback behavior uses EntityType defaults."""
+        # No params -> returns EntityType defaults (not stored prob_given_true/false)
+        mock_numeric_entity.learned_gaussian_params = None
+        # Change stored values to verify we use EntityType defaults
+        mock_numeric_entity.prob_given_true = 0.9
+        mock_numeric_entity.prob_given_false = 0.1
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+        # Should use EntityType defaults (0.5, 0.5), not stored values
+        assert p_t == 0.5
+        assert p_f == 0.5
+
+        # With params but invalid state -> uses representative value (average of means)
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+        mock_numeric_entity.state_provider = lambda x: "unavailable"
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+        # Should use representative value (average of means = 21.0) to calculate probabilities
+        # This will give non-zero probabilities based on Gaussian PDF
+        assert p_t > 0.0
+        assert p_f > 0.0
+        assert p_t != 0.5  # Should be calculated, not default
+        assert p_f != 0.5  # Should be calculated, not default
+
+    def test_update_correlation_populates_params(self, mock_numeric_entity):
+        """Test update_correlation populates Gaussian params."""
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "strong_positive",
+            "mean_value_when_occupied": 22.0,
+            "mean_value_when_unoccupied": 20.0,
+            "std_dev_when_occupied": 1.5,
+            "std_dev_when_unoccupied": 1.2,
+        }
+
+        mock_numeric_entity.update_correlation(correlation_data)
+
+        assert mock_numeric_entity.learned_gaussian_params is not None
+        assert mock_numeric_entity.learned_gaussian_params["mean_occupied"] == 22.0
+        assert mock_numeric_entity.learned_gaussian_params["std_occupied"] == 1.5
+        assert mock_numeric_entity.learned_gaussian_params["mean_unoccupied"] == 20.0
+        assert mock_numeric_entity.learned_gaussian_params["std_unoccupied"] == 1.2
+
+        # Should also populate learned_active_range for UI
+        assert mock_numeric_entity.learned_active_range is not None
+
+    def test_update_correlation_missing_params(self, mock_numeric_entity):
+        """Test update_correlation handles missing occupied stats."""
+        correlation_data = {
+            "confidence": 0.8,
+            "correlation_type": "strong_positive",
+            "mean_value_when_unoccupied": 20.0,
+            "std_dev_when_unoccupied": 1.2,
+            # Missing occupied stats
+        }
+
+        mock_numeric_entity.update_correlation(correlation_data)
+
+        # Should NOT populate gaussian params
+        assert mock_numeric_entity.learned_gaussian_params is None
+        # Should still populate active range (open-ended)
+        assert mock_numeric_entity.learned_active_range is not None
+        assert mock_numeric_entity.learned_active_range[1] == float("inf")
+        # Should NOT update stored prob_given_true/false (no fallback)
+
+    def test_get_likelihoods_nan_mean_occupied(self, mock_numeric_entity):
+        """Test get_likelihoods with NaN mean_occupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": float("nan"),
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_nan_mean_unoccupied(self, mock_numeric_entity):
+        """Test get_likelihoods with NaN mean_unoccupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": float("nan"),
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_inf_mean_occupied(self, mock_numeric_entity):
+        """Test get_likelihoods with inf mean_occupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": float("inf"),
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_inf_mean_unoccupied(self, mock_numeric_entity):
+        """Test get_likelihoods with inf mean_unoccupied falls back to EntityType defaults."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": float("inf"),
+            "std_unoccupied": 1.0,
+        }
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should fallback to EntityType defaults
+        assert p_t == mock_numeric_entity.type.prob_given_true
+        assert p_f == mock_numeric_entity.type.prob_given_false
+
+    def test_get_likelihoods_nan_state_value(self, mock_numeric_entity):
+        """Test get_likelihoods with NaN state value uses mean of means."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        # Set state to NaN
+        mock_numeric_entity.state_provider = lambda x: float("nan")
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should use mean of means (21.0) and calculate valid densities
+        assert not math.isnan(p_t)
+        assert not math.isnan(p_f)
+        assert not math.isinf(p_t)
+        assert not math.isinf(p_f)
+        assert p_t > 0.0
+        assert p_f > 0.0
+
+    def test_get_likelihoods_inf_state_value(self, mock_numeric_entity):
+        """Test get_likelihoods with inf state value uses mean of means."""
+
+        mock_numeric_entity.learned_gaussian_params = {
+            "mean_occupied": 22.0,
+            "std_occupied": 1.0,
+            "mean_unoccupied": 20.0,
+            "std_unoccupied": 1.0,
+        }
+
+        # Set state to inf
+        mock_numeric_entity.state_provider = lambda x: float("inf")
+
+        p_t, p_f = mock_numeric_entity.get_likelihoods()
+
+        # Should use mean of means (21.0) and calculate valid densities
+        assert not math.isnan(p_t)
+        assert not math.isnan(p_f)
+        assert not math.isinf(p_t)
+        assert not math.isinf(p_f)
+        assert p_t > 0.0
+        assert p_f > 0.0
+
+    def test_get_likelihoods_motion_sensor_uses_configured_values(self):
+        """Test that motion sensors always use configured prob_given_true/false."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.85,
+            prob_given_true=0.95,  # EntityType default
+            prob_given_false=0.02,  # EntityType default
+            active_states=[STATE_ON],
         )
-        assert (
-            entity.prob_given_false
-            == DEFAULT_TYPES[InputType.MOTION]["prob_given_false"]
+        decay = Decay(half_life=60.0)
+
+        # Create motion sensor with different configured values
+        motion_entity = Entity(
+            entity_id="binary_sensor.motion",
+            type=entity_type,
+            prob_given_true=0.9,  # Configured value (different from EntityType)
+            prob_given_false=0.05,  # Configured value (different from EntityType)
+            decay=decay,
+            state_provider=lambda x: STATE_ON,
+            last_updated=dt_util.utcnow(),
         )
-        assert entity.previous_evidence is None
+
+        # Even with Gaussian params, motion sensors should use configured values
+        motion_entity.learned_gaussian_params = {
+            "mean_occupied": 0.9,
+            "std_occupied": 0.3,
+            "mean_unoccupied": 0.1,
+            "std_unoccupied": 0.3,
+        }
+
+        p_t, p_f = motion_entity.get_likelihoods()
+        # Should use configured values, not Gaussian params or EntityType defaults
+        assert p_t == 0.9
+        assert p_f == 0.05

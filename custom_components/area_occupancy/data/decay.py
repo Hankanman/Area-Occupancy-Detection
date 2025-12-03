@@ -100,6 +100,20 @@ class Decay:
             return 1.0
 
         age = (dt_util.utcnow() - self.decay_start).total_seconds()
+
+        # Handle negative age (decay_start in future) - no decay has occurred yet
+        if age < 0:
+            return 1.0
+
+        # Handle zero or negative half_life - prevent division by zero
+        if self.half_life <= 0:
+            _LOGGER.warning(
+                "Invalid half_life value %s detected, treating as immediate decay",
+                self.half_life,
+            )
+            self.is_decaying = False
+            return 0.0
+
         factor = float(0.5 ** (age / self.half_life))
         if factor < 0.05:  # practical zero
             self.is_decaying = False
