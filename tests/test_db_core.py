@@ -175,15 +175,18 @@ class TestSessionManagement:
         """Test that get_session rolls back on exception and prevents data persistence."""
         db = coordinator.db
 
-        # Insert data, then raise exception
-        with db.get_session() as session:
+        # Insert data, then raise exception - exception must escape session context
+        def _insert_and_raise(session):
+            """Helper to insert data and raise exception."""
             area = _create_test_area(
                 db, "Rollback Test Area", area_id="rollback_test_area_id"
             )
             session.add(area)
             session.flush()  # Write to DB but don't commit
-            with pytest.raises(ValueError):
-                raise ValueError("Test error")
+            raise ValueError("Test error")
+
+        with pytest.raises(ValueError), db.get_session() as session:
+            _insert_and_raise(session)
 
         # Verify data was rolled back - it should not exist
         with db.get_session() as session:
@@ -222,18 +225,21 @@ class TestSessionManagement:
         """Verify multiple sessions don't interfere with each other."""
         db = coordinator.db
 
-        # Create uncommitted data in first session
-        with db.get_session() as session1:
+        # Create uncommitted data in first session, then raise exception
+        # Exception must escape session context to test explicit rollback-on-exception
+        def _insert_and_raise(session):
+            """Helper to insert data and raise exception."""
             area1 = _create_test_area(
                 db, "Session1 Isolation Test", area_id="session1_isolation_test_id"
             )
-            session1.add(area1)
-            session1.flush()
-            # Note: flush() writes to DB but doesn't commit
-            # SQLite's default isolation level allows reading uncommitted data
-            # So session2 can see the data, but it's not committed yet
+            session.add(area1)
+            session.flush()  # Write to DB but don't commit
+            raise ValueError("Test error for rollback")
 
-        # After session1 exits (without commit), data should be rolled back
+        with pytest.raises(ValueError), db.get_session() as session1:
+            _insert_and_raise(session1)
+
+        # After session1 exits with exception, data should be rolled back
         # Verify data was not committed by checking in a new session
         with db.get_session() as session2:
             result = (
