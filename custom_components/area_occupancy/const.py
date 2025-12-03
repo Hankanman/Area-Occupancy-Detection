@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import re
 from typing import Final, TypedDict
 
 from homeassistant.const import (
@@ -210,9 +209,6 @@ RETENTION_WEEKLY_NUMERIC_YEARS: Final = (
 # Database filename
 DB_NAME: Final = "area_occupancy.db"
 
-# Database schema version for migrations
-DB_VERSION: Final = 5
-
 # States to exclude from intervals
 INVALID_STATES: Final = {"unknown", "unavailable", None, "", "NaN"}
 
@@ -287,65 +283,6 @@ ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
 ATTR_MAX_DURATION: Final = "max_duration"
 ATTR_VERIFICATION_DELAY: Final = "verification_delay"
 ATTR_VERIFICATION_PENDING: Final = "verification_pending"
-
-
-def validate_and_sanitize_area_name(area_name: str) -> str:
-    """Validate and sanitize area name for use in unique IDs.
-
-    This function:
-    1. Validates that area name is not empty
-    2. Sanitizes special characters that could break unique IDs
-    3. Normalizes whitespace
-    4. Prevents conflicts with ALL_AREAS_IDENTIFIER (both raw and sanitized)
-
-    Args:
-        area_name: The area name to validate and sanitize
-
-    Returns:
-        str: The sanitized area name
-
-    Raises:
-        ValueError: If area name is empty or conflicts with ALL_AREAS_IDENTIFIER
-    """
-    if not area_name or not area_name.strip():
-        raise ValueError("Area name cannot be empty")
-
-    # Prevent conflicts with special identifier (check raw input first)
-    stripped_name = area_name.strip()
-    if stripped_name == ALL_AREAS_IDENTIFIER:
-        raise ValueError(
-            f"Area name cannot be '{ALL_AREAS_IDENTIFIER}' as it conflicts with "
-            "the 'All Areas' aggregation identifier"
-        )
-
-    # Sanitize for use in unique IDs
-    # Replace special characters that could break unique IDs with underscores
-    sanitized = re.sub(r"[^\w\s-]", "_", stripped_name)
-    # Replace multiple spaces/underscores with single underscore
-    sanitized = re.sub(r"[\s_]+", "_", sanitized)
-    # Remove leading/trailing underscores
-    sanitized = sanitized.strip("_")
-
-    if not sanitized:
-        raise ValueError("Area name contains only invalid characters")
-
-    # Prevent conflicts with special identifier (check sanitized result)
-    # This catches cases like "all areas" -> "all_areas"
-    if sanitized == ALL_AREAS_IDENTIFIER:
-        raise ValueError(
-            f"Area name '{area_name}' sanitizes to '{ALL_AREAS_IDENTIFIER}' which conflicts with "
-            "the 'All Areas' aggregation identifier"
-        )
-
-    # Warn if sanitization changed the name
-    if sanitized != stripped_name:
-        _LOGGER.warning(
-            "Area name sanitized: '%s' -> '%s' (special characters replaced)",
-            area_name,
-            sanitized,
-        )
-
-    return sanitized
 
 
 # ────────────────────────────────────── State Mapping ───────────────────────────

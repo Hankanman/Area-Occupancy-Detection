@@ -41,6 +41,12 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def save_data(db: AreaOccupancyDB) -> None:
+    """Save both area and entity data to the database."""
+    save_area_data(db)
+    save_entity_data(db)
+
+
 def _validate_area_data(
     db: AreaOccupancyDB, area_data: dict[str, Any], area_name_item: str
 ) -> list[tuple[str, str]]:
@@ -506,7 +512,7 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
 
         # Clean up any orphaned entities after saving current ones
         try:
-            cleaned_count = cleanup_orphaned_entities(db)
+            cleaned_count = _cleanup_orphaned_entities(db)
             if cleaned_count > 0:
                 _LOGGER.info(
                     "Cleaned up %d orphaned entities after saving", cleaned_count
@@ -531,13 +537,7 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
         raise
 
 
-def save_data(db: AreaOccupancyDB) -> None:
-    """Save both area and entity data to the database."""
-    save_area_data(db)
-    save_entity_data(db)
-
-
-def cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
+def _cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
     """Clean up entities from database that are no longer in the current configuration.
 
     This method removes entities and their associated intervals that exist in the database
