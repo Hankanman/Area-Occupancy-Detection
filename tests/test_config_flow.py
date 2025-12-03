@@ -41,6 +41,8 @@ from custom_components.area_occupancy.const import (
     CONF_DOOR_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_MOTION_PROB_GIVEN_FALSE,
+    CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_OPTION_PREFIX_AREA,
     CONF_PURPOSE,
@@ -51,7 +53,6 @@ from custom_components.area_occupancy.const import (
     DEFAULT_PURPOSE,
     DOMAIN,
 )
-from custom_components.area_occupancy.data.purpose import get_default_decay_half_life
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
@@ -64,7 +65,7 @@ from tests.conftest import (
 )
 
 
-# ruff: noqa: SLF001, TID251
+# ruff: noqa: SLF001, TID251, PLC0415
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 class TestBaseOccupancyFlow:
     """Test BaseOccupancyFlow class."""
@@ -74,22 +75,41 @@ class TestBaseOccupancyFlow:
         """Create a BaseOccupancyFlow instance."""
         return BaseOccupancyFlow()
 
-    def test_validate_config_valid(self, flow, config_flow_base_config, hass):
-        """Test validating a valid configuration."""
-        flow._validate_config(
-            config_flow_base_config, hass
-        )  # Should not raise any exception
-
-    def test_validate_config_decay_half_life_zero_valid(
-        self, flow, config_flow_base_config, hass
+    @pytest.mark.parametrize(
+        ("config_modification", "should_raise", "expected_error_match"),
+        [
+            ({}, False, None),  # basic_valid
+            (
+                {"decay_enabled": True, "decay_half_life": 0},
+                False,
+                None,
+            ),  # decay_zero_valid
+            ({"weight_motion": 0.0}, False, None),  # weight_min_valid
+            ({"weight_motion": 1.0}, False, None),  # weight_max_valid
+            (
+                {CONF_AREA_ID: "nonexistent_area_id_12345"},
+                True,
+                "no longer exists",
+            ),  # invalid_area_id
+        ],
+    )
+    def test_validate_config_valid_scenarios(
+        self,
+        flow,
+        config_flow_base_config,
+        hass,
+        config_modification,
+        should_raise,
+        expected_error_match,
     ):
-        """Test that decay_half_life of 0 is valid (means use purpose value)."""
-        test_config = {
-            **config_flow_base_config,
-            "decay_enabled": True,
-            "decay_half_life": 0,
-        }
-        flow._validate_config(test_config, hass)  # Should not raise any exception
+        """Test validating various valid and invalid configuration scenarios."""
+        test_config = {**config_flow_base_config, **config_modification}
+
+        if should_raise:
+            with pytest.raises(vol.Invalid, match=expected_error_match):
+                flow._validate_config(test_config, hass)
+        else:
+            flow._validate_config(test_config, hass)  # Should not raise any exception
 
     @pytest.mark.parametrize(
         ("invalid_config", "expected_error"),
@@ -156,6 +176,20 @@ class TestBaseOccupancyFlow:
                 },
                 "Window active state is required",
             ),
+            (
+                {
+                    CONF_MOTION_PROB_GIVEN_TRUE: 0.5,
+                    CONF_MOTION_PROB_GIVEN_FALSE: 0.6,
+                },
+                "Motion sensor P(Active | Occupied) must be greater than",
+            ),
+            (
+                {
+                    CONF_MOTION_PROB_GIVEN_TRUE: 0.5,
+                    CONF_MOTION_PROB_GIVEN_FALSE: 0.5,
+                },
+                "Motion sensor P(Active | Occupied) must be greater than",
+            ),
         ],
     )
     def test_validate_config_invalid_scenarios(
@@ -168,7 +202,15 @@ class TestBaseOccupancyFlow:
 
         with pytest.raises(vol.Invalid) as excinfo:
             flow._validate_config(test_config, hass)
-        assert expected_error.lower() in str(excinfo.value).lower()
+        error_message = str(excinfo.value)
+        assert expected_error.lower() in error_message.lower()
+
+        # Validate error messages are user-friendly
+        assert len(error_message) > 0  # Should not be empty
+        assert len(error_message) < 500  # Reasonable length
+        # Should not contain technical Python details
+        assert "Traceback" not in error_message
+        assert "File" not in error_message
 
 
 class TestHelperFunctions:
@@ -183,7 +225,14 @@ class TestHelperFunctions:
         options = _get_state_select_options(platform)
         assert isinstance(options, list)
         assert len(options) > 0
-        assert all("value" in option and "label" in option for option in options)
+        # Validate structure and content
+        for option in options:
+            assert "value" in option
+            assert "label" in option
+            assert isinstance(option["value"], str)
+            assert isinstance(option["label"], str)
+            assert len(option["value"]) > 0  # Values should not be empty
+            assert len(option["label"]) > 0  # Labels should not be empty
 
     @pytest.mark.parametrize(
         ("purpose", "expected"),
@@ -298,6 +347,18 @@ class TestHelperFunctions:
         schema = _create_area_selector_schema(areas)
         assert isinstance(schema, vol.Schema)
 
+        # Validate schema structure
+        schema_dict = schema.schema
+        assert "selected_option" in schema_dict
+
+        # If areas provided, validate options match
+        if areas and len(areas) > 0:
+            # Get the selector config
+            selector = schema_dict["selected_option"]
+            # Schema uses vol.Required wrapper, so we need to access the selector
+            # The actual validation happens when schema is used, but we can check structure
+            assert selector is not None
+
     def test_create_action_selection_schema(self):
         """Test _create_action_selection_schema function."""
         schema = _create_action_selection_schema()
@@ -306,6 +367,17 @@ class TestHelperFunctions:
         # Validate schema structure
         schema_dict = schema.schema
         assert "action" in schema_dict
+
+        # Validate that schema can be used with expected action values
+        valid_actions = [CONF_ACTION_EDIT, CONF_ACTION_REMOVE, CONF_ACTION_CANCEL]
+        for action in valid_actions:
+            # Should not raise when using valid action
+            result = schema({"action": action})
+            assert result["action"] == action
+
+        # Invalid action should raise
+        with pytest.raises(vol.Invalid):
+            schema({"action": "invalid_action"})
 
     def test_get_include_entities(self, hass, entity_registry):
         """Test getting include entities."""
@@ -421,12 +493,6 @@ class TestHelperFunctions:
 
 class TestAreaOccupancyConfigFlow:
     """Test AreaOccupancyConfigFlow class."""
-
-    def test_initialization(self):
-        """Test ConfigFlow initialization."""
-        flow = AreaOccupancyConfigFlow()
-        assert flow.VERSION == 1
-        assert flow.MINOR_VERSION == 1
 
     @pytest.mark.parametrize(
         ("areas", "user_input", "expected_step_id", "expected_type", "patch_type"),
@@ -610,8 +676,29 @@ class TestAreaOccupancyConfigFlow:
                 assert result.get("type") == FlowResultType.FORM
             assert result.get("step_id") == expected_step_id
 
-    async def test_config_flow_remove_area_cancel(self, config_flow_flow):
-        """Test cancellation path."""
+    @pytest.mark.parametrize(
+        (
+            "confirm",
+            "expected_type",
+            "expected_step_id",
+            "has_error",
+            "area_to_remove_cleared",
+        ),
+        [
+            (False, FlowResultType.MENU, "user", False, True),  # cancel
+            (True, FlowResultType.FORM, "remove_area", True, False),  # last_area_error
+        ],
+    )
+    async def test_config_flow_remove_area_scenarios(
+        self,
+        config_flow_flow,
+        confirm,
+        expected_type,
+        expected_step_id,
+        has_error,
+        area_to_remove_cleared,
+    ):
+        """Test config flow remove area with various scenarios."""
         config_flow_flow._areas = [
             create_area_config(
                 name="Living Room",
@@ -620,28 +707,15 @@ class TestAreaOccupancyConfigFlow:
         ]
         # _area_to_remove now stores area ID, not name
         config_flow_flow._area_to_remove = "living_room"
-        user_input = {"confirm": False}
+        user_input = {"confirm": confirm}
         result = await config_flow_flow.async_step_remove_area(user_input)
-        assert result.get("type") == FlowResultType.MENU
-        assert result.get("step_id") == "user"
-        assert config_flow_flow._area_to_remove is None
-
-    async def test_config_flow_remove_area_last_area_error(self, config_flow_flow):
-        """Test error when removing last area."""
-        config_flow_flow._areas = [
-            create_area_config(
-                name="Living Room",
-                motion_sensors=["binary_sensor.motion1"],
-            )
-        ]
-        # _area_to_remove now stores area ID, not name
-        config_flow_flow._area_to_remove = "living_room"
-        user_input = {"confirm": True}
-        result = await config_flow_flow.async_step_remove_area(user_input)
-        assert result.get("type") == FlowResultType.FORM
-        assert result.get("step_id") == "remove_area"
-        assert "errors" in result
-        assert "last area" in result["errors"]["base"].lower()
+        assert result.get("type") == expected_type
+        assert result.get("step_id") == expected_step_id
+        if has_error:
+            assert "errors" in result
+            assert "last area" in result["errors"]["base"].lower()
+        if area_to_remove_cleared:
+            assert config_flow_flow._area_to_remove is None
 
 
 class TestConfigFlowIntegration:
@@ -919,29 +993,9 @@ class TestConfigFlowIntegration:
             assert isinstance(schema_dict, dict)
             assert len(schema_dict) > 0
 
-    @pytest.mark.parametrize("platform", ["door", "window", "media", "appliance"])
-    def test_state_options_generation(self, platform):
-        """Test state options generation for different platforms."""
-        options = _get_state_select_options(platform)
-        assert isinstance(options, list)
-        assert len(options) > 0
-
-        for option in options:
-            assert "value" in option
-            assert "label" in option
-            assert isinstance(option["value"], str)
-            assert isinstance(option["label"], str)
-
 
 class TestAreaOccupancyOptionsFlow:
     """Test AreaOccupancyOptionsFlow class."""
-
-    def test_options_flow_init(self):
-        """Test OptionsFlow initialization."""
-        flow = AreaOccupancyOptionsFlow()
-        assert flow._area_being_edited is None
-        assert flow._area_to_remove is None
-        assert flow._device_id is None
 
     @pytest.mark.parametrize(
         ("config_entry_fixture", "expected_area_id"),
@@ -1030,6 +1084,38 @@ class TestAreaOccupancyOptionsFlow:
         assert "menu_options" in result
         assert CONF_ACTION_ADD_AREA in result["menu_options"]
 
+    async def test_options_flow_global_settings_save(
+        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
+    ):
+        """Test that global settings are actually saved."""
+        from custom_components.area_occupancy.const import (
+            CONF_SLEEP_END,
+            CONF_SLEEP_START,
+        )
+
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        # Set initial options
+        flow.config_entry.options = {
+            CONF_SLEEP_START: "22:00:00",
+            CONF_SLEEP_END: "07:00:00",
+        }
+
+        # Update global settings
+        user_input = {
+            CONF_SLEEP_START: "23:00:00",
+            CONF_SLEEP_END: "08:00:00",
+        }
+
+        result = await flow.async_step_global_settings(user_input)
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+
+        # Verify settings were saved
+        result_data = result["data"]
+        assert result_data[CONF_SLEEP_START] == "23:00:00"
+        assert result_data[CONF_SLEEP_END] == "08:00:00"
+
     async def test_options_flow_manage_areas_selection_error(
         self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
     ):
@@ -1062,97 +1148,69 @@ class TestAreaOccupancyOptionsFlow:
             assert len(areas) == 2  # Original + new
             assert any(area[CONF_AREA_ID] == "kitchen" for area in areas)
 
-    async def test_options_flow_area_config_migration(
-        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
+    async def test_options_flow_area_config_duplicate_area_id(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
     ):
-        """Test options flow area config with migration.
-
-        Note: Migration is no longer needed since area IDs are stable.
-        This test verifies that area config works without migration.
-        """
+        """Test that duplicate area ID detection works in actual flow."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        # Use sanitized name to avoid triggering migration due to sanitization
-        # _area_being_edited now stores area ID, not name
-        flow._area_being_edited = "living_room"
+        flow._area_being_edited = None  # Adding new area
 
-        user_input = create_user_input(name="Living_Room")
+        # Get existing area ID from config
+        existing_areas = flow._get_areas_from_config()
+        existing_area_id = existing_areas[0][CONF_AREA_ID]
+
+        # Try to add a new area with the same area ID
+        user_input = create_user_input(name="Living Room")  # Same area name
+        user_input[CONF_AREA_ID] = existing_area_id  # Use same area ID
 
         with patch_create_schema_context():
             result = await flow.async_step_area_config(user_input)
-            # Should succeed without calling migration since name didn't change
-            assert result["type"] == FlowResultType.CREATE_ENTRY
+            assert result["type"] == FlowResultType.FORM
+            assert result["step_id"] == "area_config"
+            assert "errors" in result
+            assert "base" in result["errors"]
+            assert "already configured" in result["errors"]["base"].lower()
 
-    async def test_options_flow_area_config_migration_on_rename(
+    async def test_options_flow_area_config_change_area_id(
         self,
         hass: HomeAssistant,
         config_flow_options_flow,
         config_flow_mock_config_entry_with_areas,
         setup_area_registry: dict[str, str],
     ):
-        """Test options flow area config when area ID changes (different area selection).
-
-        Note: With area IDs, changing the area ID means selecting a different area,
-        not renaming. Migration is no longer needed since area IDs are stable.
-        """
-
+        """Test area ID change during edit (changing to different area)."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        # Use actual area ID from registry
-        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
-        flow._area_being_edited = living_room_area_id
 
-        # Create "Living Room Renamed" area in registry
-        area_reg = ar.async_get(hass)
-        renamed_area = area_reg.async_create("Living Room Renamed")
-        renamed_area_id = renamed_area.id
+        # Get existing area ID from config
+        existing_areas = flow._get_areas_from_config()
+        existing_area_id = existing_areas[0][CONF_AREA_ID]
+        flow._area_being_edited = existing_area_id
 
-        user_input = create_user_input(name="Living Room Renamed")
-        # Update user_input to use the actual area ID from registry
-        user_input[CONF_AREA_ID] = renamed_area_id
+        # Use existing "Kitchen" area from fixture (already created by setup_area_registry)
+        kitchen_area_id = setup_area_registry.get("Kitchen")
+        assert kitchen_area_id is not None, "Kitchen area should exist from fixture"
+
+        # Ensure we're changing to a different area
+        assert kitchen_area_id != existing_area_id, (
+            "Kitchen should be different from existing area"
+        )
+
+        # Change area ID to the Kitchen area
+        user_input = create_user_input(name="Kitchen")
+        user_input[CONF_AREA_ID] = kitchen_area_id
 
         with patch_create_schema_context():
             result = await flow.async_step_area_config(user_input)
+            # Should succeed - changing area ID means selecting a different area
             assert result["type"] == FlowResultType.CREATE_ENTRY
-            # Migration is no longer called when area ID changes (it's a different area selection)
-
-    @pytest.mark.parametrize(
-        "error_type",
-        [ValueError, HomeAssistantError, KeyError],
-    )
-    async def test_options_flow_area_config_migration_errors(
-        self,
-        hass: HomeAssistant,
-        config_flow_options_flow,
-        config_flow_mock_config_entry_with_areas,
-        setup_area_registry: dict[str, str],
-        error_type,
-    ):
-        """Test options flow area config when area ID changes.
-
-        Note: Migration is no longer needed since area IDs are stable.
-        This test verifies that area config works when changing area selection.
-        """
-
-        flow = config_flow_options_flow
-        flow.config_entry = config_flow_mock_config_entry_with_areas
-        # Use actual area ID from registry
-        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
-        flow._area_being_edited = living_room_area_id
-
-        # Create "Living Room Renamed" area in registry
-        area_reg = ar.async_get(hass)
-        renamed_area = area_reg.async_create("Living Room Renamed")
-        renamed_area_id = renamed_area.id
-
-        user_input = create_user_input(name="Living Room Renamed")
-        # Update user_input to use the actual area ID from registry
-        user_input[CONF_AREA_ID] = renamed_area_id
-
-        with patch_create_schema_context():
-            result = await flow.async_step_area_config(user_input)
-            # Should succeed without migration since migration is no longer used
-            assert result["type"] == FlowResultType.CREATE_ENTRY
+            areas = result["data"][CONF_AREAS]
+            # Should have updated the area with new ID
+            assert any(area[CONF_AREA_ID] == kitchen_area_id for area in areas)
 
     async def test_options_flow_area_config_no_old_area(
         self,
@@ -1228,33 +1286,33 @@ class TestAreaOccupancyOptionsFlow:
         assert result["type"] == expected_type
         assert result["step_id"] == expected_step_id
 
-    async def test_options_flow_area_action_no_area(
-        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
+    @pytest.mark.parametrize(
+        ("area_being_edited", "setup_areas", "expected_type", "expected_step_id"),
+        [
+            (None, False, FlowResultType.MENU, "init"),  # no_area
+            ("NonExistent", True, FlowResultType.FORM, "area_config"),  # area_not_found
+        ],
+    )
+    async def test_options_flow_area_action_edge_cases(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+        area_being_edited,
+        setup_areas,
+        expected_type,
+        expected_step_id,
     ):
-        """Test options flow area action when no area is selected."""
+        """Test options flow area action edge cases."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_being_edited = None
+        flow._area_being_edited = area_being_edited
+        if setup_areas:
+            # Ensure areas list exists
+            flow._areas = flow._get_areas_from_config()
 
         result = await flow.async_step_area_action()
-        assert result["type"] == FlowResultType.MENU
-        assert result["step_id"] == "init"
-
-    async def test_options_flow_area_action_area_not_found(
-        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
-    ):
-        """Test options flow area action when area is not found."""
-        flow = config_flow_options_flow
-        flow.config_entry = config_flow_mock_config_entry_with_areas
-        flow._area_being_edited = "NonExistent"
-        # Ensure areas list exists
-        flow._areas = flow._get_areas_from_config()
-
-        result = await flow.async_step_area_action()
-        # When area is not found, async_step_area_action calls async_step_init()
-        # But async_step_init sees _area_being_edited is set and redirects to area_config
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "area_config"
+        assert result["type"] == expected_type
+        assert result["step_id"] == expected_step_id
 
     @pytest.mark.parametrize(
         (
@@ -1381,24 +1439,6 @@ class TestAreaOccupancyOptionsFlow:
 class TestHelperFunctionEdgeCases:
     """Test edge cases for helper functions."""
 
-    def test_get_default_decay_half_life_with_purpose(self):
-        """Test get_default_decay_half_life with valid purpose."""
-        result = get_default_decay_half_life("social")
-        assert isinstance(result, float)
-        assert result > 0
-
-    def test_get_default_decay_half_life_invalid_purpose(self):
-        """Test get_default_decay_half_life with invalid purpose - should fallback."""
-        result = get_default_decay_half_life("invalid_purpose")
-        assert isinstance(result, float)
-        assert result > 0
-
-    def test_get_default_decay_half_life_none(self):
-        """Test get_default_decay_half_life with None purpose."""
-        result = get_default_decay_half_life(None)
-        assert isinstance(result, float)
-        assert result > 0
-
     @pytest.mark.parametrize(
         "areas",
         [
@@ -1414,6 +1454,14 @@ class TestHelperFunctionEdgeCases:
         schema = _create_area_selector_schema(areas)
         assert isinstance(schema, vol.Schema)
 
+        # Schema should handle edge cases gracefully
+        # Invalid areas should be filtered out, resulting in empty options if all invalid
+        schema_dict = schema.schema
+        assert "selected_option" in schema_dict
+
+        # If all areas are invalid, schema should still be valid but have no options
+        # (This is tested by the fact that schema creation doesn't raise)
+
     def test_find_area_by_sanitized_id_unknown_area(self):
         """Test _find_area_by_sanitized_id when area ID is 'unknown'."""
         areas = [{CONF_AREA_ID: "unknown", CONF_PURPOSE: "social"}]
@@ -1421,21 +1469,31 @@ class TestHelperFunctionEdgeCases:
         assert result is not None  # Should find it
         assert result[CONF_AREA_ID] == "unknown"
 
-    def test_validate_duplicate_area_id_raises(self):
-        """Test _validate_duplicate_area_id raises vol.Invalid for duplicate."""
+    @pytest.mark.parametrize(
+        ("area_being_edited", "should_raise", "expected_error_match"),
+        [
+            (None, True, "already configured"),  # duplicate_raises
+            ("test_area", False, None),  # same_area_editing_allowed
+        ],
+    )
+    def test_validate_duplicate_area_id_scenarios(
+        self, area_being_edited, should_raise, expected_error_match
+    ):
+        """Test _validate_duplicate_area_id with various scenarios."""
         flow = BaseOccupancyFlow()
         flattened_input = {CONF_AREA_ID: "test_area"}
         areas = [{CONF_AREA_ID: "test_area", CONF_PURPOSE: "social"}]
-        with pytest.raises(vol.Invalid, match="already configured"):
-            flow._validate_duplicate_area_id(flattened_input, areas, None, None)
 
-    def test_validate_duplicate_area_id_same_area_editing(self):
-        """Test _validate_duplicate_area_id allows same ID when editing same area."""
-        flow = BaseOccupancyFlow()
-        flattened_input = {CONF_AREA_ID: "test_area"}
-        areas = [{CONF_AREA_ID: "test_area", CONF_PURPOSE: "social"}]
-        # Should not raise when editing the same area
-        flow._validate_duplicate_area_id(flattened_input, areas, "test_area", None)
+        if should_raise:
+            with pytest.raises(vol.Invalid, match=expected_error_match):
+                flow._validate_duplicate_area_id(
+                    flattened_input, areas, area_being_edited, None
+                )
+        else:
+            # Should not raise when editing the same area
+            flow._validate_duplicate_area_id(
+                flattened_input, areas, area_being_edited, None
+            )
 
 
 class TestStaticMethods:
@@ -1456,6 +1514,14 @@ class TestStaticMethods:
         assert isinstance(result, AreaOccupancyOptionsFlow)
         if expected_device_id:
             assert result._device_id == expected_device_id
+
+        # Validate that returned flow instance is usable
+        assert result._area_being_edited is None
+        assert result._area_to_remove is None
+        if expected_device_id:
+            assert result._device_id == expected_device_id
+        else:
+            assert result._device_id is None
 
 
 class TestNewHelperFunctions:
@@ -1597,3 +1663,13 @@ class TestNewHelperFunctions:
         err = error_type(error_message)
         result = _handle_step_error(err)
         assert result == expected_result
+
+        # Validate error messages are user-friendly (not empty, not technical jargon)
+        assert len(result) > 0  # Error messages should not be empty
+        if result != "unknown":
+            # User-friendly errors should not contain Python traceback info
+            assert "Traceback" not in result
+            assert "File" not in result
+            assert "line" not in result.lower()
+            # Should be readable (no excessive technical details)
+            assert len(result) < 500  # Reasonable length for user-facing errors

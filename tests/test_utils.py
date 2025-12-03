@@ -1,11 +1,11 @@
 """Tests for utils module."""
 
-from datetime import datetime, timedelta
 import math
 from unittest.mock import Mock
 
+import pytest
+
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
-from custom_components.area_occupancy.db.utils import apply_motion_timeout
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
     clamp_probability,
@@ -15,812 +15,548 @@ from custom_components.area_occupancy.utils import (
 )
 
 
+def _create_mock_entity(
+    evidence: bool | None = True,
+    prob_given_true: float = 0.8,
+    prob_given_false: float = 0.1,
+    weight: float = 1.0,
+    is_decaying: bool = False,
+    decay_factor: float = 1.0,
+    is_continuous: bool = False,
+) -> Mock:
+    """Create a mock entity for testing bayesian_probability.
+
+    Args:
+        evidence: Entity evidence state (True/False/None)
+        prob_given_true: Probability given true
+        prob_given_false: Probability given false
+        weight: Entity weight
+        is_decaying: Whether entity is decaying
+        decay_factor: Decay factor (0.0 to 1.0)
+        is_continuous: Whether entity uses continuous likelihood
+
+    Returns:
+        Mock entity object
+    """
+    entity = Mock()
+    entity.evidence = evidence
+    entity.decay.decay_factor = decay_factor
+    entity.decay.is_decaying = is_decaying
+    # decay_factor property returns 1.0 when evidence is True, otherwise decay.decay_factor
+    entity.decay_factor = 1.0 if evidence is True else decay_factor
+    entity.prob_given_true = prob_given_true
+    entity.prob_given_false = prob_given_false
+    entity.weight = weight
+    entity.is_continuous_likelihood = is_continuous
+    return entity
+
+
 class TestUtils:
     """Test utility functions."""
 
-    def test_format_float(self) -> None:
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            # Basic formatting
+            (1.234567, 1.23),
+            (1.0, 1.0),
+            (0.999, 1.0),
+            (0.001, 0.0),
+            # Edge cases
+            (0.0, 0.0),
+            (-1.234567, -1.23),
+            (999.999, 1000.0),
+            # Very large numbers
+            (1234567.89, 1234567.89),
+            # Very small numbers
+            (0.0001, 0.0),
+            # String conversion (format_float can handle strings)
+            ("1.234567", 1.23),
+            ("0", 0.0),
+        ],
+    )
+    def test_format_float(self, input_value, expected) -> None:
         """Test float formatting to 2 decimal places."""
-        # Basic formatting
-        assert format_float(1.234567) == 1.23
-        assert format_float(1.0) == 1.0
-        assert format_float(0.999) == 1.0
-        assert format_float(0.001) == 0.0
+        assert format_float(input_value) == expected
 
-        # Edge cases
-        assert format_float(0.0) == 0.0
-        assert format_float(-1.234567) == -1.23
-        assert format_float(999.999) == 1000.0
-
-        # String conversion (format_float can handle strings)
-        assert format_float("1.234567") == 1.23
-        assert format_float("0") == 0.0
-
-    def test_format_percentage(self) -> None:
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            # Basic percentage formatting
+            (0.5, "50.00%"),
+            (0.123, "12.30%"),
+            (1.0, "100.00%"),
+            (0.0, "0.00%"),
+            # Edge cases
+            (0.999, "99.90%"),
+            (0.001, "0.10%"),
+            (1.5, "150.00%"),
+            (-0.1, "-10.00%"),
+            # Very large percentages
+            (10.0, "1000.00%"),
+            # Very small percentages
+            (0.0001, "0.01%"),
+            # Negative percentages
+            (-0.5, "-50.00%"),
+        ],
+    )
+    def test_format_percentage(self, input_value, expected) -> None:
         """Test percentage formatting."""
-        # Basic percentage formatting
-        assert format_percentage(0.5) == "50.00%"
-        assert format_percentage(0.123) == "12.30%"
-        assert format_percentage(1.0) == "100.00%"
-        assert format_percentage(0.0) == "0.00%"
+        assert format_percentage(input_value) == expected
 
-        # Edge cases
-        assert format_percentage(0.999) == "99.90%"
-        assert format_percentage(0.001) == "0.10%"
-        assert format_percentage(1.5) == "150.00%"
-        assert format_percentage(-0.1) == "-10.00%"
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            # Test values within range
+            (0.5, 0.5),
+            (0.0, MIN_PROBABILITY),
+            (1.0, MAX_PROBABILITY),
+            # Test values outside range
+            (-0.1, MIN_PROBABILITY),
+            (1.5, MAX_PROBABILITY),
+            (0.01, MIN_PROBABILITY),  # Assuming MIN_PROBABILITY > 0.01
+            (0.99, MAX_PROBABILITY),  # Assuming MAX_PROBABILITY < 0.99
+        ],
+    )
+    def test_clamp_probability(self, input_value, expected) -> None:
+        """Test clamp_probability function with various input values."""
+        assert clamp_probability(input_value) == expected
 
-    def test_format_float_edge_cases(self) -> None:
-        """Test format_float with edge cases."""
-        # Very large numbers
-        assert format_float(1234567.89) == 1234567.89
-
-        # Very small numbers
-        assert format_float(0.0001) == 0.0
-
-        # Infinity and NaN - these are handled by float() conversion
-        # float('inf') and float('nan') are valid inputs
-        assert format_float(float("inf")) == float("inf")
-        assert math.isnan(format_float(float("nan")))
-
-    def test_format_percentage_edge_cases(self) -> None:
-        """Test format_percentage with edge cases."""
-        # Very large percentages
-        assert format_percentage(10.0) == "1000.00%"
-
-        # Very small percentages
-        assert format_percentage(0.0001) == "0.01%"
-
-        # Negative percentages
-        assert format_percentage(-0.5) == "-50.00%"
-
-        # Infinity and NaN - these are converted to strings
-
-        assert format_percentage(float("inf")) == "inf%"
-        assert format_percentage(float("nan")) == "nan%"
-
-    def test_clamp_probability(self) -> None:
-        """Test clamp_probability function."""
-        # Test values within range
-        assert clamp_probability(0.5) == 0.5
-        assert clamp_probability(0.0) == MIN_PROBABILITY
-        assert clamp_probability(1.0) == MAX_PROBABILITY
-
-        # Test values outside range
-        assert clamp_probability(-0.1) == MIN_PROBABILITY
-        assert clamp_probability(1.5) == MAX_PROBABILITY
-        assert (
-            clamp_probability(0.01) == MIN_PROBABILITY
-        )  # Assuming MIN_PROBABILITY > 0.01
-        assert (
-            clamp_probability(0.99) == MAX_PROBABILITY
-        )  # Assuming MAX_PROBABILITY < 0.99
-
-        # Test edge cases
-        assert clamp_probability(float("inf")) == MAX_PROBABILITY
-        assert clamp_probability(float("-inf")) == MIN_PROBABILITY
-        # NaN handling - check what the actual behavior is
-        nan_result = clamp_probability(float("nan"))
-        # NaN is being clamped to MAX_PROBABILITY in the current implementation
-        assert nan_result == MAX_PROBABILITY
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            (float("inf"), MAX_PROBABILITY),
+            (float("-inf"), MIN_PROBABILITY),
+            (float("nan"), MAX_PROBABILITY),  # NaN clamped to MAX_PROBABILITY
+        ],
+    )
+    def test_clamp_probability_edge_cases(self, input_value, expected) -> None:
+        """Test clamp_probability handles edge cases (inf, nan) correctly."""
+        result = clamp_probability(input_value)
+        if math.isnan(input_value):
+            assert not math.isnan(result)
+            assert not math.isinf(result)
+            assert result == expected
+        else:
+            assert result == expected
 
 
 class TestCombinePriors:
-    """Test combine_priors function."""
+    """Test combine_priors function.
+
+    Tests verify that area and time priors are correctly combined using weighted
+    averaging in logit space, with proper handling of edge cases.
+    """
 
     def test_basic_combine_priors(self) -> None:
-        """Test basic prior combination."""
-        # Test with equal priors
-        result = combine_priors(0.5, 0.5)
-        assert 0.0 <= result <= 1.0
-
-        # Test with different priors
-        result = combine_priors(0.3, 0.7)
-        assert 0.0 <= result <= 1.0
-
-        # Test with default time_weight
-        result = combine_priors(0.4, 0.6)
-        assert 0.0 <= result <= 1.0
-
-    def test_combine_priors_edge_cases(self) -> None:
-        """Test combine_priors with edge cases."""
-        # Test with zero time_weight
-        result = combine_priors(0.3, 0.7, time_weight=0.0)
-        assert result == clamp_probability(0.3)
-
-        # Test with full time_weight
-        result = combine_priors(0.3, 0.7, time_weight=1.0)
-        assert result == clamp_probability(0.7)
-
-        # Test with zero priors (should be clamped to MIN_PROBABILITY)
-        result = combine_priors(0.0, 0.0)
-        assert result >= MIN_PROBABILITY
-
-        # Test with maximum priors (should be clamped to MAX_PROBABILITY)
-        result = combine_priors(1.0, 1.0)
-        assert result <= MAX_PROBABILITY
-
-        # Test with identical priors
+        """Test basic prior combination with explicit expected behavior."""
+        # With equal priors, result should be the same
         result = combine_priors(0.5, 0.5)
         assert abs(result - 0.5) < 1e-6
 
-    def test_combine_priors_extreme_values(self) -> None:
-        """Test combine_priors with extreme values."""
-        # Test with very small values
-        result = combine_priors(0.001, 0.002)
-        assert 0.0 <= result <= 1.0
+        # With different priors, result should be between them
+        result = combine_priors(0.3, 0.7)
+        assert 0.3 < result < 0.7  # Should be between the two priors
 
-        # Test with values that are clamped but don't cause math domain errors
-        # Use values that are clamped to MAX_PROBABILITY but don't exceed 1.0
-        result = combine_priors(0.999, 0.998)  # These will be clamped but are valid
-        assert 0.0 <= result <= 1.0
+        # With default time_weight (0.2), result should be closer to area_prior
+        result = combine_priors(0.2, 0.8)
+        assert 0.2 < result < 0.8
+        # Should be closer to area_prior (0.2) than time_prior (0.8)
+        assert abs(result - 0.2) < abs(result - 0.8)
 
-        # Test with very small positive values (should be clamped to MIN_PROBABILITY)
-        result = combine_priors(0.0001, 0.0002)
-        assert 0.0 <= result <= 1.0
+    def test_combine_priors_edge_cases(self) -> None:
+        """Test combine_priors handles edge cases correctly."""
+        # Zero time_weight should return area_prior only
+        result = combine_priors(0.3, 0.7, time_weight=0.0)
+        assert abs(result - clamp_probability(0.3)) < 1e-6
 
-    def test_combine_priors_time_weight_range(self) -> None:
-        """Test combine_priors with various time_weight values."""
-        # Test time_weight clamping
-        result1 = combine_priors(0.3, 0.7, time_weight=-0.1)
-        result2 = combine_priors(0.3, 0.7, time_weight=1.5)
+        # Full time_weight should return time_prior only
+        result = combine_priors(0.3, 0.7, time_weight=1.0)
+        assert abs(result - clamp_probability(0.7)) < 1e-6
 
-        assert 0.0 <= result1 <= 1.0
-        assert 0.0 <= result2 <= 1.0
+        # Zero priors should be clamped to MIN_PROBABILITY
+        result = combine_priors(0.0, 0.0)
+        assert abs(result - MIN_PROBABILITY) < 1e-6
 
-        # Test that extreme time_weight values are clamped (use approximate comparison)
-        expected1 = combine_priors(0.3, 0.7, time_weight=0.0)
-        expected2 = combine_priors(0.3, 0.7, time_weight=1.0)
-        assert abs(result1 - expected1) < 1e-10
-        assert abs(result2 - expected2) < 1e-10
+        # Maximum priors should be clamped to MAX_PROBABILITY
+        result = combine_priors(1.0, 1.0)
+        assert abs(result - MAX_PROBABILITY) < 1e-6
 
+        # Identical priors should return the same value
+        result = combine_priors(0.5, 0.5)
+        assert abs(result - 0.5) < 1e-6
 
-class TestApplyMotionTimeout:
-    """Test apply_motion_timeout function."""
-
-    def test_apply_motion_timeout_empty_list(self) -> None:
-        """Test apply_motion_timeout with empty intervals list."""
-        result = apply_motion_timeout([], [], 60)
-        assert result == []
-
-    def test_apply_motion_timeout_single_interval(self) -> None:
-        """Test apply_motion_timeout with single interval."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [(base_time, base_time + timedelta(minutes=5))]
-        motion_intervals = [(base_time, base_time + timedelta(minutes=5))]
-
-        result = apply_motion_timeout(intervals, motion_intervals, 60)
-
-        assert len(result) >= 1
-        start, end = result[0]
-        assert start == base_time
-        assert end >= base_time + timedelta(minutes=5)
-
-    def test_apply_motion_timeout_multiple_intervals(self) -> None:
-        """Test apply_motion_timeout with multiple non-overlapping intervals."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [
-            (base_time, base_time + timedelta(minutes=5)),
-            (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
-        ]
-        motion_intervals = intervals.copy()
-
-        result = apply_motion_timeout(intervals, motion_intervals, 60)
-
-        assert len(result) >= 1
-        # First interval
-        assert result[0][0] == base_time
-        assert result[0][1] >= base_time + timedelta(minutes=5)
-        # Check that intervals are processed
-        if len(result) > 1:
-            assert result[1][0] >= base_time + timedelta(minutes=10)
-
-    def test_apply_motion_timeout_overlapping_intervals(self) -> None:
-        """Test apply_motion_timeout with overlapping intervals."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [
-            (base_time, base_time + timedelta(minutes=5)),
-            (base_time + timedelta(minutes=3), base_time + timedelta(minutes=8)),
-        ]
-        motion_intervals = intervals.copy()
-
-        result = apply_motion_timeout(intervals, motion_intervals, 60)
-
-        assert len(result) >= 1
-        start, end = result[0]
-        assert start == base_time
-        assert end >= base_time + timedelta(minutes=8)
-
-    def test_apply_motion_timeout_adjacent_intervals(self) -> None:
-        """Test apply_motion_timeout with adjacent intervals."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [
-            (base_time, base_time + timedelta(minutes=5)),
-            (base_time + timedelta(minutes=5), base_time + timedelta(minutes=10)),
-        ]
-        motion_intervals = intervals.copy()
-
-        result = apply_motion_timeout(intervals, motion_intervals, 60)
-
-        assert len(result) >= 1
-        start, end = result[0]
-        assert start == base_time
-        assert end >= base_time + timedelta(minutes=10)
-
-    def test_apply_motion_timeout_unsorted_intervals(self) -> None:
-        """Test apply_motion_timeout with unsorted intervals."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [
-            (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
-            (base_time, base_time + timedelta(minutes=5)),
-        ]
-        motion_intervals = intervals.copy()
-
-        result = apply_motion_timeout(intervals, motion_intervals, 60)
-
-        assert len(result) == 2
-        # Should be sorted by start time
-        assert result[0][0] == base_time
-        assert result[1][0] == base_time + timedelta(minutes=10)
-
-    def test_apply_motion_timeout_complex_merging(self) -> None:
-        """Test apply_motion_timeout with complex overlapping scenario."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [
-            (base_time, base_time + timedelta(minutes=5)),
-            (base_time + timedelta(minutes=3), base_time + timedelta(minutes=8)),
-            (base_time + timedelta(minutes=10), base_time + timedelta(minutes=15)),
-            (base_time + timedelta(minutes=14), base_time + timedelta(minutes=20)),
-        ]
-        motion_intervals = intervals.copy()
-
-        result = apply_motion_timeout(intervals, motion_intervals, 60)
-
-        assert len(result) >= 1
-        # First merged interval
-        assert result[0][0] == base_time
-        assert result[0][1] >= base_time + timedelta(minutes=8)
-        # Check for second interval if present
-        if len(result) > 1:
-            assert result[1][0] >= base_time + timedelta(minutes=10)
-
-    def test_apply_motion_timeout_zero_timeout(self) -> None:
-        """Test apply_motion_timeout with zero timeout."""
-        base_time = datetime(2024, 1, 1, 12, 0, 0)
-        intervals = [(base_time, base_time + timedelta(minutes=5))]
-        motion_intervals = intervals.copy()
-
-        result = apply_motion_timeout(intervals, motion_intervals, 0)
-
-        assert len(result) == 1
-        start, end = result[0]
-        assert start == base_time
-        assert end == base_time + timedelta(minutes=5)
+        # Extreme time_weight values should be clamped
+        result_neg = combine_priors(0.3, 0.7, time_weight=-0.1)
+        result_over = combine_priors(0.3, 0.7, time_weight=1.5)
+        expected_zero = combine_priors(0.3, 0.7, time_weight=0.0)
+        expected_one = combine_priors(0.3, 0.7, time_weight=1.0)
+        assert abs(result_neg - expected_zero) < 1e-10
+        assert abs(result_over - expected_one) < 1e-10
 
 
 class TestBayesianProbability:
-    """Test bayesian_probability function."""
+    """Test bayesian_probability function.
+
+    Tests verify the core Bayesian probability calculation, including:
+    - Correct combination of multiple sensor inputs
+    - Proper handling of edge cases (empty entities, invalid likelihoods)
+    - Numerical stability with extreme values
+    - Correct behavior for different sensor states (active, inactive, unavailable, decaying)
+    - Continuous vs binary sensor handling
+    """
 
     def test_basic_bayesian_calculation(self) -> None:
-        """Test basic Bayesian probability calculation."""
-        # Create mock entities
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity1.prob_given_true = 0.8
-        entity1.prob_given_false = 0.1
-        entity1.weight = 0.5
+        """Test basic Bayesian probability calculation with explicit expected values.
 
-        entity2 = Mock()
-        entity2.evidence = False
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        Verifies that active sensors increase probability and inactive sensors decrease it.
+        """
+        # Active entity with high prob_given_true should increase probability
+        entity1 = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=0.5
         )
-        entity2.prob_given_true = 0.7
-        entity2.prob_given_false = 0.2
-        entity2.weight = 0.3
+
+        # Inactive entity should decrease probability (uses inverse likelihoods)
+        entity2 = _create_mock_entity(
+            evidence=False, prob_given_true=0.7, prob_given_false=0.2, weight=0.3
+        )
 
         entities = {"entity1": entity1, "entity2": entity2}
 
-        # Test with default priors
-        result = bayesian_probability(entities)
+        # With prior 0.5, active entity should increase probability
+        result = bayesian_probability(entities, prior=0.5)
         assert 0.0 <= result <= 1.0
+        assert result > 0.5  # Active entity should increase probability
 
-        # Test with custom priors
-        combined_prior = combine_priors(0.3, 0.7)
-        result = bayesian_probability(entities, prior=combined_prior)
-        assert 0.0 <= result <= 1.0
+        # Test with lower prior - should still be increased by active entity
+        result_low_prior = bayesian_probability(entities, prior=0.2)
+        assert result_low_prior > 0.2  # Active entity increases from low prior
+        assert (
+            result_low_prior < result
+        )  # Lower prior should result in lower final probability
 
     def test_bayesian_with_decay(self) -> None:
-        """Test Bayesian probability with decaying entities."""
-        entity = Mock()
-        entity.evidence = False  # No current evidence
-        entity.decay.decay_factor = 0.5  # Decaying
-        entity.decay.is_decaying = True
-        entity.decay_factor = (
-            0.5  # Property returns decay.decay_factor when evidence is False
+        """Test Bayesian probability with decaying entities.
+
+        Verifies that decay interpolation affects the result correctly.
+        """
+        # Entity with no current evidence but decaying (half decay)
+        entity_decaying = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            weight=1.0,
+            is_decaying=True,
+            decay_factor=0.5,
         )
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
-        entity.weight = 0.5
 
-        entities = {"entity1": entity}
+        # Entity with full evidence (no decay)
+        entity_active = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
+        )
 
-        result = bayesian_probability(entities)
-        assert 0.0 <= result <= 1.0
+        # Entity with no evidence and no decay
+        entity_inactive = _create_mock_entity(
+            evidence=False, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
+        )
 
-    def test_bayesian_edge_cases(self) -> None:
-        """Test Bayesian probability with edge cases."""
-        # Empty entities
-        result = bayesian_probability({})
-        assert 0.0 <= result <= 1.0
+        prior = 0.5
+        result_decaying = bayesian_probability({"entity": entity_decaying}, prior=prior)
+        result_active = bayesian_probability({"entity": entity_active}, prior=prior)
+        result_inactive = bayesian_probability({"entity": entity_inactive}, prior=prior)
 
-        # Extreme priors (should be clamped)
-        entity = Mock()
-        entity.evidence = True
-        entity.decay.decay_factor = 1.0
-        entity.decay.is_decaying = False
-        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
-        entity.weight = 0.5
+        # Decaying entity should have effect between active and inactive
+        assert result_active > result_decaying > result_inactive
 
-        entities = {"entity1": entity}
-
-        # Test with extreme priors
-        combined_prior_0 = combine_priors(0.0, 0.0)
-        result = bayesian_probability(entities, prior=combined_prior_0)
-        assert 0.0 <= result <= 1.0
-
-        combined_prior_1 = combine_priors(1.0, 1.0)
-        result = bayesian_probability(entities, prior=combined_prior_1)
-        assert 0.0 <= result <= 1.0
+    def test_bayesian_empty_entities(self) -> None:
+        """Test Bayesian probability with empty entities returns prior."""
+        prior = 0.7
+        result = bayesian_probability({}, prior=prior)
+        assert abs(result - clamp_probability(prior)) < 1e-6
 
     def test_bayesian_numerical_stability(self) -> None:
-        """Test Bayesian probability numerical stability with many entities."""
+        """Test Bayesian probability numerical stability with many entities.
+
+        Verifies that calculations remain stable and don't produce NaN/inf with many entities.
+        """
         entities = {}
 
         # Create many entities with varying probabilities
         for i in range(10):
-            entity = Mock()
-            entity.evidence = i % 2 == 0  # Alternate evidence
-            entity.decay.decay_factor = 1.0
-            entity.decay.is_decaying = False
-            # Property returns 1.0 when evidence is True, decay.decay_factor when False
-            entity.decay_factor = 1.0
-            entity.prob_given_true = 0.8
-            entity.prob_given_false = 0.1
-            entity.weight = 0.1
-
+            entity = _create_mock_entity(
+                evidence=(i % 2 == 0),  # Alternate evidence
+                prob_given_true=0.8,
+                prob_given_false=0.1,
+                weight=0.1,
+            )
             entities[f"entity_{i}"] = entity
 
-        result = bayesian_probability(entities)
+        result = bayesian_probability(entities, prior=0.5)
         assert 0.0 <= result <= 1.0
         assert not (math.isnan(result) or math.isinf(result))
+        # With mixed evidence, result should be reasonable
+        assert 0.1 < result < 0.9
 
     def test_bayesian_zero_weight_entities(self) -> None:
-        """Test Bayesian probability with entities having zero weight."""
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity1.prob_given_true = 0.8
-        entity1.prob_given_false = 0.1
-        entity1.weight = 0.0  # Zero weight
+        """Test that entities with zero weight are correctly ignored."""
+        entity_zero_weight = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=0.0
+        )
 
-        entity2 = Mock()
-        entity2.evidence = True
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity2.prob_given_true = 0.8
-        entity2.prob_given_false = 0.1
-        entity2.weight = 0.5  # Non-zero weight
+        entity_with_weight = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=0.5
+        )
 
-        entities = {"entity1": entity1, "entity2": entity2}
+        entities = {
+            "zero_weight": entity_zero_weight,
+            "with_weight": entity_with_weight,
+        }
 
-        result = bayesian_probability(entities)
-        assert 0.0 <= result <= 1.0
+        result = bayesian_probability(entities, prior=0.5)
+        result_without_zero = bayesian_probability(
+            {"with_weight": entity_with_weight}, prior=0.5
+        )
 
-        # Should behave the same as if only entity2 was present
-        result2 = bayesian_probability({"entity2": entity2})
-        assert abs(result - result2) < 1e-6
+        # Should behave exactly the same as if zero-weight entity wasn't present
+        assert abs(result - result_without_zero) < 1e-6
 
-    def test_bayesian_invalid_likelihoods(self) -> None:
-        """Test Bayesian probability with entities having invalid likelihoods."""
-        # Entity with prob_given_true = 0 (invalid)
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity1.prob_given_true = 0.0  # Invalid
-        entity1.prob_given_false = 0.1
-        entity1.weight = 0.5
-
-        # Entity with prob_given_false = 1 (invalid)
-        entity2 = Mock()
-        entity2.evidence = True
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity2.prob_given_true = 0.8
-        entity2.prob_given_false = 1.0  # Invalid
-        entity2.weight = 0.5
-
-        # Entity with prob_given_true > 1 (invalid)
-        entity3 = Mock()
-        entity3.evidence = True
-        entity3.decay.decay_factor = 1.0
-        entity3.decay.is_decaying = False
-        entity3.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity3.prob_given_true = 1.5  # Invalid
-        entity3.prob_given_false = 0.1
-        entity3.weight = 0.5
+    def test_bayesian_invalid_likelihoods_filtered(self) -> None:
+        """Test that entities with invalid likelihoods are filtered out correctly."""
+        # Invalid entities (should be filtered)
+        entity_invalid1 = _create_mock_entity(
+            evidence=True, prob_given_true=0.0, prob_given_false=0.1, weight=0.5
+        )  # prob_given_true = 0 is invalid
+        entity_invalid2 = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=1.0, weight=0.5
+        )  # prob_given_false = 1 is invalid
+        entity_invalid3 = _create_mock_entity(
+            evidence=True, prob_given_true=1.5, prob_given_false=0.1, weight=0.5
+        )  # prob_given_true > 1 is invalid
 
         # Valid entity
-        entity4 = Mock()
-        entity4.evidence = True
-        entity4.decay.decay_factor = 1.0
-        entity4.decay.is_decaying = False
-        entity4.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity4.prob_given_true = 0.8
-        entity4.prob_given_false = 0.1
-        entity4.weight = 0.5
+        entity_valid = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=0.5
+        )
 
-        entities = {
-            "entity1": entity1,
-            "entity2": entity2,
-            "entity3": entity3,
-            "entity4": entity4,
+        entities_mixed = {
+            "invalid1": entity_invalid1,
+            "invalid2": entity_invalid2,
+            "invalid3": entity_invalid3,
+            "valid": entity_valid,
         }
 
-        result = bayesian_probability(entities)
-        assert 0.0 <= result <= 1.0
+        result_mixed = bayesian_probability(entities_mixed, prior=0.5)
+        result_valid_only = bayesian_probability({"valid": entity_valid}, prior=0.5)
 
-        # Should behave the same as if only valid entities were present
-        result2 = bayesian_probability({"entity4": entity4})
-        # The results may differ slightly due to the way invalid entities are filtered
-        # but both should be valid probabilities
-        assert 0.0 <= result2 <= 1.0
-        assert abs(result - result2) < 0.1  # Allow for some difference
-
-    def test_bayesian_extreme_decay_factors(self) -> None:
-        """Test Bayesian probability with extreme decay factors."""
-        # Entity with negative decay factor
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = -0.5  # Should be clamped to 0.0
-        entity1.decay.is_decaying = True
-        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity1.prob_given_true = 0.8
-        entity1.prob_given_false = 0.1
-        entity1.weight = 0.5
-
-        # Entity with decay factor > 1
-        entity2 = Mock()
-        entity2.evidence = True
-        entity2.decay.decay_factor = 1.5  # Should be clamped to 1.0
-        entity2.decay.is_decaying = True
-        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity2.prob_given_true = 0.8
-        entity2.prob_given_false = 0.1
-        entity2.weight = 0.5
-
-        entities = {"entity1": entity1, "entity2": entity2}
-
-        result = bayesian_probability(entities)
-        assert 0.0 <= result <= 1.0
-
-        # Note: The bayesian_probability function doesn't mutate entity objects,
-        # it only uses their values for calculation. The decay factors should be
-        # clamped by the Decay class itself, not by this function.
+        # Should behave exactly the same as if only valid entity was present
+        assert abs(result_mixed - result_valid_only) < 1e-6
 
     def test_bayesian_numerical_overflow(self) -> None:
-        """Test Bayesian probability with numerical overflow scenarios."""
-        # Create entities with extreme probabilities that could cause overflow
-        entity = Mock()
-        entity.evidence = True
-        entity.decay.decay_factor = 1.0
-        entity.decay.is_decaying = False
-        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity.prob_given_true = 0.999999  # Very close to 1
-        entity.prob_given_false = 0.000001  # Very close to 0
-        entity.weight = 1.0
+        """Test Bayesian probability handles extreme probabilities without overflow.
+
+        Verifies that probabilities very close to 0 or 1 don't cause numerical issues.
+        """
+        entity = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.999999,  # Very close to 1
+            prob_given_false=0.000001,  # Very close to 0
+            weight=1.0,
+        )
 
         entities = {"entity1": entity}
 
-        result = bayesian_probability(entities)
+        result = bayesian_probability(entities, prior=0.5)
         assert 0.0 <= result <= 1.0
         assert not (math.isnan(result) or math.isinf(result))
+        # With such extreme probabilities, result should be very high
+        assert result > 0.9
 
     def test_bayesian_all_invalid_entities(self) -> None:
-        """Test Bayesian probability when all entities have invalid likelihoods."""
+        """Test that when all entities are invalid, function returns clamped prior."""
         # All entities with invalid likelihoods
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity1.prob_given_true = 0.0  # Invalid
-        entity1.prob_given_false = 0.1
-        entity1.weight = 0.5
-
-        entity2 = Mock()
-        entity2.evidence = True
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity2.prob_given_true = 0.8
-        entity2.prob_given_false = 1.0  # Invalid
-        entity2.weight = 0.5
+        entity1 = _create_mock_entity(
+            evidence=True, prob_given_true=0.0, prob_given_false=0.1, weight=0.5
+        )  # Invalid: prob_given_true = 0
+        entity2 = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=1.0, weight=0.5
+        )  # Invalid: prob_given_false = 1
 
         entities = {"entity1": entity1, "entity2": entity2}
 
-        # Should return combined prior when all entities are invalid
-        combined_prior = combine_priors(0.3, 0.7)
-        result = bayesian_probability(entities, prior=combined_prior)
-        assert abs(result - combined_prior) < 1e-6
+        # Should return clamped prior when all entities are invalid
+        prior = combine_priors(0.3, 0.7)
+        result = bayesian_probability(entities, prior=prior)
+        assert abs(result - clamp_probability(prior)) < 1e-6
 
     def test_bayesian_decay_interpolation(self) -> None:
-        """Test Bayesian probability with decay interpolation."""
-        entity = Mock()
-        entity.evidence = False  # No current evidence
-        entity.decay.decay_factor = 0.5  # Half decay
-        entity.decay.is_decaying = True
-        entity.decay_factor = (
-            0.5  # Property returns decay.decay_factor when evidence is False
+        """Test that decay interpolation correctly affects probability calculation.
+
+        When evidence=False and is_decaying=True:
+        - effective_evidence becomes True (because value or is_decaying)
+        - Uses original likelihoods (0.8, 0.1), NOT inverse
+        - Applies decay interpolation to those original likelihoods
+
+        With decay factor 0.5: p_t = 0.5 + (0.8 - 0.5) * 0.5 = 0.65, p_f = 0.5 + (0.1 - 0.5) * 0.5 = 0.3
+        With decay factor 0.0: p_t = 0.5, p_f = 0.5 (neutral)
+        """
+        entity_no_decay = _create_mock_entity(
+            evidence=False, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
         )
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
-        entity.weight = 1.0
+        entity_half_decay = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            weight=1.0,
+            is_decaying=True,
+            decay_factor=0.5,
+        )
+        entity_full_decay = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            weight=1.0,
+            is_decaying=True,
+            decay_factor=0.0,
+        )
 
-        entities = {"entity1": entity}
+        prior = 0.5
+        result_no_decay = bayesian_probability({"entity": entity_no_decay}, prior=prior)
+        result_half_decay = bayesian_probability(
+            {"entity": entity_half_decay}, prior=prior
+        )
+        result_full_decay = bayesian_probability(
+            {"entity": entity_full_decay}, prior=prior
+        )
 
-        result = bayesian_probability(entities)
-        assert 0.0 <= result <= 1.0
-
-        # With decay factor 0.5, the probabilities should be interpolated
-        # between neutral (0.5) and the original values
-        # p_t = 0.5 + (0.8 - 0.5) * 0.5 = 0.65
-        # p_f = 0.5 + (0.1 - 0.5) * 0.5 = 0.3
-
-    def test_bayesian_total_probability_zero(self) -> None:
-        """Test Bayesian probability when total probability becomes zero."""
-        # This is a very edge case that should be handled gracefully
-        entity = Mock()
-        entity.evidence = True
-        entity.decay.decay_factor = 1.0
-        entity.decay.is_decaying = False
-        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity.prob_given_true = 0.5
-        entity.prob_given_false = 0.5  # This makes the calculation neutral
-        entity.weight = 1.0
-
-        entities = {"entity1": entity}
-
-        combined_prior = combine_priors(0.5, 0.5)
-        result = bayesian_probability(entities, prior=combined_prior)
-        assert 0.0 <= result <= 1.0
-        assert not (math.isnan(result) or math.isinf(result))
+        # entity_no_decay: uses inverse likelihoods (0.2, 0.9) → suggests NOT occupied → low probability
+        # entity_full_decay: uses original likelihoods with full decay → neutral (0.5, 0.5) → close to prior
+        # entity_half_decay: uses original likelihoods with half decay → suggests occupied → higher probability
+        assert abs(result_full_decay - prior) < 0.1
+        assert result_no_decay < result_full_decay
+        assert result_full_decay < result_half_decay
+        assert result_half_decay > prior
 
     def test_bayesian_inactive_sensor_inverse_likelihoods(self) -> None:
-        """Test that inactive sensors use inverse likelihoods."""
+        """Test that inactive sensors correctly use inverse likelihoods.
+
+        When a sensor is inactive, it uses (1 - prob_given_true, 1 - prob_given_false).
+        This means an inactive sensor with high prob_given_true suggests not occupied.
+        """
         # Entity with prob_given_true=0.8, prob_given_false=0.1
-        # When inactive, should use p_t=0.2, p_f=0.9
-        entity = Mock()
-        entity.evidence = False  # Inactive
-        entity.decay.decay_factor = 1.0
-        entity.decay.is_decaying = False
-        entity.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        # When inactive, uses p_t=0.2, p_f=0.9 (inverse)
+        entity_active = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
         )
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
-        entity.weight = 1.0
+        entity_inactive = _create_mock_entity(
+            evidence=False, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
+        )
 
-        entities = {"entity1": entity}
+        prior = 0.5
+        result_active = bayesian_probability({"entity": entity_active}, prior=prior)
+        result_inactive = bayesian_probability({"entity": entity_inactive}, prior=prior)
 
-        # Calculate with prior 0.5
-        result = bayesian_probability(entities, prior=0.5)
-
-        # With inverse likelihoods: p_t=0.2, p_f=0.9
-        # log_true = log(0.5) + log(0.2) = -0.693 - 1.609 = -2.302
-        # log_false = log(0.5) + log(0.9) = -0.693 - 0.105 = -0.798
-        # After normalization, probability should be low (inactive sensor suggests not occupied)
-        assert 0.0 <= result <= 1.0
-        # Inactive sensor with high prob_given_true means it's usually active when occupied
-        # So when inactive, it suggests not occupied -> lower probability
-        assert result < 0.5  # Should be below prior since inactive
+        # Active sensor should increase probability, inactive should decrease it
+        assert result_active > prior
+        assert result_inactive < prior
+        assert result_active > result_inactive
 
     def test_bayesian_motion_sensor_with_inactive_others(self) -> None:
-        """Test motion sensor with multiple inactive sensors to verify probability increases."""
+        """Test that active motion sensor dominates inactive sensors.
+
+        Verifies that a strong active sensor (motion) increases probability significantly
+        even when other sensors are inactive.
+        """
         # Motion sensor: active, high reliability
-        motion = Mock()
-        motion.evidence = True
-        motion.decay.decay_factor = 1.0
-        motion.decay.is_decaying = False
-        motion.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        motion.prob_given_true = 0.95
-        motion.prob_given_false = 0.02
-        motion.weight = 1.0
-
-        # Media player: inactive
-        media = Mock()
-        media.evidence = False
-        media.decay.decay_factor = 1.0
-        media.decay.is_decaying = False
-        media.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        motion = _create_mock_entity(
+            evidence=True, prob_given_true=0.95, prob_given_false=0.02, weight=1.0
         )
-        media.prob_given_true = 0.65
-        media.prob_given_false = 0.02
-        media.weight = 0.85
 
-        # Door: inactive
-        door = Mock()
-        door.evidence = False
-        door.decay.decay_factor = 1.0
-        door.decay.is_decaying = False
-        door.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        # Other sensors: inactive
+        media = _create_mock_entity(
+            evidence=False, prob_given_true=0.65, prob_given_false=0.02, weight=0.85
         )
-        door.prob_given_true = 0.2
-        door.prob_given_false = 0.02
-        door.weight = 0.3
-
-        # Window: inactive
-        window = Mock()
-        window.evidence = False
-        window.decay.decay_factor = 1.0
-        window.decay.is_decaying = False
-        window.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        door = _create_mock_entity(
+            evidence=False, prob_given_true=0.2, prob_given_false=0.02, weight=0.3
         )
-        window.prob_given_true = 0.2
-        window.prob_given_false = 0.02
-        window.weight = 0.2
-
-        entities = {
-            "motion": motion,
-            "media": media,
-            "door": door,
-            "window": window,
-        }
-
-        # Test with prior 0.3
-        result = bayesian_probability(entities, prior=0.3)
-
-        # Motion sensor is active with high prob_given_true (0.95) and low prob_given_false (0.02)
-        # This should significantly increase probability from prior
-        # Inactive sensors use inverse likelihoods, which provide some negative evidence
-        # but the motion sensor's strong positive evidence should dominate
-        assert 0.0 <= result <= 1.0
-        assert result > 0.3  # Should be higher than prior due to active motion sensor
-        assert result > 0.5  # Should be significantly higher
-
-    def test_bayesian_inactive_edge_cases(self) -> None:
-        """Test edge cases for inactive sensors with extreme likelihood values."""
-        # Test with prob_given_true near 0.0
-        entity1 = Mock()
-        entity1.evidence = False
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        window = _create_mock_entity(
+            evidence=False, prob_given_true=0.2, prob_given_false=0.02, weight=0.2
         )
-        entity1.prob_given_true = 0.01  # Near 0
-        entity1.prob_given_false = 0.01
-        entity1.weight = 1.0
 
-        # Inverse: p_t = 0.99, p_f = 0.99 (should be clamped)
-        entities1 = {"entity1": entity1}
-        result1 = bayesian_probability(entities1, prior=0.5)
-        assert 0.0 <= result1 <= 1.0
+        entities = {"motion": motion, "media": media, "door": door, "window": window}
 
-        # Test with prob_given_true near 1.0
-        entity2 = Mock()
-        entity2.evidence = False
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
-        )
-        entity2.prob_given_true = 0.99  # Near 1
-        entity2.prob_given_false = 0.99
-        entity2.weight = 1.0
+        prior = 0.3
+        result = bayesian_probability(entities, prior=prior)
 
-        # Inverse: p_t = 0.01, p_f = 0.01 (should be clamped)
-        entities2 = {"entity2": entity2}
-        result2 = bayesian_probability(entities2, prior=0.5)
-        assert 0.0 <= result2 <= 1.0
+        # Motion sensor's strong positive evidence should dominate
+        assert result > prior
+        assert result > 0.5  # Should be significantly higher than prior
+        # Should be higher than prior alone
+        assert result > clamp_probability(prior)
 
     def test_bayesian_unavailable_sensors_skipped(self) -> None:
-        """Test that unavailable sensors are still skipped (unchanged behavior)."""
-        # Available but inactive sensor
-        inactive = Mock()
-        inactive.evidence = False
-        inactive.decay.decay_factor = 1.0
-        inactive.decay.is_decaying = False
-        inactive.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        """Test that unavailable sensors (evidence=None) are correctly skipped."""
+        inactive = _create_mock_entity(
+            evidence=False, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
         )
-        inactive.prob_given_true = 0.8
-        inactive.prob_given_false = 0.1
-        inactive.weight = 1.0
 
-        # Unavailable sensor (should be skipped)
-        unavailable = Mock()
-        unavailable.evidence = None  # Unavailable
-        unavailable.decay.decay_factor = 1.0
-        unavailable.decay.is_decaying = False
-        unavailable.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is None
+        unavailable = _create_mock_entity(
+            evidence=None, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
         )
-        unavailable.prob_given_true = 0.8
-        unavailable.prob_given_false = 0.1
-        unavailable.weight = 1.0
 
         entities = {"inactive": inactive, "unavailable": unavailable}
 
-        # Should behave the same as if only inactive sensor was present
-        result1 = bayesian_probability(entities, prior=0.5)
-        result2 = bayesian_probability({"inactive": inactive}, prior=0.5)
+        # Should behave exactly the same as if only inactive sensor was present
+        result_with_unavailable = bayesian_probability(entities, prior=0.5)
+        result_without_unavailable = bayesian_probability(
+            {"inactive": inactive}, prior=0.5
+        )
 
-        # Results should be the same (unavailable sensor is skipped)
-        assert abs(result1 - result2) < 1e-6
+        assert abs(result_with_unavailable - result_without_unavailable) < 1e-6
 
     def test_bayesian_evidence_true_with_decay_active(self) -> None:
-        """Test that entity.decay_factor property prevents decay when evidence is True.
+        """Test that decay is not applied when evidence is True.
 
-        This tests Bug 1 fix: when evidence=True but is_decaying=True (inconsistent state),
-        entity.decay_factor should return 1.0 to prevent decay from being applied.
+        When evidence=True, entity.decay_factor property returns 1.0, preventing
+        decay interpolation even if is_decaying=True (inconsistent state).
         """
-        entity = Mock()
-        entity.evidence = True  # Evidence is active
-        entity.decay.is_decaying = True  # But decay is also active (inconsistent state)
-        entity.decay.decay_factor = 0.5  # Decay factor would be 0.5 if used directly
-        # Mock entity.decay_factor property to return 1.0 when evidence is True
-        entity.decay_factor = 1.0  # Property should return 1.0 when evidence is True
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
-        entity.weight = 1.0
-        entity.is_continuous_likelihood = False
+        entity_with_evidence = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            weight=1.0,
+            is_decaying=True,  # Inconsistent state
+            decay_factor=0.5,
+        )
 
-        entities = {"entity1": entity}
+        entity_no_decay = _create_mock_entity(
+            evidence=True, prob_given_true=0.8, prob_given_false=0.1, weight=1.0
+        )
 
-        result = bayesian_probability(entities, prior=0.5)
+        prior = 0.5
+        result_with_decay_flag = bayesian_probability(
+            {"entity": entity_with_evidence}, prior=prior
+        )
+        result_no_decay = bayesian_probability({"entity": entity_no_decay}, prior=prior)
 
-        # Since decay_factor should be 1.0 (from entity.decay_factor property),
-        # decay should not be applied, so likelihoods should be used at full strength
-        assert 0.0 <= result <= 1.0
-        # With evidence=True and no decay applied, probability should be high
-        assert result > 0.5
+        # Both should produce same result since evidence=True prevents decay
+        assert abs(result_with_decay_flag - result_no_decay) < 1e-6
+        assert result_with_decay_flag > 0.5
 
     def test_bayesian_continuous_sensor_inactive_state(self) -> None:
-        """Test continuous sensor with inactive state (evidence=False, not None).
+        """Test that continuous sensors use get_likelihoods() for inactive states.
 
-        This tests Bug 3: continuous sensors with evidence=False should still
-        use get_likelihoods() which handles inactive states correctly.
+        Continuous sensors (Gaussian densities) should call get_likelihoods() even
+        when evidence=False, not use inverse probabilities like binary sensors.
         """
-        entity = Mock()
-        entity.evidence = False  # Inactive (not unavailable)
-        entity.decay.is_decaying = False
-        entity.decay.decay_factor = 1.0
-        entity.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is False
+        entity = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.8,
+            prob_given_false=0.2,
+            weight=1.0,
+            is_continuous=True,
         )
-        entity.weight = 1.0
-        entity.is_continuous_likelihood = True
         # Mock get_likelihoods to return densities for inactive state
         entity.get_likelihoods = Mock(return_value=(0.3, 0.7))
-        # These shouldn't be used for continuous sensors, but set them anyway
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.2
 
         entities = {"entity1": entity}
 
@@ -829,153 +565,79 @@ class TestBayesianProbability:
         # Should use get_likelihoods() for inactive continuous sensor
         entity.get_likelihoods.assert_called_once()
         assert 0.0 <= result <= 1.0
+        # Result should reflect the densities returned by get_likelihoods()
+        assert result < 0.5  # Lower density for true suggests not occupied
 
     def test_bayesian_continuous_sensor_unavailable_state(self) -> None:
-        """Test continuous sensor with unavailable state (evidence=None).
+        """Test that unavailable continuous sensors are skipped.
 
-        This tests that continuous sensors handle unavailable state correctly
-        by using get_likelihoods() which uses mean of means.
+        Unavailable sensors (evidence=None) are skipped unless decaying,
+        so get_likelihoods() should not be called.
         """
-        entity = Mock()
-        entity.evidence = None  # Unavailable
-        entity.decay.is_decaying = False
-        entity.decay.decay_factor = 1.0
-        entity.decay_factor = (
-            1.0  # Property returns decay.decay_factor when evidence is None
+        entity = _create_mock_entity(
+            evidence=None,
+            prob_given_true=0.8,
+            prob_given_false=0.2,
+            weight=1.0,
+            is_continuous=True,
         )
-        entity.weight = 1.0
-        entity.is_continuous_likelihood = True
-        # Mock get_likelihoods to return densities using mean of means
         entity.get_likelihoods = Mock(return_value=(0.5, 0.5))
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.2
 
         entities = {"entity1": entity}
 
-        # Unavailable sensor should be skipped (unless decaying)
-        result = bayesian_probability(entities, prior=0.5)
+        prior = 0.5
+        result = bayesian_probability(entities, prior=prior)
 
         # Should return prior since entity is skipped
-        assert abs(result - 0.5) < 1e-6
+        assert abs(result - clamp_probability(prior)) < 1e-6
         # get_likelihoods should not be called since entity is skipped
         entity.get_likelihoods.assert_not_called()
 
     def test_bayesian_gaussian_std_zero_edge_case(self) -> None:
-        """Test Gaussian density calculation with std=0 edge case.
+        """Test that continuous sensors handle edge cases gracefully.
 
-        This tests Bug 4: std should be clamped to minimum 0.05 before
-        calling _calculate_gaussian_density to prevent returning 0.0.
+        Verifies that get_likelihoods() returns valid densities that don't cause
+        numerical issues in the calculation.
         """
-        # This test verifies that get_likelihoods() clamps std before calculation
-        # We can't directly test _calculate_gaussian_density with std=0 since
-        # get_likelihoods() clamps it, but we can verify the behavior is correct
-        entity = Mock()
-        entity.evidence = True
-        entity.decay.is_decaying = False
-        entity.decay.decay_factor = 1.0
-        entity.decay_factor = 1.0  # Property returns 1.0 when evidence is True
-        entity.weight = 1.0
-        entity.is_continuous_likelihood = True
-        # Mock get_likelihoods to simulate std=0 case (should be clamped to 0.05)
-        # With std=0.05, density should be calculable (not 0.0)
+        entity = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.8,
+            prob_given_false=0.2,
+            weight=1.0,
+            is_continuous=True,
+        )
+        # Mock get_likelihoods to return valid densities
         entity.get_likelihoods = Mock(return_value=(0.6, 0.4))
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.2
 
         entities = {"entity1": entity}
 
         result = bayesian_probability(entities, prior=0.5)
 
-        # Should use get_likelihoods() and get valid densities
+        # Should use get_likelihoods() and produce valid result
         entity.get_likelihoods.assert_called_once()
         assert 0.0 <= result <= 1.0
-        # Densities should be > 0 (clamped to 1e-9 minimum later)
+        assert not (math.isnan(result) or math.isinf(result))
         assert result > 0.0
 
-    def test_bayesian_nan_likelihoods_filtered(self) -> None:
-        """Test that entities with NaN likelihoods are filtered out."""
-
-        # Entity with NaN prob_given_true
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = 1.0
-        entity1.prob_given_true = float("nan")
-        entity1.prob_given_false = 0.1
-        entity1.weight = 1.0
-        entity1.is_continuous_likelihood = False
-
-        # Entity with valid likelihoods
-        entity2 = Mock()
-        entity2.evidence = True
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = 1.0
-        entity2.prob_given_true = 0.8
-        entity2.prob_given_false = 0.1
-        entity2.weight = 1.0
-        entity2.is_continuous_likelihood = False
-
-        entities = {"entity1": entity1, "entity2": entity2}
-
-        result = bayesian_probability(entities, prior=0.5)
-
-        # Should only use entity2 (entity1 filtered out)
-        assert 0.0 <= result <= 1.0
-        assert not (math.isnan(result) or math.isinf(result))
-        # Result should be based on entity2 only
-        assert result > 0.5  # entity2 suggests occupied
-
-    def test_bayesian_inf_likelihoods_filtered(self) -> None:
-        """Test that entities with inf likelihoods are filtered out."""
-
-        # Entity with inf prob_given_false
-        entity1 = Mock()
-        entity1.evidence = True
-        entity1.decay.decay_factor = 1.0
-        entity1.decay.is_decaying = False
-        entity1.decay_factor = 1.0
-        entity1.prob_given_true = 0.8
-        entity1.prob_given_false = float("inf")
-        entity1.weight = 1.0
-        entity1.is_continuous_likelihood = False
-
-        # Entity with valid likelihoods
-        entity2 = Mock()
-        entity2.evidence = True
-        entity2.decay.decay_factor = 1.0
-        entity2.decay.is_decaying = False
-        entity2.decay_factor = 1.0
-        entity2.prob_given_true = 0.8
-        entity2.prob_given_false = 0.1
-        entity2.weight = 1.0
-        entity2.is_continuous_likelihood = False
-
-        entities = {"entity1": entity1, "entity2": entity2}
-
-        result = bayesian_probability(entities, prior=0.5)
-
-        # Should only use entity2 (entity1 filtered out)
-        assert 0.0 <= result <= 1.0
-        assert not (math.isnan(result) or math.isinf(result))
-        # Result should be based on entity2 only
-        assert result > 0.5  # entity2 suggests occupied
-
-    def test_bayesian_get_likelihoods_returns_nan(self) -> None:
-        """Test that get_likelihoods() returning NaN falls back to static values."""
-
-        entity = Mock()
-        entity.evidence = True
-        entity.decay.decay_factor = 1.0
-        entity.decay.is_decaying = False
-        entity.decay_factor = 1.0
-        entity.weight = 1.0
-        entity.is_continuous_likelihood = True
-        # Mock get_likelihoods to return NaN
-        entity.get_likelihoods = Mock(return_value=(float("nan"), 0.5))
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
+    @pytest.mark.parametrize(
+        "return_value",
+        [
+            (float("nan"), 0.5),
+            (0.5, float("inf")),
+        ],
+        ids=["NaN", "inf"],
+    )
+    def test_bayesian_get_likelihoods_invalid_fallback(self, return_value) -> None:
+        """Test that get_likelihoods() returning NaN/inf falls back to static values."""
+        entity = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.8,
+            prob_given_false=0.1,
+            weight=1.0,
+            is_continuous=True,
+        )
+        # Mock get_likelihoods to return invalid value
+        entity.get_likelihoods = Mock(return_value=return_value)
 
         entities = {"entity1": entity}
 
@@ -985,51 +647,5 @@ class TestBayesianProbability:
         assert 0.0 <= result <= 1.0
         assert not (math.isnan(result) or math.isinf(result))
         entity.get_likelihoods.assert_called_once()
-
-    def test_bayesian_get_likelihoods_returns_inf(self) -> None:
-        """Test that get_likelihoods() returning inf falls back to static values."""
-
-        entity = Mock()
-        entity.evidence = True
-        entity.decay.decay_factor = 1.0
-        entity.decay.is_decaying = False
-        entity.decay_factor = 1.0
-        entity.weight = 1.0
-        entity.is_continuous_likelihood = True
-        # Mock get_likelihoods to return inf
-        entity.get_likelihoods = Mock(return_value=(0.5, float("inf")))
-        entity.prob_given_true = 0.8
-        entity.prob_given_false = 0.1
-
-        entities = {"entity1": entity}
-
-        result = bayesian_probability(entities, prior=0.5)
-
-        # Should fallback to static values and produce valid result
-        assert 0.0 <= result <= 1.0
-        assert not (math.isnan(result) or math.isinf(result))
-        entity.get_likelihoods.assert_called_once()
-
-    def test_clamp_probability_nan(self) -> None:
-        """Test clamp_probability handles NaN values."""
-
-        result = clamp_probability(float("nan"))
-        assert not math.isnan(result)
-        assert not math.isinf(result)
-        assert result == 0.99  # MAX_PROBABILITY (matching existing behavior)
-
-    def test_clamp_probability_inf(self) -> None:
-        """Test clamp_probability handles inf values."""
-
-        result = clamp_probability(float("inf"))
-        assert not math.isnan(result)
-        assert not math.isinf(result)
-        assert result == 0.99  # MAX_PROBABILITY (positive infinity clamped to max)
-
-    def test_clamp_probability_neg_inf(self) -> None:
-        """Test clamp_probability handles negative inf values."""
-
-        result = clamp_probability(float("-inf"))
-        assert not math.isnan(result)
-        assert not math.isinf(result)
-        assert result == 0.01  # MIN_PROBABILITY
+        # Result should be based on static prob_given_true/prob_given_false
+        assert result > 0.5

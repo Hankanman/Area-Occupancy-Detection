@@ -2,16 +2,11 @@
 
 from contextlib import contextmanager
 from datetime import timedelta
-from unittest.mock import patch
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.db.utils import (
-    is_intervals_empty,
-    is_valid_state,
-    safe_is_intervals_empty,
-)
+from custom_components.area_occupancy.db.utils import is_intervals_empty, is_valid_state
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -138,92 +133,3 @@ class TestIsIntervalsEmpty:
         monkeypatch.setattr(db, "get_session", mock_session)
         result = is_intervals_empty(db)
         assert result is True  # Should return True as fallback
-
-
-class TestSafeIsIntervalsEmpty:
-    """Test safe_is_intervals_empty function."""
-
-    def test_safe_empty_intervals(self, coordinator: AreaOccupancyCoordinator):
-        """Test safe_is_intervals_empty with empty intervals."""
-        db = coordinator.db
-        result = safe_is_intervals_empty(db)
-        assert result is True
-
-    def test_safe_non_empty_intervals(self, coordinator: AreaOccupancyCoordinator):
-        """Test safe_is_intervals_empty with non-empty intervals."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        end = dt_util.utcnow()
-        start = end - timedelta(seconds=60)
-
-        # Ensure area and entity exist first (foreign key requirements)
-        db.save_area_data(area_name)
-        with db.get_session() as session:
-            entity = db.Entities(
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_id="binary_sensor.motion",
-                entity_type="motion",
-            )
-            session.add(entity)
-            session.commit()
-
-        with db.get_session() as session:
-            interval = db.Intervals(
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_id="binary_sensor.motion",
-                state="on",
-                start_time=start,
-                end_time=end,
-                duration_seconds=60,
-                aggregation_level="raw",
-            )
-            session.add(interval)
-            session.commit()
-
-        result = safe_is_intervals_empty(db)
-        assert result is False
-
-    def test_safe_corruption_error(
-        self, coordinator: AreaOccupancyCoordinator, monkeypatch
-    ):
-        """Test safe_is_intervals_empty with corruption error."""
-        db = coordinator.db
-
-        @contextmanager
-        def mock_session():
-            raise SQLAlchemyError("database disk image is malformed")
-
-        monkeypatch.setattr(db, "get_session", mock_session)
-
-        # safe_is_intervals_empty catches all exceptions and returns True
-        result = safe_is_intervals_empty(db)
-        assert result is True  # Should return True to trigger data population
-
-    def test_safe_other_error(self, coordinator: AreaOccupancyCoordinator, monkeypatch):
-        """Test safe_is_intervals_empty with other error."""
-        db = coordinator.db
-
-        @contextmanager
-        def mock_session():
-            raise RuntimeError("Other error")
-
-        monkeypatch.setattr(db, "get_session", mock_session)
-
-        with patch(
-            "custom_components.area_occupancy.db.utils.maintenance.is_database_corrupted"
-        ) as mock_corrupted:
-            mock_corrupted.return_value = False
-            result = safe_is_intervals_empty(db)
-            assert result is True  # Should return True as fallback
-
-
-# Note: The following functions are comprehensively tested in test_analysis_helpers.py:
-# - merge_overlapping_intervals
-# - find_overlapping_motion_intervals
-# - segment_interval_with_motion
-# - apply_motion_timeout
-#
-# Those tests are kept in test_analysis_helpers.py since they're more comprehensive.
-# This file focuses on testing db/utils.py functions that are NOT tested elsewhere.

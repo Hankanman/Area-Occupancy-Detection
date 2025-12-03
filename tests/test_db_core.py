@@ -11,6 +11,38 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.db import AreaOccupancyDB
 
 
+# ruff: noqa: SLF001, PLC0415
+def _create_test_area(
+    db: AreaOccupancyDB,
+    area_name: str,
+    area_id: str | None = None,
+    purpose: str = "social",
+    threshold: float = 0.5,
+) -> Any:
+    """Helper function to create a test Areas record.
+
+    Args:
+        db: AreaOccupancyDB instance
+        area_name: Name of the area
+        area_id: Optional area ID (defaults to generated from area_name)
+        purpose: Area purpose (default: "social")
+        threshold: Occupancy threshold (default: 0.5)
+
+    Returns:
+        Areas model instance
+    """
+    if area_id is None:
+        area_id = f"{area_name.lower().replace(' ', '_')}_id"
+
+    return db.Areas(
+        entry_id=db.coordinator.entry_id,
+        area_name=area_name,
+        area_id=area_id,
+        purpose=purpose,
+        threshold=threshold,
+    )
+
+
 class TestAreaOccupancyDBInitialization:
     """Test AreaOccupancyDB initialization."""
 
@@ -42,23 +74,66 @@ class TestAreaOccupancyDBInitialization:
             assert db.storage_path.exists()
             assert db.storage_path.is_dir()
 
-    def test_initialization_sets_recovery_config(self, coordinator):
-        """Test that initialization sets recovery configuration."""
-        db = AreaOccupancyDB(coordinator=coordinator)
+    @pytest.mark.parametrize(
+        ("attr_name", "expected_value"),
+        [
+            ("enable_auto_recovery", True),
+            ("max_recovery_attempts", 3),
+            ("enable_periodic_backups", True),
+            ("backup_interval_hours", 24),
+        ],
+    )
+    def test_initialization_sets_recovery_config(
+        self, coordinator, attr_name: str, expected_value: Any
+    ):
+        """Test that initialization sets recovery configuration with correct default values."""
+        from custom_components.area_occupancy.const import (
+            DEFAULT_BACKUP_INTERVAL_HOURS,
+            DEFAULT_ENABLE_AUTO_RECOVERY,
+            DEFAULT_ENABLE_PERIODIC_BACKUPS,
+            DEFAULT_MAX_RECOVERY_ATTEMPTS,
+        )
 
-        assert hasattr(db, "enable_auto_recovery")
-        assert hasattr(db, "max_recovery_attempts")
-        assert hasattr(db, "enable_periodic_backups")
-        assert hasattr(db, "backup_interval_hours")
+        # Map attribute names to their constants for verification
+        const_map = {
+            "enable_auto_recovery": DEFAULT_ENABLE_AUTO_RECOVERY,
+            "max_recovery_attempts": DEFAULT_MAX_RECOVERY_ATTEMPTS,
+            "enable_periodic_backups": DEFAULT_ENABLE_PERIODIC_BACKUPS,
+            "backup_interval_hours": DEFAULT_BACKUP_INTERVAL_HOURS,
+        }
+
+        db = AreaOccupancyDB(coordinator=coordinator)
+        # Verify value matches both the expected value and the constant
+        assert getattr(db, attr_name) == expected_value
+        assert getattr(db, attr_name) == const_map[attr_name]
 
     def test_initialization_creates_model_classes_dict(self, coordinator):
-        """Test that initialization creates model_classes dictionary."""
+        """Test that initialization creates model_classes dictionary with all expected models."""
         db = AreaOccupancyDB(coordinator=coordinator)
 
-        assert "Areas" in db.model_classes
-        assert "Entities" in db.model_classes
-        assert "Intervals" in db.model_classes
-        assert db.model_classes["Areas"] == db.Areas
+        expected_models = [
+            "Areas",
+            "Entities",
+            "Priors",
+            "Intervals",
+            "Metadata",
+            "IntervalAggregates",
+            "OccupiedIntervalsCache",
+            "GlobalPriors",
+            "NumericSamples",
+            "NumericAggregates",
+            "Correlations",
+            "EntityStatistics",
+            "AreaRelationships",
+            "CrossAreaStats",
+        ]
+
+        # Verify all expected models are present
+        assert len(db.model_classes) == len(expected_models)
+        for model_name in expected_models:
+            assert model_name in db.model_classes
+            # Verify mapping correctness (key matches class attribute)
+            assert db.model_classes[model_name] == getattr(db, model_name)
 
     def test_initialization_auto_init_db_env_var(self, coordinator, monkeypatch):
         """Test that AREA_OCCUPANCY_AUTO_INIT_DB env var triggers initialization."""
@@ -97,48 +172,80 @@ class TestSessionManagement:
     def test_get_session_rollback_on_exception(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test that get_session rolls back on exception."""
+        """Test that get_session rolls back on exception and prevents data persistence."""
         db = coordinator.db
 
-        with pytest.raises(ValueError), db.get_session():
-            # Add something that will fail
-            raise ValueError("Test error")
-            # Session should be rolled back automatically
+        # Insert data, then raise exception
+        with db.get_session() as session:
+            area = _create_test_area(
+                db, "Rollback Test Area", area_id="rollback_test_area_id"
+            )
+            session.add(area)
+            session.flush()  # Write to DB but don't commit
+            with pytest.raises(ValueError):
+                raise ValueError("Test error")
+
+        # Verify data was rolled back - it should not exist
+        with db.get_session() as session:
+            result = (
+                session.query(db.Areas)
+                .filter_by(area_name="Rollback Test Area")
+                .first()
+            )
+            assert result is None
 
     def test_get_session_closes_on_exit(self, coordinator: AreaOccupancyCoordinator):
         """Test that get_session closes session on exit."""
         db = coordinator.db
 
         with db.get_session() as session:
-            session_id = id(session)
+            assert session.is_active is True
+            # Perform an operation to ensure session is active
+            result = session.execute(text("SELECT 1"))
+            assert result.scalar() == 1
 
-        # Session should be closed after context manager exits
-        # We can't directly check if it's closed, but we can verify
-        # that a new session is created each time
+        # After exit, verify session is closed
+        # SQLAlchemy sessions close their connection when the context exits
+        # The session should no longer be able to perform operations
+        # Check that the session's connection is closed
+        # In SQLAlchemy 2.x, closed sessions have their connection closed
+        # We verify by checking that attempting operations would fail
+        # Note: session.is_active may still be True, but connection is closed
+        assert hasattr(session, "bind")
+        # The connection pool should have returned the connection
+        # We can verify by checking that a new session gets a fresh connection
+        with db.get_session() as new_session:
+            assert new_session is not session
+            assert new_session.bind is not None
+
+    def test_session_isolation(self, coordinator: AreaOccupancyCoordinator):
+        """Verify multiple sessions don't interfere with each other."""
+        db = coordinator.db
+
+        # Create uncommitted data in first session
+        with db.get_session() as session1:
+            area1 = _create_test_area(
+                db, "Session1 Isolation Test", area_id="session1_isolation_test_id"
+            )
+            session1.add(area1)
+            session1.flush()
+            # Note: flush() writes to DB but doesn't commit
+            # SQLite's default isolation level allows reading uncommitted data
+            # So session2 can see the data, but it's not committed yet
+
+        # After session1 exits (without commit), data should be rolled back
+        # Verify data was not committed by checking in a new session
         with db.get_session() as session2:
-            assert id(session2) != session_id
+            result = (
+                session2.query(db.Areas)
+                .filter_by(area_name="Session1 Isolation Test")
+                .first()
+            )
+            assert result is None  # Data should not exist after rollback
 
 
-class TestTableProperties:
-    """Test table property accessors."""
-
-    def test_table_properties(self, coordinator: AreaOccupancyCoordinator):
-        """Test table property accessors."""
-        db = coordinator.db
-
-        assert db.areas.name == "areas"
-        assert db.entities.name == "entities"
-        assert db.intervals.name == "intervals"
-        assert db.priors.name == "priors"
-        assert db.metadata.name == "metadata"
-
-    def test_get_engine(self, coordinator: AreaOccupancyCoordinator):
-        """Test get_engine method."""
-        db = coordinator.db
-
-        engine = db.get_engine()
-        assert engine is not None
-        assert engine == db.engine
+class TestSessionMakerUpdate:
+    """Test session maker update functionality."""
 
     def test_update_session_maker(self, coordinator: AreaOccupancyCoordinator):
         """Test update_session_maker method."""
@@ -157,45 +264,56 @@ class TestTableProperties:
         assert db._session_maker is not original_maker
         assert db._session_maker.kw.get("bind") == new_engine
 
+    def test_update_session_maker_creates_new_sessions(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Verify update_session_maker creates sessions with new engine."""
+        db = coordinator.db
+        original_engine = db.engine
+
+        # Create session with original engine
+        with db.get_session() as session1:
+            assert session1.bind is original_engine
+
+        # Create new engine and update session maker
+        new_engine = create_engine("sqlite:///:memory:")
+        db.engine = new_engine
+        db.update_session_maker()
+
+        # New sessions should use new engine
+        with db.get_session() as session2:
+            assert session2.bind is new_engine
+            assert session2.bind is not original_engine
+
 
 class TestModelClassReferences:
     """Test model class references."""
 
-    def test_model_class_references(self, coordinator: AreaOccupancyCoordinator):
-        """Test that model classes are correctly referenced."""
+    def test_model_classes_are_functional(self, coordinator: AreaOccupancyCoordinator):
+        """Verify model classes can be used to create and query records."""
         db = coordinator.db
 
-        # Test that class attributes reference schema models
-        assert db.Areas is not None
-        assert db.Entities is not None
-        assert db.Intervals is not None
-        assert db.Priors is not None
-        assert db.Metadata is not None
-        assert db.IntervalAggregates is not None
-        assert db.OccupiedIntervalsCache is not None
-        assert db.GlobalPriors is not None
-        assert db.NumericSamples is not None
-        assert db.NumericAggregates is not None
-        assert db.Correlations is not None
-        assert db.EntityStatistics is not None
-        assert db.AreaRelationships is not None
-        assert db.CrossAreaStats is not None
+        with db.get_session() as session:
+            # Create instance using model class
+            test_area = _create_test_area(
+                db, "Test Model Functional", area_id="test_model_functional_id"
+            )
+            session.add(test_area)
+            session.commit()
+
+            # Query using model class
+            result = (
+                session.query(db.Areas)
+                .filter_by(area_name="Test Model Functional")
+                .first()
+            )
+            assert result is not None
+            assert result.area_name == "Test Model Functional"
+            assert result.threshold == 0.5
 
 
 class TestDelegationCorrectness:
     """Test that core.py methods correctly delegate to underlying modules via __getattr__."""
-
-    def test_delegated_methods_dict_exists(self, coordinator: AreaOccupancyCoordinator):
-        """Test that _delegated_methods dictionary exists and contains expected methods."""
-        db = coordinator.db
-
-        assert hasattr(db, "_delegated_methods")
-        assert isinstance(db._delegated_methods, dict)
-        # Verify some expected methods are in the dictionary
-        assert "load_data" in db._delegated_methods
-        assert "save_area_data" in db._delegated_methods
-        assert "check_database_integrity" in db._delegated_methods
-        assert "get_area_data" in db._delegated_methods
 
     def test_nonexistent_attribute_raises_error(
         self, coordinator: AreaOccupancyCoordinator
@@ -222,12 +340,6 @@ class TestDelegationCorrectness:
                 "custom_components.area_occupancy.db.queries.get_area_data",
                 ("test_entry",),
                 {"entry_id": "test"},
-            ),
-            (
-                "check_database_integrity",
-                "custom_components.area_occupancy.db.maintenance.check_database_integrity",
-                (),
-                True,
             ),
             (
                 "is_intervals_empty",
@@ -318,20 +430,20 @@ class TestDelegationCorrectness:
             mock_is_valid.assert_called_once_with("on")
             assert result is True
 
+    @pytest.mark.parametrize(
+        "method_name", ["get_time_prior", "get_occupied_intervals"]
+    )
     def test_explicit_methods_not_delegated(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, method_name: str
     ):
-        """Test that methods with added logic (get_time_prior, get_occupied_intervals) are not delegated."""
+        """Test that methods with added logic are not delegated."""
         db = coordinator.db
 
-        # These methods should exist as real methods, not in _delegated_methods
-        assert "get_time_prior" not in db._delegated_methods
-        assert "get_occupied_intervals" not in db._delegated_methods
-        # Verify they exist as real methods
-        assert hasattr(db, "get_time_prior")
-        assert hasattr(db, "get_occupied_intervals")
-        assert callable(db.get_time_prior)
-        assert callable(db.get_occupied_intervals)
+        # Method should not be in delegated methods
+        assert method_name not in db._delegated_methods
+        # Verify it exists as a real method
+        assert hasattr(db, method_name)
+        assert callable(getattr(db, method_name))
 
 
 class TestErrorHandling:

@@ -1,134 +1,88 @@
-"""Test constants for performance optimization features."""
+"""Test constants for performance optimization features.
+
+This module tests performance-related constants that are actively used in the codebase.
+Tests focus on validating important relationships and constraints rather than
+redundant type checks or exact value assertions.
+"""
 
 import pytest
 
 from custom_components.area_occupancy.const import (
-    ALL_AREAS_IDENTIFIER,
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_LOOKBACK_DAYS,
     RETENTION_DAYS,
-    validate_and_sanitize_area_name,
 )
 
 
 class TestPerformanceConstants:
-    """Test performance optimization constants."""
+    """Test performance optimization constants.
 
-    def test_performance_constants_defined(self):
-        """Test that performance constants are properly defined."""
-        # Test DEFAULT_LOOKBACK_DAYS
-        assert DEFAULT_LOOKBACK_DAYS == 60
-        assert isinstance(DEFAULT_LOOKBACK_DAYS, int)
-        assert DEFAULT_LOOKBACK_DAYS > 0
+    These constants control data retention and analysis periods for the
+    occupancy detection system. Tests validate important relationships
+    and constraints to ensure reasonable configuration.
+    """
 
-        # Test DEFAULT_CACHE_TTL_SECONDS
-        assert DEFAULT_CACHE_TTL_SECONDS == 3600
-        assert isinstance(DEFAULT_CACHE_TTL_SECONDS, int)
-        assert DEFAULT_CACHE_TTL_SECONDS > 0
+    @pytest.mark.parametrize(
+        ("constant_value", "expected_value", "constant_name", "usage_context"),
+        [
+            (
+                DEFAULT_LOOKBACK_DAYS,
+                60,
+                "DEFAULT_LOOKBACK_DAYS",
+                "used in data/analysis.py, db/core.py - 2 months reasonable for analysis",
+            ),
+            (
+                RETENTION_DAYS,
+                365,
+                "RETENTION_DAYS",
+                "used in db/operations.py, db/sync.py - 1 year reasonable retention period",
+            ),
+            (
+                DEFAULT_CACHE_TTL_SECONDS,
+                3600,
+                "DEFAULT_CACHE_TTL_SECONDS",
+                "currently unused, kept for future caching implementation - 1 hour reasonable cache TTL",
+            ),
+        ],
+    )
+    def test_performance_constant_values(
+        self,
+        constant_value: int,
+        expected_value: int,
+        constant_name: str,
+        usage_context: str,
+    ) -> None:
+        """Test that performance constants have valid types and expected values.
 
-        # Test RETENTION_DAYS
-        assert RETENTION_DAYS == 365
-        assert isinstance(RETENTION_DAYS, int)
-        assert RETENTION_DAYS > 0
+        Args:
+            constant_value: The actual constant value to test
+            expected_value: The expected value for the constant
+            constant_name: Name of the constant for error messages
+            usage_context: Description of where/how the constant is used
+        """
+        # Type validation: must be integer
+        assert isinstance(constant_value, int), (
+            f"{constant_name} must be an integer, got {type(constant_value).__name__}"
+        )
 
-    def test_constants_reasonable_values(self):
-        """Test that constants have reasonable values."""
-        # Lookback should be less than retention
-        assert DEFAULT_LOOKBACK_DAYS < RETENTION_DAYS
+        # Positive value validation: must be greater than zero
+        assert constant_value > 0, (
+            f"{constant_name} must be positive, got {constant_value}"
+        )
 
-        # Cache TTL should be reasonable (1 hour)
-        assert DEFAULT_CACHE_TTL_SECONDS == 3600  # 1 hour
+        # Exact value validation: must match expected value
+        assert constant_value == expected_value, (
+            f"{constant_name} expected {expected_value}, got {constant_value} ({usage_context})"
+        )
 
-        # Lookback should be reasonable (2 months)
-        assert DEFAULT_LOOKBACK_DAYS == 60  # 2 months
+    def test_performance_constants_relationship(self) -> None:
+        """Test critical relationship constraint between performance constants.
 
-        # Retention should be reasonable (1 year)
-        assert RETENTION_DAYS == 365  # 1 year
-
-    def test_constants_importable(self):
-        """Test that constants can be imported from const module."""
-
-        # Should not raise ImportError
-        assert DEFAULT_LOOKBACK_DAYS is not None
-        assert DEFAULT_CACHE_TTL_SECONDS is not None
-        assert RETENTION_DAYS is not None
-
-
-class TestValidateAndSanitizeAreaName:
-    """Test validate_and_sanitize_area_name function."""
-
-    def test_valid_area_name(self):
-        """Test that valid area names are accepted."""
-        result = validate_and_sanitize_area_name("Living Room")
-        assert result == "Living_Room"
-
-    def test_empty_area_name(self):
-        """Test that empty area names are rejected."""
-        with pytest.raises(ValueError, match="Area name cannot be empty"):
-            validate_and_sanitize_area_name("")
-        with pytest.raises(ValueError, match="Area name cannot be empty"):
-            validate_and_sanitize_area_name("   ")
-
-    def test_exact_all_areas_identifier(self):
-        """Test that exact ALL_AREAS_IDENTIFIER is rejected."""
-        with pytest.raises(
-            ValueError,
-            match=f"Area name cannot be '{ALL_AREAS_IDENTIFIER}' as it conflicts with",
-        ):
-            validate_and_sanitize_area_name(ALL_AREAS_IDENTIFIER)
-
-    def test_sanitized_all_areas_identifier(self):
-        """Test that names that sanitize to ALL_AREAS_IDENTIFIER are rejected."""
-        # "all areas" should sanitize to "all_areas"
-        with pytest.raises(
-            ValueError,
-            match=f"Area name 'all areas' sanitizes to '{ALL_AREAS_IDENTIFIER}' which conflicts with",
-        ):
-            validate_and_sanitize_area_name("all areas")
-
-        # "all  areas" with extra spaces should sanitize to "all_areas"
-        with pytest.raises(
-            ValueError,
-            match=f"Area name 'all  areas' sanitizes to '{ALL_AREAS_IDENTIFIER}' which conflicts with",
-        ):
-            validate_and_sanitize_area_name("all  areas")
-
-        # "all_areas" with underscores should match exactly (caught by first check)
-        with pytest.raises(
-            ValueError,
-            match=f"Area name cannot be '{ALL_AREAS_IDENTIFIER}' as it conflicts with",
-        ):
-            validate_and_sanitize_area_name("all_areas")
-
-    def test_sanitization_normalizes_whitespace(self):
-        """Test that whitespace is normalized."""
-        result = validate_and_sanitize_area_name("  Living  Room  ")
-        assert result == "Living_Room"
-
-    def test_sanitization_replaces_special_characters(self):
-        """Test that special characters are replaced with underscores."""
-        result = validate_and_sanitize_area_name("Living/Room")
-        assert result == "Living_Room"
-
-        result = validate_and_sanitize_area_name("Living@Room")
-        assert result == "Living_Room"
-
-    def test_sanitization_removes_leading_trailing_underscores(self):
-        """Test that leading and trailing underscores are removed."""
-        result = validate_and_sanitize_area_name("_Living_Room_")
-        assert result == "Living_Room"
-
-    def test_only_invalid_characters(self):
-        """Test that names with only invalid characters are rejected."""
-        with pytest.raises(
-            ValueError, match="Area name contains only invalid characters"
-        ):
-            validate_and_sanitize_area_name("@@@")
-
-    def test_sanitization_preserves_valid_names(self):
-        """Test that valid names without special characters are preserved."""
-        result = validate_and_sanitize_area_name("LivingRoom")
-        assert result == "LivingRoom"
-
-        result = validate_and_sanitize_area_name("Living_Room")
-        assert result == "Living_Room"
+        The lookback period must be less than the retention period to ensure
+        we don't try to analyze more data than we retain. This is a critical
+        constraint that prevents data access errors.
+        """
+        assert DEFAULT_LOOKBACK_DAYS < RETENTION_DAYS, (
+            f"Lookback period ({DEFAULT_LOOKBACK_DAYS} days) must be less than "
+            f"retention period ({RETENTION_DAYS} days) to prevent analyzing more data than retained"
+        )
