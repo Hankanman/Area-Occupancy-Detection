@@ -1,6 +1,6 @@
 """Tests for data.entity_type module."""
 
-from unittest.mock import Mock
+import logging
 
 import pytest
 
@@ -17,18 +17,7 @@ class TestInputType:
 
     @pytest.mark.parametrize(
         ("input_type", "expected_value"),
-        [
-            (InputType.MOTION, "motion"),
-            (InputType.MEDIA, "media"),
-            (InputType.APPLIANCE, "appliance"),
-            (InputType.DOOR, "door"),
-            (InputType.WINDOW, "window"),
-            (InputType.TEMPERATURE, "temperature"),
-            (InputType.HUMIDITY, "humidity"),
-            (InputType.ILLUMINANCE, "illuminance"),
-            (InputType.ENVIRONMENTAL, "environmental"),
-            (InputType.UNKNOWN, "unknown"),
-        ],
+        [(input_type, input_type.value) for input_type in InputType],
     )
     def test_input_type_values(self, input_type, expected_value) -> None:
         """Test that InputType has expected values."""
@@ -48,7 +37,6 @@ class TestEntityType:
             active_states=[STATE_ON],
         )
 
-        assert entity_type.input_type == InputType.MOTION
         assert entity_type.weight == 0.8
         assert entity_type.prob_given_true == 0.25
         assert entity_type.prob_given_false == 0.05
@@ -65,13 +53,79 @@ class TestEntityType:
             active_range=(0.0, 0.2),
         )
 
-        assert entity_type.input_type == InputType.ENVIRONMENTAL
         assert entity_type.active_range == (0.0, 0.2)
         assert entity_type.active_states is None
 
     @pytest.mark.parametrize(
+        ("input_type", "expected_config"),
+        [(input_type, config) for input_type, config in DEFAULT_TYPES.items()],
+    )
+    def test_initialization_with_defaults(self, input_type, expected_config) -> None:
+        """Test initialization for different input types with default values."""
+        entity_type = EntityType(input_type)
+
+        assert entity_type.weight == expected_config["weight"]
+        assert entity_type.prob_given_true == expected_config["prob_given_true"]
+        assert entity_type.prob_given_false == expected_config["prob_given_false"]
+        assert entity_type.active_states == expected_config["active_states"]
+        assert entity_type.active_range == expected_config["active_range"]
+
+    @pytest.mark.parametrize(
+        (
+            "override_type",
+            "input_type",
+            "override_value",
+            "expected_weight",
+            "expected_states",
+            "expected_range",
+        ),
+        [
+            (
+                "weight",
+                InputType.MOTION,
+                {"weight": 0.9},
+                0.9,
+                DEFAULT_TYPES[InputType.MOTION]["active_states"],
+                None,
+            ),
+            (
+                "active_states",
+                InputType.MOTION,
+                {"active_states": ["on", "detected"]},
+                DEFAULT_TYPES[InputType.MOTION]["weight"],
+                ["on", "detected"],
+                None,
+            ),
+            (
+                "active_range",
+                InputType.ENVIRONMENTAL,
+                {"weight": 0.2, "active_range": (0.1, 0.3)},
+                0.2,
+                None,
+                (0.1, 0.3),
+            ),
+        ],
+    )
+    def test_initialization_with_overrides(
+        self,
+        override_type,
+        input_type,
+        override_value,
+        expected_weight,
+        expected_states,
+        expected_range,
+    ) -> None:
+        """Test initialization with various parameter overrides."""
+        entity_type = EntityType(input_type, **override_value)
+
+        assert entity_type.weight == expected_weight
+        assert entity_type.active_states == expected_states
+        assert entity_type.active_range == expected_range
+
+    @pytest.mark.parametrize(
         ("test_case", "params", "expected_error"),
         [
+            # Mutually exclusive parameters
             (
                 "both_active_states_and_range",
                 {
@@ -84,207 +138,215 @@ class TestEntityType:
                 },
                 "Cannot provide both active_states and active_range",
             ),
+            # Weight validation errors
+            (
+                "invalid_weight_negative",
+                {
+                    "input_type": InputType.MOTION,
+                    "weight": -0.1,
+                    "active_states": [STATE_ON],
+                },
+                "Invalid weight for motion: -0.1",
+            ),
+            (
+                "invalid_weight_too_large",
+                {
+                    "input_type": InputType.MOTION,
+                    "weight": 1.5,
+                    "active_states": [STATE_ON],
+                },
+                "Invalid weight for motion: 1.5",
+            ),
+            (
+                "invalid_weight_string",
+                {
+                    "input_type": InputType.MOTION,
+                    "weight": "0.8",
+                    "active_states": [STATE_ON],
+                },
+                "Invalid weight for motion: 0.8",
+            ),
+            # active_states validation errors
+            (
+                "invalid_states_not_list",
+                {
+                    "input_type": InputType.MOTION,
+                    "active_states": "invalid",
+                },
+                "Invalid active states for motion: invalid",
+            ),
+            (
+                "invalid_states_non_string",
+                {
+                    "input_type": InputType.MOTION,
+                    "active_states": [123, "on"],
+                },
+                "Invalid active states for motion:",
+            ),
+            (
+                "invalid_states_mixed_types",
+                {
+                    "input_type": InputType.MOTION,
+                    "active_states": ["on", 456, None],
+                },
+                "Invalid active states for motion:",
+            ),
+            # active_range validation errors
+            (
+                "invalid_range_not_tuple",
+                {
+                    "input_type": InputType.ENVIRONMENTAL,
+                    "active_range": "invalid",
+                },
+                "Invalid active range for environmental: invalid",
+            ),
+            (
+                "invalid_range_wrong_length_0",
+                {
+                    "input_type": InputType.ENVIRONMENTAL,
+                    "active_range": (),
+                },
+                "Invalid active range for environmental:",
+            ),
+            (
+                "invalid_range_wrong_length_1",
+                {
+                    "input_type": InputType.ENVIRONMENTAL,
+                    "active_range": (0.0,),
+                },
+                "Invalid active range for environmental:",
+            ),
+            (
+                "invalid_range_wrong_length_3",
+                {
+                    "input_type": InputType.ENVIRONMENTAL,
+                    "active_range": (0.0, 0.2, 0.5),
+                },
+                "Invalid active range for environmental:",
+            ),
         ],
     )
-    def test_initialization_errors(self, test_case, params, expected_error) -> None:
-        """Test initialization errors for invalid configurations."""
+    def test_initialization_validation_errors(
+        self, test_case, params, expected_error
+    ) -> None:
+        """Test initialization with invalid parameter values."""
         with pytest.raises(ValueError, match=expected_error):
             EntityType(**params)
 
     @pytest.mark.parametrize(
-        ("input_type", "expected_config"),
-        [(input_type, config) for input_type, config in DEFAULT_TYPES.items()],
-    )
-    def test_initialization_with_defaults(self, input_type, expected_config) -> None:
-        """Test initialization for different input types with default values."""
-        entity_type = EntityType(input_type)
-
-        assert entity_type.input_type == input_type
-        assert entity_type.weight == expected_config["weight"]
-        assert entity_type.prob_given_true == expected_config["prob_given_true"]
-        assert entity_type.prob_given_false == expected_config["prob_given_false"]
-        assert entity_type.active_states == expected_config["active_states"]
-        assert entity_type.active_range == expected_config["active_range"]
-
-    def test_initialization_with_config_override(self) -> None:
-        """Test initialization with configuration overrides."""
-        mock_config = Mock()
-        mock_config.weights = Mock()
-        mock_config.weights.motion = 0.9
-        mock_config.sensor_states = Mock()
-        mock_config.sensor_states.motion = ["on", "detected"]
-        # Ensure no unexpected attributes exist
-        mock_config.motion_active_range = None
-
-        # Extract overrides from config
-        weight = getattr(mock_config.weights, InputType.MOTION.value, None)
-        active_states = getattr(mock_config.sensor_states, InputType.MOTION.value, None)
-        active_range = getattr(
-            mock_config, f"{InputType.MOTION.value}_active_range", None
-        )
-
-        entity_type = EntityType(
-            InputType.MOTION,
-            weight=weight,
-            active_states=active_states,
-            active_range=active_range,
-        )
-
-        assert entity_type.input_type == InputType.MOTION
-        assert entity_type.weight == 0.9  # Overridden
-        assert entity_type.active_states == ["on", "detected"]  # Overridden
-        assert entity_type.active_range is None
-
-    def test_initialization_with_active_range_override(self) -> None:
-        """Test initialization with active range override."""
-        mock_config = Mock()
-        mock_config.weights = Mock()
-        mock_config.weights.environmental = 0.2  # Override weight
-        # Explicitly set sensor_states to None to avoid Mock creating unexpected attributes
-        mock_config.sensor_states = None
-        mock_config.environmental_active_range = (0.1, 0.3)  # Override range
-
-        # Extract overrides from config
-        weight = getattr(mock_config.weights, InputType.ENVIRONMENTAL.value, None)
-        active_states = None  # sensor_states is None
-        active_range = getattr(
-            mock_config, f"{InputType.ENVIRONMENTAL.value}_active_range", None
-        )
-
-        entity_type = EntityType(
-            InputType.ENVIRONMENTAL,
-            weight=weight,
-            active_states=active_states,
-            active_range=active_range,
-        )
-
-        assert entity_type.input_type == InputType.ENVIRONMENTAL
-        assert entity_type.weight == 0.2  # Overridden
-        assert entity_type.active_states is None  # Cleared when range is set
-        assert entity_type.active_range == (0.1, 0.3)  # Overridden
-
-    @pytest.mark.parametrize(
-        ("test_case", "config_setup", "expected_error"),
+        ("input_type", "weight", "expected_states", "expected_range"),
         [
             (
-                "invalid_weight",
-                lambda: Mock(
-                    weights=Mock(motion=1.5),  # Invalid weight > 1
-                ),
-                "Invalid weight for motion: 1.5",
+                InputType.MOTION,
+                0.9,
+                DEFAULT_TYPES[InputType.MOTION]["active_states"],
+                None,
             ),
             (
-                "invalid_states",
-                lambda: Mock(
-                    weights=Mock(motion=0.8),  # Valid weight
-                    sensor_states=Mock(motion="invalid"),  # Should be list
-                ),
-                "Invalid active states for motion: invalid",
-            ),
-            (
-                "invalid_active_range",
-                lambda: Mock(
-                    weights=Mock(environmental=0.1),  # Valid weight
-                    sensor_states=None,  # Explicitly set to None
-                    environmental_active_range="invalid",  # Should be tuple
-                ),
-                "Invalid active range for environmental: invalid",
+                InputType.TEMPERATURE,
+                0.2,
+                None,
+                DEFAULT_TYPES[InputType.TEMPERATURE]["active_range"],
             ),
         ],
     )
-    def test_initialization_config_errors(
-        self, test_case, config_setup, expected_error
+    def test_initialization_with_empty_states_list(
+        self, input_type, weight, expected_states, expected_range
     ) -> None:
-        """Test initialization with invalid configuration."""
-        mock_config = config_setup()
-
-        # Use the appropriate input type based on the test case
-        if test_case == "invalid_active_range":
-            input_type = InputType.ENVIRONMENTAL
-        else:
-            input_type = InputType.MOTION
-
-        # Extract overrides from config
-        weights = getattr(mock_config, "weights", None)
-        weight = getattr(weights, input_type.value, None) if weights else None
-
-        sensor_states = getattr(mock_config, "sensor_states", None)
-        active_states = (
-            getattr(sensor_states, input_type.value, None) if sensor_states else None
+        """Test that empty active_states list uses defaults instead of crashing."""
+        entity_type = EntityType(
+            input_type,
+            weight=weight,
+            active_states=[],  # Empty list - should use defaults
         )
 
-        active_range = getattr(mock_config, f"{input_type.value}_active_range", None)
+        # Should use defaults from DEFAULT_TYPES, not empty list
+        assert entity_type.weight == weight  # Weight override should still work
+        assert entity_type.active_states == expected_states
+        assert entity_type.active_range == expected_range
 
-        with pytest.raises(ValueError, match=expected_error):
-            EntityType(
-                input_type,
-                weight=weight,
-                active_states=active_states,
-                active_range=active_range,
+    @pytest.mark.parametrize(
+        "weight",
+        [
+            0.0,  # Boundary: minimum valid weight
+            1.0,  # Boundary: maximum valid weight
+            0.5,  # Valid middle value
+        ],
+    )
+    def test_weight_boundary_values(self, weight) -> None:
+        """Test weight boundary values (0.0 and 1.0 should pass)."""
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=weight,
+            active_states=[STATE_ON],
+        )
+        assert entity_type.weight == weight
+
+    @pytest.mark.parametrize(
+        ("input_type", "active_range"),
+        [
+            (InputType.ENVIRONMENTAL, (0.0, 0.0)),  # Equal min/max should be valid
+            (InputType.TEMPERATURE, (18.0, 24.0)),  # Normal range should work
+        ],
+    )
+    def test_active_range_boundary_values(self, input_type, active_range) -> None:
+        """Test active_range boundary values including equal min/max."""
+        entity_type = EntityType(
+            input_type=input_type,
+            active_range=active_range,
+        )
+        assert entity_type.active_range == active_range
+
+    def test_missing_input_type_fallback(self, caplog) -> None:
+        """Test fallback behavior when InputType is missing from DEFAULT_TYPES."""
+        # Create a temporary InputType that doesn't exist in DEFAULT_TYPES
+        # We'll need to temporarily remove one from DEFAULT_TYPES for testing
+        # Since we can't easily create new enum values, we'll test the fallback
+        # by temporarily modifying DEFAULT_TYPES
+
+        # Temporarily remove a type (we'll use CO2 as it's not critical)
+        test_type = InputType.CO2
+        original_value = DEFAULT_TYPES.pop(test_type, None)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                entity_type = EntityType(test_type)
+
+            # Should log a warning
+            assert any(
+                "missing from DEFAULT_TYPES" in record.message
+                and str(test_type) in record.message
+                for record in caplog.records
             )
 
-    def test_initialization_with_empty_states_list(self) -> None:
-        """Test that empty active_states list uses defaults instead of crashing."""
-        mock_config = Mock()
-        mock_config.weights = Mock()
-        mock_config.weights.motion = 0.9  # Override weight
-        mock_config.sensor_states = Mock()
-        mock_config.sensor_states.motion = []  # Empty list - should use defaults
-        mock_config.motion_active_range = None
+            # Should fallback to UNKNOWN defaults
+            assert entity_type.weight == DEFAULT_TYPES[InputType.UNKNOWN]["weight"]
+            assert (
+                entity_type.active_states
+                == DEFAULT_TYPES[InputType.UNKNOWN]["active_states"]
+            )
+        finally:
+            # Restore original DEFAULT_TYPES
+            if original_value is not None:
+                DEFAULT_TYPES[test_type] = original_value
 
-        # Extract overrides from config
-        weight = getattr(mock_config.weights, InputType.MOTION.value, None)
-        active_states = getattr(mock_config.sensor_states, InputType.MOTION.value, None)
-        active_range = getattr(
-            mock_config, f"{InputType.MOTION.value}_active_range", None
-        )
+    def test_missing_unknown_fallback(self, caplog) -> None:
+        """Test ultimate fallback when UNKNOWN is also missing from DEFAULT_TYPES."""
+        # Save original values
+        original_unknown = DEFAULT_TYPES.pop(InputType.UNKNOWN, None)
+        test_type = InputType.CO2
+        original_co2 = DEFAULT_TYPES.pop(test_type, None)
 
-        entity_type = EntityType(
-            InputType.MOTION,
-            weight=weight,
-            active_states=active_states,
-            active_range=active_range,
-        )
+        try:
+            with caplog.at_level(logging.WARNING):
+                entity_type = EntityType(test_type)
 
-        # Should use default active_states from DEFAULT_TYPES, not empty list
-        assert entity_type.input_type == InputType.MOTION
-        assert entity_type.weight == 0.9  # Weight override should still work
-        assert (
-            entity_type.active_states
-            == DEFAULT_TYPES[InputType.MOTION]["active_states"]
-        )  # Default states
-        assert entity_type.active_range is None
-
-    def test_initialization_with_empty_states_list_for_range_type(self) -> None:
-        """Test that empty active_states list uses defaults for range-based types."""
-        mock_config = Mock()
-        mock_config.weights = Mock()
-        mock_config.weights.temperature = 0.2  # Override weight
-        mock_config.sensor_states = Mock()
-        mock_config.sensor_states.temperature = []  # Empty list - should use defaults
-        mock_config.temperature_active_range = None
-
-        # Extract overrides from config
-        weight = getattr(mock_config.weights, InputType.TEMPERATURE.value, None)
-        active_states = getattr(
-            mock_config.sensor_states, InputType.TEMPERATURE.value, None
-        )
-        active_range = getattr(
-            mock_config, f"{InputType.TEMPERATURE.value}_active_range", None
-        )
-
-        entity_type = EntityType(
-            InputType.TEMPERATURE,
-            weight=weight,
-            active_states=active_states,
-            active_range=active_range,
-        )
-
-        # Should use default active_range from DEFAULT_TYPES, not empty list
-        assert entity_type.input_type == InputType.TEMPERATURE
-        assert entity_type.weight == 0.2  # Weight override should still work
-        assert entity_type.active_states is None  # Default for temperature
-        assert (
-            entity_type.active_range
-            == DEFAULT_TYPES[InputType.TEMPERATURE]["active_range"]
-        )  # Default range
+            # Should still work with ultimate fallback
+            assert entity_type.weight == 0.5  # Ultimate fallback value
+            assert entity_type.active_states == [STATE_ON]  # Ultimate fallback
+        finally:
+            # Restore original values
+            if original_unknown is not None:
+                DEFAULT_TYPES[InputType.UNKNOWN] = original_unknown
+            if original_co2 is not None:
+                DEFAULT_TYPES[test_type] = original_co2

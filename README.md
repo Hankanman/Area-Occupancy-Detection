@@ -6,6 +6,9 @@
 
 [![version](https://shields.io/github/v/release/Hankanman/Area-Occupancy-Detection?style=for-the-badge)](https://github.com/Hankanman/Area-Occupancy-Detection/releases)
 [![Latest Release](https://img.shields.io/badge/dynamic/json?style=for-the-badge&color=41BDF5&logo=home-assistant&label=installs&cacheSeconds=15600&url=https://analytics.home-assistant.io/custom_integrations.json&query=$.area_occupancy.total)](https://analytics.home-assistant.io/custom_integrations.json)
+![GitHub Repo stars](https://img.shields.io/github/stars/Hankanman/Area-Occupancy-Detection?style=for-the-badge)
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ff813f?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/sebburrell)
 
 This integration provides advanced area occupancy detection by combining multiple sensors through probability calculations. It aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, historical data, and learned time-based occupancy patterns.
 
@@ -163,10 +166,8 @@ Key things to check in the logs:
 - **Releases & Changelog**: [GitHub Releases][releases]
 
 If you enjoy the integration, please consider buying me a coffee!
-[![Buy me a coffee][buymeacoffee-shield]][buymeacoffee]
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ff813f?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/sebburrell)
 
 [issues]: https://github.com/Hankanman/Area-Occupancy-Detection/issues
 [community]: https://github.com/Hankanman/Area-Occupancy-Detection/discussions
 [releases]: https://github.com/Hankanman/Area-Occupancy-Detection/releases
-[buymeacoffee-shield]: https://www.buymeacoffee.com/assets/img/guidelines/download-assets-sm-2.svg
-[buymeacoffee]: https://buymeacoffee.com/sebburrell

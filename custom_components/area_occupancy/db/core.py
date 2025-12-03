@@ -66,25 +66,15 @@ def _create_delegated_methods() -> dict[str, Any]:
     """
     return {
         # Maintenance methods
-        "check_database_integrity": maintenance.check_database_integrity,
-        "check_database_accessibility": maintenance.check_database_accessibility,
-        "is_database_corrupted": maintenance.is_database_corrupted,
-        "attempt_database_recovery": maintenance.attempt_database_recovery,
-        "backup_database": maintenance.backup_database,
-        "restore_database_from_backup": maintenance.restore_database_from_backup,
-        "handle_database_corruption": maintenance.handle_database_corruption,
         "periodic_health_check": maintenance.periodic_health_check,
-        "set_db_version": maintenance.set_db_version,
         "get_db_version": maintenance.get_db_version,
         "delete_db": maintenance.delete_db,
-        "force_reinitialize": maintenance.force_reinitialize,
         "init_db": maintenance.init_db,
         # Operations methods
         "load_data": operations.load_data,
+        "save_data": operations.save_data,
         "save_area_data": operations.save_area_data,
         "save_entity_data": operations.save_entity_data,
-        "save_data": operations.save_data,
-        "cleanup_orphaned_entities": operations.cleanup_orphaned_entities,
         "delete_area_data": operations.delete_area_data,
         "ensure_area_exists": operations.ensure_area_exists,
         "prune_old_intervals": operations.prune_old_intervals,
@@ -93,7 +83,6 @@ def _create_delegated_methods() -> dict[str, Any]:
         "save_occupied_intervals_cache": operations.save_occupied_intervals_cache,
         # Utility methods
         "is_intervals_empty": utils.is_intervals_empty,
-        "safe_is_intervals_empty": utils.safe_is_intervals_empty,
         # Query methods (except get_time_prior which adds logic)
         "get_area_data": queries.get_area_data,
         "get_latest_interval": queries.get_latest_interval,
