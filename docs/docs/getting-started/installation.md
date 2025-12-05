@@ -1,59 +1,69 @@
 # Installation
 
-There are two main ways to install the Area Occupancy Detection integration for Home Assistant:
-
-## Method 1: HACS (Recommended)
-
-1. **Ensure HACS is installed:** If you don't have the [Home Assistant Community Store (HACS)](https://hacs.xyz/) installed, follow their instructions to set it up first.
-2. **Navigate to HACS:** Open your Home Assistant frontend and go to HACS in the sidebar.
-3. **Go to Integrations:** Click on "Integrations".
-4. **Explore & Add Repositories:** Click the vertical ellipsis (three dots) in the top right corner and select "Custom repositories".
-5. **Add Custom Repository:**
-    * **Repository:** Enter the URL of this integration's GitHub repository: `https://github.com/Hankanman/Area-Occupancy-Detection`
-    * **Category:** Select `Integration`.
-    * Click **Add**.
-6. **Install Integration:** Back in the main HACS Integrations view, search for "Area Occupancy Detection". Click on it and then click the **Download** button. Select the latest version and confirm.
-7. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance (Configuration -> Settings -> Server Management -> Restart, or use the Developer Tools).
+## HACS
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hankanman&repository=Area-Occupancy-Detection&category=integration)
 
-## Method 2: Manual Installation
+1. **Ensure HACS is installed:** If you don't have the [Home Assistant Community Store (HACS)](https://hacs.xyz/) installed, follow their instructions to set it up first.
+2. **Navigate to HACS:** Open your Home Assistant frontend and go to HACS in the sidebar.
+3. **Search for Area Occupancy Detection:** Search for "Area Occupancy Detection" and select then **Download**.
+7. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
 
-1. **Download the Latest Release:** Go to the [Releases page](https://github.com/Hankanman/Area-Occupancy-Detection/releases) of the GitHub repository and download the `area_occupancy.zip` file from the latest release assets.
-2. **Unzip the File:** Extract the contents of the downloaded zip file. You should have a folder named `area_occupancy` containing files like `__init__.py`, `manifest.json`, etc.
-3. **Access Home Assistant Configuration Directory:** Connect to the machine running your Home Assistant instance (e.g., via Samba, SSH, or the File editor add-on).
-4. **Navigate to `custom_components`:** Inside your main Home Assistant configuration directory (where your `configuration.yaml` file is located), find or create a folder named `custom_components`.
-5. **Copy Integration Folder:** Copy the entire extracted `area_occupancy` folder (the one containing `__init__.py`) into the `custom_components` folder.
-    Your directory structure should look like this:
-    ```
-    <config_directory>
-        └── custom_components/
-            └── area_occupancy/
-                ├── __init__.py
-                ├── manifest.json
-                ├── sensor.py
-                └── ... (other integration files)
-    ```
-6. **Restart Home Assistant:** Restart your Home Assistant instance (Configuration -> Settings -> Server Management -> Restart, or use the Developer Tools).
+## Initial Setup
 
-## Verification
+1. Go to **Settings** > **Devices & Services** > **Integrations** > **+ Add Integration**.
+2. Search for **Area Occupancy Detection** and select it.
+3. **Navigate to Integrations:** Go to **Configuration** -> **Devices & Services** -> **Integrations**.
+4. **Add Integration:** Click the **+ Add Integration** button in the bottom right.
+5. **Search:** Search for "Area Occupancy Detection" and select it.
+6. **Configure Area Name:**
+    - Select a Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.
+    - You may need to create the area in Home Assistant first if it doesn't exist.
+7. **Configure Area Purpose:**
+    - Choose the purpose of the area. This sets a sensible default for the decay half life used when probability decreases. The purpose selection affects how quickly the system "forgets" about occupancy after activity stops.
+8. **Configure Sensors:**
+    - Select the sensors that will be used to detect occupancy.
+    - You will need to select at least one motion/presence sensor for the integration to work.
+    - You can then add sensors of many different types to the area to improve the accuracy of the occupancy detection.
 
-After installation:
+## Configuration
 
-1. Restart Home Assistant
-2. Go to Settings → Devices & Services
-3. Click "+ Add Integration"
-4. Search for "Area Occupancy Detection"
-   - If it appears, installation was successful
-   - If not, check Home Assistant logs for errors
+When you first create the integration you will taken straight to configuring the first area.
 
-### Getting Help
+When adding new areas you will need to navigate to **Integrations** -> **Area Occupancy Detection** -> **Configure (⚙️ Cog icon)**. This will bring up the configuration menu.
+
+There is detailed documentation on the configuration options here: [Configuration](configuration.md).
+
+### Main Menu
+
+The main menu allows you to modify global settings, add a new area, or manage existing areas.
+
+![Main Menu](../images/config_main_menu.png)
+
+### Global Settings
+
+The global settings menu allows you to modify the global settings for the integration, these are limited for now and will be expanded in the future.
+
+![Global Settings](../images/config_global_settings.png)
+
+### Add New Area
+
+The add new area menu allows you to add a new area to the integration.
+
+![Add New Area](../images/config_new_area.png)
+
+### Manage Areas
+
+The manage areas menu allows you to manage existing areas, you can see a summary of each area and the sensors associated with it. You can then select one of the areas to edit or remove.
+
+![Manage Areas](../images/config_manage_areas.png)
+
+![Manage Area](../images/config_manage_area.png)
+
+## Getting Help
 
 If you encounter issues:
 
 1. Search [GitHub Issues](https://github.com/Hankanman/Area-Occupancy-Detection/issues)
 2. Join the [Discussion](https://github.com/Hankanman/Area-Occupancy-Detection/discussions)
 
-## Next Steps
-
-After restarting, proceed to the [Configuration](configuration.md) guide to set up your first Area Occupancy instance.
