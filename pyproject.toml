@@ -22,12 +22,6 @@ classifiers = [
   "Topic :: Home Automation",
 ]
 requires-python = ">=3.13.2"
-dependencies = [
-  # External dependencies used directly by the component
-  # Home Assistant and its dependencies are managed by the homeassistant package
-  "sqlalchemy>=2.0",
-  "numpy>=1.24.0",
-]
 
 [project.optional-dependencies]
 dev = [

@@ -1,3 +1,4 @@
+homeassistant==2025.12.0b3
 pytest-homeassistant-custom-component
 pytest-cov
 matplotlib>=3.10.0
