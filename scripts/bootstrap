@@ -36,13 +36,13 @@ if [ ! -d ".venv" ]; then
 fi
 
 echo "==> Installing dependencies..."
-uv pip install --python .venv/bin/python --requirement requirements.txt
+uv pip install --python .venv/bin/python --pre --requirement requirements.txt
 
 echo "==> Installing test dependencies..."
-uv pip install --python .venv/bin/python --requirement requirements_test.txt
+uv pip install --python .venv/bin/python --pre --requirement requirements_test.txt
 
 echo "==> Installing dev dependencies..."
-uv pip install --python .venv/bin/python ".[dev]"
+uv pip install --python .venv/bin/python --pre ".[dev]"
 
 echo "==> Installing pre-commit hooks..."
 uv run pre-commit install
