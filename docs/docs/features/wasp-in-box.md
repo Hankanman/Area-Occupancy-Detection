@@ -10,6 +10,15 @@ The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a
 
 The feature is named after the concept of a wasp trapped in a box - once inside, it remains there until an opening appears. Similarly, once a person enters a closed space, they must be considered "present" until they exit through the door.
 
+## Configuration
+
+| Parameter               | Description                                                            | Range           | Default               |
+| ----------------------- | ---------------------------------------------------------------------- | --------------- | --------------------- |
+| **Wasp in Box Enabled** | Toggle the Wasp in Box virtual sensor                                  | True/False      | Disabled              |
+| **Motion Timeout**      | How long motion sensors remain active after detecting motion           | 0-3600 seconds  | 300 seconds           |
+| **Weight**              | Influence of the Wasp in Box sensor on final probability calculation   | 0.0-1.0         | 0.8                   |
+| **Max Duration**        | Maximum time the Wasp in Box can indicate occupancy without new motion | 0-86400 seconds | 3600 seconds (1 hour) |
+
 ## Core Principles
 
 The sensor implements three fundamental rules:
