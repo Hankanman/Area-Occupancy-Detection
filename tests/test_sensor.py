@@ -368,10 +368,12 @@ class TestDecaySensor:
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.appliance1"
         mock_entity1.decay.decay_factor = 0.5
+        mock_entity1.decay.half_life = 300.0
 
         mock_entity2 = Mock()
         mock_entity2.entity_id = "binary_sensor.appliance2"
         mock_entity2.decay.decay_factor = 0.75
+        mock_entity2.decay.half_life = 600.0
 
         area._entities = Mock()
         area._entities.decaying_entities = [mock_entity1, mock_entity2]
@@ -386,8 +388,10 @@ class TestDecaySensor:
         # Verify structure of decaying entities
         assert attributes["decaying"][0]["id"] == "binary_sensor.appliance1"
         assert attributes["decaying"][0]["decay"] == "50.00%"  # format_percentage(0.5)
+        assert attributes["decaying"][0]["half_life"] == 300.0
         assert attributes["decaying"][1]["id"] == "binary_sensor.appliance2"
         assert attributes["decaying"][1]["decay"] == "75.00%"  # format_percentage(0.75)
+        assert attributes["decaying"][1]["half_life"] == 600.0
 
     def test_extra_state_attributes_error_handling(
         self, coordinator: AreaOccupancyCoordinator
@@ -441,10 +445,12 @@ class TestDecaySensor:
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.entity1"
         mock_entity1.decay.decay_factor = 0.3
+        mock_entity1.decay.half_life = 240.0
 
         mock_entity2 = Mock()
         mock_entity2.entity_id = "binary_sensor.entity2"
         mock_entity2.decay.decay_factor = 0.7
+        mock_entity2.decay.half_life = 480.0
 
         area._entities = Mock()
         area._entities.decaying_entities = [mock_entity1, mock_entity2]
@@ -456,9 +462,11 @@ class TestDecaySensor:
         for item in attrs["decaying"]:
             assert "id" in item
             assert "decay" in item
+            assert "half_life" in item
             assert isinstance(item["id"], str)
             assert isinstance(item["decay"], str)  # format_percentage returns string
             assert item["decay"].endswith("%")
+            assert isinstance(item["half_life"], float)
 
 
 class TestAllAreasSensors:
@@ -633,6 +641,7 @@ class TestAllAreasSensors:
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.test"
         mock_entity.decay.decay_factor = 0.5
+        mock_entity.decay.half_life = 300.0
 
         area._entities = Mock()
         area._entities.decaying_entities = [mock_entity]
@@ -643,6 +652,7 @@ class TestAllAreasSensors:
         assert len(attrs["decaying"]) == 1
         assert attrs["decaying"][0]["area"] == area_name
         assert attrs["decaying"][0]["id"] == "binary_sensor.test"
+        assert attrs["decaying"][0]["half_life"] == 300.0
 
     def test_all_areas_decay_sensor_extra_attributes_multiple_areas(
         self, coordinator: AreaOccupancyCoordinator
@@ -663,6 +673,7 @@ class TestAllAreasSensors:
             mock_entity = Mock()
             mock_entity.entity_id = f"binary_sensor.test{idx}"
             mock_entity.decay.decay_factor = 0.3 + (idx * 0.2)
+            mock_entity.decay.half_life = 300.0 + (idx * 100.0)
 
             area._entities = Mock()
             area._entities.decaying_entities = [mock_entity]
@@ -674,6 +685,10 @@ class TestAllAreasSensors:
         # Verify all areas are represented
         decaying_areas = {item["area"] for item in attrs["decaying"]}
         assert decaying_areas == set(area_names)
+        # Verify half_life is present for each decaying entity
+        for item in attrs["decaying"]:
+            assert "half_life" in item
+            assert isinstance(item["half_life"], float)
 
     def test_all_areas_sensors_with_no_areas(
         self, coordinator: AreaOccupancyCoordinator
@@ -933,6 +948,7 @@ class TestSensorIntegration:
         mock_entity1 = Mock()
         mock_entity1.entity_id = "binary_sensor.motion1"
         mock_entity1.decay.decay_factor = 0.8
+        mock_entity1.decay.half_life = 300.0
 
         area_name = coordinator_with_sensors.get_area_names()[0]
         area = coordinator_with_sensors.get_area(area_name)
@@ -944,11 +960,13 @@ class TestSensorIntegration:
         decay_sensor = DecaySensor(area_handle=handle)
         attrs = decay_sensor.extra_state_attributes
         assert len(attrs["decaying"]) == 1
+        assert attrs["decaying"][0]["half_life"] == 300.0
 
         # Add another decaying entity
         mock_entity2 = Mock()
         mock_entity2.entity_id = "binary_sensor.motion2"
         mock_entity2.decay.decay_factor = 0.6
+        mock_entity2.decay.half_life = 600.0
 
         area._entities.decaying_entities = [
             mock_entity1,
@@ -956,6 +974,8 @@ class TestSensorIntegration:
         ]
         attrs = decay_sensor.extra_state_attributes
         assert len(attrs["decaying"]) == 2
+        assert attrs["decaying"][0]["half_life"] == 300.0
+        assert attrs["decaying"][1]["half_life"] == 600.0
 
     def test_sensor_error_handling(
         self, coordinator_with_sensors: AreaOccupancyCoordinator
