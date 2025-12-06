@@ -12,12 +12,15 @@ The feature is named after the concept of a wasp trapped in a box - once inside,
 
 ## Configuration
 
-| Parameter               | Description                                                            | Range           | Default               |
-| ----------------------- | ---------------------------------------------------------------------- | --------------- | --------------------- |
-| **Wasp in Box Enabled** | Toggle the Wasp in Box virtual sensor                                  | True/False      | Disabled              |
-| **Motion Timeout**      | How long motion sensors remain active after detecting motion           | 0-3600 seconds  | 300 seconds           |
-| **Weight**              | Influence of the Wasp in Box sensor on final probability calculation   | 0.0-1.0         | 0.8                   |
-| **Max Duration**        | Maximum time the Wasp in Box can indicate occupancy without new motion | 0-86400 seconds | 3600 seconds (1 hour) |
+The Wasp in Box sensor can be configured in the integration settings:
+
+| Setting                | Description                                                                                               | Default      | Related Scenarios  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- | ------------ | ------------------ |
+| **Enable Wasp in Box** | Turn this virtual sensor on or off                                                                        | Disabled     | All scenarios      |
+| **Motion Timeout**     | How long motion events are considered recent (in seconds)                                                 | 300s (5 min) | Scenarios 3, 4     |
+| **Wasp Weight**        | The weight factor for this sensor in probability calculations (0.1-1.0)                                   | 0.8          | N/A (probability)  |
+| **Maximum Duration**   | Maximum time (in seconds) a space can be marked as occupied before automatically resetting (0 = no limit) | 0 (disabled) | Scenario 11        |
+| **Verification Delay** | Delay before re-checking motion to verify occupancy, in seconds (0-120, 0 = disabled)                     | 0 (disabled) | Scenarios 10a, 10b |
 
 ## Core Principles
 
@@ -347,18 +350,6 @@ The feature creates a binary sensor that becomes part of your Area Occupancy Det
 - **Device Class**: `occupancy`
 - **Weight**: The sensor's state is considered alongside other sensors in the Bayesian probability calculation, with its influence determined by the configured weight (default: 0.8)
 - **Decay Disabled**: Unlike standard motion sensors, this sensor has probability decay disabled. When the door opens, it transitions immediately to "OFF", ensuring the room is marked as vacant instantly without a fading memory period.
-
-## Configuration
-
-The Wasp in Box sensor can be configured in the integration settings:
-
-| Setting                       | Description                                                                                               | Default      | Related Scenarios  |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------- | ------------ | ------------------ |
-| **Enable Wasp in Box**        | Turn this virtual sensor on or off                                                                        | Disabled     | All scenarios      |
-| **Motion Timeout**            | How long motion events are considered recent (in seconds)                                                 | 300s (5 min) | Scenarios 3, 4     |
-| **Wasp Weight**               | The weight factor for this sensor in probability calculations (0.1-1.0)                                   | 0.8          | N/A (probability)  |
-| **Maximum Occupied Duration** | Maximum time (in seconds) a space can be marked as occupied before automatically resetting (0 = no limit) | 0 (disabled) | Scenario 11        |
-| **Verification Delay**        | Delay before re-checking motion to verify occupancy, in seconds (0-120, 0 = disabled)                     | 0 (disabled) | Scenarios 10a, 10b |
 
 ### Motion Timeout
 

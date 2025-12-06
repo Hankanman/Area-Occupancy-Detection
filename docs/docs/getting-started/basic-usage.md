@@ -2,9 +2,9 @@
 
 Once [configured](configuration.md), there are four entities to monitor, Occupancy Status, Occupancy Probability, Prior Probability, and Threshold. The history panel in Home Assistant is great for visualising the data over time.
 
-The graph below shows a 24 hour period for the Lounge. I added some annotations to show my threshold is set at 75% because I have strong occupancy indicators and multiple motion sensors and my TV as a media player configured. You can see that we can determine some very clear periods of occupancy from the Occupancy Status and the spikes in the graph of Occupancy Probability.
+The graph below shows a 24-hour period for the Lounge. I added some annotations to show my threshold is set at 75% because I have strong occupancy indicators and multiple motion sensors and my TV as a media player configured. You can see that we can determine some very clear periods of occupancy from the Occupancy Status and the spikes in the graph of Occupancy Probability.
 
-We can also see the prior probability in yellow on the graph. This is the probability before any evidence is observed. Think of it as a percentage of total time that the area is occupied. in this case you can see that around 20% of the time someone is in the lounge. This fluctuates based on the time of day and day of week, it will get more accurate the longer you have the integration running. This is fugured out be the integration based on previous evidence from sensors in your Home Assistant history data.
+We can also see the prior probability in yellow on the graph. This is the probability before any evidence is observed. Think of it as a percentage of total time that the area is occupied. In this case you can see that around 20% of the time someone is in the lounge. This fluctuates based on the time of day and day of week, it will get more accurate the longer you have the integration running. This is figured out by the integration based on previous evidence from sensors in your Home Assistant history data.
 
 If you get too many false positives, you can adjust the threshold up or down. You can also adjust the weights of the sensors to give more or less influence to the sensors in the [configuration](configuration.md).
 

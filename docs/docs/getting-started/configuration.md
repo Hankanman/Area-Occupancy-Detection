@@ -24,7 +24,7 @@ The following purposes are available (in order of decay time, shortest to longes
 You can override the resulting half life in the parameters section if needed.
 
 **Global Sleep Schedule:**
-For areas with the `Bedroom` purpose, the half-life dynamically adjusts based on your configured sleep schedule. You can set your household's `Sleep Start` and `Sleep End` times in the **Global Settings** menu (accessible via the main integration options). Outside of sleep hours, `Bedroom` areas behave like `Living Room` areas.
+For areas with the `Bedroom` purpose, the half life dynamically adjusts based on your configured sleep schedule. You can set your household's `Sleep Start` and `Sleep End` times in the **Global Settings** menu (accessible via the main integration options). Outside of sleep hours, `Bedroom` areas behave like `Living Room` areas.
 
 ## Sensor Selection
 
