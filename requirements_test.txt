@@ -1,4 +1,4 @@
-homeassistant==2025.12.0b3
-pytest-homeassistant-custom-component
+homeassistant==2025.12.0
+pytest-homeassistant-custom-component==0.13.298
 pytest-cov
 matplotlib>=3.10.0

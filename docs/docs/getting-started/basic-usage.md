@@ -1,6 +1,14 @@
 # Basic Usage
 
-This guide covers the basic usage of the Area Occupancy Detection integration after installation and configuration.
+Once [configured](configuration.md), there are four entities to monitor, Occupancy Status, Occupancy Probability, Prior Probability, and Threshold. The history panel in Home Assistant is great for visualising the data over time.
+
+The graph below shows a 24-hour period for the Lounge. I added some annotations to show my threshold is set at 75% because I have strong occupancy indicators and multiple motion sensors and my TV as a media player configured. You can see that we can determine some very clear periods of occupancy from the Occupancy Status and the spikes in the graph of Occupancy Probability.
+
+We can also see the prior probability in yellow on the graph. This is the probability before any evidence is observed. Think of it as a percentage of total time that the area is occupied. In this case you can see that around 20% of the time someone is in the lounge. This fluctuates based on the time of day and day of week, it will get more accurate the longer you have the integration running. This is figured out by the integration based on previous evidence from sensors in your Home Assistant history data.
+
+If you get too many false positives, you can adjust the threshold up or down. You can also adjust the weights of the sensors to give more or less influence to the sensors in the [configuration](configuration.md).
+
+![alt text](../images/lounge_occupancy_graph.png)
 
 ## Created Entities
 
@@ -17,11 +25,11 @@ This entity shows the overall occupancy status, you can use it in automations su
 
 ### Occupancy Probability
 
-This entity shows the calculated probability of occupancy based on the sensors and their weights that are currently active based on your configuration.
+This entity shows the calculated probability of occupancy based on the sensors and their weights that are currently active based on your configuration as a percentage.
 
 ### Prior Probability
 
-The prior probability is the probability of occupancy before any sensors are active. It is used to provide a baseline probability of occupancy.
+The prior probability is the probability of occupancy before any evidence is observed. It is used to provide a baseline probability of occupancy as a percentage.
 
 **Attributes:**
 
@@ -105,21 +113,24 @@ automation:
 ## Tips and Tricks
 
 1. **Optimal Threshold**:
-      - Start at 50%
-      - Increase for fewer false positives
-      - Decrease for higher sensitivity
+
+   - Start at 50%
+   - Increase for fewer false positives
+   - Decrease for higher sensitivity
 
 2. **Sensor Weights**:
-      - Adjust based on reliability
-      - Higher weights = stronger influence
-      - Balance multiple sensors
+
+   - Adjust based on reliability
+   - Higher weights = stronger influence
+   - Balance multiple sensors
 
 3. **Decay Settings**:
-      - Match room usage patterns
-      - Longer windows for less traffic
-      - Shorter windows for high traffic
+
+   - Match room usage patterns
+   - Longer windows for less traffic
+   - Shorter windows for high traffic
 
 4. **Historical Learning**:
-      - Enable for better accuracy
-      - Use longer periods when stable
-      - Update regularly
+   - Enable for better accuracy
+   - Use longer periods when stable
+   - Update regularly

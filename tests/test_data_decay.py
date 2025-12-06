@@ -12,6 +12,10 @@ from custom_components.area_occupancy.data.purpose import (
 )
 from homeassistant.util import dt as dt_util
 
+# Get decay values from purpose definitions for use in tests
+SLEEPING_HALF_LIFE = PURPOSE_DEFINITIONS[AreaPurpose.SLEEPING].half_life
+RELAXING_HALF_LIFE = PURPOSE_DEFINITIONS[AreaPurpose.RELAXING].half_life
+
 
 class TestDecay:
     """Test the Decay class."""
@@ -280,17 +284,17 @@ class TestDecay:
         # Only matches at the exact time
         # At exact time - should use base_half_life (within window)
         TestDecayHalfLife.check_sleep_window_half_life(
-            "12:00:00", "12:00:00", "12:00:00", 1200.0, 1200.0
+            "12:00:00", "12:00:00", "12:00:00", SLEEPING_HALF_LIFE, SLEEPING_HALF_LIFE
         )
 
         # One second before - should use RELAXING half_life (outside window)
         TestDecayHalfLife.check_sleep_window_half_life(
-            "11:59:59", "12:00:00", "12:00:00", 600.0, 1200.0
+            "11:59:59", "12:00:00", "12:00:00", RELAXING_HALF_LIFE, SLEEPING_HALF_LIFE
         )
 
         # One second after - should use RELAXING half_life (outside window)
         TestDecayHalfLife.check_sleep_window_half_life(
-            "12:00:01", "12:00:00", "12:00:00", 600.0, 1200.0
+            "12:00:01", "12:00:00", "12:00:00", RELAXING_HALF_LIFE, SLEEPING_HALF_LIFE
         )
 
     def test_decay_very_large_half_life(self) -> None:
@@ -316,6 +320,10 @@ class TestDecay:
 
 class TestDecayHalfLife:
     """Test the Decay half_life property logic."""
+
+    # Class-level constants that reference module-level constants
+    SLEEPING_HALF_LIFE = SLEEPING_HALF_LIFE
+    RELAXING_HALF_LIFE = RELAXING_HALF_LIFE
 
     @staticmethod
     def create_time_datetime(time_str: str) -> datetime:
@@ -387,23 +395,23 @@ class TestDecayHalfLife:
     ) -> None:
         """Test SLEEPING purpose without complete sleep config returns base_half_life."""
         decay = Decay(
-            half_life=1200.0,
+            half_life=self.SLEEPING_HALF_LIFE,
             purpose=AreaPurpose.SLEEPING.value,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
         )
-        assert decay.half_life == 1200.0
+        assert decay.half_life == self.SLEEPING_HALF_LIFE
 
     @pytest.mark.parametrize(
         ("current_time", "sleep_start", "sleep_end", "expected_half_life"),
         [
             # Same-day window: 13:00-15:00
-            ("13:00:00", "13:00:00", "15:00:00", 1200.0),  # At start
-            ("14:00:00", "13:00:00", "15:00:00", 1200.0),  # Middle
-            ("15:00:00", "13:00:00", "15:00:00", 1200.0),  # At end
+            ("13:00:00", "13:00:00", "15:00:00", SLEEPING_HALF_LIFE),  # At start
+            ("14:00:00", "13:00:00", "15:00:00", SLEEPING_HALF_LIFE),  # Middle
+            ("15:00:00", "13:00:00", "15:00:00", SLEEPING_HALF_LIFE),  # At end
             # Same-day window: outside
-            ("12:59:59", "13:00:00", "15:00:00", 600.0),  # Before
-            ("15:00:01", "13:00:00", "15:00:00", 600.0),  # After
+            ("12:59:59", "13:00:00", "15:00:00", RELAXING_HALF_LIFE),  # Before
+            ("15:00:01", "13:00:00", "15:00:00", RELAXING_HALF_LIFE),  # After
         ],
     )
     def test_sleeping_same_day_window(
@@ -415,20 +423,20 @@ class TestDecayHalfLife:
     ) -> None:
         """Test SLEEPING purpose with same-day sleep window."""
         self.check_sleep_window_half_life(
-            current_time, sleep_start, sleep_end, expected_half_life, 1200.0
+            current_time, sleep_start, sleep_end, expected_half_life, SLEEPING_HALF_LIFE
         )
 
     @pytest.mark.parametrize(
         ("current_time", "sleep_start", "sleep_end", "expected_half_life"),
         [
             # Overnight window: 23:00-07:00
-            ("23:00:00", "23:00:00", "07:00:00", 1200.0),  # At start
-            ("01:00:00", "23:00:00", "07:00:00", 1200.0),  # Middle of night
-            ("07:00:00", "23:00:00", "07:00:00", 1200.0),  # At end
+            ("23:00:00", "23:00:00", "07:00:00", SLEEPING_HALF_LIFE),  # At start
+            ("01:00:00", "23:00:00", "07:00:00", SLEEPING_HALF_LIFE),  # Middle of night
+            ("07:00:00", "23:00:00", "07:00:00", SLEEPING_HALF_LIFE),  # At end
             # Overnight window: outside
-            ("22:59:59", "23:00:00", "07:00:00", 600.0),  # Before start
-            ("07:00:01", "23:00:00", "07:00:00", 600.0),  # After end
-            ("12:00:00", "23:00:00", "07:00:00", 600.0),  # Middle of day
+            ("22:59:59", "23:00:00", "07:00:00", RELAXING_HALF_LIFE),  # Before start
+            ("07:00:01", "23:00:00", "07:00:00", RELAXING_HALF_LIFE),  # After end
+            ("12:00:00", "23:00:00", "07:00:00", RELAXING_HALF_LIFE),  # Middle of day
         ],
     )
     def test_sleeping_overnight_window(
@@ -440,25 +448,25 @@ class TestDecayHalfLife:
     ) -> None:
         """Test SLEEPING purpose with overnight sleep window."""
         self.check_sleep_window_half_life(
-            current_time, sleep_start, sleep_end, expected_half_life, 1200.0
+            current_time, sleep_start, sleep_end, expected_half_life, SLEEPING_HALF_LIFE
         )
 
     def test_sleeping_error_handling_invalid_format(self) -> None:
         """Test SLEEPING purpose with invalid sleep time format falls back to base_half_life."""
         decay = Decay(
-            half_life=1200.0,
+            half_life=self.SLEEPING_HALF_LIFE,
             purpose=AreaPurpose.SLEEPING.value,
             sleep_start="invalid",
             sleep_end="07:00:00",
         )
 
         # Should fall back to base_half_life due to ValueError in strptime
-        assert decay.half_life == 1200.0
+        assert decay.half_life == self.SLEEPING_HALF_LIFE
 
     def test_sleeping_error_handling_type_error(self) -> None:
         """Test SLEEPING purpose error handling for TypeError."""
         decay = Decay(
-            half_life=1200.0,
+            half_life=self.SLEEPING_HALF_LIFE,
             purpose=AreaPurpose.SLEEPING.value,
             sleep_start="23:00:00",
             sleep_end="07:00:00",
@@ -469,20 +477,24 @@ class TestDecayHalfLife:
             "homeassistant.util.dt.as_local", side_effect=TypeError("Test error")
         ):
             # Should fall back to base_half_life
-            assert decay.half_life == 1200.0
+            assert decay.half_life == self.SLEEPING_HALF_LIFE
 
     def test_sleeping_relaxing_fallback(self) -> None:
         """Test SLEEPING purpose outside sleep window uses RELAXING half_life."""
         # Test with datetime outside sleep window (12:00:00)
         TestDecayHalfLife.check_sleep_window_half_life(
-            "12:00:00", "23:00:00", "07:00:00", 600.0, 1200.0
+            "12:00:00",
+            "23:00:00",
+            "07:00:00",
+            self.RELAXING_HALF_LIFE,
+            self.SLEEPING_HALF_LIFE,
         )
 
         # Verify it's using RELAXING purpose's half_life
         expected_relaxing_half_life = PURPOSE_DEFINITIONS[
             AreaPurpose.RELAXING
         ].half_life
-        assert expected_relaxing_half_life == 600.0
+        assert expected_relaxing_half_life == self.RELAXING_HALF_LIFE
 
     def test_sleeping_relaxing_fallback_when_missing(self) -> None:
         """Test SLEEPING purpose falls back to base_half_life when RELAXING is missing."""
