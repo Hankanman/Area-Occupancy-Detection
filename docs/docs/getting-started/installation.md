@@ -25,7 +25,7 @@
 
 ## Configuration
 
-When you first create the integration you will taken straight to configuring the first area.
+When you first create the integration you will be taken straight to configuring the first area.
 
 When adding new areas you will need to navigate to **Integrations** -> **Area Occupancy Detection** -> **Configure (⚙️ Cog icon)**. This will bring up the configuration menu.
 

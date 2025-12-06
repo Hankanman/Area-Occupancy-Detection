@@ -41,11 +41,11 @@ Each purpose's half-life is tuned to match typical usage patterns:
 
 - **Dining Room (480s / 8 min):** Meals typically last 10-20 minutes, but people sit relatively still while eating. A moderate-long half-life matches typical meal duration, accounting for periods of stillness between bites.
 
-- **Living Room (480s / 8 min):** Conversations and board games create sporadic motion with quiet pauses. A moderate-long half-life allows evidence to fade gently, riding out quiet pauses without flickering.
+- **Living Room (520s / ~8.5 min):** Conversations and board games create sporadic motion with quiet pauses. A moderate-long half-life allows evidence to fade gently, riding out quiet pauses without flickering.
 
 - **Office (600s / 10 min):** Long seated sessions with occasional trips for coffee or printer. People can be very still while focused on work. A longer half-life prevents premature "vacant" detection during focused work periods while still clearing after extended absence.
 
-- **Media Room (600s / 10 min):** People can remain very still while watching TV or reading. A longer half-life keeps the room marked as "occupied" through extended stretches of calm activity, matching the description's "quarter-hour memory" concept.
+- **Media Room (620s / ~10 min):** People can remain very still while watching TV or reading. A longer half-life keeps the room marked as "occupied" through extended stretches of calm activity, while still allowing the room to clear after a reasonable period of inactivity.
 
 - **Bedroom (1200s / 20 min):** Deep sleep has minimal motion. A very long half-life prevents false vacancy during deep sleep while still allowing the house to revert to "empty" within a couple of hours after everyone gets up. This is especially important for preventing lights from turning off during the night.
 
