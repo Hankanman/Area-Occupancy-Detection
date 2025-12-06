@@ -1,13 +1,14 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DEVICE_SW_VERSION, DOMAIN
 from .utils import get_coordinator
 
 if TYPE_CHECKING:
@@ -150,7 +151,9 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         coordinator = get_coordinator(hass)
 
         _LOGGER.info("Running analysis for all areas")
+        analysis_start_time = time.perf_counter()
         await coordinator.run_analysis()
+        analysis_time_ms = (time.perf_counter() - analysis_start_time) * 1000
 
         # Aggregate data from all areas
         all_areas_data = {}
@@ -163,6 +166,8 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         return {
             "areas": all_areas_data,
             "update_timestamp": dt_util.utcnow().isoformat(),
+            "analysis_time_ms": analysis_time_ms,
+            "device_sw_version": DEVICE_SW_VERSION,
         }
     except Exception as err:
         error_msg = f"Failed to run analysis: {err}"
