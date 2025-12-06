@@ -2,7 +2,6 @@
   "recommendations": [
     "charliermarsh.ruff",
     "ms-python.python",
-    "prettier.prettier-vscode",
-    "davidanson.vscode-markdownlint"
+    "prettier.prettier-vscode"
   ]
 }
