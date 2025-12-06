@@ -1,0 +1,325 @@
+.md-content__inner {
+  margin: 0;
+}
+.md-content__inner {
+  padding: 0;
+}
+.md-content__inner:before {
+  display: none;
+}
+.md-content__button {
+  display: none;
+}
+p:first-of-type {
+  display: none;
+}
+
+.md-header--shadow {
+  box-shadow: none;
+}
+
+sl-details.md-card {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.aod-simulator,
+.sim-stack,
+.sim-layout {
+  display: flex;
+  flex-direction: column;
+}
+
+.sim-sticky {
+  position: sticky;
+  top: calc(var(--md-header-height, 3.3rem) + 1.5rem);
+  z-index: 1;
+}
+
+.sim-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  width: 100%;
+  min-height: 160px;
+  padding: 0 1.25rem;
+  background-color: var(--md-primary-fg-color);
+  box-shadow: 0 0 0.2rem #0000001a, 0 0.2rem 0.4rem #0003;
+}
+
+.sim-header h2 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.sim-header-content {
+  gap: 1.5rem;
+}
+
+.sim-header-content {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+}
+
+.sim-prob-chart {
+  border-radius: 0.75rem;
+  padding: 0;
+  background: var(--md-footer-bg-color, #ffffff);
+  display: flex;
+  align-items: center;
+  position: relative;
+  flex: 1 1 auto;
+}
+
+.sim-prob-overlay {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.sim-prob-overlay #probability-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--md-default-fg-color, #000000);
+  margin: 0;
+  text-shadow: 0 2px 4px rgba(255, 255, 255, 0.9);
+}
+
+.sim-header-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  align-items: stretch;
+}
+
+.sim-header-actions sl-button sl-icon {
+  font-size: 0.875rem;
+}
+
+.sim-header-actions sl-select::part(form-control-label) {
+  font-size: 0.7rem;
+}
+
+.sim-header-actions sl-button::part(base),
+.sim-header-actions sl-select::part(display-input) {
+  padding: unset;
+  min-height: unset;
+  font-size: unset;
+  height: unset;
+}
+
+.sim-prob-chart canvas {
+  width: 100% !important;
+  height: 125px;
+  max-height: 125px;
+}
+
+.md-main__inner {
+  margin: 0;
+  max-width: unset;
+}
+h1:first-of-type {
+  display: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+body.aod-simulator-mode {
+  min-height: 100vh;
+}
+
+/* Shoelace sizing overrides for MkDocs integration - High Specificity */
+:root .aod-simulator,
+:root .aod-simulator.sl-theme-light,
+:root .aod-simulator.sl-theme-dark {
+  --sl-font-size-2x-small: 0.625rem;
+  --sl-font-size-x-small: 0.7rem;
+  --sl-font-size-small: 0.75rem;
+  --sl-font-size-medium: 0.8125rem; /* ~13px */
+  --sl-font-size-large: 0.9375rem;
+  --sl-font-size-x-large: 1.125rem;
+  --sl-font-size-2x-large: 1.375rem;
+  --sl-font-size-3x-large: 1.625rem;
+  --sl-font-size-4x-large: 1.875rem;
+
+  --sl-input-height-small: 1.625rem;
+  --sl-input-height-medium: 2rem; /* 32px */
+  --sl-input-height-large: 2.5rem;
+
+  --sl-font-sans: inherit;
+  --sl-font-serif: inherit;
+  --sl-font-mono: inherit;
+
+  --sl-spacing-3x-small: 0.125rem;
+  --sl-spacing-2x-small: 0.25rem;
+  --sl-spacing-x-small: 0.5rem;
+  --sl-spacing-small: 0.75rem;
+  --sl-spacing-medium: 1rem;
+  --sl-spacing-large: 1.5rem;
+  --sl-spacing-x-large: 2rem;
+  --sl-spacing-2x-large: 2.5rem;
+  --sl-spacing-3x-large: 3rem;
+  --sl-spacing-4x-large: 3.5rem;
+}
+
+.sim-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sim-section-header,
+.sim-card-content,
+.sim-card-header,
+.sim-card-row,
+.sim-card-actions {
+  gap: 0.5rem;
+}
+
+.sim-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sim-controls,
+.sim-card-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.sim-controls--autofit {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.sim-card {
+  display: flex;
+  gap: 1.25rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--md-default-fg-color--lighter, #e0e0e0);
+}
+
+.sim-card-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sim-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.sim-card h3 {
+  margin: 0;
+}
+
+.sim-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.sim-card-row > div {
+  flex: 0 1 auto;
+}
+
+.sim-card-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.sim-card-actions sl-button::part(base) {
+  padding: 0.35rem 0.85rem;
+}
+
+.sim-placeholder {
+  width: 100%;
+}
+
+.sim-card-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.sim-metric-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--md-default-bg-color--lighter, rgba(0, 0, 0, 0.04));
+}
+
+.sim-metric-chip strong {
+  font-size: 1.1em;
+}
+
+.help-dialog::part(body) {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.help-dialog h1 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.help-dialog h2 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.help-dialog p {
+  margin-bottom: 1rem;
+}
+
+.help-dialog ul,
+.help-dialog ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.help-dialog li {
+  margin-bottom: 0.5rem;
+}
+
+.sim-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+@media (max-width: 1220px) {
+  .sim-card-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sim-sticky {
+    position: sticky;
+    top: var(--md-header-height, 2.4rem);
+    z-index: 1;
+  }
+
+  .sim-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
