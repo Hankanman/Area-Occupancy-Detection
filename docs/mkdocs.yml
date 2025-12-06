@@ -105,13 +105,14 @@ nav:
       - Configuration: getting-started/configuration.md
       - Basic Usage: getting-started/basic-usage.md
   - Features:
+      - Purpose: features/purpose.md
+      - Sensors: features/sensors.md
       - Bayesian Calculation: features/calculation.md
       - Prior Learning: features/prior-learning.md
       - Sensor Likelihoods: features/likelihood.md
       - Sensor Correlation: features/sensor-correlation.md
-      - Area Purpose: features/purpose.md
       - Wasp in Box: features/wasp-in-box.md
-      - Probability Decay: features/decay.md
+      - Decay: features/decay.md
       - Entities: features/entities.md
       - Services: features/services.md
   - Technical:

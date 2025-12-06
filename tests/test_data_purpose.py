@@ -71,7 +71,7 @@ class TestPurposeDefinitions:
     def test_get_purpose_options(self):
         """Test getting purpose options for UI."""
         options = get_purpose_options()
-        assert len(options) == 9
+        assert len(options) == 12
 
         # Verify structure
         assert all("value" in option and "label" in option for option in options)
