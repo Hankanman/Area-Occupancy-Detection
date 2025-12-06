@@ -331,6 +331,7 @@ class DecaySensor(AreaOccupancySensorBase):
                                 "area": area_name,
                                 "id": entity.entity_id,
                                 "decay": format_percentage(entity.decay.decay_factor),
+                                "half_life": entity.decay.half_life,
                             }
                             for entity in area.entities.decaying_entities
                         ]
@@ -344,6 +345,7 @@ class DecaySensor(AreaOccupancySensorBase):
                     {
                         "id": entity.entity_id,
                         "decay": format_percentage(entity.decay.decay_factor),
+                        "half_life": entity.decay.half_life,
                     }
                     for entity in area.entities.decaying_entities
                 ]
