@@ -1710,6 +1710,20 @@ def config_flow_options_flow(
 
     # Patch frame reporting to avoid issues with Mock config entries
     # The patch needs to stay active, so we patch it at module level
+    # Store config_entry in instance __dict__ and create a property that reads/writes it
+    flow.__dict__["_test_config_entry"] = config_flow_mock_config_entry_with_areas
+
+    def get_config_entry(self):
+        return self.__dict__.get(
+            "_test_config_entry", config_flow_mock_config_entry_with_areas
+        )
+
+    def set_config_entry(self, value):
+        self.__dict__["_test_config_entry"] = value
+
+    # Replace the read-only property with a read-write one on this instance's class
+    type(flow).config_entry = property(get_config_entry, set_config_entry)
+
     with (
         patch("homeassistant.helpers.frame.report_usage", return_value=None),
         patch(
@@ -1717,7 +1731,6 @@ def config_flow_options_flow(
         ),
         patch("homeassistant.loader.async_get_issue_tracker", return_value=None),
     ):
-        flow.config_entry = config_flow_mock_config_entry_with_areas
         yield flow
 
 

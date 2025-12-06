@@ -560,7 +560,7 @@ class TestAreaOccupancyConfigFlow:
             assert "menu_options" in result
         elif expected_step_id == "area_action":
             # _area_being_edited now stores area ID, not name
-            assert config_flow_flow._area_being_edited == "living_room"
+            assert config_flow_flow._area_being_edited == living_room_area_id
 
     @pytest.mark.parametrize(
         (
@@ -571,8 +571,8 @@ class TestAreaOccupancyConfigFlow:
             "needs_schema_mock",
         ),
         [
-            (CONF_ACTION_EDIT, "area_config", "living_room", None, True),
-            (CONF_ACTION_REMOVE, "remove_area", None, "living_room", False),
+            (CONF_ACTION_EDIT, "area_config", True, None, True),
+            (CONF_ACTION_REMOVE, "remove_area", None, True, False),
             (CONF_ACTION_CANCEL, "user", None, None, False),
         ],
     )
@@ -580,6 +580,7 @@ class TestAreaOccupancyConfigFlow:
         self,
         config_flow_flow,
         config_flow_sample_area,
+        setup_area_registry: dict[str, str],
         action,
         expected_step_id,
         expected_area_edited,
@@ -587,9 +588,11 @@ class TestAreaOccupancyConfigFlow:
         needs_schema_mock,
     ):
         """Test async_step_area_action with different actions."""
+        # Get actual area ID from sample area
+        living_room_area_id = config_flow_sample_area[CONF_AREA_ID]
         config_flow_flow._areas = [config_flow_sample_area]
         # _area_being_edited now stores area ID, not name
-        config_flow_flow._area_being_edited = "living_room"
+        config_flow_flow._area_being_edited = living_room_area_id
 
         user_input = {"action": action}
 
@@ -605,24 +608,26 @@ class TestAreaOccupancyConfigFlow:
             assert result.get("type") == FlowResultType.FORM
         assert result.get("step_id") == expected_step_id
         if expected_area_edited:
-            assert config_flow_flow._area_being_edited == expected_area_edited
+            assert config_flow_flow._area_being_edited == living_room_area_id
         elif action == CONF_ACTION_CANCEL:
             assert config_flow_flow._area_being_edited is None
         if expected_area_to_remove:
-            assert config_flow_flow._area_to_remove == expected_area_to_remove
+            assert config_flow_flow._area_to_remove == living_room_area_id
 
     async def test_async_step_area_config_preserves_name_when_editing(
-        self, config_flow_flow
+        self, config_flow_flow, setup_area_registry: dict[str, str]
     ):
         """Test that area_id is preserved when editing an area."""
-        config_flow_flow._areas = [
-            create_area_config(
-                name="Living Room",
-                motion_sensors=["binary_sensor.motion1"],
-            )
-        ]
+        # Get actual area ID from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        area_config = create_area_config(
+            name="Living Room",
+            motion_sensors=["binary_sensor.motion1"],
+        )
+        area_config[CONF_AREA_ID] = living_room_area_id
+        config_flow_flow._areas = [area_config]
         # _area_being_edited now stores area ID, not name
-        config_flow_flow._area_being_edited = "living_room"
+        config_flow_flow._area_being_edited = living_room_area_id
 
         # User submits form without area_id field (or with empty area_id)
         user_input = create_user_input(name="")  # Empty name - should be preserved
@@ -638,7 +643,7 @@ class TestAreaOccupancyConfigFlow:
             # Should have preserved the area_id
             mock_validate.assert_called_once()
             call_args = mock_validate.call_args[0][0]
-            assert call_args[CONF_AREA_ID] == "living_room"
+            assert call_args[CONF_AREA_ID] == living_room_area_id
 
     @pytest.mark.parametrize(
         (
@@ -692,6 +697,7 @@ class TestAreaOccupancyConfigFlow:
     async def test_config_flow_remove_area_scenarios(
         self,
         config_flow_flow,
+        setup_area_registry: dict[str, str],
         confirm,
         expected_type,
         expected_step_id,
@@ -699,14 +705,16 @@ class TestAreaOccupancyConfigFlow:
         area_to_remove_cleared,
     ):
         """Test config flow remove area with various scenarios."""
-        config_flow_flow._areas = [
-            create_area_config(
-                name="Living Room",
-                motion_sensors=["binary_sensor.motion1"],
-            )
-        ]
+        # Get actual area ID from registry
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        area_config = create_area_config(
+            name="Living Room",
+            motion_sensors=["binary_sensor.motion1"],
+        )
+        area_config[CONF_AREA_ID] = living_room_area_id
+        config_flow_flow._areas = [area_config]
         # _area_to_remove now stores area ID, not name
-        config_flow_flow._area_to_remove = "living_room"
+        config_flow_flow._area_to_remove = living_room_area_id
         user_input = {"confirm": confirm}
         result = await config_flow_flow.async_step_remove_area(user_input)
         assert result.get("type") == expected_type
@@ -722,9 +730,15 @@ class TestConfigFlowIntegration:
     """Test config flow integration scenarios."""
 
     async def test_complete_config_flow(
-        self, config_flow_flow, config_flow_valid_user_input
+        self,
+        config_flow_flow,
+        config_flow_valid_user_input,
+        setup_area_registry: dict[str, str],
     ):
         """Test complete configuration flow."""
+        # Get actual area ID from user input
+        expected_area_id = config_flow_valid_user_input[CONF_AREA_ID]
+
         # Step 1: Auto-starts area_config when no areas exist
         with patch_create_schema_context():
             result1 = await config_flow_flow.async_step_user()
@@ -756,7 +770,7 @@ class TestConfigFlowIntegration:
             areas = result_data.get(CONF_AREAS, [])
             assert len(areas) == 1
             area_data = areas[0]
-            assert area_data.get(CONF_AREA_ID) == "living_room"  # Area ID
+            assert area_data.get(CONF_AREA_ID) == expected_area_id  # Area ID
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert area_data.get(CONF_THRESHOLD) == 60
 
