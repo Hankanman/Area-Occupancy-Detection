@@ -987,6 +987,7 @@ class TestConfigFlowIntegration:
 
         # Second attempt with valid data
         valid_input = create_user_input(name="Living Room")
+        valid_input[CONF_AREA_ID] = living_room_area_id
 
         with patch_create_schema_context():
             result2 = await config_flow_flow.async_step_area_config(valid_input)
