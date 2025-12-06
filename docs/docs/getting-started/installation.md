@@ -7,24 +7,21 @@
 1. **Ensure HACS is installed:** If you don't have the [Home Assistant Community Store (HACS)](https://hacs.xyz/) installed, follow their instructions to set it up first.
 2. **Navigate to HACS:** Open your Home Assistant frontend and go to HACS in the sidebar.
 3. **Search for Area Occupancy Detection:** Search for "Area Occupancy Detection" and select then **Download**.
-7. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
+4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
 
 ## Initial Setup
 
 1. Go to **Settings** > **Devices & Services** > **Integrations** > **+ Add Integration**.
 2. Search for **Area Occupancy Detection** and select it.
-3. **Navigate to Integrations:** Go to **Configuration** -> **Devices & Services** -> **Integrations**.
-4. **Add Integration:** Click the **+ Add Integration** button in the bottom right.
-5. **Search:** Search for "Area Occupancy Detection" and select it.
-6. **Configure Area Name:**
-    - Select a Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.
-    - You may need to create the area in Home Assistant first if it doesn't exist.
-7. **Configure Area Purpose:**
-    - Choose the purpose of the area. This sets a sensible default for the decay half life used when probability decreases. The purpose selection affects how quickly the system "forgets" about occupancy after activity stops.
-8. **Configure Sensors:**
-    - Select the sensors that will be used to detect occupancy.
-    - You will need to select at least one motion/presence sensor for the integration to work.
-    - You can then add sensors of many different types to the area to improve the accuracy of the occupancy detection.
+3. **Configure Area Name:**
+   - Select a Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.
+   - You may need to create the area in Home Assistant first if it doesn't exist.
+4. **Configure Area Purpose:**
+   - Choose the purpose of the area. This sets a sensible default for the decay half-life used when probability decreases. The purpose selection affects how quickly the system "forgets" about occupancy after activity stops.
+5. **Configure Sensors:**
+   - Select the sensors that will be used to detect occupancy.
+   - You will need to select at least one motion/presence sensor for the integration to work.
+   - You can then add sensors of many different types to the area to improve the accuracy of the occupancy detection.
 
 ## Configuration
 
@@ -66,4 +63,3 @@ If you encounter issues:
 
 1. Search [GitHub Issues](https://github.com/Hankanman/Area-Occupancy-Detection/issues)
 2. Join the [Discussion](https://github.com/Hankanman/Area-Occupancy-Detection/discussions)
-

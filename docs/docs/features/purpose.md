@@ -39,7 +39,7 @@ Each purpose's half-life is tuned to match typical usage patterns:
 
 - **Bathroom (450s / 7.5 min):** Showers typically last 5-15 minutes, but motion sensors may not detect much movement during showers. A moderate-long half-life ensures the area stays marked as occupied throughout a typical shower, preventing lights from turning off.
 
-- **Eating (480s / 8 min):** Meals typically last 10-20 minutes, but people sit relatively still while eating. A moderate-long half-life matches typical meal duration, accounting for periods of stillness between bites.
+- **Dining Room (480s / 8 min):** Meals typically last 10-20 minutes, but people sit relatively still while eating. A moderate-long half-life matches typical meal duration, accounting for periods of stillness between bites.
 
 - **Living Room (480s / 8 min):** Conversations and board games create sporadic motion with quiet pauses. A moderate-long half-life allows evidence to fade gently, riding out quiet pauses without flickering.
 
