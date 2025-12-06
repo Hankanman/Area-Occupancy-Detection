@@ -25,6 +25,8 @@ service: area_occupancy.run_analysis
   - `likelihoods`: Updated likelihood data per entity. Each entity in `likelihoods` contains:
     - `analysis_error`: Error code indicating why analysis failed or was not performed (see below)
 - `update_timestamp`: ISO timestamp of when the analysis completed
+- `analysis_time_ms`: Total time taken for the full analysis in milliseconds (float)
+- `device_sw_version`: Integration software version string
 
 ### `analysis_error` Values
 
