@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.area_occupancy.const import DOMAIN
+from custom_components.area_occupancy.const import DEVICE_SW_VERSION, DOMAIN
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay as DecayClass
 from custom_components.area_occupancy.data.entity import Entity
@@ -189,6 +189,15 @@ class TestRunAnalysis:
         # Verify timestamp format
         assert isinstance(result["update_timestamp"], str)
         assert "T" in result["update_timestamp"] or "Z" in result["update_timestamp"]
+
+        # Verify analysis_time_ms is present and is a number
+        assert "analysis_time_ms" in result
+        assert isinstance(result["analysis_time_ms"], (int, float))
+        assert result["analysis_time_ms"] >= 0
+
+        # Verify device_sw_version is present and matches constant
+        assert "device_sw_version" in result
+        assert result["device_sw_version"] == DEVICE_SW_VERSION
 
     async def test_run_analysis_missing_coordinator(self, hass: HomeAssistant) -> None:
         """Test analysis run with missing coordinator."""
@@ -558,6 +567,9 @@ class TestAsyncSetupServices:
         assert isinstance(response, dict)
         assert "areas" in response
         assert "update_timestamp" in response
+        assert "analysis_time_ms" in response
+        assert "device_sw_version" in response
+        assert response["device_sw_version"] == DEVICE_SW_VERSION
 
         # Verify run_analysis was called
         coordinator.run_analysis.assert_called_once()
