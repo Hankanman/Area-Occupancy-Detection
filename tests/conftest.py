@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import os
 import types
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -1708,8 +1708,16 @@ def config_flow_options_flow(
     flow = AreaOccupancyOptionsFlow()
     flow.hass = hass
 
-    # Patch frame reporting to avoid issues with Mock config entries
-    # The patch needs to stay active, so we patch it at module level
+    # Patch config_entry property to avoid mutating class-level property
+    # This prevents test pollution by patching only for the duration of this fixture
+    config_entry_patch = patch.object(
+        type(flow),
+        "config_entry",
+        new_callable=PropertyMock,
+        return_value=config_flow_mock_config_entry_with_areas,
+    )
+    config_entry_patch.start()
+
     with (
         patch("homeassistant.helpers.frame.report_usage", return_value=None),
         patch(
@@ -1717,8 +1725,11 @@ def config_flow_options_flow(
         ),
         patch("homeassistant.loader.async_get_issue_tracker", return_value=None),
     ):
-        flow.config_entry = config_flow_mock_config_entry_with_areas
-        yield flow
+        try:
+            yield flow
+        finally:
+            # Stop the patch to restore the original class-level property
+            config_entry_patch.stop()
 
 
 @pytest.fixture

@@ -19,6 +19,9 @@ class AreaPurpose(StrEnum):
     SOCIAL = "social"
     RELAXING = "relaxing"
     SLEEPING = "sleeping"
+    GARAGE = "garage"
+    GARDEN = "garden"
+    DRIVEWAY = "driveway"
 
 
 class Purpose:
@@ -101,11 +104,35 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         _description="Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.",
         _half_life=45.0,
     ),
+    AreaPurpose.DRIVEWAY: Purpose(
+        purpose=AreaPurpose.DRIVEWAY,
+        _name="Driveway",
+        _description="Parking and vehicle access area. Brief transit for entering/exiting vehicles with occasional short pauses for loading or unloading.",
+        _half_life=60.0,
+    ),
     AreaPurpose.UTILITY: Purpose(
         purpose=AreaPurpose.UTILITY,
         _name="Utility",
         _description="Laundry room, pantry, boot room. Short functional visits (grab the detergent, put on shoes) with little lingering.",
         _half_life=90.0,
+    ),
+    AreaPurpose.GARAGE: Purpose(
+        purpose=AreaPurpose.GARAGE,
+        _name="Garage",
+        _description="Storage and workshop space. Visits range from quick item retrieval to extended projects; moderate memory accommodates varying activity patterns.",
+        _half_life=180.0,
+    ),
+    AreaPurpose.FOOD_PREP: Purpose(
+        purpose=AreaPurpose.FOOD_PREP,
+        _name="Kitchen",
+        _description="Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.",
+        _half_life=240.0,
+    ),
+    AreaPurpose.GARDEN: Purpose(
+        purpose=AreaPurpose.GARDEN,
+        _name="Garden",
+        _description="Outdoor activity space for gardening, relaxing, or yard work. People may remain still while working or resting; longer memory accounts for sparse motion detection.",
+        _half_life=360.0,
     ),
     AreaPurpose.BATHROOM: Purpose(
         purpose=AreaPurpose.BATHROOM,
@@ -113,39 +140,33 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         _description="Showers, baths, getting ready. Motion can be obstructed or minimal; a moderate memory prevents darkness during a shower.",
         _half_life=450.0,
     ),
-    AreaPurpose.FOOD_PREP: Purpose(
-        purpose=AreaPurpose.FOOD_PREP,
-        _name="Food-Prep",
-        _description="Kitchen work zone around the hob or countertop. Residents step away to the fridge or sink and return; a few minutes of memory prevents flicker.",
-        _half_life=240.0,
-    ),
     AreaPurpose.EATING: Purpose(
         purpose=AreaPurpose.EATING,
-        _name="Eating",
+        _name="Dining Room",
         _description="Dining table, breakfast bar. Family members usually stay seated 10-20 minutes but may be fairly still between bites.",
         _half_life=480.0,
     ),
+    AreaPurpose.SOCIAL: Purpose(
+        purpose=AreaPurpose.SOCIAL,
+        _name="Living Room",
+        _description="Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.",
+        _half_life=520.0,
+    ),
     AreaPurpose.WORKING: Purpose(
         purpose=AreaPurpose.WORKING,
-        _name="Working",
+        _name="Office",
         _description='Home office, homework desk. Long seated sessions with occasional trips for coffee or printer; ten-minute half-life avoids premature "vacant".',
         _half_life=600.0,
     ),
-    AreaPurpose.SOCIAL: Purpose(
-        purpose=AreaPurpose.SOCIAL,
-        _name="Social",
-        _description="Living room, play zone, game area. Conversations or board games create sporadic motion; evidence fades gently to ride out quiet pauses.",
-        _half_life=480.0,
-    ),
     AreaPurpose.RELAXING: Purpose(
         purpose=AreaPurpose.RELAXING,
-        _name="Relaxing",
+        _name="Media Room",
         _description='TV lounge, reading nook, music corner. People can remain very still while watching or reading; a quarter-hour memory keeps the room "occupied" through stretches of calm.',
-        _half_life=600.0,
+        _half_life=620.0,
     ),
     AreaPurpose.SLEEPING: Purpose(
         purpose=AreaPurpose.SLEEPING,
-        _name="Sleeping",
+        _name="Bedroom",
         _description='Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up.',
         _half_life=1200.0,
     ),
