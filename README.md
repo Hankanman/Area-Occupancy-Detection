@@ -106,7 +106,6 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **Activity Detection**: Based on history and current state, predict the current activity like Cooking, Working, Sleeping etc.
 - **Machine Learning Model**: Train a true neural network based on history to predict occupancy, may be needed for the activity detection.
 - **Auto-Adjusting Threshold**: Based on the history of itself and predictions, automatically adjust the threshold for occupancy status so the user doesn't need to.
-- **Numeric Sensor Analysis**: Currently numeric sensors (like environmental ones) are just triggered based on a fixed set of value ranges. This feature will correctly analyse the history and set correct ranges and detect trends.
 - **Location Aware**: Leveraging BLE, WiFi, GPS
 - **Weather-Aware**: If it’s cold and rainy, you might be more likely to be indoors — integrate weather data into priors to influence probabilities.
 - **Occupancy Zone Hierarchies**:
