@@ -157,16 +157,16 @@
                             "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
                     },
-                    "energy": {
-                        "name": "Energy Sensors",
-                        "description": "Configure energy consumption sensors",
+                    "power": {
+                        "name": "Power Sensors",
+                        "description": "Configure power consumption sensors",
                         "data": {
-                            "energy_sensors": "Energy Sensors",
-                            "weight_energy": "Energy Weight"
+                            "power_sensors": "Power Sensors",
+                            "weight_power": "Power Weight"
                         },
                         "data_description": {
-                            "energy_sensors": "Energy sensors that measure power consumption (kWh). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
-                            "weight_energy": "The weight given to energy sensor inputs in the occupancy calculation."
+                            "power_sensors": "Power sensors that measure power consumption (W/kW). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
+                            "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
                     },
                     "parameters": {
@@ -353,16 +353,16 @@
                             "weight_environmental": "The weight given to environmental sensor inputs in the occupancy calculation."
                         }
                     },
-                    "energy": {
-                        "name": "Energy Sensors",
-                        "description": "Configure energy consumption sensors",
+                    "power": {
+                        "name": "Power Sensors",
+                        "description": "Configure power consumption sensors",
                         "data": {
-                            "energy_sensors": "Energy Sensors",
-                            "weight_energy": "Energy Weight"
+                            "power_sensors": "Power Sensors",
+                            "weight_power": "Power Weight"
                         },
                         "data_description": {
-                            "energy_sensors": "Energy sensors that measure power consumption (kWh). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
-                            "weight_energy": "The weight given to energy sensor inputs in the occupancy calculation."
+                            "power_sensors": "Power sensors that measure power consumption (W/kW). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
+                            "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
                     },
                     "parameters": {
