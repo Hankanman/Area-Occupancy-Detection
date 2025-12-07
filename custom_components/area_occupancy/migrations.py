@@ -352,7 +352,7 @@ def _migrate_energy_to_power(data: dict[str, Any]) -> bool:
             energy_sensors = area_config.pop(CONF_ENERGY_SENSORS)
             _LOGGER.info(
                 "Removed incorrectly configured energy_sensors from area '%s' (%d sensor(s)). "
-                "Please reconfigure with power sensors (W/kW) instead of energy sensors (Wh/kWh).",
+                "Please reconfigure with power sensors (W/kW) instead of energy sensors (Wh/kWh)",
                 area_name,
                 len(energy_sensors) if isinstance(energy_sensors, list) else 0,
             )
@@ -364,7 +364,7 @@ def _migrate_energy_to_power(data: dict[str, Any]) -> bool:
             weight_energy = area_config.pop(CONF_WEIGHT_ENERGY)
             _LOGGER.info(
                 "Removed incorrectly configured weight_energy from area '%s' (value: %s). "
-                "Please reconfigure with weight_power for power sensors.",
+                "Please reconfigure with weight_power for power sensors",
                 area_name,
                 weight_energy,
             )
@@ -492,14 +492,15 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         # Handle v15 migration: energy_sensors -> power_sensors
         # This runs for entries that are v13+ but < v15
+        # Always bump version to 15 to prevent re-consolidation, even if no fields were removed
         if config_entry.version < 15 and config_entry.version >= 13:
             entry_data = dict(config_entry.data)
-            if _migrate_energy_to_power(entry_data):
-                hass.config_entries.async_update_entry(
-                    config_entry,
-                    data=entry_data,
-                    version=CONF_VERSION,
-                )
+            _migrate_energy_to_power(entry_data)  # Clean up any misconfigured fields
+            hass.config_entries.async_update_entry(
+                config_entry,
+                data=entry_data,
+                version=CONF_VERSION,
+            )
 
         # If entry is already at version 15 or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
@@ -519,8 +520,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             return True
         # EARLY CHECK: Before even starting executor, check if migration is done
         # This prevents multiple executors from starting concurrently
+        # Only consolidate entries with version < 13 (true legacy single-area format)
+        # Entries at v13+ already have multi-area structure and should not be re-consolidated
         all_entries = hass.config_entries.async_entries(DOMAIN)
-        old_entries = [entry for entry in all_entries if entry.version < CONF_VERSION]
+        old_entries = [entry for entry in all_entries if entry.version < 13]
 
         if not old_entries:
             _LOGGER.debug(
@@ -569,9 +572,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     return False
 
                 # Identify all entries needing migration
-                old_entries = [
-                    entry for entry in all_entries if entry.version < CONF_VERSION
-                ]
+                # Only consolidate entries with version < 13 (true legacy single-area format)
+                # Entries at v13+ already have multi-area structure and should not be re-consolidated
+                old_entries = [entry for entry in all_entries if entry.version < 13]
 
                 if not old_entries:
                     # Check for any "deleted" entries that need removal

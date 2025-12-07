@@ -5,6 +5,12 @@ body:
   - type: markdown
     attributes:
       value: Before you open a new issue, search through the existing issues to see if others have had the same problem.
+  - type: text
+    attributes:
+      label: "Area Occupancy Detection version"
+      description: "Can be found in the integration card or any AOD device in Home Assistant."
+    validations:
+      required: true
   - type: textarea
     attributes:
       label: "System Health details"
