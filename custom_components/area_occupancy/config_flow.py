@@ -62,7 +62,6 @@ from .const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
-    CONF_ENERGY_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -75,6 +74,7 @@ from .const import (
     CONF_OPTION_PREFIX_AREA,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
+    CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
     CONF_SLEEP_END,
@@ -90,10 +90,10 @@ from .const import (
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
-    CONF_WEIGHT_ENERGY,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_POWER,
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
@@ -116,10 +116,10 @@ from .const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_DOOR,
-    DEFAULT_WEIGHT_ENERGY,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
+    DEFAULT_WEIGHT_POWER,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
@@ -572,23 +572,23 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
     )
 
 
-def _create_energy_section_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Create schema for the energy section."""
+def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the power section."""
     return vol.Schema(
         {
             vol.Optional(
-                CONF_ENERGY_SENSORS,
-                default=defaults.get(CONF_ENERGY_SENSORS, []),
+                CONF_POWER_SENSORS,
+                default=defaults.get(CONF_POWER_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.ENERGY,
+                    device_class=SensorDeviceClass.POWER,
                     multiple=True,
                 )
             ),
             vol.Optional(
-                CONF_WEIGHT_ENERGY,
-                default=defaults.get(CONF_WEIGHT_ENERGY, DEFAULT_WEIGHT_ENERGY),
+                CONF_WEIGHT_POWER,
+                default=defaults.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -792,8 +792,8 @@ def create_schema(
     schema_dict[vol.Required("environmental")] = section(
         _create_environmental_section_schema(defaults), {"collapsed": True}
     )
-    schema_dict[vol.Required("energy")] = section(
-        _create_energy_section_schema(defaults), {"collapsed": True}
+    schema_dict[vol.Required("power")] = section(
+        _create_power_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("wasp_in_box")] = section(
         _create_wasp_in_box_section_schema(defaults), {"collapsed": True}
