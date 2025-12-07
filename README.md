@@ -10,34 +10,75 @@
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ff813f?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/sebburrell)
 
-This integration provides advanced area occupancy detection by combining multiple sensors through probability calculations. It aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, historical data, and learned time-based occupancy patterns.
+Have you ever had your lights turn off while you're still in the room? Or watched your smart home mark you as "away" while you're sitting perfectly still, watching TV? These frustrating experiences happen because most occupancy detection relies on simple motion sensors that can't understand context.
+
+**Area Occupancy Detection** solves these real-world problems by thinking more intelligently about what "occupied" really means. Instead of just checking if motion was detected, it combines multiple clues, learns from your patterns, and calculates the probability that someone is actually there.
+
+**Area Occupancy Detection doesn't automate anything for you**—it provides the intelligent occupancy information you need to create reliable automations. AOD creates sensors that your automations can use to control lights, heating, and other devices. Think of AOD as the "smart sensor" that gives your automations better data to work with.
+
+## The Quick Answer
+
+**Here's why AOD is different:**
+
+**HA**: "Motion detected? Occupied. Motion stopped? Not occupied."
+
+🎯 **AOD**: "Let me check motion, TV, doors, appliances, learned patterns, and time of day... 75% confident someone is there."
+
+**HA**: You configure everything manually. It never learns.
+
+🧠 **AOD**: Learns from your history automatically. Gets smarter over time. Knows you're usually in the kitchen Sunday mornings.
+
+**Core HA**: One sensor fails → wrong answer.
+
+🔀 **AOD**: Combines multiple sensors intelligently. If motion misses you, TV being on maintains occupancy probability → your automations keep lights on.
+
+**Core HA**: Motion stops → occupancy sensor turns off → automations turn lights off immediately.
+
+⏱️ **AOD**: Motion stops → probability gradually decreases → occupancy sensor stays on longer → your automations keep lights on while you sit still.
+
+**Core HA**: Basic features only.
+
+✨ **AOD**: Special features like "Wasp in Box" (for bathrooms), whole-home aggregation, purpose-based defaults.
+
+**The bottom line:** AOD provides intelligent occupancy sensors that your automations can use. It learns, adapts, and understands context—so when you build automations that respond to occupancy, they work reliably instead of turning lights off while you're still in the room.
+
+## Creating Automations with AOD
+
+Here's how AOD fits into your automation workflow:
+
+### The Workflow
+
+1. **AOD analyzes your sensors** → Motion, TV, doors, appliances, learned patterns
+2. **AOD calculates probability** → Combines all inputs using Bayesian inference
+3. **AOD creates occupancy sensors** → Binary occupancy status and probability sensors
+4. **Your automations use these sensors** → Trigger actions based on occupancy state or probability
+5. **AOD learns and adapts** → Gets smarter over time, improving your automations automatically
+
+### What AOD Provides
+
+AOD creates sensors that your automations can use:
+
+- **Occupancy Status**: Binary sensor (`on` = occupied, `off` = clear) - use this in most automations
+- **Occupancy Probability**: Percentage (0-100%) - use this for conditional or gradual actions
+- **Prior Probability**: Baseline from learned patterns - useful for monitoring and debugging
+- **Threshold**: Adjustable setting - fine-tune without reconfiguration
+
+### How You Use It
+
+You create automations that respond to AOD's sensors. For example:
+
+- **Turn lights on** when occupancy status turns `on`
+- **Turn lights off** when occupancy status turns `off` (with a delay to prevent flickering)
+- **Adjust heating** based on occupancy probability
+- **Dim lights gradually** as probability decreases
+
+The key difference: AOD provides intelligent occupancy data. You decide what actions to take based on that data.
+
+![Probability Cards](docs/docs/images/probability-cards.png)
 
 ## Documentation
 
-All documentation is available at the [Documentation Site](https://hankanman.github.io/Area-Occupancy-Detection/).
-
-## Why?
-
-Most presence detection in Home Assistant is based on a single binary motion sensor. While simple, it’s often unreliable —
-walk into a room and stand still, and the sensor “forgets” you’re there. Watch TV, and you’ll suddenly be marked as “away”. This leads to frustration, false triggers, and automations that don’t feel smart.
-
-**Area Occupancy Detection** solves this by thinking more like a human:
-
-- It **combines multiple sources of information** — motion, doors, windows, appliances, media players, lights, and environmental sensors — to build a picture of whether the room is truly occupied.
-- It uses **Bayesian probability** to weigh and balance all these inputs, meaning a single missed detection won’t ruin the accuracy.
-- It **learns your patterns** with **time-based priors**, adjusting its confidence depending on the day of the week and time of day.
-
-  - Example: It knows you’re more likely to be in the kitchen on Sunday mornings than on Tuesday afternoons.
-
-- It **adapts automatically** as your routines change, improving the longer it runs.
-- It offers **fine-grained control** with weights, thresholds, motion timeouts, and decay settings so you can tune it to your environment.
-- It **runs locally** in Home Assistant — no cloud services, no delays, full privacy.
-
-The result?
-Lights that stay on while you’re still in the room. Heating that only runs when someone’s actually home.
-Automations that feel **predictive, not reactive** — making your smart home feel truly smart.
-
-![Probability Cards](docs/docs/images/probability-cards.png)
+AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-Detection/).
 
 ## Features
 
@@ -75,21 +116,14 @@ Automations that feel **predictive, not reactive** — making your smart home fe
 
 ## Installation
 
-### Option 1: HACS (Recommended)
+## HACS
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hankanman&repository=Area-Occupancy-Detection&category=integration)
 
-### Option 2: Manual
-
-1. Download the latest release from GitHub.
-2. Place the `custom_components/area_occupancy` directory in your `config/custom_components` folder.
-3. Restart Home Assistant.
-
-## Configuration
-
-1. Go to **Settings → Devices & Services**.
-2. Click **+ Add Integration** and search for **Area Occupancy Detection**.
-3. Follow the setup wizard to configure your sensors and parameters.
+1. **Ensure HACS is installed:** If you don't have the [Home Assistant Community Store (HACS)](https://hacs.xyz/) installed, follow their instructions to set it up first.
+2. **Navigate to HACS:** Open your Home Assistant frontend and go to HACS in the sidebar.
+3. **Search for Area Occupancy Detection:** Search for "Area Occupancy Detection" and select then **Download**.
+4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
 
 ## Entities Created
 
