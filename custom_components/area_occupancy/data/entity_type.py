@@ -34,7 +34,7 @@ class InputType(StrEnum):
     VOC = "voc"
     PM25 = "pm25"
     PM10 = "pm10"
-    ENERGY = "energy"
+    POWER = "power"
     ENVIRONMENTAL = "environmental"
     UNKNOWN = "unknown"
 
@@ -259,7 +259,7 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "active_states": None,
         "active_range": (55.0, 155.0),
     },
-    InputType.ENERGY: {
+    InputType.POWER: {
         "weight": 0.3,
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,

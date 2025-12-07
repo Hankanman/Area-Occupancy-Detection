@@ -26,8 +26,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.12.1"
-CONF_VERSION: Final = 14  # Incremented for single-instance multi-device architecture
+DEVICE_SW_VERSION: Final = "2025.12.2"
+CONF_VERSION: Final = 15  # Incremented for energy_sensors -> power_sensors migration
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -65,7 +65,7 @@ CONF_AIR_QUALITY_SENSORS: Final = "air_quality_sensors"
 CONF_VOC_SENSORS: Final = "voc_sensors"
 CONF_PM25_SENSORS: Final = "pm25_sensors"
 CONF_PM10_SENSORS: Final = "pm10_sensors"
-CONF_ENERGY_SENSORS: Final = "energy_sensors"
+CONF_POWER_SENSORS: Final = "power_sensors"
 CONF_DOOR_SENSORS: Final = "door_sensors"
 CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
@@ -91,7 +91,7 @@ CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
 CONF_WEIGHT_DOOR: Final = "weight_door"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
-CONF_WEIGHT_ENERGY: Final = "weight_energy"
+CONF_WEIGHT_POWER: Final = "weight_power"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
 
 # Default values
@@ -125,7 +125,7 @@ DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
-DEFAULT_WEIGHT_ENERGY: Final = 0.3
+DEFAULT_WEIGHT_POWER: Final = 0.3
 
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01

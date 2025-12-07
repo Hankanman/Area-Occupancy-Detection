@@ -1504,7 +1504,7 @@ def get_correlatable_entities_by_area(
         InputType.ILLUMINANCE,
         InputType.ENVIRONMENTAL,
         InputType.CO2,
-        InputType.ENERGY,
+        InputType.POWER,
         InputType.SOUND_PRESSURE,
         InputType.PRESSURE,
         InputType.AIR_QUALITY,
