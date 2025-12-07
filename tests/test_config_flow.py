@@ -449,7 +449,7 @@ class TestHelperFunctions:
             "media",
             "appliances",
             "environmental",
-            "energy",
+            "power",
             "wasp_in_box",
             "parameters",
         ]
@@ -483,7 +483,7 @@ class TestHelperFunctions:
                     "media": {},
                     "appliances": {},
                     "environmental": {},
-                    "energy": {},
+                    "power": {},
                     "wasp_in_box": {},
                     "parameters": {},
                 }

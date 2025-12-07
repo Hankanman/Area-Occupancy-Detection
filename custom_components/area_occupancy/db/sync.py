@@ -37,7 +37,7 @@ _NUMERIC_INPUT_TYPES = {
     InputType.VOC,
     InputType.PM25,
     InputType.PM10,
-    InputType.ENERGY,
+    InputType.POWER,
     InputType.ENVIRONMENTAL,
 }
 

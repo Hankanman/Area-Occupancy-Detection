@@ -197,8 +197,8 @@ class TestAsyncResetDatabaseIfNeeded:
         ("version", "should_delete"),
         [
             (12, True),  # Old version - should delete
-            (13, False),  # Current version - should not delete
-            (14, False),  # Future version - should not delete
+            (13, True),  # Old version - should delete
+            (15, False),  # Future or currentversion - should not delete
         ],
     )
     async def test_async_reset_database_if_needed_version(
@@ -282,7 +282,7 @@ class TestAsyncMigrateEntryAdditional:
 
         result = await async_migrate_entry(hass, entry)
         assert result is True
-        # Database should be deleted for version < 13
+        # Database should be deleted for version < 14
         assert not db_path.exists()
 
 

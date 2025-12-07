@@ -44,8 +44,7 @@ You will be prompted to select entities for various categories. You only need to
 - Air Quality Index (AQI)
 - VOC (ppb)
 - Particulate matter (µg/m³)
-- Energy (kWh)
-- Power (W)
+- Power (W/kW)
 
 More information on the [Sensors](../features/sensors.md) page.
 
