@@ -84,13 +84,11 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 - **Intelligent Occupancy Detection**: Uses multiple sensor inputs and Bayesian statistics.
 - **Multiple Sensor Support**:
-
   - **Motion/Occupancy Sensors**: Primary input for detecting presence.
   - **Media Devices**: TV, media players, and similar devices used as activity indicators.
   - **Appliances**: Sensors or switches representing devices like fans, PCs, or other appliances.
   - **Environmental Sensors**: Illuminance, humidity, and temperature sensors contribute subtle occupancy clues.
   - **Doors, Windows, and Lights**: These can influence or correlate with presence.
-
 - **Probability-Based Output**: Provides an occupancy probability (1-99%) and a binary occupancy status based on a configurable threshold.
 - **Time-Based Priors**: Learns occupancy patterns by **day of week** and **time of day**, adjusting probability dynamically based on historical usage.
 - **Adaptive Historical Analysis**: Learns sensor priors over time, improving accuracy as it gathers data.
@@ -199,6 +197,7 @@ Key things to check in the logs:
 - **Releases & Changelog**: [GitHub Releases][releases]
 
 If you enjoy the integration, please consider buying me a coffee!
+
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ff813f?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/sebburrell)
 
 [issues]: https://github.com/Hankanman/Area-Occupancy-Detection/issues
