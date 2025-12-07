@@ -502,6 +502,7 @@ class AreaConfig:
             ("voc", self.sensors.voc),
             ("pm25", self.sensors.pm25),
             ("pm10", self.sensors.pm10),
+            ("power", self.sensors.power),
         ]:
             if entity_list and not all(
                 isinstance(eid, str) and eid.strip() for eid in entity_list
