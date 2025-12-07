@@ -684,7 +684,7 @@ class TestAreaConfigValidation:
             ("voc", ["sensor.voc1", None]),
             ("pm25", ["sensor.pm25_1", ""]),
             ("pm10", ["sensor.pm10_1", "   "]),
-            # Note: power sensors are not validated in the current implementation
+            ("power", ["sensor.power1", "   "]),
         ],
     )
     def test_validate_entity_configuration_invalid_entity_ids(

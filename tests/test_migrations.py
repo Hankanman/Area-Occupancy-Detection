@@ -282,7 +282,7 @@ class TestAsyncMigrateEntryAdditional:
 
         result = await async_migrate_entry(hass, entry)
         assert result is True
-        # Database should be deleted for version < 13
+        # Database should be deleted for version < 14
         assert not db_path.exists()
 
 

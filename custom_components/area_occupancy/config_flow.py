@@ -1330,6 +1330,10 @@ class BaseOccupancyFlow:
                 CONF_WEIGHT_ENVIRONMENTAL,
                 data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
             ),
+            (
+                CONF_WEIGHT_POWER,
+                data.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
+            ),
         ]
         for name, weight in weights:
             if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
