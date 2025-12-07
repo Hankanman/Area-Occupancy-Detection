@@ -17,11 +17,11 @@ from custom_components.area_occupancy.const import (
     CONF_CO2_SENSORS,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_SENSORS,
-    CONF_ENERGY_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
+    CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
     CONF_SLEEP_END,
@@ -474,7 +474,7 @@ class TestAreaConfigProperties:
                     CONF_VOC_SENSORS: ["sensor.voc_1"],
                     CONF_PM25_SENSORS: ["sensor.pm25_1"],
                     CONF_PM10_SENSORS: ["sensor.pm10_1"],
-                    CONF_ENERGY_SENSORS: ["sensor.energy_1"],
+                    CONF_POWER_SENSORS: ["sensor.power_1"],
                     CONF_WEIGHT_MOTION: 0.9,
                     CONF_WEIGHT_MEDIA: 0.7,
                     CONF_WEIGHT_APPLIANCE: 0.6,
@@ -511,7 +511,7 @@ class TestAreaConfigProperties:
             "sensor.voc_1",
             "sensor.pm25_1",
             "sensor.pm10_1",
-            "sensor.energy_1",
+            "sensor.power_1",
         ]
 
         assert len(entity_ids) == len(expected_entities)
@@ -684,7 +684,7 @@ class TestAreaConfigValidation:
             ("voc", ["sensor.voc1", None]),
             ("pm25", ["sensor.pm25_1", ""]),
             ("pm10", ["sensor.pm10_1", "   "]),
-            # Note: energy sensors are not validated in the current implementation
+            # Note: power sensors are not validated in the current implementation
         ],
     )
     def test_validate_entity_configuration_invalid_entity_ids(
@@ -707,7 +707,7 @@ class TestAreaConfigValidation:
             "voc": CONF_VOC_SENSORS,
             "pm25": CONF_PM25_SENSORS,
             "pm10": CONF_PM10_SENSORS,
-            "energy": CONF_ENERGY_SENSORS,
+            "power": CONF_POWER_SENSORS,
         }[sensor_type]
 
         # Build test data - for motion sensors, use invalid_ids directly

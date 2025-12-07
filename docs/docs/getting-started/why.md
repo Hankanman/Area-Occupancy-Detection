@@ -158,7 +158,7 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 
 **AOD Approach:**
 
-- Automatically combines motion, media, appliances, doors, windows, environmental sensors, and energy sensors
+- Automatically combines motion, media, appliances, doors, windows, environmental sensors, and power sensors
 - Each sensor type has learned reliability with weighted contributions
 - See [Bayesian Calculation](features/calculation.md) for details
 

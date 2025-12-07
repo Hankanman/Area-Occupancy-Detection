@@ -861,7 +861,7 @@ class EntityFactory:
             "voc": InputType.VOC,
             "pm25": InputType.PM25,
             "pm10": InputType.PM10,
-            "energy": InputType.ENERGY,
+            "power": InputType.POWER,
         }
 
         # Process each sensor type using the mapping
