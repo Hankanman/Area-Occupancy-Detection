@@ -44,7 +44,7 @@ async def async_reset_database_if_needed(hass: HomeAssistant, version: int) -> N
         """Blocking helper: delete database file if entry version requires migration."""
         # Check if entry version requires database reset
         # Version 13 introduced breaking changes requiring DB reset
-        if version >= 13:
+        if version >= 14:
             _LOGGER.debug(
                 "Config entry version %d is current, no database migration needed",
                 version,
@@ -323,6 +323,60 @@ def _find_or_create_area(area_reg: ar.AreaRegistry, area_name: str) -> str:
 
 
 # ============================================================================
+# Config Data Migrations
+# ============================================================================
+
+CONF_ENERGY_SENSORS = "energy_sensors"
+CONF_WEIGHT_ENERGY = "weight_energy"
+
+
+def _migrate_energy_to_power(data: dict[str, Any]) -> bool:
+    """Remove energy_sensors and weight_energy from config data (they were incorrectly configured).
+
+    Args:
+        data: Config entry data dictionary
+
+    Returns:
+        True if migration was performed, False otherwise
+    """
+    migrated = False
+    areas = data.get(CONF_AREAS, [])
+
+    for area_config in areas:
+        area_name = area_config.get(CONF_AREA_ID, "unknown")
+        area_migrated = False
+
+        if CONF_ENERGY_SENSORS in area_config:
+            # Pop energy_sensors (they were incorrectly configured as Wh/kWh)
+            # Users will need to reconfigure with power sensors (W/kW)
+            energy_sensors = area_config.pop(CONF_ENERGY_SENSORS)
+            _LOGGER.info(
+                "Removed incorrectly configured energy_sensors from area '%s' (%d sensor(s)). "
+                "Please reconfigure with power sensors (W/kW) instead of energy sensors (Wh/kWh).",
+                area_name,
+                len(energy_sensors) if isinstance(energy_sensors, list) else 0,
+            )
+            area_migrated = True
+
+        if CONF_WEIGHT_ENERGY in area_config:
+            # Pop weight_energy (it was incorrectly configured for energy sensors)
+            # Users will need to reconfigure with weight_power for power sensors
+            weight_energy = area_config.pop(CONF_WEIGHT_ENERGY)
+            _LOGGER.info(
+                "Removed incorrectly configured weight_energy from area '%s' (value: %s). "
+                "Please reconfigure with weight_power for power sensors.",
+                area_name,
+                weight_energy,
+            )
+            area_migrated = True
+
+        if area_migrated:
+            migrated = True
+
+    return migrated
+
+
+# ============================================================================
 # Entry Migration (Main Entry Point)
 # ============================================================================
 
@@ -436,7 +490,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         # Moved inside lock to serialize DB deletion across concurrent setup attempts
         await async_reset_database_if_needed(hass, config_entry.version)
 
-        # If entry is already at version 13 or higher, no migration needed
+        # Handle v15 migration: energy_sensors -> power_sensors
+        # This runs for entries that are v13+ but < v15
+        if config_entry.version < 15 and config_entry.version >= 13:
+            entry_data = dict(config_entry.data)
+            if _migrate_energy_to_power(entry_data):
+                hass.config_entries.async_update_entry(
+                    config_entry,
+                    data=entry_data,
+                    version=CONF_VERSION,
+                )
+
+        # If entry is already at version 15 or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
             # Check if we were deleted while waiting for lock
             if config_entry.data.get("deleted"):

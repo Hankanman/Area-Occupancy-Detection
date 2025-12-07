@@ -165,8 +165,8 @@ Before you begin, ensure you have the following:
 
 - **Set Appropriate Idle Timeouts**:
 
-  - Shorter timeouts save energy but may turn off lights too quickly.
-  - Longer timeouts provide more comfort but may waste energy.
+  - Shorter timeouts save power but may turn off lights too quickly.
+  - Longer timeouts provide more comfort but may waste power.
 
 - **Create Multiple Automations**:
   - Use the blueprint to create separate automations for different rooms.
@@ -231,7 +231,7 @@ For users comfortable with YAML and Home Assistant automations, you can further 
 
 ## Conclusion
 
-The **Smart Lighting Control** blueprint provides a flexible and efficient way to automate your home's lighting based on occupancy and ambient conditions. By following this guide, you can set up the automation to enhance comfort, save energy, and tailor the lighting environment to your preferences.
+The **Smart Lighting Control** blueprint provides a flexible and efficient way to automate your home's lighting based on occupancy and ambient conditions. By following this guide, you can set up the automation to enhance comfort, save power, and tailor the lighting environment to your preferences.
 
 ---
 

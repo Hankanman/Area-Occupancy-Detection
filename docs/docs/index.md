@@ -55,7 +55,7 @@ The integration supports multiple sensor types with different default weights:
 - **Media Devices** (0.70): Good indicator of active use
 - **Appliances** (0.40): Moderate reliability
 - **Door Sensors** (0.30): Lower reliability, but useful for entry/exit
-- **Energy Sensors** (0.30): Power consumption indicating active device usage
+- **Power Sensors** (0.30): Power consumption indicating active device usage
 - **Window Sensors** (0.20): Minimal influence
 - **Environmental Sensors** (0.10): Very low influence (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 
@@ -96,7 +96,7 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 
 ## Key Features
 
-- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances, energy sensors, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
+- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances, power sensors, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
 - **Bayesian Inference:** Calculates the probability of occupancy based on the current state of configured sensors and their individual learned likelihoods.
 - **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using motion sensors as ground truth) over a configurable history period.
 - **Configurable Weights:** Assign weights to different sensor _types_ to influence their impact on the overall probability.
@@ -118,10 +118,10 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 
 1. **Configuration:** You select various sensors associated with an area (motion, doors, media players, etc.) and configure parameters like weights and the history period for learning.
 2. **Prior Learning:** The integration analyses the history of your selected sensors against all configured motion sensors. It calculates:
-    - **P(Sensor Active | Area Occupied):** How likely is a sensor to be active when the area is truly occupied?
-    - **P(Sensor Active | Area Not Occupied):** How likely is a sensor to be active when the area is _not_ occupied?
-    - **P(Area Occupied):** The baseline (prior) probability of the area being occupied, derived from motion sensor history.
-      These learned probabilities (or defaults if history is insufficient) are stored and used in calculations.
+   - **P(Sensor Active | Area Occupied):** How likely is a sensor to be active when the area is truly occupied?
+   - **P(Sensor Active | Area Not Occupied):** How likely is a sensor to be active when the area is _not_ occupied?
+   - **P(Area Occupied):** The baseline (prior) probability of the area being occupied, derived from motion sensor history.
+     These learned probabilities (or defaults if history is insufficient) are stored and used in calculations.
 3. **Real-time Calculation:** As your sensor states change, the integration uses Bayes' theorem. For each _active_ sensor, it updates the probability of occupancy based on its learned likelihoods and the overall prior probability.
 4. **Weighted Combination:** The contributions from individual active sensors are combined in log space and weighted by sensor type.
 5. **Output:** The final calculated probability is exposed. If it crosses the configured threshold, the Occupancy Status sensor turns "on".
@@ -130,22 +130,24 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 ## Common Issues
 
 1. **No Occupancy Detection**:
-      - Verify sensors are working correctly
-      - Check threshold setting
-      - Ensure sensors are properly configured
-      - Adjust sensor weights
+
+   - Verify sensors are working correctly
+   - Check threshold setting
+   - Ensure sensors are properly configured
+   - Adjust sensor weights
 
 2. **False Positives**:
-      - Lower weights for less reliable sensors
-      - Increase occupancy threshold
-      - Adjust decay settings
-      - Review time-based priors
+
+   - Lower weights for less reliable sensors
+   - Increase occupancy threshold
+   - Adjust decay settings
+   - Review time-based priors
 
 3. **False Negatives**:
-      - Increase weights for reliable sensors
-      - Lower occupancy threshold
-      - Add additional sensors
-      - Check time-based prior patterns
+   - Increase weights for reliable sensors
+   - Lower occupancy threshold
+   - Add additional sensors
+   - Check time-based prior patterns
 
 ## Support
 

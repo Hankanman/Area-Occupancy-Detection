@@ -21,7 +21,7 @@ You will be prompted to select entities for various categories. You only need to
 | VOC Sensors                  | `sensor`                            | Volatile organic compound sensors measuring VOC levels (ppb)         | `200.0 - 1000.0`     |
 | PM2.5 Sensors                | `sensor`                            | Particulate matter sensors measuring PM2.5 levels (µg/m³)            | `12.0 - 55.0`        |
 | PM10 Sensors                 | `sensor`                            | Particulate matter sensors measuring PM10 levels (µg/m³)             | `55.0 - 155.0`       |
-| Energy Sensors               | `sensor`                            | Energy sensors measuring power consumption (kWh)                     | `0.1 - 10.0`         |
+| Power Sensors                | `sensor`                            | Power sensors measuring power consumption (W/kW)                     | `0.1 - 10.0`         |
 
 ## Sensor Weights
 
@@ -34,6 +34,6 @@ Weights allow you to adjust the influence of different _types_ of sensors on the
 | Media Device         | 0.70           |
 | Appliance            | 0.40           |
 | Door Sensor          | 0.30           |
-| Energy Sensor        | 0.30           |
+| Power Sensor         | 0.30           |
 | Window Sensor        | 0.20           |
 | Environmental Sensor | 0.10           |
