@@ -513,7 +513,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                     domain=Platform.SENSOR,
                     device_class=[
                         SensorDeviceClass.PRESSURE,
-                        SensorDeviceClass.ATMOSPHERIC_PRESSURE
+                        SensorDeviceClass.ATMOSPHERIC_PRESSURE,
                     ],
                     multiple=True,
                 )
