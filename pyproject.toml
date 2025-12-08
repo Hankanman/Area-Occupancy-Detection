@@ -54,8 +54,7 @@ include-package-data = true
 where = ["."]
 include = ["custom_components.area_occupancy*"] # Find package within custom_components
 
-# Pylint configuration removed - ruff is the primary linter for this project
-# If pylint is needed, use .pylintrc file instead
+# Ruff is the primary linter for this project
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

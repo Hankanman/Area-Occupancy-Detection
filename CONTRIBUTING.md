@@ -13,7 +13,7 @@ Github is used to host code, to track issues and feature requests, as well as ac
 
 Pull requests are the best way to propose changes to the codebase.
 
-1. Fork the repo and create your branch from `main`.
+1. Fork the repo and create your branch from `dev`.
 2. If you've changed something, update the documentation.
 3. Make sure your code lints (using `scripts/lint`).
 4. Test you contribution.
@@ -42,19 +42,56 @@ Report a bug by [opening a new issue](../../issues/new/choose); it's that easy!
 
 People *love* thorough bug reports. I'm not even kidding.
 
+## Getting Started
+
+### Development Environment Setup
+
+This project uses a **devcontainer** for a consistent development environment. When you open this repository in VS Code (or another IDE that supports devcontainers), you'll be prompted to reopen the project in a container. **Accept this prompt** - it will automatically:
+
+- Set up the development environment
+- Install all dependencies (root project, simulator, and docs)
+- Configure the development tools
+- Set up pre-commit hooks
+
+The devcontainer provides a standalone Home Assistant instance running with the included [`configuration.yaml`](./config/configuration.yaml) file, making it easy to test your changes.
+
+### Manual Setup (if not using devcontainer)
+
+If you prefer not to use the devcontainer, you can set up the environment manually:
+
+1. Install [uv](https://github.com/astral-sh/uv) if not already installed
+2. Run `scripts/bootstrap` to install all dependencies
+3. Activate the virtual environment: `source .venv/bin/activate`
+
 ## Use a Consistent Coding Style
 
-Use [black](https://github.com/ambv/black) to make sure the code follows the style.
+This project uses [ruff](https://github.com/astral-sh/ruff) for linting and formatting. Before submitting your changes, run:
+
+```bash
+scripts/lint
+```
+
+Or manually:
+```bash
+uv run ruff format .
+uv run ruff check . --fix
+```
+
+This will automatically format your code and fix any linting issues.
 
 ## Test your code modification
 
 This custom component is based on [integration_blueprint template](https://github.com/ludeeus/integration_blueprint).
 
-It comes with development environment in a container, easy to launch
-if you use Visual Studio Code. With this container you will have a stand alone
-Home Assistant instance running and already configured with the included
-[`configuration.yaml`](./config/configuration.yaml)
-file.
+Run tests using:
+```bash
+scripts/test
+```
+
+Or manually:
+```bash
+uv run pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
+```
 
 ## License
 
