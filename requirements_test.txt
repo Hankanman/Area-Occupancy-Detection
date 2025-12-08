@@ -1,4 +1,0 @@
-homeassistant==2025.12.1
-pytest-homeassistant-custom-component==0.13.299
-pytest-cov
-matplotlib>=3.10.0

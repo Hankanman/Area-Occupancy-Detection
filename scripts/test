@@ -4,4 +4,4 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
+uv run pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing

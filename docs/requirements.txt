@@ -1,3 +1,7 @@
+# DEPRECATED: This file is deprecated. Please use `uv sync --package area-occupancy-docs` instead.
+# The docs now use a pyproject.toml file in the docs/ directory.
+# This file is kept for backward compatibility only and may be removed in a future version.
+
 mkdocs>=1.6.0,<2.0.0
 mkdocs-material>=9.5.0,<10.0.0
 mkdocs-minify-plugin>=0.8.0,<1.0.0

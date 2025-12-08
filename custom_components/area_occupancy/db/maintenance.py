@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import suppress
 from datetime import datetime
 import logging
+from pathlib import Path
 import shutil
 import time
 from typing import TYPE_CHECKING, Any
@@ -33,7 +34,7 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
         if db.db_path and db.db_path.exists():
             # Quick check: read first 16 bytes to validate SQLite format
             try:
-                with open(db.db_path, "rb") as f:
+                with Path.open(db.db_path, "rb") as f:
                     header = f.read(16)
                     if not header.startswith(b"SQLite format 3"):
                         _LOGGER.warning(
