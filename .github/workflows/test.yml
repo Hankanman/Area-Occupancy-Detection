@@ -18,19 +18,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements_test.txt
+        run: uv sync --extra test
 
       - name: Run tests with pytest
         run: |
-          pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
+          uv run pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
         env:
           AREA_OCCUPANCY_AUTO_INIT_DB: "1"
 

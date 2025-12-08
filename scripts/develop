@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 # Create config dir if not present
 if [[ ! -d "${PWD}/config" ]]; then
     mkdir -p "${PWD}/config"
-    hass --config "${PWD}/config" --script ensure_config
+    uv run hass --config "${PWD}/config" --script ensure_config
 fi
 
 # Set the path to custom_components
@@ -19,7 +19,7 @@ export PYTHONPATH="${PYTHONPATH}:${PWD}/custom_components"
 # Start Home Assistant with filtered log output
 # Filter removes timestamp and thread name, keeps log level, extracts last module name
 # Color codes log levels: ERROR/CRITICAL=red, WARNING=yellow, INFO=green, DEBUG=dim
-hass --config "${PWD}/config" --debug 2>&1 | stdbuf -oL -eL sed -E \
+uv run hass --config "${PWD}/config" --debug 2>&1 | stdbuf -oL -eL sed -E \
   -e 's/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} //' \
   -e 's/^([A-Z]+) \([^)]+\) \[([^\]]+)\]/\1 [\2]/' \
   -e 's/\[([^.]*\.)*([^.]*)\]/\2/' \

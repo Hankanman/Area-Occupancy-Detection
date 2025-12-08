@@ -35,14 +35,14 @@ if [ ! -d ".venv" ]; then
     uv venv
 fi
 
-echo "==> Installing dependencies..."
-uv pip install --python .venv/bin/python --pre --requirement requirements.txt
+echo "==> Installing root project dependencies..."
+uv sync --extra dev --extra test --extra viz
 
-echo "==> Installing test dependencies..."
-uv pip install --python .venv/bin/python --pre --requirement requirements_test.txt
+echo "==> Installing simulator dependencies..."
+(cd simulator && uv sync --python ../.venv/bin/python)
 
-echo "==> Installing dev dependencies..."
-uv pip install --python .venv/bin/python --pre ".[dev]"
+echo "==> Installing docs dependencies..."
+(cd docs && uv sync --python ../.venv/bin/python)
 
 echo "==> Installing pre-commit hooks..."
 uv run pre-commit install
