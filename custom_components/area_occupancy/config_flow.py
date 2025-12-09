@@ -511,7 +511,10 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.PRESSURE,
+                    device_class=[
+                        SensorDeviceClass.PRESSURE,
+                        SensorDeviceClass.ATMOSPHERIC_PRESSURE,
+                    ],
                     multiple=True,
                 )
             ),
