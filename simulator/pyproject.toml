@@ -6,7 +6,7 @@ description = "Flask-based simulator for Area Occupancy Detection"
 dependencies = [
     "Flask>=3.0.0",
     "Flask-Cors>=4.0",
-    "homeassistant>=2025.12.1",
+    "homeassistant>=2025.12.2",
     "numpy>=2.3.2",
 ]
 
@@ -14,3 +14,5 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+only-include = ["app.py", "__init__.py"]

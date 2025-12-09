@@ -39,10 +39,10 @@ echo "==> Installing root project dependencies..."
 uv sync --extra dev --extra test --extra viz
 
 echo "==> Installing simulator dependencies..."
-(cd simulator && uv sync --python ../.venv/bin/python)
+(cd simulator && unset VIRTUAL_ENV && uv sync --python ../.venv/bin/python)
 
 echo "==> Installing docs dependencies..."
-(cd docs && uv sync --python ../.venv/bin/python)
+(cd docs && unset VIRTUAL_ENV && uv sync --python ../.venv/bin/python)
 
 echo "==> Installing pre-commit hooks..."
 uv run pre-commit install

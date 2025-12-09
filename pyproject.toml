@@ -23,7 +23,7 @@ classifiers = [
 ]
 requires-python = ">=3.13.2"
 dependencies = [
-  "homeassistant==2025.12.1",
+  "homeassistant==2025.12.2",
   "numpy>=2.3.2",
 ]
 
@@ -33,7 +33,7 @@ dev = [
   "pre-commit==4.5.0",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.299",
+  "pytest-homeassistant-custom-component==0.13.300",
   "pytest-cov",
 ]
 viz = [
