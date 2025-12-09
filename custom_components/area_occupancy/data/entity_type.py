@@ -28,6 +28,7 @@ class InputType(StrEnum):
     HUMIDITY = "humidity"
     ILLUMINANCE = "illuminance"
     CO2 = "co2"
+    CO = "co"
     SOUND_PRESSURE = "sound_pressure"
     PRESSURE = "pressure"
     AIR_QUALITY = "air_quality"
@@ -216,6 +217,13 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_false": 0.01,
         "active_states": None,
         "active_range": (400.0, 1200.0),
+    },
+    InputType.CO: {
+        "weight": 0.1,
+        "prob_given_true": 0.09,
+        "prob_given_false": 0.01,
+        "active_states": None,
+        "active_range": (5.0, 50.0),  # ppm - elevated levels indicate human activity
     },
     InputType.SOUND_PRESSURE: {
         "weight": 0.1,

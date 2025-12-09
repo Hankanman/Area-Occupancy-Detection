@@ -58,6 +58,7 @@ from .const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_CO2_SENSORS,
+    CONF_CO_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -471,7 +472,10 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.HUMIDITY,
+                    device_class=[
+                        SensorDeviceClass.HUMIDITY,
+                        SensorDeviceClass.MOISTURE,
+                    ],
                     multiple=True,
                 )
             ),
@@ -492,6 +496,16 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
                     device_class=SensorDeviceClass.CO2,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_CO_SENSORS,
+                default=defaults.get(CONF_CO_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=Platform.SENSOR,
+                    device_class=SensorDeviceClass.CO,
                     multiple=True,
                 )
             ),
@@ -585,7 +599,10 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.POWER,
+                    device_class=[
+                        SensorDeviceClass.POWER,
+                        SensorDeviceClass.CURRENT,
+                    ],
                     multiple=True,
                 )
             ),

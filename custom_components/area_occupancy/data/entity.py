@@ -855,6 +855,7 @@ class EntityFactory:
             "humidity": InputType.HUMIDITY,
             "temperature": InputType.TEMPERATURE,
             "co2": InputType.CO2,
+            "co": InputType.CO,
             "sound_pressure": InputType.SOUND_PRESSURE,
             "pressure": InputType.PRESSURE,
             "air_quality": InputType.AIR_QUALITY,
