@@ -26,7 +26,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.12.2"
+DEVICE_SW_VERSION: Final = "2025.12.3"
 CONF_VERSION: Final = 15  # Incremented for energy_sensors -> power_sensors migration
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
