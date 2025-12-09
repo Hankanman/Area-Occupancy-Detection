@@ -20,6 +20,7 @@ from ..const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_CO2_SENSORS,
+    CONF_CO_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -170,6 +171,7 @@ class Sensors:
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
     co2: list[str] = field(default_factory=list)
+    co: list[str] = field(default_factory=list)
     sound_pressure: list[str] = field(default_factory=list)
     pressure: list[str] = field(default_factory=list)
     air_quality: list[str] = field(default_factory=list)
@@ -367,6 +369,7 @@ class AreaConfig:
             humidity=data.get(CONF_HUMIDITY_SENSORS, []),
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
             co2=data.get(CONF_CO2_SENSORS, []),
+            co=data.get(CONF_CO_SENSORS, []),
             sound_pressure=data.get(CONF_SOUND_PRESSURE_SENSORS, []),
             pressure=data.get(CONF_PRESSURE_SENSORS, []),
             air_quality=data.get(CONF_AIR_QUALITY_SENSORS, []),
@@ -453,6 +456,7 @@ class AreaConfig:
             *self.sensors.humidity,
             *self.sensors.temperature,
             *self.sensors.co2,
+            *self.sensors.co,
             *self.sensors.sound_pressure,
             *self.sensors.pressure,
             *self.sensors.air_quality,
@@ -496,6 +500,7 @@ class AreaConfig:
             ("humidity", self.sensors.humidity),
             ("temperature", self.sensors.temperature),
             ("co2", self.sensors.co2),
+            ("co", self.sensors.co),
             ("sound_pressure", self.sensors.sound_pressure),
             ("pressure", self.sensors.pressure),
             ("air_quality", self.sensors.air_quality),

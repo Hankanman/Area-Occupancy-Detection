@@ -1787,6 +1787,7 @@ class TestEntityFactory:
         area.config.sensors.door = ["binary_sensor.door"]
         area.config.sensors.window = ["binary_sensor.window"]
         area.config.sensors.co2 = ["sensor.co2"]
+        area.config.sensors.co = ["sensor.co"]
 
         factory = EntityFactory(coordinator, area_name=area_name)
         mapping = factory.get_entity_type_mapping()
@@ -1806,6 +1807,8 @@ class TestEntityFactory:
         assert mapping["binary_sensor.window"] == "window"
         assert "sensor.co2" in mapping
         assert mapping["sensor.co2"] == "co2"
+        assert "sensor.co" in mapping
+        assert mapping["sensor.co"] == "co"
 
 
 # ruff: noqa: SLF001
