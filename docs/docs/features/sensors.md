@@ -15,6 +15,7 @@ You will be prompted to select entities for various categories. You only need to
 | Temperature Sensors          | `sensor`                            | Temperature sensors measuring temperature                            | `18.0 - 24.0`        |
 | Humidity Sensors             | `sensor`                            | Humidity sensors measuring humidity                                  | `70.0 - 100.0`       |
 | CO2 Sensors                  | `sensor`                            | Carbon dioxide sensors measuring CO2 levels (ppm)                    | `400.0 - 1200.0`     |
+| CO Sensors                   | `sensor`                            | Carbon monoxide sensors measuring CO levels (ppm)                    | `5.0 - 50.0`         |
 | Sound Pressure Sensors       | `sensor`                            | Sound pressure sensors measuring noise levels in decibels (dB)       | `40.0 - 80.0`        |
 | Atmospheric Pressure Sensors | `sensor`                            | Atmospheric pressure sensors measuring air pressure (hPa)            | `980.0 - 1050.0`     |
 | Air Quality Index Sensors    | `sensor`                            | Air quality index sensors measuring overall air quality              | `50.0 - 150.0`       |

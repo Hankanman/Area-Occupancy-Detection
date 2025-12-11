@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "area-occupancy-detection"
-version = "2025.12.2"
+version = "2025.12.3"
 license = "Apache-2.0"
 description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
 readme = "README.md"  # Assuming you'll have a README.md
@@ -23,7 +23,7 @@ classifiers = [
 ]
 requires-python = ">=3.13.2"
 dependencies = [
-  "homeassistant==2025.12.1",
+  "homeassistant==2025.12.2",
   "numpy>=2.3.2",
 ]
 
@@ -33,7 +33,7 @@ dev = [
   "pre-commit==4.5.0",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.299",
+  "pytest-homeassistant-custom-component==0.13.300",
   "pytest-cov",
 ]
 viz = [
@@ -54,8 +54,7 @@ include-package-data = true
 where = ["."]
 include = ["custom_components.area_occupancy*"] # Find package within custom_components
 
-# Pylint configuration removed - ruff is the primary linter for this project
-# If pylint is needed, use .pylintrc file instead
+# Ruff is the primary linter for this project
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

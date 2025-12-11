@@ -26,7 +26,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2025.12.2"
+DEVICE_SW_VERSION: Final = "2025.12.3"
 CONF_VERSION: Final = 15  # Incremented for energy_sensors -> power_sensors migration
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
@@ -59,6 +59,7 @@ CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
 CONF_CO2_SENSORS: Final = "co2_sensors"
+CONF_CO_SENSORS: Final = "co_sensors"
 CONF_SOUND_PRESSURE_SENSORS: Final = "sound_pressure_sensors"
 CONF_PRESSURE_SENSORS: Final = "pressure_sensors"
 CONF_AIR_QUALITY_SENSORS: Final = "air_quality_sensors"
