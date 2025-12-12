@@ -1,5 +1,6 @@
 """Tests for database area relationship functions."""
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -12,37 +13,13 @@ from custom_components.area_occupancy.db.relationships import (
     save_area_relationship,
     sync_adjacent_areas_from_config,
 )
+from tests.conftest import create_test_area  # noqa: TID251
 
 if TYPE_CHECKING:
     from custom_components.area_occupancy.db.core import AreaOccupancyDB
 else:
     # Import for runtime type checking in helper functions
     from custom_components.area_occupancy.db.core import AreaOccupancyDB
-
-
-def _create_test_area(
-    db: AreaOccupancyDB, area_name: str, area_id: str | None = None
-) -> None:
-    """Helper to create a test area in the database.
-
-    Args:
-        db: Database instance
-        area_name: Name of the area to create
-        area_id: Optional area ID (defaults to lowercase area_name)
-    """
-    if area_id is None:
-        area_id = area_name.lower()
-
-    with db.get_session() as session:
-        area = db.Areas(
-            entry_id=db.coordinator.entry_id,
-            area_name=area_name,
-            area_id=area_id,
-            purpose="work",
-            threshold=0.5,
-        )
-        session.add(area)
-        session.commit()
 
 
 def _verify_relationship(
@@ -62,7 +39,11 @@ def _verify_relationship(
     with db.get_session() as session:
         relationship = (
             session.query(db.AreaRelationships)
-            .filter_by(area_name=area_name, related_area_name=related_area_name)
+            .filter_by(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                related_area_name=related_area_name,
+            )
             .first()
         )
         assert relationship is not None, (
@@ -86,7 +67,8 @@ class TestSaveAreaRelationship:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
 
         result = save_area_relationship(
             db, area_name, "Kitchen", "adjacent", influence_weight=0.5, distance=10.0
@@ -107,7 +89,11 @@ class TestSaveAreaRelationship:
         with db.get_session() as session:
             relationship = (
                 session.query(db.AreaRelationships)
-                .filter_by(area_name=area_name, related_area_name="Kitchen")
+                .filter_by(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    related_area_name="Kitchen",
+                )
                 .first()
             )
             assert relationship.created_at is not None
@@ -120,7 +106,8 @@ class TestSaveAreaRelationship:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
 
         # Save initial relationship
         save_area_relationship(
@@ -131,11 +118,19 @@ class TestSaveAreaRelationship:
         with db.get_session() as session:
             initial_relationship = (
                 session.query(db.AreaRelationships)
-                .filter_by(area_name=area_name, related_area_name="Kitchen")
+                .filter_by(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    related_area_name="Kitchen",
+                )
                 .first()
             )
+            assert initial_relationship is not None, "Initial relationship not found"
             initial_updated_at = initial_relationship.updated_at
             initial_created_at = initial_relationship.created_at
+
+        # Ensure time boundary before update to avoid flakiness with second-resolution timestamps
+        time.sleep(1)
 
         # Update relationship with all fields
         result = save_area_relationship(
@@ -162,15 +157,22 @@ class TestSaveAreaRelationship:
         with db.get_session() as session:
             relationship = (
                 session.query(db.AreaRelationships)
-                .filter_by(area_name=area_name, related_area_name="Kitchen")
+                .filter_by(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    related_area_name="Kitchen",
+                )
                 .first()
             )
             assert (
                 relationship.created_at == initial_created_at
             )  # Created_at shouldn't change
             assert (
-                relationship.updated_at > initial_updated_at
-            )  # Updated_at should change
+                relationship.updated_at >= initial_updated_at
+            )  # Updated_at should be >= initial
+            assert (
+                relationship.updated_at != initial_updated_at
+            )  # Updated_at should have changed
 
     @pytest.mark.parametrize(
         ("input_weight", "expected_weight"),
@@ -189,7 +191,8 @@ class TestSaveAreaRelationship:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
 
         result = save_area_relationship(
             db, area_name, "Kitchen", "adjacent", influence_weight=input_weight
@@ -218,7 +221,8 @@ class TestSaveAreaRelationship:
         area_name = db.coordinator.get_area_names()[0]
 
         test_area_name = f"Area_{relationship_type}"
-        _create_test_area(db, test_area_name)
+        create_test_area(coordinator, area_name=test_area_name)
+        db.save_area_data(test_area_name)
 
         # Save relationship without specifying weight (should use default)
         result = save_area_relationship(
@@ -238,7 +242,8 @@ class TestSaveAreaRelationship:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
 
         # Save relationship with unknown type
         result = save_area_relationship(
@@ -272,7 +277,8 @@ class TestSaveAreaRelationship:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
 
         result = save_area_relationship(
             db, area_name, "Kitchen", "adjacent", distance=distance_value
@@ -298,7 +304,8 @@ class TestGetAdjacentAreas:
         ]
 
         for adj_name, rel_type, weight, distance in areas_to_create:
-            _create_test_area(db, adj_name)
+            create_test_area(coordinator, area_name=adj_name)
+            db.save_area_data(adj_name)
             save_area_relationship(
                 db,
                 area_name,
@@ -347,7 +354,8 @@ class TestGetInfluenceWeight:
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
         save_area_relationship(
             db, area_name, "Kitchen", "adjacent", influence_weight=0.6
         )
@@ -377,7 +385,8 @@ class TestGetInfluenceWeight:
         ]
 
         for adj_name, rel_type, weight in relationships:
-            _create_test_area(db, adj_name)
+            create_test_area(coordinator, area_name=adj_name)
+            db.save_area_data(adj_name)
             save_area_relationship(
                 db, area_name, adj_name, rel_type, influence_weight=weight
             )
@@ -402,7 +411,8 @@ class TestSyncAdjacentAreasFromConfig:
 
         # Create adjacent areas
         for adj_name in ["Kitchen", "Bedroom"]:
-            _create_test_area(db, adj_name)
+            create_test_area(coordinator, area_name=adj_name)
+            db.save_area_data(adj_name)
 
         # Update the area record to include adjacent_areas in the database
         # sync_adjacent_areas_from_config reads from area_record.adjacent_areas
@@ -437,7 +447,8 @@ class TestSyncAdjacentAreasFromConfig:
         db.save_area_data(area_name)
 
         # Create adjacent area
-        _create_test_area(db, "Kitchen")
+        create_test_area(coordinator, area_name="Kitchen")
+        db.save_area_data("Kitchen")
         with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
             if area_record:
@@ -472,7 +483,8 @@ class TestSyncAdjacentAreasFromConfig:
         db.save_area_data(area_name)
 
         # Create old area and relationship
-        _create_test_area(db, "Old Area", "old")
+        create_test_area(coordinator, area_name="Old Area")
+        db.save_area_data("Old Area")
 
         # Create relationship manually (not from config)
         save_area_relationship(
@@ -486,7 +498,8 @@ class TestSyncAdjacentAreasFromConfig:
         assert adjacent_before[0]["influence_weight"] == 0.8
 
         # Create new area and update config to only include new area
-        _create_test_area(db, "New Area", "new")
+        create_test_area(coordinator, area_name="New Area")
+        db.save_area_data("New Area")
         with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
             if area_record:
@@ -569,7 +582,8 @@ class TestSyncAdjacentAreasFromConfig:
         db.save_area_data(area_name)
 
         # Create one valid area and include a non-existent area name
-        _create_test_area(db, "Valid Area", "valid")
+        create_test_area(coordinator, area_name="Valid Area")
+        db.save_area_data("Valid Area")
         with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
             if area_record:

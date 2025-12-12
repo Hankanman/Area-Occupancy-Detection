@@ -3,6 +3,7 @@
 
 from contextlib import suppress
 from datetime import timedelta
+from functools import wraps
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -68,6 +69,7 @@ def _create_retry_mock(original_get_session, max_failures: int = 1):
     """Create a mock for retry mechanism testing."""
     call_count = 0
 
+    @wraps(original_get_session)
     def mock_get_session(*args, **kwargs):
         nonlocal call_count
         call_count += 1
@@ -80,7 +82,7 @@ def _create_retry_mock(original_get_session, max_failures: int = 1):
             mock_session.__exit__ = Mock(return_value=False)
             return mock_session
         # Return real session on retry
-        return original_get_session()
+        return original_get_session(*args, **kwargs)
 
     return mock_get_session
 

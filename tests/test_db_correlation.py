@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+from dateutil.relativedelta import relativedelta
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -1311,10 +1312,17 @@ class TestPruneOldCorrelations:
             now = dt_util.utcnow()
             for i in range(CORRELATION_MONTHS_TO_KEEP + 5):
                 # Create correlations spread across months (one per month)
-                # Use i * 30 days to ensure they're in different months
-                days_ago = i * 30
-                period_start = now - timedelta(days=days_ago + 30)
-                period_end = now - timedelta(days=days_ago)
+                # Use month-based arithmetic to ensure each iteration falls into a distinct calendar month
+                months_ago = i
+                # Calculate target month: go back i months from now
+                target_month_start = now.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0
+                ) - relativedelta(months=months_ago)
+                # Period spans the entire month
+                period_start = target_month_start
+                period_end = target_month_start + relativedelta(months=1)
+                # Calculation date is at the end of the analysis period
+                calculation_date = period_end
                 correlation = db.Correlations(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
@@ -1322,7 +1330,7 @@ class TestPruneOldCorrelations:
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.01),
                     correlation_type="strong_positive",
-                    calculation_date=now - timedelta(days=days_ago),
+                    calculation_date=calculation_date,
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
                     sample_count=100,

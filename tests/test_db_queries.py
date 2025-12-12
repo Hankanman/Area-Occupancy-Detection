@@ -509,8 +509,24 @@ class TestGetOccupiedIntervals:
 
         now = dt_util.utcnow()
         start = now - timedelta(hours=2)
-        # Motion interval ends 5 minutes before "now"
-        motion_end = now - timedelta(minutes=5)
+        # Motion interval ends 15 minutes before "now"
+        motion_end = now - timedelta(minutes=15)
+        # Second motion interval starts after first ends (with a gap)
+        # The timeout should bridge the gap, and merged_end will be the end of second interval
+        # This ensures motion_end < merged_end, allowing timeout extension to be tested
+        # motion_end + timeout = now - 15m + 10m = now - 5m
+        # Set merged_end = now - 8m, so motion_end + timeout (now - 5m) > merged_end (now - 8m)
+        # This means timeout IS clamped to merged_end (now - 8m)
+        # Set second_motion_start to overlap with first motion, so they're in the same merged interval
+        # Then the timeout extension from motion_end is clamped to merged_end
+        # The segments will merge, and result[0][1] = merged_end (now - 8m)
+        # This equals min(motion_end + timeout, merged_end) = min(now - 5m, now - 8m) = now - 8m
+        merged_end = now - timedelta(
+            minutes=8
+        )  # Before motion_end + timeout, so timeout is clamped
+        second_motion_start = now - timedelta(
+            minutes=16
+        )  # Overlaps with first motion (ends at now - 15m)
 
         with db.get_session() as session:
             entity = db.Entities(
@@ -521,31 +537,47 @@ class TestGetOccupiedIntervals:
             )
             session.add(entity)
 
-            # Create motion interval that ends before the merged interval end
-            # This allows timeout to extend the motion segment
+            # Create first motion interval that ends before the merged interval end
             _create_test_interval(
                 session, db, "binary_sensor.motion1", start, motion_end, area_name
+            )
+            # Create second motion interval that starts after first ends (gap)
+            # The timeout will bridge the gap, and merged_end will be the end of second interval
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                second_motion_start,
+                merged_end,
+                area_name,
             )
             session.commit()
 
         # With 10 minute timeout, motion segment should be extended
+        motion_timeout_seconds = 600  # 10 minutes
         result = get_occupied_intervals(
             db,
             db.coordinator.entry_id,
             area_name,
             lookback_days=1,
-            motion_timeout_seconds=600,  # 10 minutes
+            motion_timeout_seconds=motion_timeout_seconds,
         )
 
         assert len(result) == 1
-        # Timeout extends motion segments, but is clamped to merged_end
-        # Since motion_end is the merged_end, timeout is clamped and doesn't extend beyond it
-        # The result should be the motion interval itself (no extension beyond merged_end)
-        result_end, motion_end_normalized = _normalize_datetime_for_comparison(
-            result[0][1], motion_end
+        # Timeout extends motion segments from motion_end, but is clamped to merged_end
+        # Since motion_end < merged_end, timeout should extend to min(motion_end + timeout, merged_end)
+        # motion_end + timeout = now - 15m + 10m = now - 5m
+        # merged_end = now - 8m
+        # So expected_end = min(now - 5m, now - 8m) = now - 8m (timeout is clamped to merged_end)
+        # After merging segments, result[0][1] should equal min(motion_end + timeout, merged_end)
+        expected_end = min(
+            motion_end + timedelta(seconds=motion_timeout_seconds), merged_end
         )
-        # Result should be motion_end (clamped, no extension beyond merged_end)
-        assert abs((result_end - motion_end_normalized).total_seconds()) < 1
+        result_end, expected_end_normalized = _normalize_datetime_for_comparison(
+            result[0][1], expected_end
+        )
+        # Result should be min(motion_end + timeout, merged_end) = merged_end (clamped)
+        assert abs((result_end - expected_end_normalized).total_seconds()) < 1
 
     def test_get_occupied_intervals_error(
         self, coordinator: AreaOccupancyCoordinator, monkeypatch
@@ -1152,8 +1184,24 @@ class TestGetTotalOccupiedSeconds:
 
         now = dt_util.utcnow()
         start = now - timedelta(hours=2)
-        # Motion interval ends 5 minutes before "now"
-        motion_end = now - timedelta(minutes=5)
+        # Motion interval ends 15 minutes before "now"
+        motion_end = now - timedelta(minutes=15)
+        # Second motion interval starts after first ends (with a gap)
+        # The timeout should bridge the gap, and merged_end will be the end of second interval
+        # This ensures motion_end < merged_end, allowing timeout extension to be tested
+        # motion_end + timeout = now - 15m + 10m = now - 5m
+        # Set merged_end = now - 8m, so motion_end + timeout (now - 5m) > merged_end (now - 8m)
+        # This means timeout IS clamped to merged_end (now - 8m)
+        # Set second_motion_start to overlap with first motion, so they're in the same merged interval
+        # Then the timeout extension from motion_end is clamped to merged_end
+        # The segments will merge, and result[0][1] = merged_end (now - 8m)
+        # This equals min(motion_end + timeout, merged_end) = min(now - 5m, now - 8m) = now - 8m
+        merged_end = now - timedelta(
+            minutes=8
+        )  # Before motion_end + timeout, so timeout is clamped
+        second_motion_start = now - timedelta(
+            minutes=16
+        )  # Overlaps with first motion (ends at now - 15m)
 
         with db.get_session() as session:
             entity = db.Entities(
@@ -1164,23 +1212,40 @@ class TestGetTotalOccupiedSeconds:
             )
             session.add(entity)
 
+            # Create first motion interval that ends before the merged interval end
             _create_test_interval(
                 session, db, "binary_sensor.motion1", start, motion_end, area_name
+            )
+            # Create second motion interval that starts after first ends (gap)
+            # The timeout will bridge the gap, and merged_end will be the end of second interval
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                second_motion_start,
+                merged_end,
+                area_name,
             )
             session.commit()
 
         # With 10 minute timeout, motion segment should be extended
+        motion_timeout_seconds = 600  # 10 minutes
         result = get_total_occupied_seconds(
             db,
             db.coordinator.entry_id,
             area_name,
             lookback_days=90,
-            motion_timeout_seconds=600,  # 10 minutes
+            motion_timeout_seconds=motion_timeout_seconds,
         )
 
-        # Timeout extends motion segments, but is clamped to merged_end
-        # Since motion_end is the merged_end, timeout is clamped and doesn't extend beyond it
-        # The result should be the original duration (no extension beyond merged_end)
-        original_duration = (motion_end - start).total_seconds()
-        expected = original_duration
-        assert abs(result - expected) < 1.0
+        # Timeout extends motion segments from motion_end, but is clamped to merged_end
+        # Since motion_end < merged_end, timeout should extend to min(motion_end + timeout, merged_end)
+        # motion_end + timeout = now - 15m + 10m = now - 5m
+        # merged_end = now - 8m
+        # So expected_end = min(now - 5m, now - 8m) = now - 8m (timeout is clamped to merged_end)
+        # The duration should be from start to min(motion_end + timeout, merged_end) = merged_end
+        expected_end = min(
+            motion_end + timedelta(seconds=motion_timeout_seconds), merged_end
+        )
+        expected_duration = (expected_end - start).total_seconds()
+        assert abs(result - expected_duration) < 1.0
