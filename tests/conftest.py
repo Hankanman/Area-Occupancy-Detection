@@ -9,6 +9,7 @@ import contextlib
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 import os
+from pathlib import Path
 import types
 from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
@@ -1943,3 +1944,24 @@ def create_user_input(name: str = "Test Area", **overrides: Any) -> dict[str, An
     }
     input_dict.update(overrides)
     return input_dict
+
+
+def setup_test_db_engine(db: Any, db_path: Path) -> None:
+    """Helper function to set up a test database engine with standard configuration.
+
+    This function creates a SQLite engine pointing to the specified path and
+    configures the session maker. Use this helper to avoid duplicating engine
+    setup code across multiple tests.
+
+    Args:
+        db: AreaOccupancyDB instance to configure
+        db_path: Path to the database file
+    """
+    db.db_path = db_path
+    db.engine = create_engine(
+        f"sqlite:///{db_path}",
+        echo=False,
+        pool_pre_ping=True,
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    db._session_maker = sessionmaker(bind=db.engine)

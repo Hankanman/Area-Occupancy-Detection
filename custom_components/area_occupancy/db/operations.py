@@ -128,8 +128,23 @@ def _update_existing_entity(
             pass
     existing_entity.last_updated = entity_obj.last_updated
     existing_entity.previous_evidence = entity_obj.evidence
+
+    # Restore probabilities from database
+    # Correlation data takes priority, but if absent, use database values
     if corr_data:
         _apply_correlation_data(existing_entity, corr_data)
+    else:
+        # No correlation data, restore probabilities directly from database
+        if (
+            hasattr(entity_obj, "prob_given_true")
+            and entity_obj.prob_given_true is not None
+        ):
+            existing_entity.prob_given_true = entity_obj.prob_given_true
+        if (
+            hasattr(entity_obj, "prob_given_false")
+            and entity_obj.prob_given_false is not None
+        ):
+            existing_entity.prob_given_false = entity_obj.prob_given_false
 
 
 async def load_data(db: AreaOccupancyDB) -> None:

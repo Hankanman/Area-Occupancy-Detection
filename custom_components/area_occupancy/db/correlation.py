@@ -995,6 +995,15 @@ def analyze_correlation(  # noqa: C901
             # Calculate confidence (based on correlation strength and sample size)
             # Confidence increases with stronger correlation and more samples
             sample_count = len(sample_values)
+            # Defensive check: avoid division by zero (should not happen due to validation above)
+            if sample_count == 0:
+                base_result.update(
+                    {
+                        "sample_count": 0,
+                        "analysis_error": "zero_samples_after_filtering",
+                    }
+                )
+                return base_result
             confidence = min(
                 1.0,
                 abs_correlation * (1.0 - (MIN_CORRELATION_SAMPLES / sample_count)),
