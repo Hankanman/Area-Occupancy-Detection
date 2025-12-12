@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.util import dt as dt_util
 
-from ..utils import ensure_timezone_aware
+from ..time_utils import to_local, to_utc
 from .purpose import PURPOSE_DEFINITIONS, AreaPurpose
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class Decay:
         """
         # Ensure decay_start is timezone-aware
         if decay_start is not None:
-            self.decay_start = ensure_timezone_aware(decay_start)
+            self.decay_start = to_utc(decay_start)
         else:
             self.decay_start = dt_util.utcnow()
 
@@ -60,7 +60,7 @@ class Decay:
 
         try:
             # Parse sleep times
-            now = dt_util.as_local(dt_util.utcnow())
+            now = to_local(dt_util.utcnow())
             start_time = datetime.strptime(self.sleep_start, "%H:%M:%S").time()
             end_time = datetime.strptime(self.sleep_end, "%H:%M:%S").time()
 

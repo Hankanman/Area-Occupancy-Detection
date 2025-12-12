@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_WEIGHT, MIN_WEIGHT
-from ..utils import ensure_timezone_aware
+from ..time_utils import to_utc
 from .decay import Decay
 from .entity_type import DEFAULT_TYPES, EntityType, InputType
 from .purpose import get_default_decay_half_life
@@ -478,9 +478,7 @@ class Entity:
     def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
         self.decay.decay_start = (
-            ensure_timezone_aware(decay_start)
-            if decay_start is not None
-            else decay_start
+            to_utc(decay_start) if decay_start is not None else decay_start
         )
         self.decay.is_decaying = is_decaying
 
@@ -592,10 +590,10 @@ class EntityFactory:
 
         # Validate datetime objects are timezone-aware
         if decay_start is not None:
-            decay_start = ensure_timezone_aware(decay_start)
+            decay_start = to_utc(decay_start)
 
         if last_updated is not None:
-            last_updated = ensure_timezone_aware(last_updated)
+            last_updated = to_utc(last_updated)
 
         # Convert evidence field - handle None case
         previous_evidence = entity_data["evidence"]

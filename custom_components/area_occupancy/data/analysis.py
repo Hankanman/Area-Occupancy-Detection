@@ -12,7 +12,8 @@ from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, TIME_PRIOR_MAX_BOUND, TIME_PRIOR_MIN_BOUND
 from ..db.queries import is_occupied_intervals_cache_valid
-from ..utils import ensure_timezone_aware, format_area_names
+from ..time_utils import ensure_timezone_aware, ensure_utc_datetime, to_local, to_utc
+from ..utils import format_area_names
 from .entity_type import InputType
 from .prior import Prior
 
@@ -244,20 +245,136 @@ class PriorAnalyzer:
             # Determine actual data period from intervals (not fixed lookback)
             # Ensure all datetime objects are timezone-aware UTC
             # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
+
+            # Diagnostic logging: log interval details before calculation
+            _LOGGER.debug(
+                "Prior calculation for area %s: %d intervals",
+                self.area_name,
+                len(occupied_intervals),
+            )
+            if occupied_intervals:
+                # Log first few intervals for debugging
+                for i, (start, end) in enumerate(occupied_intervals[:5]):
+                    start_aware = ensure_timezone_aware(start)
+                    end_aware = ensure_timezone_aware(end)
+                    _LOGGER.debug(
+                        "Interval %d: start=%s (tz=%s), end=%s (tz=%s), duration=%.2f",
+                        i,
+                        start_aware,
+                        start_aware.tzinfo,
+                        end_aware,
+                        end_aware.tzinfo,
+                        (end_aware - start_aware).total_seconds(),
+                    )
+
+            # Validate interval data: check all intervals have start <= end
+            invalid_intervals = []
+            for i, (start, end) in enumerate(occupied_intervals):
+                start_aware = ensure_utc_datetime(start)
+                end_aware = ensure_utc_datetime(end)
+                if start_aware > end_aware:
+                    invalid_intervals.append((i, start_aware, end_aware))
+
+            if invalid_intervals:
+                _LOGGER.error(
+                    "Invalid interval data for area %s: %d intervals have start > end",
+                    self.area_name,
+                    len(invalid_intervals),
+                )
+                for i, start, end in invalid_intervals[:5]:  # Log first 5
+                    _LOGGER.error(
+                        "  Interval %d: start=%s > end=%s (difference: %.2f seconds)",
+                        i,
+                        start,
+                        end,
+                        (start - end).total_seconds(),
+                    )
+                # Filter out invalid intervals
+                occupied_intervals = [
+                    (start, end)
+                    for start, end in occupied_intervals
+                    if ensure_utc_datetime(start) <= ensure_utc_datetime(end)
+                ]
+                if not occupied_intervals:
+                    _LOGGER.error(
+                        "All intervals invalid for area %s, using fallback prior",
+                        self.area_name,
+                    )
+                    self.area.prior.set_global_prior(0.01)
+                    return
+
+            # Convert all intervals to UTC and find bounds
             first_interval_start = min(
-                ensure_timezone_aware(start) for start, end in occupied_intervals
+                ensure_utc_datetime(start) for start, end in occupied_intervals
             )
             last_interval_end = max(
-                ensure_timezone_aware(end) for start, end in occupied_intervals
+                ensure_utc_datetime(end) for start, end in occupied_intervals
             )
-            now = dt_util.utcnow()
+            now = ensure_utc_datetime(dt_util.utcnow())
+
+            # Validate that intervals are chronologically valid
+            if first_interval_start > last_interval_end:
+                _LOGGER.error(
+                    "Invalid interval data for area %s: first_interval_start (%s) > last_interval_end (%s). "
+                    "This may indicate timezone issues or corrupted data.",
+                    self.area_name,
+                    first_interval_start,
+                    last_interval_end,
+                )
+                # Use fallback prior
+                self.area.prior.set_global_prior(0.01)
+                _LOGGER.debug(
+                    "Prior analysis completed for area %s: global_prior=0.010 (fallback due to invalid interval bounds)",
+                    self.area_name,
+                )
+                return
+
+            # Diagnostic logging: log key timestamps
+            _LOGGER.debug(
+                "Period calculation for area %s: first_interval_start=%s (tz=%s), "
+                "last_interval_end=%s (tz=%s), now=%s (tz=%s)",
+                self.area_name,
+                first_interval_start,
+                first_interval_start.tzinfo,
+                last_interval_end,
+                last_interval_end.tzinfo,
+                now,
+                now.tzinfo,
+            )
 
             # Use actual period: from first interval to now (or last interval if very recent)
             # If last interval is more than 1 hour old, use it; otherwise use now
+            # Ensure we use UTC-aware datetimes for all calculations
             if (now - last_interval_end).total_seconds() > 3600:
                 actual_period_end = last_interval_end
             else:
                 actual_period_end = now
+
+            # Defensive check: ensure actual_period_end >= first_interval_start
+            if actual_period_end < first_interval_start:
+                _LOGGER.warning(
+                    "actual_period_end (%s) < first_interval_start (%s) for area %s. "
+                    "This may indicate timezone issues or clock skew. Using now instead.",
+                    actual_period_end,
+                    first_interval_start,
+                    self.area_name,
+                )
+                actual_period_end = now
+                # Double-check after using now
+                if actual_period_end < first_interval_start:
+                    _LOGGER.error(
+                        "Even 'now' (%s) is before first_interval_start (%s) for area %s. "
+                        "This indicates severe clock skew or timezone issues. Using fallback prior.",
+                        actual_period_end,
+                        first_interval_start,
+                        self.area_name,
+                    )
+                    self.area.prior.set_global_prior(0.01)
+                    _LOGGER.debug(
+                        "Prior analysis completed for area %s: global_prior=0.010 (fallback due to clock skew)",
+                        self.area_name,
+                    )
+                    return
 
             actual_period_duration = (
                 actual_period_end - first_interval_start
@@ -267,10 +384,13 @@ class PriorAnalyzer:
             if actual_period_duration <= 0:
                 _LOGGER.warning(
                     "Invalid period duration (%.2f seconds) for area %s. "
+                    "first_interval_start=%s, actual_period_end=%s. "
                     "This may indicate bad timestamps or clock skew. "
                     "Using safe fallback prior of 0.01.",
                     actual_period_duration,
                     self.area_name,
+                    first_interval_start,
+                    actual_period_end,
                 )
                 # Set safe fallback prior and return early
                 self.area.prior.set_global_prior(0.01)
@@ -280,12 +400,10 @@ class PriorAnalyzer:
                 )
                 return
 
-            # Calculate occupied duration (ensure timezone-aware)
-            # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
+            # Calculate occupied duration (ensure UTC-aware)
+            # Use ensure_utc_datetime to ensure all datetimes are in UTC
             occupied_duration = sum(
-                (
-                    ensure_timezone_aware(end) - ensure_timezone_aware(start)
-                ).total_seconds()
+                (ensure_utc_datetime(end) - ensure_utc_datetime(start)).total_seconds()
                 for start, end in occupied_intervals
             )
 
@@ -412,92 +530,100 @@ class PriorAnalyzer:
             period_end,
         )
 
-        # Initialize slot tracking: (day_of_week, time_slot) -> (occupied_seconds, weeks_with_data)
+        # Policy: bucket by Home Assistant local wall-clock time.
+        # We do overlap arithmetic in UTC, but derive slot keys from the corresponding local time.
         slot_occupied_seconds: dict[tuple[int, int], float] = {}
-        # Track calendar weeks as (year, week_number) tuples using ISO calendar
-        slot_weeks: dict[tuple[int, int], set[tuple[int, int]]] = {}
+
+        period_start_utc = to_utc(period_start)
+        period_end_utc = to_utc(period_end)
+
+        # Track total possible seconds per slot over the period to handle DST correctly.
+        # Keyed by (day_of_week, hour) in local time.
+        slot_total_seconds: dict[tuple[int, int], float] = {}
+        slot_weeks_total: dict[tuple[int, int], set[tuple[int, int]]] = {}
+
+        # Build denominators by walking local hour slots across the analysis period.
+        # Iterate in UTC to avoid ambiguity during DST fall-back (repeated local hours).
+        current_utc = period_start_utc
+        while current_utc < period_end_utc:
+            current_local = to_local(current_utc)
+            fold = getattr(current_local, "fold", 0)
+            slot_start_local = current_local.replace(
+                minute=0, second=0, microsecond=0, fold=fold
+            )
+            slot_end_local = slot_start_local + timedelta(hours=1)
+
+            slot_start_utc = to_utc(slot_start_local)
+            slot_end_utc = to_utc(slot_end_local)
+            if slot_end_utc <= slot_start_utc:
+                break
+
+            slot_key = (slot_start_local.weekday(), slot_start_local.hour)
+            overlap_start = max(period_start_utc, slot_start_utc)
+            overlap_end = min(period_end_utc, slot_end_utc)
+            slot_seconds = max(0.0, (overlap_end - overlap_start).total_seconds())
+            if slot_seconds > 0:
+                slot_total_seconds[slot_key] = (
+                    slot_total_seconds.get(slot_key, 0.0) + slot_seconds
+                )
+                year, week_number, _ = slot_start_local.isocalendar()
+                slot_weeks_total.setdefault(slot_key, set()).add((year, week_number))
+
+            current_utc = slot_end_utc
 
         # Process each occupied interval
         for start_time, end_time in occupied_intervals:
-            start = ensure_timezone_aware(start_time)
-            end = ensure_timezone_aware(end_time)
+            start_utc = to_utc(start_time)
+            end_utc = to_utc(end_time)
 
-            # Get all time slots this interval overlaps with
-            current_time = start
-            while current_time < end:
-                # Determine day of week (0=Monday, 6=Sunday)
-                day_of_week = current_time.weekday()
+            # Clamp to analysis period bounds
+            start_utc = max(start_utc, period_start_utc)
+            end_utc = min(end_utc, period_end_utc)
+            if start_utc >= end_utc:
+                continue
 
-                # Determine time slot (0-23 for hourly slots)
-                # DEFAULT_SLOT_MINUTES = 60, so slot = hour
-                time_slot = current_time.hour
+            current_utc = start_utc
+            while current_utc < end_utc:
+                current_local = to_local(current_utc)
+                fold = getattr(current_local, "fold", 0)
+                slot_start_local = current_local.replace(
+                    minute=0, second=0, microsecond=0, fold=fold
+                )
+                slot_end_local = slot_start_local + timedelta(hours=1)
 
-                # Calculate slot start and end for this day
-                slot_start = current_time.replace(minute=0, second=0, microsecond=0)
-                slot_end = slot_start + timedelta(hours=1)
+                slot_start_utc = to_utc(slot_start_local)
+                slot_end_utc = to_utc(slot_end_local)
+                if slot_end_utc <= slot_start_utc:
+                    break
 
-                # Calculate overlap duration
-                overlap_start = max(start, slot_start)
-                overlap_end = min(end, slot_end)
-                overlap_seconds = max(0, (overlap_end - overlap_start).total_seconds())
-
+                slot_key = (slot_start_local.weekday(), slot_start_local.hour)
+                overlap_start = max(start_utc, current_utc, slot_start_utc)
+                overlap_end = min(end_utc, slot_end_utc)
+                overlap_seconds = max(
+                    0.0, (overlap_end - overlap_start).total_seconds()
+                )
                 if overlap_seconds > 0:
-                    slot_key = (day_of_week, time_slot)
+                    slot_occupied_seconds[slot_key] = (
+                        slot_occupied_seconds.get(slot_key, 0.0) + overlap_seconds
+                    )
 
-                    # Initialize if needed
-                    if slot_key not in slot_occupied_seconds:
-                        slot_occupied_seconds[slot_key] = 0.0
-                        slot_weeks[slot_key] = set()
-
-                    # Add occupied seconds
-                    slot_occupied_seconds[slot_key] += overlap_seconds
-
-                    # Track which calendar week this data point belongs to
-                    # Use ISO calendar week (year, week_number) to properly handle
-                    # week boundaries and year transitions
-                    # This ensures intervals on the same calendar week are grouped together
-                    year, week_number, _ = overlap_start.isocalendar()
-                    week_key = (year, week_number)
-                    slot_weeks[slot_key].add(week_key)
-
-                # Move to next slot
-                current_time = slot_end
+                current_utc = slot_end_utc
 
         # Calculate prior values for each slot
         time_priors: dict[tuple[int, int], float] = {}
         data_points: dict[tuple[int, int], int] = {}
 
-        # Total seconds per slot per week (3600 seconds = 1 hour)
-        seconds_per_slot_per_week = 3600.0
-
         for slot_key, occupied_seconds in slot_occupied_seconds.items():
-            weeks_set = slot_weeks[slot_key]
-            num_weeks_with_data = len(weeks_set)
+            total_slot_seconds = slot_total_seconds.get(slot_key, 0.0)
+            if total_slot_seconds <= 0:
+                continue
 
-            # Calculate total slot seconds: number of weeks with data × seconds per slot per week
-            # We use weeks_with_data because we can only calculate occupancy for weeks we have data
-            total_slot_seconds = num_weeks_with_data * seconds_per_slot_per_week
-
-            if total_slot_seconds > 0:
-                # Calculate occupancy percentage
-                prior_value = occupied_seconds / total_slot_seconds
-
-                # Apply safety bounds [0.1, 0.9]
-                prior_value = max(
-                    TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, prior_value)
-                )
-
-                time_priors[slot_key] = prior_value
-                # Store number of weeks with data as data_points
-                data_points[slot_key] = num_weeks_with_data
-            else:
-                # No data for this slot - skip (will default to 0.5 at retrieval)
-                _LOGGER.debug(
-                    "No data for slot (day=%d, slot=%d) in area %s",
-                    slot_key[0],
-                    slot_key[1],
-                    self.area_name,
-                )
+            prior_value = occupied_seconds / total_slot_seconds
+            prior_value = max(
+                TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, prior_value)
+            )
+            time_priors[slot_key] = prior_value
+            data_points[slot_key] = len(slot_weeks_total.get(slot_key, set()))
 
         _LOGGER.debug(
             "Time priors calculated for area %s: %d slots populated out of 168 total",

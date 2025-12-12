@@ -785,6 +785,12 @@ def create_test_area(
         if hasattr(area.config, key) and key != "motion":
             setattr(area.config, key, value)
 
+    # Ensure area_id is always present for tests that persist areas to the DB.
+    # In the real integration this is validated by config flow, but tests often
+    # create ad-hoc areas not present in the config entry.
+    if not getattr(area.config, "area_id", None):
+        area.config.area_id = area_name.lower().replace(" ", "_")
+
     # Add to coordinator
     coordinator.areas[area_name] = area
 
