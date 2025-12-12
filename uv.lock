@@ -256,7 +256,7 @@ wheels = [
 
 [[package]]
 name = "area-occupancy-detection"
-version = "2025.12.3"
+version = "2025.12.4-pre1"
 source = { editable = "." }
 dependencies = [
     { name = "homeassistant" },
