@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 import math
 from typing import TYPE_CHECKING, Any
@@ -10,30 +9,15 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 _LOGGER = logging.getLogger(__name__)
 
+
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
-
-
-def ensure_timezone_aware(dt: datetime) -> datetime:
-    """Ensure a datetime is timezone-aware, assuming UTC if naive.
-
-    Args:
-        dt: The datetime object to make timezone-aware
-
-    Returns:
-        A timezone-aware datetime object
-
-    """
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=dt_util.UTC)
-    return dt
 
 
 def format_float(value: float) -> float:

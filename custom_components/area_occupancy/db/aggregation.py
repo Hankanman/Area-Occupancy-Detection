@@ -29,6 +29,7 @@ from ..const import (
     RETENTION_WEEKLY_AGGREGATES_DAYS,
     RETENTION_WEEKLY_NUMERIC_YEARS,
 )
+from ..time_utils import from_db_utc, to_db_utc, to_local
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -57,8 +58,8 @@ def aggregate_raw_to_daily(
     try:
         with db.get_session() as session:
             # Calculate cutoff date (30 days ago)
-            cutoff_date = dt_util.utcnow() - timedelta(
-                days=RETENTION_RAW_INTERVALS_DAYS
+            cutoff_date = to_db_utc(
+                dt_util.utcnow() - timedelta(days=RETENTION_RAW_INTERVALS_DAYS)
             )
 
             # Find raw intervals older than cutoff that haven't been aggregated yet
@@ -80,11 +81,13 @@ def aggregate_raw_to_daily(
             aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
 
             for interval in raw_intervals:
-                # Get start of day for period grouping
-                period_start = interval.start_time.replace(
+                # DB stores naive UTC; bucket by local day boundary and persist naive UTC.
+                interval_start_local = to_local(from_db_utc(interval.start_time))
+                day_start_local = interval_start_local.replace(
                     hour=0, minute=0, second=0, microsecond=0
                 )
-                period_end = period_start + timedelta(days=1)
+                period_start = to_db_utc(day_start_local)
+                period_end = to_db_utc(day_start_local + timedelta(days=1))
 
                 key = (interval.entity_id, interval.state, period_start)
 
@@ -215,8 +218,8 @@ def aggregate_daily_to_weekly(
     try:
         with db.get_session() as session:
             # Calculate cutoff date (90 days ago)
-            cutoff_date = dt_util.utcnow() - timedelta(
-                days=RETENTION_DAILY_AGGREGATES_DAYS
+            cutoff_date = to_db_utc(
+                dt_util.utcnow() - timedelta(days=RETENTION_DAILY_AGGREGATES_DAYS)
             )
 
             # Find daily aggregates older than cutoff
@@ -242,13 +245,16 @@ def aggregate_daily_to_weekly(
             aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
 
             for daily in daily_aggregates:
-                # Get start of week (Monday) for period grouping
-                days_since_monday = daily.period_start.weekday()
-                week_start = daily.period_start - timedelta(days=days_since_monday)
-                week_start = week_start.replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                week_end = week_start + timedelta(days=7)
+                # DB stores naive UTC; bucket by local week boundary and persist naive UTC.
+                daily_start_local = to_local(from_db_utc(daily.period_start))
+                days_since_monday = daily_start_local.weekday()
+                week_start_local = (
+                    daily_start_local - timedelta(days=days_since_monday)
+                ).replace(hour=0, minute=0, second=0, microsecond=0)
+                week_end_local = week_start_local + timedelta(days=7)
+
+                week_start = to_db_utc(week_start_local)
+                week_end = to_db_utc(week_end_local)
 
                 key = (daily.entity_id, daily.state, week_start)
 
@@ -379,8 +385,8 @@ def aggregate_weekly_to_monthly(
     try:
         with db.get_session() as session:
             # Calculate cutoff date (365 days ago)
-            cutoff_date = dt_util.utcnow() - timedelta(
-                days=RETENTION_WEEKLY_AGGREGATES_DAYS
+            cutoff_date = to_db_utc(
+                dt_util.utcnow() - timedelta(days=RETENTION_WEEKLY_AGGREGATES_DAYS)
             )
 
             # Find weekly aggregates older than cutoff
@@ -406,15 +412,21 @@ def aggregate_weekly_to_monthly(
             aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
 
             for weekly in weekly_aggregates:
-                # Get start of month for period grouping
-                month_start = weekly.period_start.replace(
+                # DB stores naive UTC; bucket by local month boundary and persist naive UTC.
+                weekly_start_local = to_local(from_db_utc(weekly.period_start))
+                month_start_local = weekly_start_local.replace(
                     day=1, hour=0, minute=0, second=0, microsecond=0
                 )
-                # Calculate end of month
-                if month_start.month == 12:
-                    month_end = month_start.replace(year=month_start.year + 1, month=1)
+                if month_start_local.month == 12:
+                    month_end_local = month_start_local.replace(
+                        year=month_start_local.year + 1, month=1
+                    )
                 else:
-                    month_end = month_start.replace(month=month_start.month + 1)
+                    month_end_local = month_start_local.replace(
+                        month=month_start_local.month + 1
+                    )
+                month_start = to_db_utc(month_start_local)
+                month_end = to_db_utc(month_end_local)
 
                 key = (weekly.entity_id, weekly.state, month_start)
 
@@ -611,7 +623,9 @@ def prune_old_aggregates(
             now = dt_util.utcnow()
 
             # Prune daily aggregates older than retention period
-            daily_cutoff = now - timedelta(days=RETENTION_DAILY_AGGREGATES_DAYS)
+            daily_cutoff = to_db_utc(
+                now - timedelta(days=RETENTION_DAILY_AGGREGATES_DAYS)
+            )
             daily_query = session.query(db.IntervalAggregates).filter(
                 db.IntervalAggregates.aggregation_period == AGGREGATION_PERIOD_DAILY,
                 db.IntervalAggregates.period_start < daily_cutoff,
@@ -623,7 +637,9 @@ def prune_old_aggregates(
             results["daily"] = daily_query.delete(synchronize_session=False)
 
             # Prune weekly aggregates older than retention period
-            weekly_cutoff = now - timedelta(days=RETENTION_WEEKLY_AGGREGATES_DAYS)
+            weekly_cutoff = to_db_utc(
+                now - timedelta(days=RETENTION_WEEKLY_AGGREGATES_DAYS)
+            )
             weekly_query = session.query(db.IntervalAggregates).filter(
                 db.IntervalAggregates.aggregation_period == AGGREGATION_PERIOD_WEEKLY,
                 db.IntervalAggregates.period_start < weekly_cutoff,
@@ -635,8 +651,8 @@ def prune_old_aggregates(
             results["weekly"] = weekly_query.delete(synchronize_session=False)
 
             # Prune monthly aggregates older than retention period
-            monthly_cutoff = now - timedelta(
-                days=RETENTION_MONTHLY_AGGREGATES_YEARS * 365
+            monthly_cutoff = to_db_utc(
+                now - timedelta(days=RETENTION_MONTHLY_AGGREGATES_YEARS * 365)
             )
             monthly_query = session.query(db.IntervalAggregates).filter(
                 db.IntervalAggregates.aggregation_period == AGGREGATION_PERIOD_MONTHLY,
@@ -684,8 +700,8 @@ def prune_old_numeric_samples(db: AreaOccupancyDB, area_name: str | None = None)
 
     try:
         with db.get_session() as session:
-            cutoff_date = dt_util.utcnow() - timedelta(
-                days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS
+            cutoff_date = to_db_utc(
+                dt_util.utcnow() - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS)
             )
 
             query = session.query(db.NumericSamples).filter(
@@ -736,8 +752,8 @@ def aggregate_numeric_samples_to_hourly(
     try:
         with db.get_session() as session:
             # Calculate cutoff date
-            cutoff_date = dt_util.utcnow() - timedelta(
-                days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS
+            cutoff_date = to_db_utc(
+                dt_util.utcnow() - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS)
             )
 
             # Find raw samples older than cutoff
@@ -759,11 +775,13 @@ def aggregate_numeric_samples_to_hourly(
             sample_ids_by_hour: dict[tuple[str, datetime], list[int]] = {}
 
             for sample in raw_samples:
-                # Get start of hour for period grouping
-                period_start = sample.timestamp.replace(
+                # DB stores naive UTC; bucket by local hour boundary and persist naive UTC.
+                sample_local = to_local(from_db_utc(sample.timestamp))
+                hour_start_local = sample_local.replace(
                     minute=0, second=0, microsecond=0
                 )
-                period_end = period_start + timedelta(hours=1)
+                period_start = to_db_utc(hour_start_local)
+                period_end = to_db_utc(hour_start_local + timedelta(hours=1))
 
                 key = (sample.entity_id, period_start)
 
@@ -885,8 +903,8 @@ def aggregate_hourly_to_weekly(
     try:
         with db.get_session() as session:
             # Calculate cutoff date
-            cutoff_date = dt_util.utcnow() - timedelta(
-                days=RETENTION_HOURLY_NUMERIC_DAYS
+            cutoff_date = to_db_utc(
+                dt_util.utcnow() - timedelta(days=RETENTION_HOURLY_NUMERIC_DAYS)
             )
 
             # Find hourly aggregates older than cutoff
@@ -912,13 +930,16 @@ def aggregate_hourly_to_weekly(
             aggregates: dict[tuple[str, datetime], dict[str, Any]] = {}
 
             for hourly in hourly_aggregates:
-                # Get start of week (Monday) for period grouping
-                days_since_monday = hourly.period_start.weekday()
-                week_start = hourly.period_start - timedelta(days=days_since_monday)
-                week_start = week_start.replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                week_end = week_start + timedelta(days=7)
+                # DB stores naive UTC; bucket by local week boundary and persist naive UTC.
+                hourly_start_local = to_local(from_db_utc(hourly.period_start))
+                days_since_monday = hourly_start_local.weekday()
+                week_start_local = (
+                    hourly_start_local - timedelta(days=days_since_monday)
+                ).replace(hour=0, minute=0, second=0, microsecond=0)
+                week_end_local = week_start_local + timedelta(days=7)
+
+                week_start = to_db_utc(week_start_local)
+                week_end = to_db_utc(week_end_local)
 
                 key = (hourly.entity_id, week_start)
 
@@ -1124,7 +1145,9 @@ def prune_old_numeric_aggregates(
             now = dt_util.utcnow()
 
             # Prune hourly aggregates older than retention period
-            hourly_cutoff = now - timedelta(days=RETENTION_HOURLY_NUMERIC_DAYS)
+            hourly_cutoff = to_db_utc(
+                now - timedelta(days=RETENTION_HOURLY_NUMERIC_DAYS)
+            )
             hourly_query = session.query(db.NumericAggregates).filter(
                 db.NumericAggregates.aggregation_period == AGGREGATION_PERIOD_HOURLY,
                 db.NumericAggregates.period_start < hourly_cutoff,
@@ -1136,7 +1159,9 @@ def prune_old_numeric_aggregates(
             results["hourly"] = hourly_query.delete(synchronize_session=False)
 
             # Prune weekly aggregates older than retention period
-            weekly_cutoff = now - timedelta(days=RETENTION_WEEKLY_NUMERIC_YEARS * 365)
+            weekly_cutoff = to_db_utc(
+                now - timedelta(days=RETENTION_WEEKLY_NUMERIC_YEARS * 365)
+            )
             weekly_query = session.query(db.NumericAggregates).filter(
                 db.NumericAggregates.aggregation_period == AGGREGATION_PERIOD_WEEKLY,
                 db.NumericAggregates.period_start < weekly_cutoff,

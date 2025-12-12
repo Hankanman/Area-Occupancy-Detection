@@ -21,6 +21,7 @@ from ..const import (
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
+from ..time_utils import to_local
 from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
@@ -119,12 +120,12 @@ class Prior:
     @property
     def day_of_week(self) -> int:
         """Return the current day of week (0=Monday, 6=Sunday)."""
-        return dt_util.utcnow().weekday()
+        return to_local(dt_util.utcnow()).weekday()
 
     @property
     def time_slot(self) -> int:
         """Return the current time slot based on DEFAULT_SLOT_MINUTES."""
-        now = dt_util.utcnow()
+        now = to_local(dt_util.utcnow())
         return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
 
     def set_global_prior(self, prior: float) -> None:

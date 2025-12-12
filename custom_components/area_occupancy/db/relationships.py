@@ -15,6 +15,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from ..time_utils import to_db_utc
+
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
 
@@ -80,7 +82,7 @@ def save_area_relationship(
                 existing.relationship_type = relationship_type
                 existing.influence_weight = influence_weight
                 existing.distance = distance
-                existing.updated_at = dt_util.utcnow()
+                existing.updated_at = to_db_utc(dt_util.utcnow())
             else:
                 # Create new relationship
                 relationship = db.AreaRelationships(

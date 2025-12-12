@@ -1295,6 +1295,16 @@ class TestPruneOldCorrelations:
     - Edge cases (empty list, exactly at limit)
     """
 
+    @pytest.fixture(autouse=True)
+    def _set_default_tz_utc(self):
+        """Correlation month grouping is local-time based; keep tests deterministic."""
+        original = dt_util.DEFAULT_TIME_ZONE
+        dt_util.set_default_time_zone(dt_util.UTC)
+        try:
+            yield
+        finally:
+            dt_util.set_default_time_zone(original)
+
     def test_prune_old_correlations_excess_records(
         self, coordinator: AreaOccupancyCoordinator
     ):

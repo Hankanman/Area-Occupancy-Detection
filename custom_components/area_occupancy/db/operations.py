@@ -31,6 +31,7 @@ from ..const import (
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
+from ..time_utils import to_db_utc
 from . import maintenance, queries
 
 ar = helpers.area_registry
@@ -330,7 +331,7 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                 "area_id": cfg.area_id,
                 "purpose": cfg.purpose,
                 "threshold": cfg.threshold,
-                "updated_at": dt_util.utcnow(),
+                "updated_at": to_db_utc(dt_util.utcnow()),
             }
 
             # Validate required fields using helper method
@@ -460,7 +461,9 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
             prob_false = DEFAULT_ENTITY_PROB_GIVEN_FALSE
         prob_false = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_false))
 
-        last_updated = getattr(entity, "last_updated", None) or dt_util.utcnow()
+        last_updated = to_db_utc(
+            getattr(entity, "last_updated", None) or dt_util.utcnow()
+        )
 
         evidence_source = getattr(entity, "previous_evidence", None)
         if evidence_source is None:
@@ -477,7 +480,9 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
             "prob_given_false": prob_false,
             "last_updated": last_updated,
             "is_decaying": entity.decay.is_decaying,
-            "decay_start": entity.decay.decay_start,
+            "decay_start": to_db_utc(entity.decay.decay_start)
+            if entity.decay.decay_start is not None
+            else None,
             "evidence": evidence_val,
         }
 
@@ -852,7 +857,7 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
     Returns:
         Number of intervals deleted
     """
-    cutoff_date = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
+    cutoff_date = to_db_utc(dt_util.utcnow() - timedelta(days=RETENTION_DAYS))
     _LOGGER.debug("Pruning intervals older than %s", cutoff_date)
 
     try:
@@ -969,25 +974,25 @@ def save_global_prior(
             if existing:
                 # Update existing record
                 existing.prior_value = prior_value
-                existing.calculation_date = dt_util.utcnow()
-                existing.data_period_start = data_period_start
-                existing.data_period_end = data_period_end
+                existing.calculation_date = to_db_utc(dt_util.utcnow())
+                existing.data_period_start = to_db_utc(data_period_start)
+                existing.data_period_end = to_db_utc(data_period_end)
                 existing.total_occupied_seconds = total_occupied_seconds
                 existing.total_period_seconds = total_period_seconds
                 existing.interval_count = interval_count
                 existing.confidence = confidence
                 existing.calculation_method = calculation_method
                 existing.underlying_data_hash = data_hash
-                existing.updated_at = dt_util.utcnow()
+                existing.updated_at = to_db_utc(dt_util.utcnow())
             else:
                 # Create new record
                 global_prior = db.GlobalPriors(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
                     prior_value=prior_value,
-                    calculation_date=dt_util.utcnow(),
-                    data_period_start=data_period_start,
-                    data_period_end=data_period_end,
+                    calculation_date=to_db_utc(dt_util.utcnow()),
+                    data_period_start=to_db_utc(data_period_start),
+                    data_period_end=to_db_utc(data_period_end),
                     total_occupied_seconds=total_occupied_seconds,
                     total_period_seconds=total_period_seconds,
                     interval_count=interval_count,
@@ -1069,11 +1074,11 @@ def save_time_priors(
                     # Update existing record
                     existing.prior_value = prior_value
                     existing.data_points = data_points
-                    existing.last_calculation_date = dt_util.utcnow()
-                    existing.sample_period_start = data_period_start
-                    existing.sample_period_end = data_period_end
+                    existing.last_calculation_date = to_db_utc(dt_util.utcnow())
+                    existing.sample_period_start = to_db_utc(data_period_start)
+                    existing.sample_period_end = to_db_utc(data_period_end)
                     existing.calculation_method = calculation_method
-                    existing.last_updated = dt_util.utcnow()
+                    existing.last_updated = to_db_utc(dt_util.utcnow())
                     # Calculate confidence based on data points (more weeks = higher confidence)
                     # Use min(1.0, data_points / 4) where 4 weeks = full confidence
                     existing.confidence = (
@@ -1089,9 +1094,9 @@ def save_time_priors(
                         time_slot=time_slot,
                         prior_value=prior_value,
                         data_points=data_points,
-                        last_calculation_date=dt_util.utcnow(),
-                        sample_period_start=data_period_start,
-                        sample_period_end=data_period_end,
+                        last_calculation_date=to_db_utc(dt_util.utcnow()),
+                        sample_period_start=to_db_utc(data_period_start),
+                        sample_period_end=to_db_utc(data_period_end),
                         calculation_method=calculation_method,
                         confidence=min(1.0, data_points / 4.0)
                         if data_points > 0
@@ -1142,7 +1147,7 @@ def save_occupied_intervals_cache(
 
     with db.get_session() as session:
         try:
-            calculation_date = dt_util.utcnow()
+            calculation_date = to_db_utc(dt_util.utcnow())
 
             # Delete existing cached intervals for this area
             session.query(db.OccupiedIntervalsCache).filter_by(
@@ -1156,8 +1161,8 @@ def save_occupied_intervals_cache(
                 cached_interval = db.OccupiedIntervalsCache(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
-                    start_time=start_time,
-                    end_time=end_time,
+                    start_time=to_db_utc(start_time),
+                    end_time=to_db_utc(end_time),
                     duration_seconds=duration_seconds,
                     calculation_date=calculation_date,
                     data_source=data_source,

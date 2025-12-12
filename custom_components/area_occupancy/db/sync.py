@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, RETENTION_DAYS
 from ..data.entity_type import InputType
+from ..time_utils import to_db_utc, to_utc
 from . import queries, utils
 
 if TYPE_CHECKING:
@@ -55,27 +56,13 @@ def _chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
         yield chunk
 
 
-def _normalize_datetime(value: datetime) -> datetime:
-    """Strip timezone info for consistent database key comparison.
+def _normalize_db_key_datetime(value: datetime) -> datetime:
+    """Normalize datetimes for DB tuple-key comparisons (naive UTC).
 
-    This function is used specifically for database key lookups where we need to
-    match keys regardless of timezone representation. SQLite may return naive or
-    timezone-aware datetimes depending on how they were stored, and Home Assistant
-    states may have timezone-aware datetimes. By normalizing to naive datetimes,
-    we ensure consistent key matching for duplicate detection.
-
-    Note: This is ONLY for database key comparisons, not for timezone-aware
-    datetime operations elsewhere in the codebase.
-
-    Args:
-        value: Datetime to normalize (may be naive or timezone-aware)
-
-    Returns:
-        Naive datetime (timezone info stripped if present)
+    We store timestamps in SQLite as naive UTC. For key comparisons (duplicate
+    detection), normalize anything (naive/aware, any timezone) into naive UTC.
     """
-    if value.tzinfo is not None:
-        return value.replace(tzinfo=None)
-    return value
+    return to_db_utc(value)
 
 
 def _get_existing_interval_keys(
@@ -96,8 +83,8 @@ def _get_existing_interval_keys(
     for chunk in _chunked(keys_list, _INTERVAL_LOOKUP_BATCH):
         matches = session.query(db.Intervals).filter(interval_tuple.in_(chunk)).all()
         for interval in matches:
-            start = _normalize_datetime(interval.start_time)
-            end = _normalize_datetime(interval.end_time)
+            start = _normalize_db_key_datetime(interval.start_time)
+            end = _normalize_db_key_datetime(interval.end_time)
             existing_keys.add((interval.entity_id, start, end))
 
     return existing_keys
@@ -119,7 +106,7 @@ def _get_existing_numeric_sample_keys(
     for chunk in _chunked(keys_list, _NUMERIC_SAMPLE_LOOKUP_BATCH):
         matches = session.query(db.NumericSamples).filter(sample_tuple.in_(chunk)).all()
         for sample in matches:
-            timestamp = _normalize_datetime(sample.timestamp)
+            timestamp = _normalize_db_key_datetime(sample.timestamp)
             existing_keys.add((sample.entity_id, timestamp))
 
     return existing_keys
@@ -144,7 +131,7 @@ def _states_to_numeric_samples(
         return []
 
     samples = []
-    current_ts = dt_util.utcnow()
+    current_ts_db = to_db_utc(dt_util.utcnow())
 
     for entity_id, state_list in states.items():
         area_name = numeric_entities.get(entity_id)
@@ -162,11 +149,11 @@ def _states_to_numeric_samples(
                     "entry_id": db.coordinator.entry_id,
                     "area_name": area_name,
                     "entity_id": entity_id,
-                    "timestamp": state.last_changed,
+                    "timestamp": to_db_utc(state.last_changed),
                     "value": value,
                     "unit_of_measurement": state.attributes.get("unit_of_measurement"),
                     "state": state.state,
-                    "created_at": current_ts,
+                    "created_at": current_ts_db,
                 }
             )
 
@@ -188,20 +175,21 @@ def _states_to_intervals(
 
     """
     intervals = []
-    retention_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS)
-    created_at = dt_util.utcnow()
+    retention_time_utc = to_utc(dt_util.utcnow() - timedelta(days=RETENTION_DAYS))
+    created_at_db = to_db_utc(dt_util.utcnow())
+    end_time_utc = to_utc(end_time)
 
     for entity_id, state_list in states.items():
         if not state_list:
             continue
 
         # Sort states by last_changed time
-        sorted_states = sorted(state_list, key=lambda s: s.last_changed)
+        sorted_states = sorted(state_list, key=lambda s: to_utc(s.last_changed))
 
         # Process each state to create intervals
         for i, state in enumerate(sorted_states):
             # Skip states outside retention period
-            if state.last_changed < retention_time:
+            if to_utc(state.last_changed) < retention_time_utc:
                 continue
 
             # Determine the end time for this interval
@@ -210,10 +198,12 @@ def _states_to_intervals(
                 interval_end = sorted_states[i + 1].last_changed
             else:
                 # For the last state, use the analysis end time
-                interval_end = end_time
+                interval_end = end_time_utc
 
             # Calculate duration
-            duration_seconds = (interval_end - state.last_changed).total_seconds()
+            start_utc = to_utc(state.last_changed)
+            end_utc = to_utc(interval_end)
+            duration_seconds = (end_utc - start_utc).total_seconds()
 
             # Apply filtering based on state and duration
             if state.state == "on":
@@ -222,10 +212,10 @@ def _states_to_intervals(
                         {
                             "entity_id": entity_id,
                             "state": state.state,
-                            "start_time": state.last_changed,
-                            "end_time": interval_end,
+                            "start_time": to_db_utc(start_utc),
+                            "end_time": to_db_utc(end_utc),
                             "duration_seconds": duration_seconds,
-                            "created_at": created_at,
+                            "created_at": created_at_db,
                         }
                     )
             elif (
@@ -236,10 +226,10 @@ def _states_to_intervals(
                     {
                         "entity_id": entity_id,
                         "state": state.state,
-                        "start_time": state.last_changed,
-                        "end_time": interval_end,
+                        "start_time": to_db_utc(start_utc),
+                        "end_time": to_db_utc(end_utc),
                         "duration_seconds": duration_seconds,
-                        "created_at": created_at,
+                        "created_at": created_at_db,
                     }
                 )
 
@@ -269,8 +259,8 @@ async def sync_states(db: AreaOccupancyDB) -> None:
         states = await recorder.async_add_executor_job(
             lambda: get_significant_states(
                 hass,
-                start_time,
-                end_time,
+                to_utc(start_time),
+                to_utc(end_time),
                 entity_ids,
                 minimal_response=False,
             )
@@ -280,7 +270,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
             return
 
         # Convert states to proper intervals with correct duration calculation
-        intervals = _states_to_intervals(db, states, end_time)
+        intervals = _states_to_intervals(db, states, to_utc(end_time))
         if intervals:
             with db.get_session() as session:
                 interval_keys = {
@@ -301,8 +291,8 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
                 new_intervals = []
                 for interval_data in intervals:
-                    start = _normalize_datetime(interval_data["start_time"])
-                    end = _normalize_datetime(interval_data["end_time"])
+                    start = _normalize_db_key_datetime(interval_data["start_time"])
+                    end = _normalize_db_key_datetime(interval_data["end_time"])
                     if (
                         interval_data["entity_id"],
                         start,
@@ -345,7 +335,7 @@ async def sync_states(db: AreaOccupancyDB) -> None:
 
                 new_samples = []
                 for sample_data in numeric_samples:
-                    timestamp = _normalize_datetime(sample_data["timestamp"])
+                    timestamp = _normalize_db_key_datetime(sample_data["timestamp"])
                     if (sample_data["entity_id"], timestamp) in existing_samples:
                         continue
 

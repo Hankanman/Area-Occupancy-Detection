@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.exceptions import HomeAssistantError
 
 from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
-from ..utils import ensure_timezone_aware
+from ..time_utils import from_db_utc, to_db_utc, to_utc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,10 +171,9 @@ def get_occupied_intervals_for_analysis(
         List of (start, end) tuples of occupied intervals (timezone-aware UTC)
     """
     try:
-        # Ensure timezone-aware UTC for query
-        # Use ensure_timezone_aware to handle both naive and aware inputs consistently
-        start_time_utc = ensure_timezone_aware(start_time)
-        end_time_utc = ensure_timezone_aware(end_time)
+        # DB stores naive UTC; always bind naive UTC for SQL queries
+        start_time_db = to_db_utc(start_time)
+        end_time_db = to_db_utc(end_time)
 
         with db.get_session() as session:
             # Debug: Check total intervals in cache for this area
@@ -189,8 +188,8 @@ def get_occupied_intervals_for_analysis(
             _LOGGER.debug(
                 "Querying occupied intervals for area %s: period=[%s, %s], total_intervals_in_cache=%d",
                 area_name,
-                start_time_utc,
-                end_time_utc,
+                start_time_db,
+                end_time_db,
                 total_intervals,
             )
 
@@ -199,8 +198,8 @@ def get_occupied_intervals_for_analysis(
                 .filter(
                     db.OccupiedIntervalsCache.entry_id == db.coordinator.entry_id,
                     db.OccupiedIntervalsCache.area_name == area_name,
-                    db.OccupiedIntervalsCache.start_time <= end_time_utc,
-                    db.OccupiedIntervalsCache.end_time >= start_time_utc,
+                    db.OccupiedIntervalsCache.start_time <= end_time_db,
+                    db.OccupiedIntervalsCache.end_time >= start_time_db,
                 )
                 .all()
             )
@@ -221,13 +220,9 @@ def get_occupied_intervals_for_analysis(
                         interval.end_time,
                     )
 
-            # Ensure all returned intervals are timezone-aware UTC
-            # SQLite returns naive datetimes, but they're stored as UTC
-            # Use ensure_timezone_aware to assume UTC for naive datetimes
-            # instead of as_utc which might convert based on system timezone
+            # Convert DB naive UTC back into aware UTC for runtime computations
             return [
-                (ensure_timezone_aware(i.start_time), ensure_timezone_aware(i.end_time))
-                for i in intervals
+                (from_db_utc(i.start_time), from_db_utc(i.end_time)) for i in intervals
             ]
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Error getting occupied intervals for analysis: %s", e)
@@ -247,11 +242,10 @@ def is_timestamp_occupied(
     Returns:
         True if timestamp is within an interval, False otherwise
     """
-    # Ensure timestamp is timezone-aware UTC for comparison
-    # Use ensure_timezone_aware to handle both naive and aware inputs consistently
-    timestamp_utc = ensure_timezone_aware(timestamp)
+    # Ensure timestamp and intervals are compared in aware UTC
+    timestamp_utc = to_utc(timestamp)
     return any(
-        ensure_timezone_aware(start) <= timestamp_utc < ensure_timezone_aware(end)
+        to_utc(start) <= timestamp_utc < to_utc(end)
         for start, end in occupied_intervals
     )
 
