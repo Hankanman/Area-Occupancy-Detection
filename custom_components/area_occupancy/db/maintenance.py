@@ -294,6 +294,11 @@ def _backup_database(db: AreaOccupancyDB) -> bool:
         return False
 
     try:
+        # Checkpoint WAL file to ensure all data is in main database file
+        # This ensures the backup includes all committed data
+        with suppress(Exception), db.engine.connect() as conn:
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+
         backup_path = db.db_path.with_suffix(".db.backup")
 
         shutil.copy2(db.db_path, backup_path)
@@ -322,6 +327,14 @@ def _restore_database_from_backup(db: AreaOccupancyDB) -> bool:
     try:
         # Close current engine
         db.engine.dispose()
+
+        # Remove any WAL files from corrupted database before restore
+        wal_path = db.db_path.with_suffix(db.db_path.suffix + "-wal")
+        shm_path = db.db_path.with_suffix(db.db_path.suffix + "-shm")
+        if wal_path.exists():
+            wal_path.unlink()
+        if shm_path.exists():
+            shm_path.unlink()
 
         shutil.copy2(backup_path, db.db_path)
 
@@ -359,9 +372,9 @@ def _handle_database_corruption(db: AreaOccupancyDB) -> bool:
 
     _LOGGER.error("Database corruption detected, attempting recovery")
 
-    # First, try to create a backup if possible
-    if db.enable_periodic_backups:
-        _backup_database(db)
+    # Don't create backup here - corruption is already detected, so we'd be backing up
+    # corrupted data. Backups should have been created BEFORE corruption via periodic backups.
+    # Only restore from existing backup if one exists.
 
     # Try database recovery first
     if _attempt_database_recovery(db):
@@ -372,6 +385,13 @@ def _handle_database_corruption(db: AreaOccupancyDB) -> bool:
     # If recovery failed, try to restore from backup
     if db.enable_periodic_backups and _restore_database_from_backup(db):
         if _check_database_integrity(db):
+            # After restore, ensure all tables exist (backup might be from before all tables were created)
+            if not verify_all_tables_exist(db):
+                _LOGGER.warning(
+                    "Restored database missing tables, reinitializing database schema"
+                )
+                init_db(db)
+                _set_db_version(db)
             _LOGGER.info("Database restore from backup successful")
             return True
 

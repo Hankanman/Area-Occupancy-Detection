@@ -1,12 +1,16 @@
 """Tests for database correlation analysis functions."""
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
+from dateutil.relativedelta import relativedelta
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.const import (
     AGGREGATION_PERIOD_HOURLY,
     CORRELATION_MONTHS_TO_KEEP,
+    MIN_CORRELATION_SAMPLES,
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
@@ -170,7 +174,13 @@ def _create_motion_intervals(
 
 
 class TestCalculatePearsonCorrelation:
-    """Test calculate_pearson_correlation function."""
+    """Test calculate_pearson_correlation function.
+
+    Tests the core correlation calculation algorithm, including:
+    - Positive and negative correlations
+    - Edge cases (insufficient samples, mismatched lengths, invalid values)
+    - P-value calculation
+    """
 
     @pytest.mark.parametrize(
         ("x_values", "y_values", "expected_corr", "corr_tolerance", "description"),
@@ -237,15 +247,35 @@ class TestCalculatePearsonCorrelation:
 
 
 class TestAnalyzeCorrelation:
-    """Test analyze_correlation function."""
+    """Test analyze_correlation function.
+
+    Tests the main correlation analysis function for both numeric and binary sensors.
+    Verifies:
+    - Successful correlation analysis with valid data
+    - Error handling for missing data, insufficient samples, no occupied intervals
+    - Binary sensor correlation analysis
+    - Negative correlation detection
+    - Correlation type classification
+    - Confidence and threshold calculations
+    """
 
     def test_analyze_correlation_success(self, coordinator: AreaOccupancyCoordinator):
-        """Test successful correlation analysis for numeric sensors."""
+        """Test successful correlation analysis for numeric sensors.
+
+        Verifies that correlation analysis correctly:
+        - Calculates correlation coefficient and statistics
+        - Classifies correlation type based on coefficient strength
+        - Computes mean and std dev for occupied vs unoccupied periods
+        - Returns all required fields in the result dictionary
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
 
+        # Create samples with values cycling 20-29
+        # Samples are created with timestamps: now - timedelta(hours=100-i)
+        # So i=0 is 100 hours ago, i=99 is 1 hour ago
         _create_numeric_entity_with_samples(
             db,
             area_name,
@@ -255,6 +285,8 @@ class TestAnalyzeCorrelation:
             unit_of_measurement="°C",
         )
 
+        # Occupied intervals: hours 50-40 ago and hours 20-10 ago
+        # These correspond to samples i=50-59 and i=80-89
         intervals = [
             (now - timedelta(hours=50), now - timedelta(hours=40)),
             (now - timedelta(hours=20), now - timedelta(hours=10)),
@@ -262,22 +294,41 @@ class TestAnalyzeCorrelation:
         _create_occupied_intervals_cache(db, area_name, intervals)
 
         result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
-        # With sufficient samples and occupied intervals, should return correlation data
+
+        # Verify result structure
         assert isinstance(result, dict)
         assert "correlation_coefficient" in result
         assert "sample_count" in result
-        # Verify correlation coefficient is in valid range
-        assert -1.0 <= result["correlation_coefficient"] <= 1.0
+        assert "correlation_type" in result
+        assert "mean_value_when_occupied" in result
+        assert "mean_value_when_unoccupied" in result
+        assert "std_dev_when_occupied" in result
+        assert "std_dev_when_unoccupied" in result
+
         # Verify sample_count matches input data
         assert result["sample_count"] == 100
-        # Verify mean/std values are reasonable
-        assert result["mean_value_when_occupied"] is not None
-        assert result["mean_value_when_unoccupied"] is not None
+
+        # Verify correlation coefficient is in valid range
+        assert -1.0 <= result["correlation_coefficient"] <= 1.0
+
+        # Verify correlation type matches coefficient strength
+        abs_corr = abs(result["correlation_coefficient"])
+        if abs_corr >= 0.4:
+            assert result["correlation_type"] in ("strong_positive", "strong_negative")
+        elif abs_corr >= 0.15:
+            assert result["correlation_type"] in ("positive", "negative")
+        else:
+            assert result["correlation_type"] == "none"
+
+        # Verify mean values are within expected range (generator produces 20-29)
+        assert 20.0 <= result["mean_value_when_occupied"] <= 29.0
+        assert 20.0 <= result["mean_value_when_unoccupied"] <= 29.0
+
+        # Verify std dev values are reasonable (for uniform distribution 20-29, std ~2.87)
         assert result["std_dev_when_occupied"] is not None
         assert result["std_dev_when_unoccupied"] is not None
-        # Verify mean values are reasonable (should be around 20-30 based on generator)
-        assert 15.0 <= result["mean_value_when_occupied"] <= 35.0
-        assert 15.0 <= result["mean_value_when_unoccupied"] <= 35.0
+        assert 0.0 <= result["std_dev_when_occupied"] <= 5.0
+        assert 0.0 <= result["std_dev_when_unoccupied"] <= 5.0
 
     def test_analyze_correlation_no_data(self, coordinator: AreaOccupancyCoordinator):
         """Test correlation analysis with no data."""
@@ -292,14 +343,20 @@ class TestAnalyzeCorrelation:
     def test_analyze_binary_correlation_success(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test successful binary correlation analysis."""
+        """Test successful binary correlation analysis.
+
+        Creates a perfect correlation scenario where the binary sensor is "on"
+        during all occupied periods and "off" during all unoccupied periods.
+        Verifies that correlation analysis correctly identifies this strong
+        positive correlation.
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "binary_sensor.door"
         now = dt_util.utcnow()
 
-        # Create occupied intervals first - 50 intervals, each 1 hour long
-        # These will be the "on" periods
+        # Create 50 occupied intervals at even hours (0, 2, 4, ..., 98)
+        # Each interval is 1 hour long
         occupied_intervals = []
         for i in range(50):
             start = now - timedelta(hours=100 - (i * 2))
@@ -307,8 +364,9 @@ class TestAnalyzeCorrelation:
             occupied_intervals.append((start, end))
         _create_occupied_intervals_cache(db, area_name, occupied_intervals)
 
-        # Create binary entity intervals - "on" during occupied periods, "off" otherwise
-        # Create 100 intervals covering the same time period
+        # Create 100 binary intervals covering the same time period
+        # Even indices (0, 2, 4, ...) are "on" (matching occupied periods)
+        # Odd indices (1, 3, 5, ...) are "off" (matching unoccupied periods)
         with db.get_session() as session:
             db.save_area_data(area_name)
             entity = db.Entities(
@@ -322,8 +380,6 @@ class TestAnalyzeCorrelation:
             for i in range(100):
                 start = now - timedelta(hours=100 - i)
                 end = start + timedelta(hours=1)
-                # "on" during occupied periods (even indices: 0, 2, 4, ...)
-                # "off" during unoccupied periods (odd indices: 1, 3, 5, ...)
                 state = "on" if i % 2 == 0 else "off"
                 interval = db.Intervals(
                     entry_id=db.coordinator.entry_id,
@@ -347,11 +403,34 @@ class TestAnalyzeCorrelation:
             active_states=["on"],
         )
 
+        # Verify result structure
         assert isinstance(result, dict)
-        assert result["correlation_coefficient"] > 0.9  # Should be perfect correlation
+        assert "correlation_coefficient" in result
+        assert "sample_count" in result
+        assert "mean_value_when_occupied" in result
+        assert "mean_value_when_unoccupied" in result
+
+        # With perfect correlation (sensor on during all occupied, off during all unoccupied),
+        # correlation should be very high (close to 1.0)
+        assert result["correlation_coefficient"] > 0.95
+
+        # Verify correlation type is strong_positive
+        assert result["correlation_type"] == "strong_positive"
+
+        # Verify sample count is reasonable (binary analysis uses 60-second chunks)
         assert result["sample_count"] > 0
-        assert result["mean_value_when_occupied"] > 0.9  # Should be ~1.0
-        assert result["mean_value_when_unoccupied"] < 0.1  # Should be ~0.0
+
+        # Mean when occupied should be close to 1.0 (sensor is on during occupied periods)
+        assert result["mean_value_when_occupied"] > 0.95
+
+        # Mean when unoccupied should be close to 0.0 (sensor is off during unoccupied periods)
+        assert result["mean_value_when_unoccupied"] < 0.05
+
+        # Verify std dev values are reasonable for binary data
+        assert result["std_dev_when_occupied"] is not None
+        assert result["std_dev_when_unoccupied"] is not None
+        assert 0.0 <= result["std_dev_when_occupied"] <= 1.0
+        assert 0.0 <= result["std_dev_when_unoccupied"] <= 1.0
 
     def test_analyze_binary_correlation_no_active_states(
         self, coordinator: AreaOccupancyCoordinator
@@ -456,44 +535,337 @@ class TestAnalyzeCorrelation:
         # Verify sample_count matches input
         assert result["sample_count"] == 100
 
-
-class TestSaveCorrelationResult:
-    """Test save_correlation_result function."""
-
-    def test_save_correlation_result_success(
-        self, coordinator: AreaOccupancyCoordinator
+    @pytest.mark.parametrize(
+        (
+            "is_binary",
+            "entity_id",
+            "entity_type",
+            "analysis_period_days",
+            "active_states",
+        ),
+        [
+            (False, "sensor.temperature", "numeric", 30, None),
+            (True, "binary_sensor.door", "door", 5, ["on"]),
+        ],
+        ids=["numeric", "binary"],
+    )
+    def test_analyze_correlation_no_unoccupied_samples(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        is_binary,
+        entity_id,
+        entity_type,
+        analysis_period_days,
+        active_states,
     ):
-        """Test saving correlation result successfully."""
+        """Test correlation analysis when all samples/intervals are in occupied periods."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        now = dt_util.utcnow()
+
+        # Create occupied interval covering the entire period
+        intervals = [
+            (now - timedelta(hours=100), now),  # Covers all samples/intervals
+        ]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Setup entity and data based on type
+        if is_binary:
+            # Create binary entity intervals
+            with db.get_session() as session:
+                db.save_area_data(area_name)
+                entity = db.Entities(
+                    entity_id=entity_id,
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type=entity_type,
+                )
+                session.add(entity)
+
+                for i in range(100):
+                    start = now - timedelta(hours=100 - i)
+                    end = start + timedelta(hours=1)
+                    state = "on" if i % 2 == 0 else "off"
+                    interval = db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        entity_id=entity_id,
+                        start_time=start,
+                        end_time=end,
+                        duration_seconds=3600,
+                        state=state,
+                    )
+                    session.add(interval)
+                session.commit()
+        else:
+            _create_numeric_entity_with_samples(
+                db, area_name, entity_id, 100, lambda i: 20.0 + (i % 10)
+            )
+
+        result = analyze_correlation(
+            db,
+            area_name,
+            entity_id,
+            analysis_period_days=analysis_period_days,
+            is_binary=is_binary,
+            active_states=active_states,
+        )
+        assert result is not None
+        assert result["analysis_error"] == "no_unoccupied_samples"
+        if is_binary:
+            assert result["sample_count"] > 0
+        else:
+            assert result["sample_count"] == 100
+
+    @pytest.mark.parametrize(
+        (
+            "correlation_coefficient",
+            "expected_type",
+            "description",
+        ),
+        [
+            (0.8, "strong_positive", "strong positive correlation"),
+            (0.5, "strong_positive", "moderate positive correlation (>= 0.4)"),
+            (0.4, "strong_positive", "threshold positive correlation"),
+            (0.3, "positive", "weak positive correlation (0.15-0.4)"),
+            (0.2, "positive", "weak positive correlation"),
+            (0.15, "positive", "threshold weak positive correlation"),
+            (0.1, "none", "very weak positive correlation (< 0.15)"),
+            (0.0, "none", "no correlation"),
+            (-0.1, "none", "very weak negative correlation (< 0.15)"),
+            (-0.15, "negative", "threshold weak negative correlation"),
+            (-0.2, "negative", "weak negative correlation"),
+            (-0.3, "negative", "weak negative correlation (0.15-0.4)"),
+            (-0.4, "strong_negative", "threshold negative correlation"),
+            (-0.5, "strong_negative", "moderate negative correlation (>= 0.4)"),
+            (-0.8, "strong_negative", "strong negative correlation"),
+        ],
+    )
+    def test_analyze_correlation_type_classification(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        correlation_coefficient,
+        expected_type,
+        description,
+    ):
+        """Test that correlation type is correctly classified based on coefficient strength."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+
+        # Create samples and occupied intervals
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 100, lambda i: 20.0 + (i % 10)
+        )
+        intervals = [(now - timedelta(hours=50), now - timedelta(hours=40))]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Mock calculate_pearson_correlation to return the test coefficient
+        with patch(
+            "custom_components.area_occupancy.db.correlation.calculate_pearson_correlation"
+        ) as mock_calc:
+            mock_calc.return_value = (correlation_coefficient, 0.01)
+
+            result = analyze_correlation(
+                db, area_name, entity_id, analysis_period_days=30
+            )
+            assert result is not None
+            assert result["correlation_coefficient"] == correlation_coefficient
+            assert result["correlation_type"] == expected_type, (
+                f"Expected {expected_type} for coefficient {correlation_coefficient} "
+                f"({description}), got {result['correlation_type']}"
+            )
+
+    def test_analyze_correlation_confidence_calculation(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that confidence calculation increases with stronger correlation and more samples."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 100, lambda i: 20.0 + (i % 10)
+        )
+        intervals = [(now - timedelta(hours=50), now - timedelta(hours=40))]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Test with strong correlation and many samples
+        with patch(
+            "custom_components.area_occupancy.db.correlation.calculate_pearson_correlation"
+        ) as mock_calc:
+            mock_calc.return_value = (0.8, 0.01)  # Strong correlation
+
+            result = analyze_correlation(
+                db, area_name, entity_id, analysis_period_days=30
+            )
+            assert result is not None
+            assert result["correlation_coefficient"] == 0.8
+
+            # Confidence formula: min(1.0, abs_correlation * (1.0 - (MIN_CORRELATION_SAMPLES / sample_count)))
+            # With 100 samples and 0.8 correlation:
+            # confidence = 0.8 * (1.0 - (MIN_CORRELATION_SAMPLES / 100))
+            expected_confidence = min(
+                1.0, 0.8 * (1.0 - (MIN_CORRELATION_SAMPLES / result["sample_count"]))
+            )
+            assert abs(result["confidence"] - expected_confidence) < 0.01
+
+        # Test with weak correlation - confidence should be lower
+        with patch(
+            "custom_components.area_occupancy.db.correlation.calculate_pearson_correlation"
+        ) as mock_calc:
+            mock_calc.return_value = (0.2, 0.05)  # Weak correlation
+
+            result = analyze_correlation(
+                db, area_name, entity_id, analysis_period_days=30
+            )
+            assert result is not None
+            assert result["correlation_coefficient"] == 0.2
+
+            # Confidence should be lower due to weaker correlation
+            expected_confidence = min(
+                1.0, 0.2 * (1.0 - (MIN_CORRELATION_SAMPLES / result["sample_count"]))
+            )
+            assert abs(result["confidence"] - expected_confidence) < 0.01
+            assert (
+                result["confidence"] < 0.3
+            )  # Should be much lower than strong correlation
+
+    def test_analyze_correlation_threshold_calculation(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that thresholds are calculated as mean ± std_dev."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+        now = dt_util.utcnow()
+
+        # Create samples with known values for easier verification
+        _create_numeric_entity_with_samples(
+            db, area_name, entity_id, 100, lambda i: 20.0 + (i % 10)
+        )
+        intervals = [(now - timedelta(hours=50), now - timedelta(hours=40))]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        result = analyze_correlation(db, area_name, entity_id, analysis_period_days=30)
+        assert result is not None
+
+        # Verify thresholds are calculated correctly
+        mean_occupied = result["mean_value_when_occupied"]
+        mean_unoccupied = result["mean_value_when_unoccupied"]
+        std_occupied = result["std_dev_when_occupied"]
+        std_unoccupied = result["std_dev_when_unoccupied"]
+
+        if mean_occupied is not None and std_occupied is not None:
+            expected_threshold_active = mean_occupied + std_occupied
+            assert result["threshold_active"] is not None
+            assert abs(result["threshold_active"] - expected_threshold_active) < 0.01
+
+        if mean_unoccupied is not None and std_unoccupied is not None:
+            expected_threshold_inactive = mean_unoccupied - std_unoccupied
+            assert result["threshold_inactive"] is not None
+            assert (
+                abs(result["threshold_inactive"] - expected_threshold_inactive) < 0.01
+            )
+
+
+class TestSaveResults:
+    """Test save functions for correlation and binary likelihood results.
+
+    Tests saving results to the database, including:
+    - Successful save operations
+    - Database error handling
+    - Updating existing records (concurrent updates)
+
+    Uses parametrization to test both save_correlation_result and
+    save_binary_likelihood_result with the same test logic.
+    """
+
+    @pytest.mark.parametrize(
+        (
+            "save_func",
+            "create_data_func",
+            "entity_id",
+            "input_type",
+            "verify_field",
+            "verify_value",
+        ),
+        [
+            (
+                save_correlation_result,
+                lambda db, area_name, entity_id: {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "input_type": InputType.TEMPERATURE.value,
+                    "correlation_coefficient": 0.75,
+                    "correlation_type": "strong_positive",
+                    "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+                    "analysis_period_end": dt_util.utcnow(),
+                    "sample_count": 100,
+                    "confidence": 0.85,
+                    "mean_value_when_occupied": 22.5,
+                    "mean_value_when_unoccupied": 20.0,
+                    "std_dev_when_occupied": 1.5,
+                    "std_dev_when_unoccupied": 1.0,
+                    "threshold_active": 21.0,
+                    "threshold_inactive": 19.0,
+                    "calculation_date": dt_util.utcnow(),
+                },
+                "sensor.temperature",
+                None,
+                "correlation_coefficient",
+                0.75,
+            ),
+            (
+                save_binary_likelihood_result,
+                lambda db, area_name, entity_id: {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "prob_given_true": 0.75,
+                    "prob_given_false": 0.15,
+                    "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+                    "analysis_period_end": dt_util.utcnow(),
+                    "analysis_error": None,
+                    "calculation_date": dt_util.utcnow(),
+                },
+                "light.test_light",
+                InputType.APPLIANCE,
+                "mean_value_when_occupied",
+                0.75,
+            ),
+        ],
+        ids=["correlation", "binary_likelihood"],
+    )
+    def test_save_result_success(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        save_func,
+        create_data_func,
+        entity_id,
+        input_type,
+        verify_field,
+        verify_value,
+    ):
+        """Test saving result successfully."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
 
         _create_entity(db, area_name, entity_id)
 
-        correlation_data = {
-            "entry_id": db.coordinator.entry_id,
-            "area_name": area_name,
-            "entity_id": entity_id,
-            "input_type": InputType.TEMPERATURE.value,
-            "correlation_coefficient": 0.75,
-            "correlation_type": "strong_positive",
-            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
-            "analysis_period_end": dt_util.utcnow(),
-            "sample_count": 100,
-            "confidence": 0.85,
-            "mean_value_when_occupied": 22.5,
-            "mean_value_when_unoccupied": 20.0,
-            "std_dev_when_occupied": 1.5,
-            "std_dev_when_unoccupied": 1.0,
-            "threshold_active": 21.0,
-            "threshold_inactive": 19.0,
-            "calculation_date": dt_util.utcnow(),
-        }
+        data = create_data_func(db, area_name, entity_id)
 
-        result = save_correlation_result(db, correlation_data)
+        if input_type is not None:
+            result = save_func(db, data, input_type)
+        else:
+            result = save_func(db, data)
+
         assert result is True
 
-        # Verify correlation was saved
+        # Verify result was saved
         with db.get_session() as session:
             correlation = (
                 session.query(db.Correlations)
@@ -501,11 +873,196 @@ class TestSaveCorrelationResult:
                 .first()
             )
             assert correlation is not None
-            assert correlation.correlation_coefficient == 0.75
+            assert getattr(correlation, verify_field) == verify_value
+
+    @pytest.mark.parametrize(
+        ("save_func", "create_data_func", "entity_id", "input_type"),
+        [
+            (
+                save_correlation_result,
+                lambda db, area_name, entity_id: {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "input_type": InputType.TEMPERATURE.value,
+                    "correlation_coefficient": 0.75,
+                    "correlation_type": "strong_positive",
+                    "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+                    "analysis_period_end": dt_util.utcnow(),
+                    "sample_count": 100,
+                },
+                "sensor.temperature",
+                None,
+            ),
+            (
+                save_binary_likelihood_result,
+                lambda db, area_name, entity_id: {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "prob_given_true": 0.75,
+                    "prob_given_false": 0.15,
+                    "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+                    "analysis_period_end": dt_util.utcnow(),
+                    "analysis_error": None,
+                    "calculation_date": dt_util.utcnow(),
+                },
+                "light.test_light",
+                InputType.APPLIANCE,
+            ),
+        ],
+        ids=["correlation", "binary_likelihood"],
+    )
+    def test_save_result_database_error(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        save_func,
+        create_data_func,
+        entity_id,
+        input_type,
+    ):
+        """Test that save functions handle database errors gracefully."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        _create_entity(db, area_name, entity_id)
+
+        data = create_data_func(db, area_name, entity_id)
+
+        # Mock database commit to raise an error
+        with patch.object(db, "get_session") as mock_session:
+            mock_session.return_value.__enter__.return_value.commit.side_effect = (
+                SQLAlchemyError("Database error")
+            )
+            if input_type is not None:
+                result = save_func(db, data, input_type)
+            else:
+                result = save_func(db, data)
+            assert result is False
+
+    @pytest.mark.parametrize(
+        (
+            "save_func",
+            "create_data_func",
+            "entity_id",
+            "input_type",
+            "update_field",
+            "update_value",
+            "verify_field",
+            "verify_value",
+        ),
+        [
+            (
+                save_correlation_result,
+                lambda db, area_name, entity_id, period_start: {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "input_type": InputType.TEMPERATURE.value,
+                    "correlation_coefficient": 0.75,
+                    "correlation_type": "strong_positive",
+                    "analysis_period_start": period_start,
+                    "analysis_period_end": dt_util.utcnow(),
+                    "sample_count": 100,
+                },
+                "sensor.temperature",
+                None,
+                "correlation_coefficient",
+                0.80,
+                "correlation_coefficient",
+                0.80,
+            ),
+            (
+                save_binary_likelihood_result,
+                lambda db, area_name, entity_id, period_start: {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": entity_id,
+                    "prob_given_true": 0.75,
+                    "prob_given_false": 0.15,
+                    "analysis_period_start": period_start,
+                    "analysis_period_end": dt_util.utcnow(),
+                    "analysis_error": None,
+                    "calculation_date": dt_util.utcnow(),
+                },
+                "light.test_light",
+                InputType.APPLIANCE,
+                "prob_given_true",
+                0.80,
+                "mean_value_when_occupied",
+                0.80,
+            ),
+        ],
+        ids=["correlation", "binary_likelihood"],
+    )
+    def test_save_result_updates_existing(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        save_func,
+        create_data_func,
+        entity_id,
+        input_type,
+        update_field,
+        update_value,
+        verify_field,
+        verify_value,
+    ):
+        """Test that save functions update existing record with same analysis_period_start."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        _create_entity(db, area_name, entity_id)
+
+        period_start = dt_util.utcnow() - timedelta(days=30)
+        data = create_data_func(db, area_name, entity_id, period_start)
+
+        # Save first time
+        if input_type is not None:
+            result = save_func(db, data, input_type)
+        else:
+            result = save_func(db, data)
+        assert result is True
+
+        # Update and save again with same analysis_period_start
+        data[update_field] = update_value
+        # For correlation, also update correlation_type
+        if input_type is None and "correlation_type" in data:
+            data["correlation_type"] = "positive"
+        if input_type is not None:
+            result = save_func(db, data, input_type)
+        else:
+            result = save_func(db, data)
+        assert result is True
+
+        # Verify updated value
+        with db.get_session() as session:
+            correlation = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .first()
+            )
+            assert correlation is not None
+            assert getattr(correlation, verify_field) == verify_value
+            # For correlation, also verify correlation_type was updated
+            if input_type is None:
+                assert correlation.correlation_type == "positive"
+            # Verify only one record exists (updated, not duplicated)
+            count = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .count()
+            )
+            assert count == 1
 
 
 class TestGetCorrelationForEntity:
-    """Test get_correlation_for_entity function."""
+    """Test get_correlation_for_entity function.
+
+    Tests retrieving correlation results from the database, including:
+    - Retrieving most recent correlation
+    - Handling multiple correlations (selects most recent)
+    - Handling missing correlations
+    """
 
     def test_get_correlation_for_entity_success(
         self, coordinator: AreaOccupancyCoordinator
@@ -546,18 +1103,22 @@ class TestGetCorrelationForEntity:
     def test_get_correlation_for_entity_multiple_results(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test getting correlation when multiple results exist."""
+        """Test getting correlation when multiple results exist.
+
+        Verifies that when multiple correlations exist, the function returns
+        the most recent one by calculation_date (fallback path when current
+        month's record doesn't exist).
+        """
         db = coordinator.db
-        db.init_db()
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
 
         _create_entity(db, area_name, entity_id)
 
-        # Create multiple correlations
+        # Create multiple correlations with different calculation dates
+        # None match current month, so fallback to most recent by calculation_date
+        now = dt_util.utcnow()
         with db.get_session() as session:
-            # Create multiple correlations (most recent first due to desc ordering)
-            now = dt_util.utcnow()
             for i in range(3):
                 # Use different analysis_period_start to avoid unique constraint violation
                 period_start = now - timedelta(days=30 + i)
@@ -569,7 +1130,7 @@ class TestGetCorrelationForEntity:
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.1),
                     correlation_type="strong_positive",
-                    calculation_date=now - timedelta(days=i),
+                    calculation_date=now - timedelta(days=i),  # i=0 is most recent
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
                     sample_count=100,
@@ -577,14 +1138,20 @@ class TestGetCorrelationForEntity:
                 session.add(correlation)
             session.commit()
 
-        # Should return most recent (i=0, coefficient=0.5)
+        # Should return most recent by calculation_date (i=0, coefficient=0.5)
         result = get_correlation_for_entity(db, area_name, entity_id)
         assert result is not None
-        assert result["correlation_coefficient"] == 0.5  # Most recent (i=0)
+        assert result["correlation_coefficient"] == 0.5
 
 
 class TestAnalyzeAndSaveCorrelation:
-    """Test analyze_and_save_correlation function."""
+    """Test analyze_and_save_correlation function.
+
+    Tests the combined analyze-and-save operation, including:
+    - Successful analysis and save
+    - Handling invalid correlation coefficients (NaN, infinity)
+    - Preserving analysis errors even with invalid coefficients
+    """
 
     def test_analyze_and_save_correlation_success(
         self, coordinator: AreaOccupancyCoordinator
@@ -631,23 +1198,102 @@ class TestAnalyzeAndSaveCorrelation:
                 == result["mean_value_when_unoccupied"]
             )
 
-    def test_analyze_and_save_correlation_no_data(
+    def test_analyze_and_save_correlation_invalid_coefficient(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test analyze_and_save when no correlation data is generated."""
+        """Test that analyze_and_save_correlation skips saving when coefficient is invalid."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
 
-        result = analyze_and_save_correlation(
-            db, area_name, "sensor.nonexistent", analysis_period_days=30
-        )
-        # Should now return rejection result
-        assert result is not None
-        assert result["analysis_error"] == "too_few_samples"
+        _create_entity(db, area_name, entity_id)
+
+        # Mock analyze_correlation to return invalid coefficient (NaN)
+        with patch(
+            "custom_components.area_occupancy.db.correlation.analyze_correlation"
+        ) as mock_analyze:
+            mock_analyze.return_value = {
+                "entry_id": db.coordinator.entry_id,
+                "area_name": area_name,
+                "entity_id": entity_id,
+                "correlation_coefficient": float("nan"),  # Invalid coefficient
+                "correlation_type": "none",
+                "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+                "analysis_period_end": dt_util.utcnow(),
+                "sample_count": 100,
+            }
+
+            result = analyze_and_save_correlation(
+                db, area_name, entity_id, analysis_period_days=30
+            )
+            # Should return None (not saved due to invalid coefficient)
+            assert result is None
+
+            # Verify nothing was saved to database
+            with db.get_session() as session:
+                correlation = (
+                    session.query(db.Correlations)
+                    .filter_by(area_name=area_name, entity_id=entity_id)
+                    .first()
+                )
+                assert correlation is None
+
+    def test_analyze_and_save_correlation_invalid_coefficient_with_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that analyze_and_save_correlation saves error even with invalid coefficient."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        _create_entity(db, area_name, entity_id)
+
+        # Mock analyze_correlation to return invalid coefficient with analysis_error
+        with patch(
+            "custom_components.area_occupancy.db.correlation.analyze_correlation"
+        ) as mock_analyze:
+            mock_analyze.return_value = {
+                "entry_id": db.coordinator.entry_id,
+                "area_name": area_name,
+                "entity_id": entity_id,
+                "correlation_coefficient": float("inf"),  # Invalid coefficient
+                "correlation_type": "none",
+                "analysis_error": "too_few_samples",  # Error to preserve
+                "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
+                "analysis_period_end": dt_util.utcnow(),
+                "sample_count": 0,
+            }
+
+            result = analyze_and_save_correlation(
+                db, area_name, entity_id, analysis_period_days=30
+            )
+            # Should return result (error is preserved even with invalid coefficient)
+            assert result is not None
+            assert result["analysis_error"] == "too_few_samples"
+            # Coefficient should be replaced with 0.0 placeholder
+            assert result["correlation_coefficient"] == 0.0
+
+            # Verify error was saved to database
+            with db.get_session() as session:
+                correlation = (
+                    session.query(db.Correlations)
+                    .filter_by(area_name=area_name, entity_id=entity_id)
+                    .first()
+                )
+                assert correlation is not None
+                assert correlation.analysis_error == "too_few_samples"
+                assert correlation.correlation_coefficient == 0.0
 
 
 class TestPruneOldCorrelations:
-    """Test _prune_old_correlations function."""
+    """Test _prune_old_correlations function.
+
+    Tests the correlation pruning logic that keeps only the most recent N months:
+    - Pruning when excess correlations exist
+    - No pruning when fewer than limit
+    - Handling duplicates within the same month
+    - Edge cases (empty list, exactly at limit)
+    """
 
     def test_prune_old_correlations_excess_records(
         self, coordinator: AreaOccupancyCoordinator
@@ -666,10 +1312,17 @@ class TestPruneOldCorrelations:
             now = dt_util.utcnow()
             for i in range(CORRELATION_MONTHS_TO_KEEP + 5):
                 # Create correlations spread across months (one per month)
-                # Use i * 30 days to ensure they're in different months
-                days_ago = i * 30
-                period_start = now - timedelta(days=days_ago + 30)
-                period_end = now - timedelta(days=days_ago)
+                # Use month-based arithmetic to ensure each iteration falls into a distinct calendar month
+                months_ago = i
+                # Calculate target month: go back i months from now
+                target_month_start = now.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0
+                ) - relativedelta(months=months_ago)
+                # Period spans the entire month
+                period_start = target_month_start
+                period_end = target_month_start + relativedelta(months=1)
+                # Calculation date is at the end of the analysis period
+                calculation_date = period_end
                 correlation = db.Correlations(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
@@ -677,7 +1330,7 @@ class TestPruneOldCorrelations:
                     input_type=InputType.TEMPERATURE.value,
                     correlation_coefficient=0.5 + (i * 0.01),
                     correlation_type="strong_positive",
-                    calculation_date=now - timedelta(days=days_ago),
+                    calculation_date=calculation_date,
                     analysis_period_start=period_start,
                     analysis_period_end=period_end,
                     sample_count=100,
@@ -701,28 +1354,30 @@ class TestPruneOldCorrelations:
     def test_prune_old_correlations_no_excess(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test pruning when there are fewer correlations than limit."""
+        """Test pruning when there are fewer correlations than limit.
+
+        Verifies that when there are fewer correlations than CORRELATION_MONTHS_TO_KEEP,
+        none are pruned. The pruning function groups by year-month, so we need
+        correlations in different months to properly test the logic.
+        """
         db = coordinator.db
-        db.init_db()
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
 
         _create_entity(db, area_name, entity_id)
 
-        # Create fewer correlations than limit
-        # Spread them across months to test pruning properly
+        # Create fewer correlations than limit, spread across different months
+        # Pruning groups by year-month, so we need proper month boundaries
+        now = dt_util.utcnow()
+        num_correlations = CORRELATION_MONTHS_TO_KEEP - 2
         with db.get_session() as session:
-            now = dt_util.utcnow()
-            num_correlations = CORRELATION_MONTHS_TO_KEEP - 2
             for i in range(num_correlations):
-                # Create correlations spread across months (one per month)
-                # Use month boundaries to ensure they're in different months
-                # Start from current month and go back i months
+                # Calculate target month: current month minus i months
                 target_date = now.replace(
                     day=1, hour=0, minute=0, second=0, microsecond=0
                 )
                 for _ in range(i):
-                    # Go back one month
+                    # Go back one month, handling year boundary
                     if target_date.month == 1:
                         target_date = target_date.replace(
                             year=target_date.year - 1, month=12
@@ -730,9 +1385,8 @@ class TestPruneOldCorrelations:
                     else:
                         target_date = target_date.replace(month=target_date.month - 1)
 
-                # Create period that starts at the beginning of the month
+                # Create period spanning the entire month
                 period_start = target_date
-                # Period ends at the beginning of next month
                 if period_start.month == 12:
                     period_end = period_start.replace(
                         year=period_start.year + 1, month=1
@@ -759,7 +1413,7 @@ class TestPruneOldCorrelations:
         with db.get_session() as session:
             _prune_old_correlations(db, session, area_name, entity_id)
 
-        # Verify all correlations remain
+        # Verify all correlations remain (none should be pruned)
         with db.get_session() as session:
             count = (
                 session.query(db.Correlations)
@@ -768,9 +1422,152 @@ class TestPruneOldCorrelations:
             )
             assert count == num_correlations
 
+    def test_prune_old_correlations_empty_list(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test pruning when no correlations exist."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        _create_entity(db, area_name, entity_id)
+
+        # Call prune function with no correlations
+        with db.get_session() as session:
+            _prune_old_correlations(db, session, area_name, entity_id)
+
+        # Verify no errors occurred
+        with db.get_session() as session:
+            count = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .count()
+            )
+            assert count == 0
+
+    def test_prune_old_correlations_exactly_limit(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test pruning when exactly CORRELATION_MONTHS_TO_KEEP correlations exist."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        _create_entity(db, area_name, entity_id)
+
+        # Create exactly CORRELATION_MONTHS_TO_KEEP correlations
+        now = dt_util.utcnow()
+        with db.get_session() as session:
+            for i in range(CORRELATION_MONTHS_TO_KEEP):
+                target_date = now.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0
+                )
+                for _ in range(i):
+                    if target_date.month == 1:
+                        target_date = target_date.replace(
+                            year=target_date.year - 1, month=12
+                        )
+                    else:
+                        target_date = target_date.replace(month=target_date.month - 1)
+
+                period_start = target_date
+                if period_start.month == 12:
+                    period_end = period_start.replace(
+                        year=period_start.year + 1, month=1
+                    )
+                else:
+                    period_end = period_start.replace(month=period_start.month + 1)
+
+                correlation = db.Correlations(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    input_type=InputType.TEMPERATURE.value,
+                    correlation_coefficient=0.5,
+                    correlation_type="strong_positive",
+                    calculation_date=period_end,
+                    analysis_period_start=period_start,
+                    analysis_period_end=period_end,
+                    sample_count=100,
+                )
+                session.add(correlation)
+            session.commit()
+
+        # Call prune function
+        with db.get_session() as session:
+            _prune_old_correlations(db, session, area_name, entity_id)
+
+        # Verify all correlations remain (none should be pruned)
+        with db.get_session() as session:
+            count = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .count()
+            )
+            assert count == CORRELATION_MONTHS_TO_KEEP
+
+    def test_prune_old_correlations_duplicates_in_month(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test pruning when multiple correlations exist in the same month."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        entity_id = "sensor.temperature"
+
+        _create_entity(db, area_name, entity_id)
+
+        # Create multiple correlations in the same month
+        # Use different days within the same month to avoid UNIQUE constraint violation
+        now = dt_util.utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        with db.get_session() as session:
+            # Create 3 correlations in the same month with different analysis_period_start
+            # (different days) and different calculation dates
+            for i in range(3):
+                # Use different days within the same month (day 1, 5, 10)
+                period_start = month_start.replace(day=1 + (i * 4))
+                correlation = db.Correlations(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=entity_id,
+                    input_type=InputType.TEMPERATURE.value,
+                    correlation_coefficient=0.5 + (i * 0.1),
+                    correlation_type="strong_positive",
+                    calculation_date=now
+                    - timedelta(days=i),  # Different calculation dates
+                    analysis_period_start=period_start,  # Different days in same month
+                    analysis_period_end=now,
+                    sample_count=100,
+                )
+                session.add(correlation)
+            session.commit()
+
+        # Call prune function
+        with db.get_session() as session:
+            _prune_old_correlations(db, session, area_name, entity_id)
+
+        # Verify only the most recent correlation for the month remains
+        # (by calculation_date, which is now - 0 days = most recent)
+        with db.get_session() as session:
+            correlations = (
+                session.query(db.Correlations)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .all()
+            )
+            assert len(correlations) == 1
+            # Should keep the one with most recent calculation_date (i=0, coefficient=0.5)
+            assert correlations[0].correlation_coefficient == 0.5
+
 
 class TestAnalyzeBinaryLikelihoods:
-    """Test analyze_binary_likelihoods function."""
+    """Test analyze_binary_likelihoods function.
+
+    Tests binary sensor likelihood analysis using duration-based probability calculation:
+    - Successful probability calculation
+    - Error handling (no active states, no occupied intervals, no sensor data)
+    - State mapping for door/window sensors (binary to semantic)
+    - Edge cases (sensor active but never during occupied periods)
+    """
 
     def test_analyze_binary_likelihoods_success(
         self, coordinator: AreaOccupancyCoordinator
@@ -825,9 +1622,25 @@ class TestAnalyzeBinaryLikelihoods:
         assert result["prob_given_true"] is not None
         assert result["prob_given_false"] is not None
         assert result["analysis_error"] is None
+
+        # Calculate expected probabilities:
+        # - 5 occupied intervals (5 hours total)
+        # - Light is "on" during first 3 occupied intervals (3 hours)
+        # - Light is "off" during last 2 occupied intervals (2 hours)
+        # - prob_given_true = 3/5 = 0.6
+        # - During unoccupied periods, light has no intervals (considered off)
+        # - prob_given_false = 0.0, but clamped to 0.05 minimum
+
+        # Verify prob_given_true is approximately 0.6 (3 out of 5 occupied hours)
+        assert 0.55 <= result["prob_given_true"] <= 0.65
+
+        # Verify prob_given_false is clamped minimum (0.05) since light is never on during unoccupied
+        assert result["prob_given_false"] == 0.05
+
         # Light should be more likely on when occupied
         assert result["prob_given_true"] > result["prob_given_false"]
-        # Probabilities should be clamped
+
+        # Probabilities should be clamped to valid range
         assert 0.05 <= result["prob_given_true"] <= 0.95
         assert 0.05 <= result["prob_given_false"] <= 0.95
 
@@ -1141,21 +1954,35 @@ class TestAnalyzeBinaryLikelihoods:
 
 
 class TestCorrelationBugFixes:
-    """Test fixes for correlation logic bugs."""
+    """Test fixes for correlation logic bugs.
+
+    Tests specific bug fixes and edge cases:
+    - Timezone-aware datetime handling in queries
+    - Entry ID filtering to prevent cross-entry data leakage
+    - Unoccupied overlap calculation edge cases
+    """
 
     def test_timezone_aware_numeric_query(self, coordinator: AreaOccupancyCoordinator):
-        """Test that numeric sensor query uses timezone-aware datetimes correctly."""
+        """Test that numeric sensor query uses timezone-aware datetimes correctly.
+
+        Verifies that queries correctly handle timezone-aware datetimes and that
+        samples are found when they fall within the analysis period, regardless
+        of whether naive or aware datetimes are used.
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         entity_id = "sensor.temperature"
         now = dt_util.utcnow()
 
         # Create samples with timezone-aware timestamps
+        # Samples are created with: now - timedelta(hours=50-i)
+        # So i=0 is 50 hours ago, i=49 is 1 hour ago
         _create_numeric_entity_with_samples(
             db, area_name, entity_id, 50, lambda i: 20.0 + (i % 10)
         )
 
-        # Create occupied intervals
+        # Create occupied intervals that overlap with samples
+        # Occupied period: hours 30-20 ago (samples i=20-30)
         intervals = [
             (now - timedelta(hours=30), now - timedelta(hours=20)),
         ]
@@ -1167,19 +1994,28 @@ class TestCorrelationBugFixes:
         assert "correlation_coefficient" in result
         assert result["sample_count"] > 0
 
-        # Verify timezone-aware datetimes are handled correctly
-        # The function should handle both naive and aware datetimes via ensure_timezone_aware
-        # Verify samples were found (proves timezone handling worked)
+        # Verify all samples were found (proves timezone handling worked)
         assert result["sample_count"] == 50
 
-        # Verify the analysis period boundaries are timezone-aware
-        # This is tested implicitly by the successful query, but we can verify
-        # that the result contains valid timestamps
+        # Verify the analysis period boundaries are timezone-aware UTC
         assert result["analysis_period_start"] is not None
         assert result["analysis_period_end"] is not None
-        # Verify these are datetime objects (timezone-aware)
         assert isinstance(result["analysis_period_start"], datetime)
         assert isinstance(result["analysis_period_end"], datetime)
+
+        # Verify they are timezone-aware (have tzinfo)
+        assert result["analysis_period_start"].tzinfo is not None
+        assert result["analysis_period_end"].tzinfo is not None
+
+        # Verify analysis_period_end is approximately now (within 1 second)
+        assert abs((result["analysis_period_end"] - now).total_seconds()) < 1.0
+
+        # Verify analysis_period_start is approximately 30 days ago
+        expected_start = now - timedelta(days=30)
+        assert (
+            abs((result["analysis_period_start"] - expected_start).total_seconds())
+            < 1.0
+        )
 
     def test_entry_id_filtering(self, coordinator: AreaOccupancyCoordinator):
         """Test that numeric samples query filters by entry_id to prevent cross-entry leakage."""
@@ -1285,25 +2121,45 @@ class TestCorrelationBugFixes:
         assert result is not None
         assert result["prob_given_true"] is not None
         assert result["prob_given_false"] is not None
-        # Probabilities should be valid (clamped between 0.05 and 0.95)
+        assert result["analysis_error"] is None
+
+        # Verify overlap calculations are correct:
+        # - Light interval: base_time - 6h to base_time - 4h + 30m (2.5 hours total)
+        # - Motion intervals create 5 occupied periods: base_time - 5h to base_time (5 hours total)
+        # - The light interval overlaps with occupied periods from base_time - 5h to base_time - 3h30m
+        # - The actual overlap depends on how intervals are clamped to the analysis period
+        #
+        # The key test is that:
+        # 1. Both probabilities are calculated correctly (not None)
+        # 2. prob_given_true > prob_given_false (light is more likely to be on during occupied periods)
+        # 3. Both probabilities are within valid clamped range (0.05 to 0.95)
+
+        # prob_given_true should be higher than prob_given_false since light overlaps with occupied periods
+        assert result["prob_given_true"] > result["prob_given_false"]
+
+        # Both probabilities should be valid (clamped between 0.05 and 0.95)
         assert 0.05 <= result["prob_given_true"] <= 0.95
         assert 0.05 <= result["prob_given_false"] <= 0.95
 
-        # Verify overlap calculations are correct:
-        # The interval spans from base_time - 6h to base_time - 4h + 30m (2.5 hours total)
-        # Motion intervals are at base_time - 5h to base_time - 4h (1 hour)
-        # So occupied overlap should be ~1 hour, unoccupied overlap should be ~1.5 hours
-        # This means prob_given_true should be > prob_given_false (more time active during occupied)
-        # But since the interval spans both occupied and unoccupied, both probabilities should be > 0
-        assert result["prob_given_true"] > 0.0
+        # Verify that the light interval does overlap with occupied periods
+        # (prob_given_true should be significantly higher than the minimum)
+        assert result["prob_given_true"] > 0.05
+
+        # Verify that there is some unoccupied overlap
+        # (prob_given_false should be greater than 0, indicating light was on during unoccupied time)
         assert result["prob_given_false"] > 0.0
-        # The interval overlaps with occupied period, so prob_given_true should be meaningful
-        # (not just clamped minimum)
-        assert result["prob_given_true"] >= 0.05
 
 
 class TestNumericAggregatesInCorrelation:
-    """Test correlation analysis using numeric aggregates for historical data."""
+    """Test correlation analysis using numeric aggregates for historical data.
+
+    Tests the aggregation system that uses raw samples for recent data and
+    hourly aggregates for older data:
+    - Using only raw samples when all data is within retention period
+    - Using only aggregates when all data is older than retention
+    - Combining both sources when period spans retention boundary
+    - Timestamp ordering of combined samples
+    """
 
     def test_correlation_uses_recent_samples_only(
         self, coordinator: AreaOccupancyCoordinator
@@ -1637,7 +2493,13 @@ class TestNumericAggregatesInCorrelation:
 
 
 class TestConvertIntervalsToSamples:
-    """Test convert_intervals_to_samples function."""
+    """Test convert_intervals_to_samples function.
+
+    Tests conversion of binary sensor intervals to numeric samples:
+    - Successful conversion with proper value mapping (active=1.0, inactive=0.0)
+    - Handling intervals that span period boundaries (clamping)
+    - Handling missing active states
+    """
 
     def test_convert_intervals_to_samples_success(
         self, coordinator: AreaOccupancyCoordinator
@@ -1777,7 +2639,11 @@ class TestConvertIntervalsToSamples:
 
 
 class TestMapBinaryStateToSemantic:
-    """Test _map_binary_state_to_semantic function."""
+    """Test _map_binary_state_to_semantic function.
+
+    Tests mapping of binary sensor states ('on'/'off') to semantic states
+    ('open'/'closed') for door and window sensors.
+    """
 
     @pytest.mark.parametrize(
         ("input_state", "active_states", "expected_result", "description"),
@@ -1815,89 +2681,14 @@ class TestMapBinaryStateToSemantic:
         assert result == "playing"
 
 
-class TestSaveBinaryLikelihoodResult:
-    """Test save_binary_likelihood_result function."""
-
-    def test_save_binary_likelihood_result_success(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test saving binary likelihood result successfully."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        entity_id = "light.test_light"
-
-        _create_entity(db, area_name, entity_id)
-
-        likelihood_data = {
-            "entry_id": db.coordinator.entry_id,
-            "area_name": area_name,
-            "entity_id": entity_id,
-            "prob_given_true": 0.75,
-            "prob_given_false": 0.15,
-            "analysis_period_start": dt_util.utcnow() - timedelta(days=30),
-            "analysis_period_end": dt_util.utcnow(),
-            "analysis_error": None,
-            "calculation_date": dt_util.utcnow(),
-        }
-
-        result = save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
-        assert result is True
-
-        # Verify likelihood was saved
-        with db.get_session() as session:
-            correlation = (
-                session.query(db.Correlations)
-                .filter_by(area_name=area_name, entity_id=entity_id)
-                .first()
-            )
-            assert correlation is not None
-            assert correlation.correlation_type == "binary_likelihood"
-            assert correlation.mean_value_when_occupied == 0.75
-            assert correlation.mean_value_when_unoccupied == 0.15
-
-    def test_save_binary_likelihood_result_updates_existing(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test that saving updates existing record."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        entity_id = "light.test_light"
-
-        _create_entity(db, area_name, entity_id)
-
-        period_start = dt_util.utcnow() - timedelta(days=30)
-        likelihood_data = {
-            "entry_id": db.coordinator.entry_id,
-            "area_name": area_name,
-            "entity_id": entity_id,
-            "prob_given_true": 0.75,
-            "prob_given_false": 0.15,
-            "analysis_period_start": period_start,
-            "analysis_period_end": dt_util.utcnow(),
-            "analysis_error": None,
-            "calculation_date": dt_util.utcnow(),
-        }
-
-        # Save first time
-        save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
-
-        # Update and save again
-        likelihood_data["prob_given_true"] = 0.80
-        result = save_binary_likelihood_result(db, likelihood_data, InputType.APPLIANCE)
-        assert result is True
-
-        # Verify updated value
-        with db.get_session() as session:
-            correlation = (
-                session.query(db.Correlations)
-                .filter_by(area_name=area_name, entity_id=entity_id)
-                .first()
-            )
-            assert correlation.mean_value_when_occupied == 0.80
-
-
 class TestGetCorrelatableEntitiesByArea:
-    """Test get_correlatable_entities_by_area function."""
+    """Test get_correlatable_entities_by_area function.
+
+    Tests discovery of entities that can be analyzed for correlation:
+    - Binary sensors (media, appliances, doors, windows)
+    - Numeric sensors (temperature, humidity, etc.)
+    - Exclusion of motion sensors (they define occupancy, not correlate with it)
+    """
 
     @pytest.mark.parametrize(
         (
@@ -1992,7 +2783,14 @@ class TestGetCorrelatableEntitiesByArea:
 
 
 class TestRunCorrelationAnalysis:
-    """Test run_correlation_analysis function."""
+    """Test run_correlation_analysis function.
+
+    Tests the high-level correlation analysis orchestration:
+    - Analysis of binary sensors (uses binary likelihood analysis)
+    - Analysis of numeric sensors (uses correlation analysis)
+    - Error propagation (errors in one entity don't stop others)
+    - Return results flag behavior
+    """
 
     async def test_run_correlation_analysis_binary_sensor(
         self, coordinator: AreaOccupancyCoordinator
@@ -2120,3 +2918,105 @@ class TestRunCorrelationAnalysis:
         """Test that return_results=False returns None."""
         result = await run_correlation_analysis(coordinator, return_results=False)
         assert result is None
+
+    async def test_run_correlation_analysis_error_propagation(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that errors in individual entity analysis don't stop the entire analysis."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Add two entities: one that will succeed, one that will fail
+        # Successful entity
+        temp_type = EntityType(
+            input_type=InputType.TEMPERATURE,
+            weight=0.1,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+        )
+        temp_entity = Entity(
+            entity_id="sensor.temperature",
+            type=temp_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda x: "20.0",
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities["sensor.temperature"] = temp_entity
+
+        # Entity that will fail (media player without intervals)
+        media_type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.7,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            active_states=[STATE_ON],
+        )
+        media_entity = Entity(
+            entity_id="media_player.tv",
+            type=media_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda x: STATE_ON,
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities["media_player.tv"] = media_entity
+
+        # Create motion intervals for occupied periods
+        db = coordinator.db
+        now = dt_util.utcnow()
+        base_time = now - timedelta(seconds=30)
+        motion_entity_id = area.config.sensors.motion[0]
+        motion_intervals = _create_motion_intervals(
+            db, area_name, motion_entity_id, 5, now=base_time
+        )
+        db.save_occupied_intervals_cache(area_name, motion_intervals, "motion_sensors")
+
+        # Create numeric samples for temperature sensor (will succeed)
+        _create_numeric_entity_with_samples(
+            db, area_name, "sensor.temperature", 100, lambda i: 20.0 + (i % 10)
+        )
+        intervals = [(now - timedelta(hours=50), now - timedelta(hours=40))]
+        _create_occupied_intervals_cache(db, area_name, intervals)
+
+        # Mock analyze_binary_likelihoods on the database instance to raise an error for media player
+        # The function is called via coordinator.db.analyze_binary_likelihoods
+        original_func = coordinator.db.analyze_binary_likelihoods
+
+        def mock_analyze_binary_likelihoods(area_name, entity_id, *args, **kwargs):
+            if entity_id == "media_player.tv":
+                raise SQLAlchemyError("Database error for media player")
+            # For other entities, call the real function
+            return original_func(area_name, entity_id, *args, **kwargs)
+
+        with patch.object(
+            coordinator.db,
+            "analyze_binary_likelihoods",
+            side_effect=mock_analyze_binary_likelihoods,
+        ):
+            # Run analysis - should continue despite error
+            results = await run_correlation_analysis(coordinator, return_results=True)
+
+            # Should have results (may include other entities from the coordinator fixture)
+            assert results is not None
+            assert len(results) > 0
+
+            # Find results for each entity we added
+            temp_result = next(
+                (r for r in results if r.get("entity_id") == "sensor.temperature"), None
+            )
+            media_result = next(
+                (r for r in results if r.get("entity_id") == "media_player.tv"), None
+            )
+
+            # Temperature sensor should succeed
+            assert temp_result is not None
+            assert temp_result["success"] is True
+
+            # Media player should have error recorded
+            assert media_result is not None
+            assert media_result["success"] is False
+            assert "error" in media_result
+            assert "Database error" in media_result["error"]

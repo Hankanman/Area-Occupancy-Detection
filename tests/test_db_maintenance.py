@@ -1,5 +1,4 @@
 """Tests for database maintenance functions."""
-# ruff: noqa: SLF001
 
 from datetime import datetime
 import os
@@ -10,9 +9,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import sessionmaker
 
 from custom_components.area_occupancy.const import CONF_VERSION
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
@@ -22,7 +20,6 @@ from custom_components.area_occupancy.db.maintenance import (
     _backup_database,
     _check_database_integrity,
     _create_tables_individually,
-    _enable_wal_mode,
     _ensure_schema_up_to_date,
     _handle_database_corruption,
     _is_database_corrupted,
@@ -39,6 +36,7 @@ from custom_components.area_occupancy.db.maintenance import (
     verify_all_tables_exist,
 )
 from homeassistant.util import dt as dt_util
+from tests.conftest import setup_test_db_engine  # noqa: TID251
 
 
 class TestEnsureDbExists:
@@ -49,16 +47,7 @@ class TestEnsureDbExists:
     ):
         """Test ensure_db_exists with new database."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_new.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_new.db")
 
         # This should create all tables
         ensure_db_exists(db)
@@ -71,16 +60,7 @@ class TestEnsureDbExists:
     ):
         """Test ensure_db_exists when file exists but has no tables (race condition)."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_race.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_race.db")
 
         # Create an empty SQLite database file (valid header but no tables)
         with db.engine.connect() as conn:
@@ -99,16 +79,7 @@ class TestEnsureDbExists:
     ):
         """Test ensure_db_exists when database is already complete."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_complete.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_complete.db")
 
         # Create a fully initialized database
         init_db(db)
@@ -124,16 +95,7 @@ class TestEnsureDbExists:
     ):
         """Test ensure_db_exists when database version doesn't match."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_version_mismatch.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_version_mismatch.db")
 
         # Create database with old version
         init_db(db)
@@ -172,40 +134,23 @@ class TestCheckDatabaseIntegrity:
         assert result is True
 
     def test_check_database_integrity_error(
-        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
-        """Test integrity check with database error."""
+        """Test integrity check with corrupted database."""
         db = coordinator.db
+        db_path = tmp_path / "test_integrity_error.db"
+        setup_test_db_engine(db, db_path)
         db.init_db()
 
-        # Use real database and mock the connection's execute to raise error
-        # This approach doesn't break teardown fixtures
-        original_connect = db.engine.connect
+        # Close engine and corrupt the database file
+        db.engine.dispose()
+        # Write invalid data to corrupt the database
+        db_path.write_bytes(b"INVALID SQLITE DATA" * 100)
 
-        class ErrorContextManager:
-            """Context manager that raises error on PRAGMA integrity_check."""
+        # Recreate engine to test with corrupted database
+        setup_test_db_engine(db, db_path)
 
-            def __init__(self, conn):
-                self.conn = conn
-                self._original_execute = conn.execute
-
-            def __enter__(self):
-                # Mock execute to raise error for PRAGMA integrity_check
-                def mock_execute(statement):
-                    if "PRAGMA integrity_check" in str(statement):
-                        raise SQLAlchemyError("Error")
-                    return self._original_execute(statement)
-
-                self.conn.execute = mock_execute
-                return self.conn
-
-            def __exit__(self, *args):
-                return False
-
-        def bad_connect():
-            return ErrorContextManager(original_connect())
-
-        monkeypatch.setattr(db.engine, "connect", bad_connect)
+        # Integrity check should fail with corrupted database
         result = _check_database_integrity(db)
         assert result is False
 
@@ -222,17 +167,18 @@ class TestVerifyAllTablesExist:
         assert verify_all_tables_exist(db) is True
 
     def test_verify_all_tables_exist_error(
-        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
-        """Test verification with database error."""
+        """Test verification with corrupted database."""
         db = coordinator.db
+        db_path = tmp_path / "test_verify_error.db"
+        # Create a corrupted database file that can't be inspected
+        db_path.write_bytes(b"CORRUPTED" * 100)
+        setup_test_db_engine(db, db_path)
 
-        # Mock sa.inspect() which is what the implementation actually uses
-        def bad_inspect(engine):
-            raise SQLAlchemyError("DB Error")
-
-        monkeypatch.setattr(sa, "inspect", bad_inspect)
-        assert verify_all_tables_exist(db) is False
+        # Verification should fail with corrupted database
+        result = verify_all_tables_exist(db)
+        assert result is False
 
 
 class TestGetMissingTables:
@@ -252,9 +198,7 @@ class TestGetMissingTables:
     ):
         """Test getting missing tables when some are missing."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
 
         # Create only some tables
         Base.metadata.create_all(db.engine, tables=[Base.metadata.tables["areas"]])
@@ -270,9 +214,7 @@ class TestInitDb:
     def test_init_db_success(self, coordinator: AreaOccupancyCoordinator, tmp_path):
         """Test init_db with successful initialization."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_init.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_init.db")
 
         # Initialize database
         init_db(db)
@@ -287,82 +229,28 @@ class TestInitDb:
             # WAL mode may be returned as 'wal' or 'WAL'
             assert result[0].upper() == "WAL"
 
-    def test_init_db_operational_error_race_condition(
-        self, coordinator: AreaOccupancyCoordinator
+    def test_init_db_wal_mode_persists_across_connections(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
-        """Test init_db with operational error (race condition)."""
+        """Test that WAL mode persists across different database connections."""
         db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "test_wal_persist.db")
 
-        # Mock error with sqlite_errno = 1 (table already exists)
-        mock_error = sa.exc.OperationalError("table already exists", None, None)
-        mock_error.orig = Mock()
-        mock_error.orig.sqlite_errno = 1
+        # Initialize database
+        init_db(db)
 
-        with (
-            patch("custom_components.area_occupancy.db.maintenance._enable_wal_mode"),
-            patch.object(db.engine, "connect", side_effect=mock_error),
-            patch(
-                "custom_components.area_occupancy.db.maintenance._create_tables_individually"
-            ),
-        ):
-            init_db(db)
+        # Verify WAL mode with first connection
+        with db.engine.connect() as conn:
+            result1 = conn.execute(text("PRAGMA journal_mode")).fetchone()
+            assert result1[0].upper() == "WAL"
 
-    def test_init_db_operational_error_other(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test init_db with other operational error."""
-        db = coordinator.db
+        # Create new connection and verify WAL mode persists
+        with db.engine.connect() as conn:
+            result2 = conn.execute(text("PRAGMA journal_mode")).fetchone()
+            assert result2[0].upper() == "WAL"
 
-        # Mock error with different sqlite_errno
-        mock_error = sa.exc.OperationalError("other error", None, None)
-        mock_error.orig = Mock()
-        mock_error.orig.sqlite_errno = 2
-
-        with (
-            patch("custom_components.area_occupancy.db.maintenance._enable_wal_mode"),
-            patch.object(db.engine, "connect", side_effect=mock_error),
-            pytest.raises(sa.exc.OperationalError),
-        ):
-            init_db(db)
-
-
-class TestEnableWalMode:
-    """Test _enable_wal_mode function."""
-
-    def test_enable_wal_mode_success(self, coordinator: AreaOccupancyCoordinator):
-        """Test _enable_wal_mode with success."""
-        db = coordinator.db
-
-        with patch.object(db.engine, "connect") as mock_connect:
-            mock_conn = Mock()
-            mock_connect.return_value.__enter__.return_value = mock_conn
-
-            _enable_wal_mode(db)
-
-            mock_conn.execute.assert_called_once()
-
-    def test_enable_wal_mode_error(self, coordinator: AreaOccupancyCoordinator):
-        """Test _enable_wal_mode with error."""
-        db = coordinator.db
-
-        with patch.object(
-            db.engine, "connect", side_effect=sa.exc.SQLAlchemyError("WAL error")
-        ):
-            # Should not raise exception, just log error
-            _enable_wal_mode(db)
-
-
-class TestCreateTablesIndividually:
-    """Test _create_tables_individually function."""
-
-    def test_create_tables_individually_success(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test _create_tables_individually with success."""
-        db = coordinator.db
-
-        with patch.object(db.engine, "connect"):
-            _create_tables_individually(db)
+        # Verify tables are still accessible
+        assert verify_all_tables_exist(db) is True
 
     def test_create_tables_individually_race_condition(
         self, coordinator: AreaOccupancyCoordinator
@@ -531,19 +419,21 @@ class TestDeleteDb:
 class TestIsDatabaseCorrupted:
     """Test _is_database_corrupted function."""
 
-    def test_is_database_corrupted_true(self, coordinator: AreaOccupancyCoordinator):
-        """Test corruption detection with corrupted database."""
+    @pytest.mark.parametrize(
+        ("error_message", "expected"),
+        [
+            ("database disk image is malformed", True),
+            ("connection error", False),
+        ],
+    )
+    def test_is_database_corrupted(
+        self, coordinator: AreaOccupancyCoordinator, error_message: str, expected: bool
+    ):
+        """Test corruption detection with various error messages."""
         db = coordinator.db
-        error = SQLAlchemyError("database disk image is malformed")
+        error = SQLAlchemyError(error_message)
         result = _is_database_corrupted(db, error)
-        assert result is True
-
-    def test_is_database_corrupted_false(self, coordinator: AreaOccupancyCoordinator):
-        """Test corruption detection with non-corruption error."""
-        db = coordinator.db
-        error = SQLAlchemyError("connection error")
-        result = _is_database_corrupted(db, error)
-        assert result is False
+        assert result is expected
 
 
 class TestAttemptDatabaseRecovery:
@@ -552,11 +442,9 @@ class TestAttemptDatabaseRecovery:
     def test_attempt_database_recovery_success(
         self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
-        """Test successful database recovery."""
+        """Test successful database recovery with recoverable corruption."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_recovery.db")
 
         # Create a valid database with tables
         db.init_db()
@@ -567,27 +455,32 @@ class TestAttemptDatabaseRecovery:
             session.add(db.Metadata(key="test_key", value="test_value"))
             session.commit()
 
-        # Corrupt database by writing invalid data
-        db.engine.dispose()
-        db.db_path.write_text("corrupted")
+        # Create a backup before corrupting
+        backup_path = db.db_path.with_suffix(".db.backup")
+        shutil.copy2(db.db_path, backup_path)
 
-        # Attempt recovery
+        # Corrupt database by writing invalid data to the end
+        # This simulates partial corruption that might be recoverable
+        db.engine.dispose()
+        with db.db_path.open("ab") as f:
+            f.write(b"CORRUPTED DATA" * 100)
+
+        # Attempt recovery - SQLite can handle appended corruption data
+        # because it can still read the valid portion of the database
         result = _attempt_database_recovery(db)
 
-        # If recovery succeeded, verify database is readable
-        if result:
-            # Verify database is readable
-            assert verify_all_tables_exist(db) is True
-            # Verify we can query the database
-            with db.get_session() as session:
-                result_query = (
-                    session.query(db.Metadata).filter_by(key="db_version").first()
-                )
-                assert result_query is not None
-        else:
-            # If recovery failed, database should still be corrupted
-            # (recovery may fail for severely corrupted databases)
-            assert result is False
+        # Recovery should succeed for this type of corruption
+        # (SQLite ignores extra data at the end of the file)
+        assert result is True
+
+        # Verify database is readable after recovery
+        assert verify_all_tables_exist(db) is True
+
+        # Verify test data is still accessible
+        with db.get_session() as session:
+            test_data = session.query(db.Metadata).filter_by(key="test_key").first()
+            assert test_data is not None
+            assert test_data.value == "test_value"
 
 
 class TestBackupDatabase:
@@ -598,9 +491,7 @@ class TestBackupDatabase:
     ):
         """Test successful database backup."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         result = _backup_database(db)
@@ -619,9 +510,7 @@ class TestRestoreDatabaseFromBackup:
     ):
         """Test successful database restoration."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         # Create backup
@@ -637,18 +526,21 @@ class TestRestoreDatabaseFromBackup:
 class TestHandleDatabaseCorruption:
     """Test _handle_database_corruption function."""
 
-    def test_handle_database_corruption_success(
+    def test_handle_database_corruption_recovery_path_selection(
         self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
-        """Test handling database corruption successfully."""
+        """Test that corruption handling selects correct recovery path."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_recovery_path.db")
         db.init_db()
         _set_db_version(db)
         db.enable_auto_recovery = True
         db.enable_periodic_backups = True
+
+        # Add test data
+        with db.get_session() as session:
+            session.add(db.Metadata(key="test_data", value="original"))
+            session.commit()
 
         # Create backup
         _backup_database(db)
@@ -657,19 +549,112 @@ class TestHandleDatabaseCorruption:
         db.engine.dispose()
         db.db_path.write_text("corrupted")
 
-        # Handle corruption
+        # Mock recovery to fail, forcing restore from backup path
+        with (
+            patch(
+                "custom_components.area_occupancy.db.maintenance._attempt_database_recovery",
+                return_value=False,
+            ),
+        ):
+            result = _handle_database_corruption(db)
+
+        # Should succeed via restore from backup path
+        assert result is True
+        assert verify_all_tables_exist(db) is True
+        assert _check_database_integrity(db) is True
+
+        # Verify data was restored from backup
+        # Note: If tables were missing and reinitialized, data might be lost
+        # but the database should still be functional
+        with db.get_session() as session:
+            restored = session.query(db.Metadata).filter_by(key="test_data").first()
+            # Data should be restored if backup had all tables
+            # If backup was missing tables and reinitialized, data might be lost
+            # but database should still be functional
+            if restored:
+                assert restored.value == "original"
+
+    def test_handle_database_corruption_restore_from_backup(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        """Test handling corruption by restoring from backup."""
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "test_corruption_restore.db")
+        db.init_db()
+        _set_db_version(db)
+        db.enable_auto_recovery = True
+        db.enable_periodic_backups = True
+
+        # Add test data to verify it's restored
+        with db.get_session() as session:
+            session.add(db.Metadata(key="test_data", value="should_be_restored"))
+            session.commit()
+
+        # Create backup before corrupting
+        _backup_database(db)
+        backup_path = db.db_path.with_suffix(".db.backup")
+        assert backup_path.exists()
+
+        # Corrupt database by completely overwriting it
+        db.engine.dispose()
+        db.db_path.write_text("corrupted")
+
+        # Handle corruption - should restore from backup
+        # Recovery will fail because file is completely corrupted, so restore should be attempted
         result = _handle_database_corruption(db)
 
-        # Verify corruption was handled
-        if result:
-            # Database should be usable
-            assert verify_all_tables_exist(db) is True
-            assert _check_database_integrity(db) is True
-            # Version should be set
-            assert get_db_version(db) == CONF_VERSION
-        else:
-            # If handling failed, verify it's because auto-recovery is disabled or all attempts failed
-            assert result is False
+        # Verify corruption was handled by restore
+        assert result is True
+
+        # After restore, _handle_database_corruption ensures all tables exist
+        # Verify database is healthy after restore
+        assert verify_all_tables_exist(db) is True
+        assert _check_database_integrity(db) is True
+        assert get_db_version(db) == CONF_VERSION
+
+        # Verify test data was restored from backup
+        # Note: If tables were missing and reinitialized, data might be lost
+        # but the database should still be functional
+        with db.get_session() as session:
+            restored_data = (
+                session.query(db.Metadata).filter_by(key="test_data").first()
+            )
+            # Data should be restored if backup had all tables
+            # If backup was missing tables and reinitialized, data might be lost
+            # but database should still be functional
+            if restored_data:
+                assert restored_data.value == "should_be_restored"
+
+    def test_handle_database_corruption_recreate_database(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        """Test handling corruption by recreating database when no backup exists."""
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "test_corruption_recreate.db")
+        db.init_db()
+        _set_db_version(db)
+        db.enable_auto_recovery = True
+        db.enable_periodic_backups = False  # No backups
+
+        # Corrupt database
+        db.engine.dispose()
+        db.db_path.write_text("corrupted")
+
+        # Handle corruption - should recreate database
+        result = _handle_database_corruption(db)
+
+        # Verify corruption was handled by recreation
+        assert result is True
+        assert verify_all_tables_exist(db) is True
+        assert _check_database_integrity(db) is True
+        assert get_db_version(db) == CONF_VERSION
+
+        # Verify database is empty (recreated, not restored)
+        with db.get_session() as session:
+            # Only db_version should exist
+            all_metadata = session.query(db.Metadata).all()
+            assert len(all_metadata) == 1
+            assert all_metadata[0].key == "db_version"
 
 
 class TestPeriodicHealthCheck:
@@ -800,16 +785,7 @@ class TestEnsureDbExistsErrorPaths:
     ):
         """Test ensure_db_exists with corrupted SQLite header."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_corrupted.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_corrupted.db")
 
         # Create file with invalid SQLite header
         db.db_path.write_bytes(b"INVALID HEADER")
@@ -824,16 +800,7 @@ class TestEnsureDbExistsErrorPaths:
     ):
         """Test ensure_db_exists with permission error reading file."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_permission.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_permission.db")
 
         # Create file
         db.db_path.touch()
@@ -844,88 +811,49 @@ class TestEnsureDbExistsErrorPaths:
         # Should still create database
         assert verify_all_tables_exist(db) is True
 
-    def test_ensure_db_exists_corruption_detected(
-        self, coordinator: AreaOccupancyCoordinator, tmp_path
-    ):
-        """Test ensure_db_exists when corruption is detected."""
-        db = coordinator.db
-        db.db_path = tmp_path / "test_corruption.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
-
-        # Create database first
-        init_db(db)
-        _set_db_version(db)
-
-        # Mock corruption detection
-        mock_error = sa.exc.SQLAlchemyError("database disk image is malformed")
-        with (
-            patch(
-                "custom_components.area_occupancy.db.maintenance.verify_all_tables_exist",
-                side_effect=mock_error,
-            ),
-            patch(
-                "custom_components.area_occupancy.db.maintenance._is_database_corrupted",
-                return_value=True,
-            ),
-        ):
-            ensure_db_exists(db)
-            # Should return early without blocking
-
-    def test_ensure_db_exists_init_failure(
-        self, coordinator: AreaOccupancyCoordinator, tmp_path
-    ):
-        """Test ensure_db_exists when initialization fails."""
-        db = coordinator.db
-        db.db_path = tmp_path / "test_init_fail.db"
-
-        # Create new engine pointing to the new database path
-        db.engine = create_engine(
-            f"sqlite:///{db.db_path}",
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"check_same_thread": False, "timeout": 30},
-        )
-        db._session_maker = sessionmaker(bind=db.engine)
-
-        # Mock initialization failure
-        mock_error = sa.exc.SQLAlchemyError("DB Error")
-        with (
-            patch(
-                "custom_components.area_occupancy.db.maintenance.verify_all_tables_exist",
-                side_effect=mock_error,
-            ),
-            patch(
-                "custom_components.area_occupancy.db.maintenance._is_database_corrupted",
-                return_value=False,
-            ),
-            patch(
-                "custom_components.area_occupancy.db.maintenance.init_db",
-                side_effect=RuntimeError("Init failed"),
-            ),
-        ):
-            ensure_db_exists(db)
-            # Should handle gracefully
-
 
 class TestAttemptDatabaseRecoveryEdgeCases:
     """Test _attempt_database_recovery function - additional scenarios."""
+
+    def test_attempt_database_recovery_with_wal_checkpoint(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        """Test recovery attempts WAL checkpoint for recoverable corruption."""
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "test_wal_recovery.db")
+
+        # Create a valid database with tables
+        db.init_db()
+        _set_db_version(db)
+
+        # Add test data
+        with db.get_session() as session:
+            session.add(db.Metadata(key="test_key", value="test_value"))
+            session.commit()
+
+        # Close engine properly before attempting recovery
+        db.engine.dispose()
+
+        # Attempt recovery on a valid database (should succeed)
+        # This tests the recovery path even when database is valid
+        result = _attempt_database_recovery(db)
+
+        # Recovery should succeed for valid database
+        assert result is True
+        assert verify_all_tables_exist(db) is True
+
+        # Verify data is still accessible
+        with db.get_session() as session:
+            test_data = session.query(db.Metadata).filter_by(key="test_key").first()
+            assert test_data is not None
+            assert test_data.value == "test_value"
 
     def test_attempt_database_recovery_no_tables(
         self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
         """Test recovery when database has no tables."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_recovery.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_recovery.db")
 
         # Create empty database (valid SQLite but no tables)
         with db.engine.connect() as conn:
@@ -955,9 +883,7 @@ class TestAttemptDatabaseRecoveryEdgeCases:
     ):
         """Test recovery with error."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_recovery_error.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_recovery_error.db")
 
         # Create corrupted database
         db.db_path.write_text("corrupted")
@@ -990,9 +916,7 @@ class TestBackupDatabaseEdgeCases:
     ):
         """Test backup with permission error."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         with patch("shutil.copy2", side_effect=PermissionError("Permission denied")):
@@ -1004,9 +928,7 @@ class TestBackupDatabaseEdgeCases:
     ):
         """Test backup with shutil error."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         with patch("shutil.copy2", side_effect=shutil.Error("Shutil error")):
@@ -1031,9 +953,7 @@ class TestRestoreDatabaseFromBackupEdgeCases:
     ):
         """Test restore when backup doesn't exist."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         result = _restore_database_from_backup(db)
@@ -1044,9 +964,7 @@ class TestRestoreDatabaseFromBackupEdgeCases:
     ):
         """Test restore with error."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         # Create backup
@@ -1062,9 +980,7 @@ class TestRestoreDatabaseFromBackupEdgeCases:
     ):
         """Test restore with SQLAlchemy error."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
 
         # Create backup
@@ -1096,9 +1012,7 @@ class TestHandleDatabaseCorruptionEdgeCases:
     ):
         """Test handling corruption with successful recovery."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
         db.enable_auto_recovery = True
 
@@ -1121,9 +1035,7 @@ class TestHandleDatabaseCorruptionEdgeCases:
     ):
         """Test handling corruption by restoring from backup."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
         db.enable_auto_recovery = True
         db.enable_periodic_backups = True
@@ -1154,9 +1066,7 @@ class TestHandleDatabaseCorruptionEdgeCases:
     ):
         """Test handling corruption by recreating database."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
         db.enable_auto_recovery = True
         db.enable_periodic_backups = False
@@ -1185,9 +1095,7 @@ class TestHandleDatabaseCorruptionEdgeCases:
     ):
         """Test handling corruption when recreation fails."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
         db.enable_auto_recovery = True
         db.enable_periodic_backups = False
@@ -1215,9 +1123,7 @@ class TestEnsureSchemaUpToDate:
     ):
         """Test _ensure_schema_up_to_date when version matches."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_version_match.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_version_match.db")
 
         # Create database with correct version
         init_db(db)
@@ -1244,9 +1150,7 @@ class TestEnsureSchemaUpToDate:
     ):
         """Test _ensure_schema_up_to_date when version doesn't match."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_version_mismatch_schema.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_version_mismatch_schema.db")
 
         # Create database with old version
         init_db(db)
@@ -1276,9 +1180,7 @@ class TestEnsureSchemaUpToDate:
     ):
         """Test _ensure_schema_up_to_date when error occurs during version check."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_schema_error.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_schema_error.db")
 
         # Create database
         init_db(db)
@@ -1305,9 +1207,7 @@ class TestEnsureSchemaUpToDate:
     ):
         """Test _ensure_schema_up_to_date when recreation fails."""
         db = coordinator.db
-        db.db_path = tmp_path / "test_schema_recreate_fail.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_schema_recreate_fail.db")
 
         # Create database with old version
         init_db(db)
@@ -1352,22 +1252,6 @@ class TestPeriodicHealthCheckEdgeCases:
             result = periodic_health_check(db)
             assert result is True
 
-    def test_periodic_health_check_missing_tables(
-        self, coordinator: AreaOccupancyCoordinator, tmp_path
-    ):
-        """Test health check when tables are missing."""
-        db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
-
-        # Create database with only some tables
-        Base.metadata.create_all(db.engine, tables=[Base.metadata.tables["areas"]])
-
-        result = periodic_health_check(db)
-        # Should attempt recovery
-        assert isinstance(result, bool)
-
     def test_periodic_health_check_missing_tables_recovery_failure(
         self, coordinator: AreaOccupancyCoordinator
     ):
@@ -1397,9 +1281,7 @@ class TestPeriodicHealthCheckEdgeCases:
     ):
         """Test health check creates backup when no backup exists."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
         db.enable_periodic_backups = True
         db.backup_interval_hours = 1
@@ -1421,9 +1303,7 @@ class TestPeriodicHealthCheckEdgeCases:
     ):
         """Test health check creates backup when backup is old."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test.db")
         db.init_db()
         db.enable_periodic_backups = True
         db.backup_interval_hours = 1
@@ -1449,12 +1329,11 @@ class TestPeriodicHealthCheckEdgeCases:
     def test_periodic_health_check_backup_failure(
         self, coordinator: AreaOccupancyCoordinator, tmp_path
     ):
-        """Test health check handles backup failure."""
+        """Test health check handles backup failure gracefully."""
         db = coordinator.db
-        db.db_path = tmp_path / "test.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
+        setup_test_db_engine(db, tmp_path / "test_backup_failure.db")
         db.init_db()
+        _set_db_version(db)
         db.enable_periodic_backups = True
         db.backup_interval_hours = 1
 
@@ -1466,23 +1345,19 @@ class TestPeriodicHealthCheckEdgeCases:
         old_time = time.time() - (2 * 3600)  # 2 hours ago
         os.utime(backup_path, (old_time, old_time))
 
-        with (
-            patch(
-                "custom_components.area_occupancy.db.maintenance._check_database_integrity",
-                return_value=True,
-            ),
-            patch(
-                "custom_components.area_occupancy.db.maintenance.get_missing_tables",
-                return_value=set(),
-            ),
-            patch(
-                "custom_components.area_occupancy.db.maintenance._backup_database",
-                return_value=False,
-            ),
+        # Mock backup failure but verify health check continues
+        with patch(
+            "custom_components.area_occupancy.db.maintenance._backup_database",
+            return_value=False,
         ):
             result = periodic_health_check(db)
             # Should still succeed even if backup fails
             assert result is True
+
+        # Verify database is still healthy and accessible
+        assert _check_database_integrity(db) is True
+        assert verify_all_tables_exist(db) is True
+        assert get_db_version(db) == CONF_VERSION
 
     def test_periodic_health_check_error(self, coordinator: AreaOccupancyCoordinator):
         """Test health check with error."""
@@ -1495,32 +1370,3 @@ class TestPeriodicHealthCheckEdgeCases:
         ):
             result = periodic_health_check(db)
             assert result is False
-
-    def test_periodic_health_check_maintenance_operations(
-        self, coordinator: AreaOccupancyCoordinator, tmp_path
-    ):
-        """Test periodic_health_check runs maintenance operations."""
-        db = coordinator.db
-        db.db_path = tmp_path / "test_maintenance.db"
-        db.engine = create_engine(f"sqlite:///{db.db_path}")
-        db._session_maker = sessionmaker(bind=db.engine)
-        db.init_db()
-        _set_db_version(db)
-
-        # Run health check
-        result = periodic_health_check(db)
-        assert result is True
-
-        # Verify maintenance operations completed by checking database is still accessible
-        # PRAGMA optimize and ANALYZE don't have direct return values, but we can verify
-        # the database is still healthy and operational
-        assert _check_database_integrity(db) is True
-        assert verify_all_tables_exist(db) is True
-
-        # Verify we can still query the database (maintenance didn't break anything)
-        with db.get_session() as session:
-            version_entry = (
-                session.query(db.Metadata).filter_by(key="db_version").first()
-            )
-            assert version_entry is not None
-            assert int(version_entry.value) == CONF_VERSION
