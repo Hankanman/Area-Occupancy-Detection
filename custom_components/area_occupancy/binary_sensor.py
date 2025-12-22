@@ -366,7 +366,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
         # Get valid entities and set up tracking
         valid_entities = self._get_valid_entities()
-        if not valid_entities:
+        if not valid_entities["all"]:
             _LOGGER.warning(
                 "No valid entities found to track. Sensor will not function"
             )
@@ -388,24 +388,16 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         )
 
     def _get_valid_entities(self) -> dict[str, list[str]]:
-        """Filter and return valid entity IDs for tracking."""
-        # Filter out invalid entities
-        valid_door_entities = [
-            entity_id
-            for entity_id in self._door_entities
-            if self.hass.states.get(entity_id) is not None
-        ]
+        """Return valid entity IDs for tracking.
 
-        valid_motion_entities = [
-            entity_id
-            for entity_id in self._motion_entities
-            if self.hass.states.get(entity_id) is not None
-        ]
-
+        We return all configured entities regardless of whether they currently
+        exist in the state machine, so that we can pick up their state changes
+        if they become available later.
+        """
         return {
-            "doors": valid_door_entities,
-            "motion": valid_motion_entities,
-            "all": valid_door_entities + valid_motion_entities,
+            "doors": self._door_entities,
+            "motion": self._motion_entities,
+            "all": self._door_entities + self._motion_entities,
         }
 
     def _get_aggregate_door_state(self) -> str:
