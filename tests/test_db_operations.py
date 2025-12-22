@@ -842,6 +842,69 @@ class TestSaveOccupiedIntervalsCache:
                 now - timedelta(hours=2)
             ).replace(tzinfo=None)
 
+    def test_save_occupied_intervals_cache_skips_invalid(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that invalid intervals (start > end) are skipped."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        now = dt_util.utcnow()
+
+        save_area_data(db, area_name)
+
+        intervals = [
+            (now - timedelta(hours=2), now - timedelta(hours=1)),  # Valid
+            (
+                now - timedelta(hours=1),
+                now - timedelta(hours=2),
+            ),  # Invalid (start > end)
+        ]
+
+        result = save_occupied_intervals_cache(db, area_name, intervals)
+        assert result is True
+
+        # Verify only valid interval was saved
+        with db.get_session() as session:
+            cached_intervals = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter_by(area_name=area_name)
+                .all()
+            )
+            assert len(cached_intervals) == 1
+            assert cached_intervals[0].start_time.replace(tzinfo=None) == (
+                now - timedelta(hours=2)
+            ).replace(tzinfo=None)
+
+    def test_save_occupied_intervals_cache_deduplicates(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that duplicate intervals are only saved once."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        now = dt_util.utcnow()
+
+        save_area_data(db, area_name)
+
+        intervals = [
+            (now - timedelta(hours=2), now - timedelta(hours=1)),
+            (now - timedelta(hours=2), now - timedelta(hours=1)),  # Duplicate
+        ]
+
+        result = save_occupied_intervals_cache(db, area_name, intervals)
+        assert result is True
+
+        # Verify duplicate was not saved
+        with db.get_session() as session:
+            cached_intervals = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter_by(area_name=area_name)
+                .all()
+            )
+            assert len(cached_intervals) == 1
+            assert cached_intervals[0].start_time.replace(tzinfo=None) == (
+                now - timedelta(hours=2)
+            ).replace(tzinfo=None)
+
 
 class TestEnsureAreaExists:
     """Test ensure_area_exists function."""
