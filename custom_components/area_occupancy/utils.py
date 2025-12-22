@@ -75,6 +75,32 @@ def clamp_probability(
     return max(min_bound, min(max_bound, value))
 
 
+def map_binary_state_to_semantic(state: str, active_states: list[str]) -> str:
+    """Map binary sensor state ('on'/'off') to semantic state ('open'/'closed') if needed.
+
+    Home Assistant binary sensors always report 'on'/'off', but some configs use
+    semantic states like 'open'/'closed'. This function maps between them.
+
+    Args:
+        state: The actual state from the sensor ('on' or 'off')
+        active_states: List of active states expected by the config
+
+    Returns:
+        The mapped state if mapping is needed, otherwise the original state
+    """
+    # If active_states contains semantic states, map binary states
+    if "closed" in active_states or "open" in active_states:
+        # Map binary states to semantic states
+        # For doors: 'off' means closed, 'on' means open
+        # For windows: 'off' means closed, 'on' means open
+        if state == "off":
+            return "closed"
+        if state == "on":
+            return "open"
+    # No mapping needed, return original state
+    return state
+
+
 # ────────────────────────────────────── Core Bayes ───────────────────────────
 def _validate_entity_likelihoods(
     active_entities: dict[str, Entity],

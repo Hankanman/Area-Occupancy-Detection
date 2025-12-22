@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import MAX_WEIGHT, MIN_WEIGHT
 from ..time_utils import to_utc
+from ..utils import map_binary_state_to_semantic
 from .decay import Decay
 from .entity_type import DEFAULT_TYPES, EntityType, InputType
 from .purpose import get_default_decay_half_life
@@ -274,7 +275,10 @@ class Entity:
             return None
 
         if self.active_states:
-            return str(self.state) in self.active_states
+            mapped_state = map_binary_state_to_semantic(
+                str(self.state), self.active_states
+            )
+            return mapped_state in self.active_states
         if self.active_range:
             min_val, max_val = self.active_range
             try:
