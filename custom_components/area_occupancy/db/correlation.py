@@ -26,7 +26,7 @@ from ..const import (
 )
 from ..data.entity_type import InputType
 from ..time_utils import from_db_utc, to_db_utc, to_local, to_utc
-from ..utils import clamp_probability
+from ..utils import clamp_probability, map_binary_state_to_semantic
 from .utils import (
     get_occupied_intervals_for_analysis,
     is_timestamp_occupied,
@@ -277,32 +277,6 @@ def convert_hourly_aggregates_to_samples(
     return samples
 
 
-def _map_binary_state_to_semantic(state: str, active_states: list[str]) -> str:
-    """Map binary sensor state ('on'/'off') to semantic state ('open'/'closed') if needed.
-
-    Home Assistant binary sensors always report 'on'/'off', but some configs use
-    semantic states like 'open'/'closed'. This function maps between them.
-
-    Args:
-        state: The actual state from the sensor ('on' or 'off')
-        active_states: List of active states expected by the config
-
-    Returns:
-        The mapped state if mapping is needed, otherwise the original state
-    """
-    # If active_states contains semantic states, map binary states
-    if "closed" in active_states or "open" in active_states:
-        # Map binary states to semantic states
-        # For doors: 'off' means closed, 'on' means open
-        # For windows: 'off' means closed, 'on' means open
-        if state == "off":
-            return "closed"
-        if state == "on":
-            return "open"
-    # No mapping needed, return original state
-    return state
-
-
 def analyze_binary_likelihoods(
     db: AreaOccupancyDB,
     area_name: str,
@@ -453,7 +427,7 @@ def analyze_binary_likelihoods(
                 unique_states.add(interval.state)
 
                 # Map binary state to semantic state if needed (e.g., 'off'/'on' → 'closed'/'open')
-                mapped_state = _map_binary_state_to_semantic(
+                mapped_state = map_binary_state_to_semantic(
                     interval.state, active_states
                 )
 
