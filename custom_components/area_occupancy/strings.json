@@ -80,7 +80,7 @@
                             "weight_window": "Window Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
+                            "door_active_state": "This is the value your sensors report when the door is open.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
@@ -97,11 +97,11 @@
                             "wasp_verification_delay": "Verification Delay (seconds)"
                         },
                         "data_description": {
-                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area",
-                            "wasp_motion_timeout": "How long motion remains valid after detection",
-                            "wasp_weight": "The weight given to this sensor in the occupancy calculation",
-                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior",
-                            "wasp_verification_delay": "Delay before re-checking motion to verify occupancy (0 = disabled)"
+                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area.",
+                            "wasp_motion_timeout": "How long motion remains valid after detection.",
+                            "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
+                            "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion, even if no door opens. This is to end a false positive.",
+                            "wasp_verification_delay": "The delay after closing the last door before any detected motion is considered as actual occupancy. This gives time for the motion sensor to stop reporting motion. (0 = disabled)."
                         }
                     },
                     "media": {
@@ -278,7 +278,7 @@
                             "weight_window": "Window Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
+                            "door_active_state": "This is the value your sensors report when the door is open.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
@@ -295,11 +295,11 @@
                             "wasp_verification_delay": "Verification Delay (seconds)"
                         },
                         "data_description": {
-                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area",
-                            "wasp_motion_timeout": "How long motion remains valid after detection",
-                            "wasp_weight": "The weight given to this sensor in the occupancy calculation",
-                            "wasp_max_duration": "The maximum duration of the wasp-in-box behavior",
-                            "wasp_verification_delay": "Delay before re-checking motion to verify occupancy (0 = disabled)"
+                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area.",
+                            "wasp_motion_timeout": "How long motion remains valid after detection.",
+                            "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
+                            "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion, even if no door opens. This is to end a false positive.",
+                            "wasp_verification_delay": "The delay after closing the last door before any detected motion is considered as actual occupancy. This gives time for the motion sensor to stop reporting motion. (0 = disabled)."
                         }
                     },
                     "media": {
@@ -405,7 +405,7 @@
                 },
                 "data_description": {
                     "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
-                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas (900s half-life) outside of sleep hours."
+                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours."
                 }
             }
         }
