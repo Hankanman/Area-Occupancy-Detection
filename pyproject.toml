@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "area-occupancy-detection"
-version = "2025.12.4-pre1"
+version = "2025.12.4-pre2"
 license = "Apache-2.0"
 description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
 readme = "README.md"  # Assuming you'll have a README.md
@@ -23,7 +23,7 @@ classifiers = [
 ]
 requires-python = ">=3.13.2"
 dependencies = [
-  "homeassistant==2025.12.2",
+  "homeassistant==2025.12.4",
   "numpy>=2.3.2",
 ]
 
@@ -33,7 +33,7 @@ dev = [
   "pre-commit==4.5.0",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.300",
+  "pytest-homeassistant-custom-component==0.13.301",
   "pytest-cov",
 ]
 viz = [
