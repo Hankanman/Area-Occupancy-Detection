@@ -1155,14 +1155,35 @@ def save_occupied_intervals_cache(
             ).delete(synchronize_session=False)
 
             # Insert new intervals
+            seen_intervals = set()
             for start_time, end_time in intervals:
+                # Validation: Skip invalid intervals where start > end
+                if start_time > end_time:
+                    _LOGGER.warning(
+                        "Skipping invalid interval for area %s: start=%s > end=%s",
+                        area_name,
+                        start_time,
+                        end_time,
+                    )
+                    continue
+
+                # Prepare DB values
+                start_db = to_db_utc(start_time)
+                end_db = to_db_utc(end_time)
+
+                # Deduplication: Skip if we've already seen this exact interval
+                interval_key = (start_db, end_db)
+                if interval_key in seen_intervals:
+                    continue
+                seen_intervals.add(interval_key)
+
                 duration_seconds = (end_time - start_time).total_seconds()
 
                 cached_interval = db.OccupiedIntervalsCache(
                     entry_id=db.coordinator.entry_id,
                     area_name=area_name,
-                    start_time=to_db_utc(start_time),
-                    end_time=to_db_utc(end_time),
+                    start_time=start_db,
+                    end_time=end_db,
                     duration_seconds=duration_seconds,
                     calculation_date=calculation_date,
                     data_source=data_source,
