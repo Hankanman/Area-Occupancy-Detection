@@ -30,10 +30,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "ruff",
-  "pre-commit==4.5.0",
+  "pre-commit==4.5.1",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.300",
+  "pytest-homeassistant-custom-component==0.13.301",
   "pytest-cov",
 ]
 viz = [
