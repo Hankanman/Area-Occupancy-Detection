@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+# Check if gh CLI is installed
+if ! command -v gh &> /dev/null; then
+    echo "Error: GitHub CLI (gh) is not installed." >&2
+    echo "Please install it from https://cli.github.com/" >&2
+    exit 1
+fi
+
+# Check if jq is installed
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq is not installed." >&2
+    echo "Please install it: sudo apt-get install jq (or equivalent)" >&2
+    exit 1
+fi
+
+# Check if authenticated with GitHub
+if ! gh auth status &> /dev/null; then
+    echo "Error: Not authenticated with GitHub CLI." >&2
+    echo "Please run: gh auth login" >&2
+    exit 1
+fi
+
+# Get repository owner and name
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+if [ -z "$REPO" ]; then
+    echo "Error: Could not determine repository. Make sure you're in a git repository." >&2
+    exit 1
+fi
+
+# Fetch all releases
+echo "Fetching releases from GitHub..."
+RELEASES_JSON=$(gh release list --limit 1000 --json tagName,createdAt,name,isPrerelease --repo "$REPO" 2>/dev/null)
+
+if [ -z "$RELEASES_JSON" ] || [ "$RELEASES_JSON" = "[]" ]; then
+    echo "Warning: No releases found." >&2
+    # Create empty changelog with header
+    cat > CHANGELOG.md << 'EOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+EOF
+    exit 0
+fi
+
+# Count releases
+RELEASE_COUNT=$(echo "$RELEASES_JSON" | jq 'length')
+echo "Found $RELEASE_COUNT release(s)"
+
+# Create temporary file for building changelog
+TEMP_CHANGELOG=$(mktemp)
+trap "rm -f $TEMP_CHANGELOG" EXIT
+
+# Write header to temp file
+cat > "$TEMP_CHANGELOG" << 'EOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+EOF
+
+# Process each release
+# Use process substitution to avoid subshell issues
+while IFS='|' read -r created_at tag_name name is_prerelease; do
+    # Convert ISO 8601 date to YYYY-MM-DD
+    # Handle both with and without timezone: 2025-12-12T10:09:59Z -> 2025-12-12
+    date=$(echo "$created_at" | cut -d'T' -f1)
+
+    # Fetch release body
+    echo "Processing release: $tag_name..."
+    body=$(gh release view "$tag_name" --json body --repo "$REPO" -q .body 2>/dev/null || echo "")
+
+    # Format version string (tag_name already includes pre-release suffix if applicable)
+    version="$tag_name"
+
+    # Add release section
+    echo "" >> "$TEMP_CHANGELOG"
+    echo "## [$version] - $date" >> "$TEMP_CHANGELOG"
+    echo "" >> "$TEMP_CHANGELOG"
+
+    # Add release body if available
+    if [ -n "$body" ] && [ "$body" != "null" ]; then
+        # Preserve markdown formatting
+        echo "$body" >> "$TEMP_CHANGELOG"
+        echo "" >> "$TEMP_CHANGELOG"
+    else
+        echo "_No release notes available._" >> "$TEMP_CHANGELOG"
+        echo "" >> "$TEMP_CHANGELOG"
+    fi
+done < <(echo "$RELEASES_JSON" | jq -r '.[] | "\(.createdAt)|\(.tagName)|\(.name)|\(.isPrerelease)"')
+
+# Write changelog to file
+cp "$TEMP_CHANGELOG" CHANGELOG.md
+
+echo "Changelog generated successfully: CHANGELOG.md"
+

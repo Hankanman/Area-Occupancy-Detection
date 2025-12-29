@@ -4,8 +4,27 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+# Get the latest stable release (not pre-release)
+# Use gh CLI if available to filter out pre-releases
+if command -v gh &> /dev/null && gh auth status &> /dev/null 2>&1; then
+    LAST_RELEASE=$(gh release list --limit 100 --json tagName,isPrerelease | jq -r '.[] | select(.isPrerelease == false) | .tagName' | head -1)
+else
+    # Fallback: get latest tag that doesn't contain 'pre'
+    LAST_RELEASE=$(git tag --sort=-version:refname | grep -v -E 'pre|beta|alpha' | head -1)
+fi
+
+if [ -z "$LAST_RELEASE" ]; then
+    echo "Error: Could not find last release tag." >&2
+    exit 1
+fi
+
+echo "Using last release: $LAST_RELEASE"
+echo "Comparing to main branch..."
+
 # Get only diffs for the custom_components folder
-git diff main..dev -- custom_components/ > release_diff.txt
+git diff "$LAST_RELEASE"..main -- custom_components/ > release_diff.txt
 
 # Get commit messages, but only for commits that touched custom_components
-git log main..dev --pretty=format:"%h%n%B%n---" -- custom_components/ > commit_messages.txt
+git log "$LAST_RELEASE"..main --pretty=format:"%h%n%B%n---" -- custom_components/ > commit_messages.txt
+
+echo "Generated release_diff.txt and commit_messages.txt"
