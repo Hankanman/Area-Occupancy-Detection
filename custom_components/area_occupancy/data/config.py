@@ -348,10 +348,24 @@ class AreaConfig:
                 "Area config missing area_id for area '%s'.",
                 self.area_name,
             )
-        # The canonical name is normally resolved from area_id via the coordinator,
-        # but we store the provided area_name from the constructor as the local
-        # name/fallback (for legacy or initial display) rather than resolving it here.
-        self.name = self.area_name  # Use area_name passed to constructor
+        # Resolve area name from area_id (canonical source)
+        # This ensures the device name matches the Home Assistant area name
+        if self.area_id:
+            area_reg = ar.async_get(self.hass)
+            area_entry = area_reg.async_get_area(self.area_id)
+            if area_entry:
+                self.name = area_entry.name
+            else:
+                # Fallback to area_name if area_id not found in registry
+                _LOGGER.warning(
+                    "Area ID '%s' not found in registry for area '%s', using fallback name.",
+                    self.area_id,
+                    self.area_name,
+                )
+                self.name = self.area_name or "Unknown Area"
+        else:
+            # Fallback to area_name if area_id not available
+            self.name = self.area_name or "Unknown Area"
         self.threshold = threshold
 
         self.sensors = Sensors(

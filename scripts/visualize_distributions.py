@@ -35,7 +35,7 @@ from custom_components.area_occupancy.db.schema import (
     NumericSamples,
     OccupiedIntervalsCache,
 )
-from custom_components.area_occupancy.db.utils import ensure_timezone_aware
+from custom_components.area_occupancy.time_utils import ensure_timezone_aware
 
 
 def gaussian_pdf(x: np.ndarray, mean: float, std: float) -> np.ndarray:

@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_VERSION, DOMAIN, PLATFORMS
+from .const import CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
@@ -51,43 +51,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Entry %s is marked for deletion, skipping setup", entry.entry_id)
         return False
 
-    # Migration check
-    if entry.version != CONF_VERSION or not entry.version:
-        _LOGGER.info(
-            "Migrating Area Occupancy entry from version %s to %s",
-            entry.version,
-            CONF_VERSION,
-        )
-        try:
-            migration_result = await async_migrate_entry(hass, entry)
+    # Migration check - only migrate if version is explicitly set and less than current
+    # Fresh entries (version=None or 0) should just get the current version set
+    # Safety check: entries with version 1 but CONF_AREAS format are fresh entries
+    # that should not be migrated (version should have been set in config flow)
+    if entry.version is not None and entry.version != CONF_VERSION:
+        # Check if this is a fresh entry with new format that somehow got version 1
+        merged = dict(entry.data)
+        if entry.options:
+            merged.update(entry.options)
 
-            # If migration returned False, check if it's because the entry was deleted
-            # (consolidated into another entry). In that case, we stop setup cleanly.
-            if not migration_result:
-                if entry.data.get("deleted"):
-                    _LOGGER.info(
-                        "Entry %s was consolidated during migration, stopping setup",
-                        entry.entry_id,
-                    )
-                    return False
-
-                # Real failure
-                _validate_migration_result(migration_result, entry.entry_id)
-
-            # Update entry version after successful migration
+        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+            # This is a fresh entry with new format, just set version without migration
+            _LOGGER.debug(
+                "Entry %s has version %d but uses new format (CONF_AREAS). "
+                "Setting version to %d without migration.",
+                entry.entry_id,
+                entry.version,
+                CONF_VERSION,
+            )
             hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
+        else:
+            # This is a real old entry that needs migration
             _LOGGER.info(
-                "Migration completed successfully for entry %s", entry.entry_id
+                "Migrating Area Occupancy entry from version %s to %s",
+                entry.version,
+                CONF_VERSION,
             )
-        except ConfigEntryNotReady:
-            raise
-        except Exception as err:
-            _LOGGER.error(
-                "Migration threw exception for entry %s: %s", entry.entry_id, err
-            )
-            raise ConfigEntryNotReady(
-                f"Migration failed with exception: {err}"
-            ) from err
+            try:
+                migration_result = await async_migrate_entry(hass, entry)
+
+                # If migration returned False, check if it's because the entry was deleted
+                # (consolidated into another entry). In that case, we stop setup cleanly.
+                if not migration_result:
+                    if entry.data.get("deleted"):
+                        _LOGGER.info(
+                            "Entry %s was consolidated during migration, stopping setup",
+                            entry.entry_id,
+                        )
+                        return False
+
+                    # Real failure
+                    _validate_migration_result(migration_result, entry.entry_id)
+
+                # Update entry version after successful migration
+                hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
+                _LOGGER.info(
+                    "Migration completed successfully for entry %s", entry.entry_id
+                )
+            except ConfigEntryNotReady:
+                raise
+            except Exception as err:
+                _LOGGER.error(
+                    "Migration threw exception for entry %s: %s", entry.entry_id, err
+                )
+                raise ConfigEntryNotReady(
+                    f"Migration failed with exception: {err}"
+                ) from err
+    elif entry.version is None or entry.version == 0:
+        # Fresh entry - just set the version without migration
+        _LOGGER.debug(
+            "Setting version %d for fresh entry %s", CONF_VERSION, entry.entry_id
+        )
+        hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
 
     # Get or create global coordinator (single-instance architecture)
     # Check if coordinator already exists (shouldn't happen in normal operation,

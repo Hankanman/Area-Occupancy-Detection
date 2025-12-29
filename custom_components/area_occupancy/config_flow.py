@@ -83,6 +83,7 @@ from .const import (
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_VERSION,
     CONF_VOC_SENSORS,
     CONF_WASP_ENABLED,
     CONF_WASP_MAX_DURATION,
@@ -548,7 +549,10 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
             ): EntitySelector(
                 EntitySelectorConfig(
                     domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS,
+                    device_class=[
+                        SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS,
+                        SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
+                    ],
                     multiple=True,
                 )
             ),
@@ -1501,9 +1505,34 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                 raise
 
             config_data = {CONF_AREAS: self._areas}
-            return self.async_create_entry(
+            result = self.async_create_entry(
                 title="Area Occupancy Detection", data=config_data
             )
+
+            # Set version immediately after creation to prevent migration trigger
+            # Home Assistant defaults new entries to version 1, but fresh entries should have current version
+            entries = self.hass.config_entries.async_entries(DOMAIN)
+            entry = next((e for e in entries if e.unique_id == DOMAIN), None)
+            if entry:
+                try:
+                    self.hass.config_entries.async_update_entry(
+                        entry, version=CONF_VERSION
+                    )
+                except (ValueError, RuntimeError, HomeAssistantError) as err:
+                    _LOGGER.warning(
+                        "Failed to set version for entry %s: %s. "
+                        "Version will be set during async_setup_entry instead.",
+                        entry.entry_id,
+                        err,
+                    )
+            else:
+                # Entry not found - this should not happen, but safety net in __init__.py will handle it
+                _LOGGER.warning(
+                    "Could not find newly created entry to set version. "
+                    "Version will be set during async_setup_entry instead."
+                )
+
+            return result  # noqa: TRY300
         except AbortFlow:
             raise
         except HomeAssistantError as err:

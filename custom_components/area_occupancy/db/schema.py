@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -34,6 +35,11 @@ else:
     Base = declarative_base()
 
 
+def _utcnow_db() -> datetime:
+    """Return naive UTC for SQLite persistence."""
+    return dt_util.utcnow().replace(tzinfo=None)
+
+
 class Areas(Base):
     """A table to store the area occupancy information."""
 
@@ -46,8 +52,8 @@ class Areas(Base):
     purpose = Column(String, nullable=False)
     threshold = Column(Float, nullable=False)
     adjacent_areas = Column(JSON, nullable=True)  # JSON array of adjacent area names
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     entities = relationship("Entities", back_populates="area")
     priors = relationship("Priors", back_populates="area")
 
@@ -74,8 +80,8 @@ class Areas(Base):
             purpose=data["purpose"],
             threshold=data["threshold"],
             adjacent_areas=data.get("adjacent_areas"),
-            created_at=data.get("created_at", dt_util.utcnow()),
-            updated_at=data.get("updated_at", dt_util.utcnow()),
+            created_at=data.get("created_at", _utcnow_db()),
+            updated_at=data.get("updated_at", _utcnow_db()),
         )
 
 
@@ -104,10 +110,8 @@ class Entities(Base):
     shared_with_areas = Column(
         JSON, nullable=True
     )  # JSON array of area names this entity is shared with
-    last_updated = Column(
-        DateTime(timezone=True), nullable=False, default=dt_util.utcnow
-    )
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    last_updated = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     is_decaying = Column(Boolean, nullable=False, default=False)
     decay_start = Column(DateTime(timezone=True), nullable=True)
     evidence = Column(Boolean, nullable=False, default=False)
@@ -165,8 +169,8 @@ class Entities(Base):
             ),
             is_shared=data.get("is_shared", False),
             shared_with_areas=data.get("shared_with_areas"),
-            last_updated=data.get("last_updated", dt_util.utcnow()),
-            created_at=data.get("created_at", dt_util.utcnow()),
+            last_updated=data.get("last_updated", _utcnow_db()),
+            created_at=data.get("created_at", _utcnow_db()),
             is_decaying=data.get("is_decaying", False),
             decay_start=data.get("decay_start"),
             evidence=data.get("evidence", False),
@@ -198,9 +202,7 @@ class Priors(Base):
     calculation_method = Column(
         String, nullable=True
     )  # Method used (e.g., 'interval_analysis')
-    last_updated = Column(
-        DateTime(timezone=True), nullable=False, default=dt_util.utcnow
-    )
+    last_updated = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     area = relationship("Areas", back_populates="priors")
 
     __table_args__ = (
@@ -243,7 +245,7 @@ class Priors(Base):
             sample_period_start=data.get("sample_period_start"),
             sample_period_end=data.get("sample_period_end"),
             calculation_method=data.get("calculation_method"),
-            last_updated=data.get("last_updated", dt_util.utcnow()),
+            last_updated=data.get("last_updated", _utcnow_db()),
         )
 
 
@@ -266,7 +268,7 @@ class Intervals(Base):
     aggregation_level = Column(
         String, nullable=False, default="raw"
     )  # 'raw', 'daily', 'weekly', 'monthly'
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     # Relationship removed - SQLite doesn't support composite FKs properly
     # Use manual joins in queries instead (see db/queries.py)
 
@@ -325,7 +327,7 @@ class Intervals(Base):
             end_time=data["end_time"],
             duration_seconds=data["duration_seconds"],
             aggregation_level=data.get("aggregation_level", "raw"),
-            created_at=data.get("created_at", dt_util.utcnow()),
+            created_at=data.get("created_at", _utcnow_db()),
         )
 
 
@@ -360,7 +362,7 @@ class IntervalAggregates(Base):
     avg_duration_seconds = Column(Float, nullable=True)
     first_occurrence = Column(DateTime(timezone=True), nullable=True)
     last_occurrence = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
 
     __table_args__ = (
         UniqueConstraint(
@@ -398,7 +400,7 @@ class OccupiedIntervalsCache(Base):
     duration_seconds = Column(Float, nullable=False)
     calculation_date = Column(DateTime(timezone=True), nullable=False)
     data_source = Column(String, nullable=True)  # 'motion_sensors', 'merged'
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
 
     __table_args__ = (
         UniqueConstraint(
@@ -438,12 +440,12 @@ class GlobalPriors(Base):
     confidence = Column(Float, nullable=True)
     calculation_method = Column(String, nullable=True)
     underlying_data_hash = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=dt_util.utcnow,
-        onupdate=dt_util.utcnow,
+        default=_utcnow_db,
+        onupdate=_utcnow_db,
     )
 
 
@@ -461,7 +463,7 @@ class NumericSamples(Base):
     value = Column(Float, nullable=False)
     unit_of_measurement = Column(String, nullable=True)
     state = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
 
     __table_args__ = (
         UniqueConstraint(
@@ -506,7 +508,7 @@ class NumericAggregates(Base):
     first_value = Column(Float, nullable=True)
     last_value = Column(Float, nullable=True)
     std_deviation = Column(Float, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
 
     __table_args__ = (
         UniqueConstraint(
@@ -564,12 +566,12 @@ class Correlations(Base):
         String, nullable=True
     )  # Reason why analysis failed (e.g., 'no_correlation', 'too_few_samples', 'no_occupied_intervals') or None if successful
     calculation_date = Column(DateTime(timezone=True), nullable=False, index=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=dt_util.utcnow,
-        onupdate=dt_util.utcnow,
+        default=_utcnow_db,
+        onupdate=_utcnow_db,
     )
 
     __table_args__ = (
@@ -613,8 +615,8 @@ class EntityStatistics(Base):
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=dt_util.utcnow,
-        onupdate=dt_util.utcnow,
+        default=_utcnow_db,
+        onupdate=_utcnow_db,
     )
 
     __table_args__ = (
@@ -660,12 +662,12 @@ class AreaRelationships(Base):
         Float, nullable=False
     )  # How much this area influences related area (0.0 to 1.0)
     distance = Column(Float, nullable=True)  # Physical distance if applicable
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=dt_util.utcnow,
-        onupdate=dt_util.utcnow,
+        default=_utcnow_db,
+        onupdate=_utcnow_db,
     )
 
     __table_args__ = (
@@ -707,7 +709,7 @@ class CrossAreaStats(Base):
     extra_metadata = Column(
         JSON, nullable=True
     )  # Additional metadata (renamed from 'metadata' - reserved by SQLAlchemy)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=dt_util.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow_db)
 
     __table_args__ = (
         UniqueConstraint(

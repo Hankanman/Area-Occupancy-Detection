@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TIME_PRIOR
 from ..data.entity_type import InputType
-from ..utils import ensure_timezone_aware
+from ..time_utils import from_db_utc, to_db_utc, to_utc
 from .utils import apply_motion_timeout, merge_overlapping_intervals
 
 if TYPE_CHECKING:
@@ -45,7 +45,8 @@ def get_latest_interval(db: AreaOccupancyDB) -> datetime:
                 sa.select(sa.func.max(db.Intervals.end_time))
             ).scalar()
             if result:
-                return result - timedelta(hours=1)
+                # DB stores naive UTC; convert to aware UTC for runtime/recorder APIs
+                return from_db_utc(result) - timedelta(hours=1)
             return dt_util.utcnow() - timedelta(days=10)
     except (
         SQLAlchemyError,
@@ -183,7 +184,7 @@ def get_occupied_intervals(
     For cached version with prior-specific caching, use analysis.get_occupied_intervals_with_cache.
     """
     now = dt_util.utcnow()
-    lookback_date = now - timedelta(days=lookback_days)
+    lookback_date_db = to_db_utc(now - timedelta(days=lookback_days))
     all_intervals: list[tuple[datetime, datetime]] = []
     motion_raw: list[tuple[datetime, datetime]] = []
     extended_intervals: list[tuple[datetime, datetime]] = []
@@ -191,7 +192,7 @@ def get_occupied_intervals(
     try:
         start_time = dt_util.utcnow()
         with db.get_session() as session:
-            base_filters = build_base_filters(db, entry_id, lookback_date, area_name)
+            base_filters = build_base_filters(db, entry_id, lookback_date_db, area_name)
             motion_query = build_motion_query(session, db, base_filters)
 
             all_results = execute_union_queries(session, db, [motion_query])
@@ -269,7 +270,13 @@ def get_time_bounds(
             time_bounds = query.first()
             if not time_bounds:
                 return (None, None)
-            return (time_bounds.first, time_bounds.last)
+            # DB stores naive UTC; return aware UTC to callers
+            first = time_bounds.first
+            last = time_bounds.last
+            return (
+                from_db_utc(first) if first is not None else None,
+                from_db_utc(last) if last is not None else None,
+            )
     except (
         SQLAlchemyError,
         ValueError,
@@ -283,14 +290,15 @@ def get_time_bounds(
 
 
 def build_base_filters(
-    db: AreaOccupancyDB, entry_id: str, lookback_date: datetime, area_name: str
+    db: AreaOccupancyDB, entry_id: str, lookback_date_db: datetime, area_name: str
 ) -> list[Any]:
     """Construct base SQLAlchemy filters for interval queries."""
     return [
         db.Entities.entry_id == entry_id,
         db.Entities.area_name == area_name,
         db.Intervals.area_name == area_name,
-        db.Intervals.start_time >= lookback_date,
+        # DB stores naive UTC
+        db.Intervals.start_time >= lookback_date_db,
     ]
 
 
@@ -337,7 +345,8 @@ def process_query_results(
     all_intervals: list[tuple[datetime, datetime]] = []
 
     for start, end, sensor_type in results:
-        interval = (start, end)
+        # DB stores naive UTC; convert to aware UTC for runtime computations
+        interval = (from_db_utc(start), from_db_utc(end))
         all_intervals.append(interval)
         if sensor_type == "motion":
             motion_raw.append(interval)
@@ -406,17 +415,19 @@ def get_occupied_intervals_cache(
 
             if period_start:
                 query = query.filter(
-                    db.OccupiedIntervalsCache.start_time >= period_start
+                    db.OccupiedIntervalsCache.start_time >= to_db_utc(period_start)
                 )
             if period_end:
-                query = query.filter(db.OccupiedIntervalsCache.end_time <= period_end)
+                query = query.filter(
+                    db.OccupiedIntervalsCache.end_time <= to_db_utc(period_end)
+                )
 
             cached_intervals = query.order_by(
                 db.OccupiedIntervalsCache.start_time
             ).all()
 
             return [
-                (interval.start_time, interval.end_time)
+                (from_db_utc(interval.start_time), from_db_utc(interval.end_time))
                 for interval in cached_intervals
             ]
 
@@ -453,13 +464,9 @@ def is_occupied_intervals_cache_valid(
                 return False
 
             # Normalize datetimes for comparison (database may return with/without tzinfo)
-            # SQLite returns naive datetimes, but they're stored as UTC
-            # Use ensure_timezone_aware to assume UTC for naive datetimes
-            now = dt_util.utcnow()
-            calc_date = latest.calculation_date
-            # Ensure both are timezone-aware
-            calc_date = ensure_timezone_aware(calc_date)
-            now = ensure_timezone_aware(now)
+            # DB stores naive UTC; compare using aware UTC
+            now = to_utc(dt_util.utcnow())
+            calc_date = from_db_utc(latest.calculation_date)
 
             age = (now - calc_date).total_seconds() / 3600
             return age < max_age_hours

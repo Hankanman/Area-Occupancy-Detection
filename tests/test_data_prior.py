@@ -371,62 +371,67 @@ def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
 
 def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
     """Test time_prior property loads from cache correctly."""
-    area_name = coordinator.get_area_names()[0]
-    prior = Prior(coordinator, area_name=area_name)
+    original_tz = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(dt_util.UTC)
+    try:
+        area_name = coordinator.get_area_names()[0]
+        prior = Prior(coordinator, area_name=area_name)
 
-    # Initially cache is None
-    assert prior._cached_time_priors is None
+        # Initially cache is None
+        assert prior._cached_time_priors is None
 
-    # Mock database get_all_time_priors to return test data
-    current_day = prior.day_of_week
-    current_slot = prior.time_slot
-    slot_key = (current_day, current_slot)
-    test_cache = {slot_key: 0.6, (1, 10): 0.4, (2, 5): 0.3}
+        # Mock database get_all_time_priors to return test data
+        current_day = prior.day_of_week
+        current_slot = prior.time_slot
+        slot_key = (current_day, current_slot)
+        test_cache = {slot_key: 0.6, (1, 10): 0.4, (2, 5): 0.3}
 
-    with patch.object(
-        prior.db,
-        "get_all_time_priors",
-        return_value=test_cache.copy(),
-    ) as mock_get_all:
-        # First access should trigger _load_time_priors
-        result = prior.time_prior
-        mock_get_all.assert_called_once_with(
-            area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
-        )
-        # Cache should now be populated
-        assert prior._cached_time_priors is not None
-        assert result == 0.6  # Should return value for current slot
+        with patch.object(
+            prior.db,
+            "get_all_time_priors",
+            return_value=test_cache.copy(),
+        ) as mock_get_all:
+            # First access should trigger _load_time_priors
+            result = prior.time_prior
+            mock_get_all.assert_called_once_with(
+                area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
+            )
+            # Cache should now be populated
+            assert prior._cached_time_priors is not None
+            assert result == 0.6  # Should return value for current slot
 
-        # Second access should use cache (no additional database call)
-        mock_get_all.reset_mock()
-        result2 = prior.time_prior
-        mock_get_all.assert_not_called()
-        assert result2 == 0.6
+            # Second access should use cache (no additional database call)
+            mock_get_all.reset_mock()
+            result2 = prior.time_prior
+            mock_get_all.assert_not_called()
+            assert result2 == 0.6
 
-    # Test accessing a different slot by patching dt_util.utcnow() to return different time
-    # This allows us to test that different slot keys work correctly
-    from datetime import datetime
+        # Test accessing a different slot by patching dt_util.utcnow() to return different time
+        # This allows us to test that different slot keys work correctly
+        from datetime import datetime
 
-    # Test slot (1, 10) - Tuesday at 10:00
-    tuesday_10am = datetime(2024, 1, 2, 10, 0, 0, tzinfo=UTC)  # Tuesday (weekday=1)
-    prior._cached_time_priors = test_cache.copy()
-    with patch(
-        "custom_components.area_occupancy.data.prior.dt_util.utcnow",
-        return_value=tuesday_10am,
-    ):
-        result3 = prior.time_prior
-        assert result3 == 0.4  # Should return value for slot (1, 10)
+        # Test slot (1, 10) - Tuesday at 10:00
+        tuesday_10am = datetime(2024, 1, 2, 10, 0, 0, tzinfo=UTC)  # Tuesday (weekday=1)
+        prior._cached_time_priors = test_cache.copy()
+        with patch(
+            "custom_components.area_occupancy.data.prior.dt_util.utcnow",
+            return_value=tuesday_10am,
+        ):
+            result3 = prior.time_prior
+            assert result3 == 0.4  # Should return value for slot (1, 10)
 
-    # Test accessing a slot not in cache (should return DEFAULT_TIME_PRIOR)
-    # Use Friday at 20:00 (slot 20) which is not in test_cache
-    friday_8pm = datetime(2024, 1, 5, 20, 0, 0, tzinfo=UTC)  # Friday (weekday=4)
-    prior._cached_time_priors = test_cache.copy()
-    with patch(
-        "custom_components.area_occupancy.data.prior.dt_util.utcnow",
-        return_value=friday_8pm,
-    ):
-        result4 = prior.time_prior
-        assert result4 == DEFAULT_TIME_PRIOR
+        # Test accessing a slot not in cache (should return DEFAULT_TIME_PRIOR)
+        # Use Friday at 20:00 (slot 20) which is not in test_cache
+        friday_8pm = datetime(2024, 1, 5, 20, 0, 0, tzinfo=UTC)  # Friday (weekday=4)
+        prior._cached_time_priors = test_cache.copy()
+        with patch(
+            "custom_components.area_occupancy.data.prior.dt_util.utcnow",
+            return_value=friday_8pm,
+        ):
+            result4 = prior.time_prior
+            assert result4 == DEFAULT_TIME_PRIOR
+    finally:
+        dt_util.set_default_time_zone(original_tz)
 
 
 def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator):

@@ -25,7 +25,8 @@ from ..const import (
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
 )
 from ..data.entity_type import InputType
-from ..utils import clamp_probability, ensure_timezone_aware
+from ..time_utils import from_db_utc, to_db_utc, to_local, to_utc
+from ..utils import clamp_probability, map_binary_state_to_semantic
 from .utils import (
     get_occupied_intervals_for_analysis,
     is_timestamp_occupied,
@@ -153,10 +154,11 @@ def convert_intervals_to_samples(
     if not active_states:
         return []
 
-    # Ensure period boundaries are timezone-aware UTC for SQL query
-    # Use ensure_timezone_aware to handle both naive and aware inputs consistently
-    period_start_utc = ensure_timezone_aware(period_start)
-    period_end_utc = ensure_timezone_aware(period_end)
+    # Runtime comparisons use aware UTC; DB filters use naive UTC
+    period_start_utc = to_utc(period_start)
+    period_end_utc = to_utc(period_end)
+    period_start_db = to_db_utc(period_start_utc)
+    period_end_db = to_db_utc(period_end_utc)
 
     # Query intervals for the entity, filtered by area_name and entry_id
     # Filter intervals that overlap with the analysis period
@@ -169,8 +171,8 @@ def convert_intervals_to_samples(
             # Include intervals that overlap with the period:
             # - Start time before period_end (interval starts before period ends)
             # - End time after period_start (interval ends after period starts)
-            db.Intervals.start_time < period_end_utc,
-            db.Intervals.end_time > period_start_utc,
+            db.Intervals.start_time < period_end_db,
+            db.Intervals.end_time > period_start_db,
         )
         .order_by(db.Intervals.start_time)
         .all()
@@ -179,10 +181,9 @@ def convert_intervals_to_samples(
     samples = []
 
     for interval in intervals:
-        # SQLite returns naive datetimes, but they're stored as UTC
-        # Use ensure_timezone_aware to assume UTC for naive datetimes
-        interval_start = ensure_timezone_aware(interval.start_time)
-        interval_end = ensure_timezone_aware(interval.end_time)
+        # DB stores naive UTC
+        interval_start = from_db_utc(interval.start_time)
+        interval_end = from_db_utc(interval.end_time)
 
         # Clamp interval bounds to period boundaries
         clamped_start = max(interval_start, period_start_utc)
@@ -228,9 +229,11 @@ def convert_hourly_aggregates_to_samples(
     Returns:
         List of SimpleSample objects created from hourly aggregates
     """
-    # Ensure period boundaries are timezone-aware UTC for SQL query
-    period_start_utc = ensure_timezone_aware(period_start)
-    period_end_utc = ensure_timezone_aware(period_end)
+    # Runtime comparisons use aware UTC; DB filters use naive UTC
+    period_start_utc = to_utc(period_start)
+    period_end_utc = to_utc(period_end)
+    period_start_db = to_db_utc(period_start_utc)
+    period_end_db = to_db_utc(period_end_utc)
 
     # Query hourly aggregates for the entity that overlap with the analysis period
     aggregates = (
@@ -243,8 +246,8 @@ def convert_hourly_aggregates_to_samples(
             # Include aggregates that overlap with the period:
             # - period_start before aggregate period_end (aggregate starts before period ends)
             # - period_end after aggregate period_start (aggregate ends after period starts)
-            db.NumericAggregates.period_start < period_end_utc,
-            db.NumericAggregates.period_end > period_start_utc,
+            db.NumericAggregates.period_start < period_end_db,
+            db.NumericAggregates.period_end > period_start_db,
         )
         .order_by(db.NumericAggregates.period_start)
         .all()
@@ -253,10 +256,9 @@ def convert_hourly_aggregates_to_samples(
     samples = []
 
     for aggregate in aggregates:
-        # SQLite returns naive datetimes, but they're stored as UTC
-        # Use ensure_timezone_aware to assume UTC for naive datetimes
-        agg_start = ensure_timezone_aware(aggregate.period_start)
-        agg_end = ensure_timezone_aware(aggregate.period_end)
+        # DB stores naive UTC
+        agg_start = from_db_utc(aggregate.period_start)
+        agg_end = from_db_utc(aggregate.period_end)
 
         # Clamp aggregate bounds to period boundaries
         clamped_start = max(agg_start, period_start_utc)
@@ -273,32 +275,6 @@ def convert_hourly_aggregates_to_samples(
         samples.append(SimpleSample(midpoint, float(aggregate.avg_value)))
 
     return samples
-
-
-def _map_binary_state_to_semantic(state: str, active_states: list[str]) -> str:
-    """Map binary sensor state ('on'/'off') to semantic state ('open'/'closed') if needed.
-
-    Home Assistant binary sensors always report 'on'/'off', but some configs use
-    semantic states like 'open'/'closed'. This function maps between them.
-
-    Args:
-        state: The actual state from the sensor ('on' or 'off')
-        active_states: List of active states expected by the config
-
-    Returns:
-        The mapped state if mapping is needed, otherwise the original state
-    """
-    # If active_states contains semantic states, map binary states
-    if "closed" in active_states or "open" in active_states:
-        # Map binary states to semantic states
-        # For doors: 'off' means closed, 'on' means open
-        # For windows: 'off' means closed, 'on' means open
-        if state == "off":
-            return "closed"
-        if state == "on":
-            return "open"
-    # No mapping needed, return original state
-    return state
 
 
 def analyze_binary_likelihoods(
@@ -339,9 +315,10 @@ def analyze_binary_likelihoods(
             # Get analysis period
             period_end = dt_util.utcnow()
             period_start = period_end - timedelta(days=analysis_period_days)
-            # Use ensure_timezone_aware to handle both naive and aware inputs consistently
-            period_start_utc = ensure_timezone_aware(period_start)
-            period_end_utc = ensure_timezone_aware(period_end)
+            period_start_utc = to_utc(period_start)
+            period_end_utc = to_utc(period_end)
+            period_start_db = to_db_utc(period_start_utc)
+            period_end_db = to_db_utc(period_end_utc)
 
             # Base result structure
             base_result = {
@@ -350,7 +327,8 @@ def analyze_binary_likelihoods(
                 "entity_id": entity_id,
                 "analysis_period_start": period_start,
                 "analysis_period_end": period_end,
-                "calculation_date": dt_util.utcnow(),
+                # Stored in DB as naive UTC
+                "calculation_date": to_db_utc(dt_util.utcnow()),
             }
 
             # Get occupied intervals for the area
@@ -372,9 +350,9 @@ def analyze_binary_likelihoods(
             # occupied_intervals are already timezone-aware UTC from get_occupied_intervals_for_analysis
             total_seconds_occupied = 0.0
             for occ_start, occ_end in occupied_intervals:
-                # Intervals are already timezone-aware UTC, but ensure they are for safety
-                occ_start_utc = ensure_timezone_aware(occ_start)
-                occ_end_utc = ensure_timezone_aware(occ_end)
+                # Intervals are already timezone-aware UTC, but normalize defensively
+                occ_start_utc = to_utc(occ_start)
+                occ_end_utc = to_utc(occ_end)
                 # Clamp to analysis period
                 clamped_start = max(occ_start_utc, period_start_utc)
                 clamped_end = min(occ_end_utc, period_end_utc)
@@ -412,8 +390,8 @@ def analyze_binary_likelihoods(
                     db.Intervals.entry_id == db.coordinator.entry_id,
                     db.Intervals.area_name == area_name,
                     db.Intervals.entity_id == entity_id,
-                    db.Intervals.start_time < period_end_utc,
-                    db.Intervals.end_time > period_start_utc,
+                    db.Intervals.start_time < period_end_db,
+                    db.Intervals.end_time > period_start_db,
                 )
                 .all()
             )
@@ -435,10 +413,8 @@ def analyze_binary_likelihoods(
             unique_states = set()
 
             for interval in binary_intervals:
-                # SQLite returns naive datetimes, but they're stored as UTC
-                # Use ensure_timezone_aware to assume UTC for naive datetimes
-                interval_start = ensure_timezone_aware(interval.start_time)
-                interval_end = ensure_timezone_aware(interval.end_time)
+                interval_start = from_db_utc(interval.start_time)
+                interval_end = from_db_utc(interval.end_time)
                 # Clamp to analysis period
                 clamped_start = max(interval_start, period_start_utc)
                 clamped_end = min(interval_end, period_end_utc)
@@ -451,7 +427,7 @@ def analyze_binary_likelihoods(
                 unique_states.add(interval.state)
 
                 # Map binary state to semantic state if needed (e.g., 'off'/'on' → 'closed'/'open')
-                mapped_state = _map_binary_state_to_semantic(
+                mapped_state = map_binary_state_to_semantic(
                     interval.state, active_states
                 )
 
@@ -468,9 +444,8 @@ def analyze_binary_likelihoods(
                 # occupied_intervals are already timezone-aware UTC from get_occupied_intervals_for_analysis
                 occupied_overlap = 0.0
                 for occ_start, occ_end in occupied_intervals:
-                    # Intervals are already timezone-aware UTC, but ensure they are for safety
-                    occ_start_utc = ensure_timezone_aware(occ_start)
-                    occ_end_utc = ensure_timezone_aware(occ_end)
+                    occ_start_utc = to_utc(occ_start)
+                    occ_end_utc = to_utc(occ_end)
                     # Calculate overlap
                     overlap_start = max(clamped_start, occ_start_utc)
                     overlap_end = min(clamped_end, occ_end_utc)
@@ -635,9 +610,10 @@ def analyze_correlation(  # noqa: C901
             # Get analysis period
             period_end = dt_util.utcnow()
             period_start = period_end - timedelta(days=analysis_period_days)
-            # Use ensure_timezone_aware to handle both naive and aware inputs consistently
-            period_start_utc = ensure_timezone_aware(period_start)
-            period_end_utc = ensure_timezone_aware(period_end)
+            period_start_utc = to_utc(period_start)
+            period_end_utc = to_utc(period_end)
+            period_start_db = to_db_utc(period_start_utc)
+            period_end_db = to_db_utc(period_end_utc)
 
             # Base result structure with defaults for required fields
             base_result = {
@@ -649,7 +625,7 @@ def analyze_correlation(  # noqa: C901
                 else InputType.UNKNOWN.value,
                 "analysis_period_start": period_start,
                 "analysis_period_end": period_end,
-                "calculation_date": dt_util.utcnow(),
+                "calculation_date": to_db_utc(dt_util.utcnow()),
                 "correlation_coefficient": 0.0,
                 "sample_count": 0,
                 "correlation_type": "none",
@@ -693,8 +669,8 @@ def analyze_correlation(  # noqa: C901
                         db.NumericSamples.entry_id == db.coordinator.entry_id,
                         db.NumericSamples.area_name == area_name,
                         db.NumericSamples.entity_id == entity_id,
-                        db.NumericSamples.timestamp >= recent_start,
-                        db.NumericSamples.timestamp <= period_end_utc,
+                        db.NumericSamples.timestamp >= to_db_utc(recent_start),
+                        db.NumericSamples.timestamp <= period_end_db,
                     )
                     .order_by(db.NumericSamples.timestamp)
                     .all()
@@ -716,9 +692,7 @@ def analyze_correlation(  # noqa: C901
                 # Combine both sources
                 # Convert raw samples to SimpleSample objects for consistency
                 all_samples: list[SimpleSample] = [
-                    SimpleSample(
-                        ensure_timezone_aware(sample.timestamp), float(sample.value)
-                    )
+                    SimpleSample(from_db_utc(sample.timestamp), float(sample.value))
                     for sample in recent_samples
                 ]
                 all_samples.extend(aggregate_samples)
@@ -751,8 +725,8 @@ def analyze_correlation(  # noqa: C901
                         db.Intervals.entry_id == db.coordinator.entry_id,
                         db.Intervals.area_name == area_name,
                         db.Intervals.entity_id == entity_id,
-                        db.Intervals.start_time < period_end_utc,
-                        db.Intervals.end_time > period_start_utc,
+                        db.Intervals.start_time < period_end_db,
+                        db.Intervals.end_time > period_start_db,
                     )
                     .all()
                 )
@@ -771,10 +745,8 @@ def analyze_correlation(  # noqa: C901
                 chunk_duration_seconds = 60.0
 
                 for interval in binary_intervals:
-                    # SQLite returns naive datetimes, but they're stored as UTC
-                    # Use ensure_timezone_aware to assume UTC for naive datetimes
-                    interval_start = ensure_timezone_aware(interval.start_time)
-                    interval_end = ensure_timezone_aware(interval.end_time)
+                    interval_start = from_db_utc(interval.start_time)
+                    interval_end = from_db_utc(interval.end_time)
                     # Clamp to analysis period
                     clamped_start = max(interval_start, period_start_utc)
                     clamped_end = min(interval_end, period_end_utc)
@@ -1104,8 +1076,10 @@ def save_binary_likelihood_result(
             "input_type": input_type_value,
             "correlation_coefficient": 0.0,  # Binary sensors don't have correlation
             "correlation_type": "binary_likelihood",
-            "analysis_period_start": likelihood_data["analysis_period_start"],
-            "analysis_period_end": likelihood_data["analysis_period_end"],
+            "analysis_period_start": to_db_utc(
+                likelihood_data["analysis_period_start"]
+            ),
+            "analysis_period_end": to_db_utc(likelihood_data["analysis_period_end"]),
             "sample_count": likelihood_data.get(
                 "sample_count", 0
             ),  # Binary sensors don't use samples
@@ -1118,8 +1092,8 @@ def save_binary_likelihood_result(
             "threshold_active": None,
             "threshold_inactive": None,
             "analysis_error": likelihood_data.get("analysis_error"),
-            "calculation_date": likelihood_data.get(
-                "calculation_date", dt_util.utcnow()
+            "calculation_date": to_db_utc(
+                likelihood_data.get("calculation_date", dt_util.utcnow())
             ),
         }
 
@@ -1145,7 +1119,7 @@ def save_binary_likelihood_result(
                         "analysis_period_start",
                     ):
                         setattr(existing, key, value)
-                existing.updated_at = dt_util.utcnow()
+                existing.updated_at = to_db_utc(dt_util.utcnow())
             else:
                 # Create new record
                 correlation = db.Correlations(**correlation_data)
@@ -1198,6 +1172,29 @@ def save_correlation_result(
         correlation_data["input_type"] = InputType.UNKNOWN.value
 
     try:
+        # Normalize datetime fields for DB persistence (naive UTC)
+        if (
+            "analysis_period_start" in correlation_data
+            and correlation_data["analysis_period_start"] is not None
+        ):
+            correlation_data["analysis_period_start"] = to_db_utc(
+                correlation_data["analysis_period_start"]
+            )
+        if (
+            "analysis_period_end" in correlation_data
+            and correlation_data["analysis_period_end"] is not None
+        ):
+            correlation_data["analysis_period_end"] = to_db_utc(
+                correlation_data["analysis_period_end"]
+            )
+        if (
+            "calculation_date" in correlation_data
+            and correlation_data["calculation_date"] is not None
+        ):
+            correlation_data["calculation_date"] = to_db_utc(
+                correlation_data["calculation_date"]
+            )
+
         with db.get_session() as session:
             # Check if correlation already exists for this period
             existing = (
@@ -1220,12 +1217,12 @@ def save_correlation_result(
                         "analysis_period_start",
                     ):
                         setattr(existing, key, value)
-                existing.updated_at = dt_util.utcnow()
+                existing.updated_at = to_db_utc(dt_util.utcnow())
             else:
                 # Create new record
                 # Ensure calculation_date is set if not provided
                 if "calculation_date" not in correlation_data:
-                    correlation_data["calculation_date"] = dt_util.utcnow()
+                    correlation_data["calculation_date"] = to_db_utc(dt_util.utcnow())
                 correlation = db.Correlations(**correlation_data)
                 session.add(correlation)
 
@@ -1282,8 +1279,9 @@ def _prune_old_correlations(
         # Group correlations by year-month
         monthly_correlations: dict[tuple[int, int], list[Any]] = defaultdict(list)
         for corr in correlations:
-            period_start = ensure_timezone_aware(corr.analysis_period_start)
-            month_key = (period_start.year, period_start.month)
+            # Group by local wall-clock month (policy decision)
+            period_start_local = to_local(from_db_utc(corr.analysis_period_start))
+            month_key = (period_start_local.year, period_start_local.month)
             monthly_correlations[month_key].append(corr)
 
         # For each month, keep only the most recent record (by calculation_date)
@@ -1294,7 +1292,7 @@ def _prune_old_correlations(
             month_corrs = monthly_correlations[month_key]
             # Keep the most recent record for this month
             most_recent = max(
-                month_corrs, key=lambda c: ensure_timezone_aware(c.calculation_date)
+                month_corrs, key=lambda c: from_db_utc(c.calculation_date)
             )
             months_to_keep.append(most_recent)
             # Delete other records for this month
@@ -1429,11 +1427,11 @@ def get_correlation_for_entity(
     try:
         with db.get_session() as session:
             # Get current month's period_start
-            now = dt_util.utcnow()
-            current_month_start = now.replace(
+            now_local = to_local(dt_util.utcnow())
+            current_month_start_local = now_local.replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )
-            current_month_start_utc = ensure_timezone_aware(current_month_start)
+            current_month_start_db = to_db_utc(current_month_start_local)
 
             # Try to get current month's record first
             correlation = (
@@ -1441,7 +1439,7 @@ def get_correlation_for_entity(
                 .filter_by(
                     area_name=area_name,
                     entity_id=entity_id,
-                    analysis_period_start=current_month_start_utc,
+                    analysis_period_start=current_month_start_db,
                 )
                 .first()
             )
@@ -1467,7 +1465,7 @@ def get_correlation_for_entity(
                     "threshold_active": correlation.threshold_active,
                     "threshold_inactive": correlation.threshold_inactive,
                     "analysis_error": correlation.analysis_error,
-                    "calculation_date": correlation.calculation_date,
+                    "calculation_date": from_db_utc(correlation.calculation_date),
                     "input_type": getattr(correlation, "input_type", None),
                 }
 

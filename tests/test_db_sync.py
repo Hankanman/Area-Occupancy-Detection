@@ -22,6 +22,7 @@ from custom_components.area_occupancy.db.sync import (
     _states_to_numeric_samples,
     sync_states,
 )
+from custom_components.area_occupancy.time_utils import to_db_utc
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -48,8 +49,8 @@ class TestStatesToIntervals:
         assert len(intervals) == 1
         assert intervals[0]["entity_id"] == "binary_sensor.motion"
         assert intervals[0]["state"] == "off"
-        assert intervals[0]["start_time"] == start
-        assert intervals[0]["end_time"] == end_time
+        assert intervals[0]["start_time"] == to_db_utc(start)
+        assert intervals[0]["end_time"] == to_db_utc(end_time)
         assert intervals[0]["duration_seconds"] == (end_time - start).total_seconds()
 
     def test_states_to_intervals_multiple_states(
@@ -73,11 +74,11 @@ class TestStatesToIntervals:
         intervals = _states_to_intervals(db, states, end_time)
         assert len(intervals) == 2
         assert intervals[0]["state"] == "off"
-        assert intervals[0]["start_time"] == start
-        assert intervals[0]["end_time"] == start + timedelta(seconds=10)
+        assert intervals[0]["start_time"] == to_db_utc(start)
+        assert intervals[0]["end_time"] == to_db_utc(start + timedelta(seconds=10))
         assert intervals[1]["state"] == "on"
-        assert intervals[1]["start_time"] == start + timedelta(seconds=10)
-        assert intervals[1]["end_time"] == end_time
+        assert intervals[1]["start_time"] == to_db_utc(start + timedelta(seconds=10))
+        assert intervals[1]["end_time"] == to_db_utc(end_time)
 
     def test_states_to_intervals_filters_invalid_states(
         self, coordinator: AreaOccupancyCoordinator
@@ -124,7 +125,7 @@ class TestStatesToIntervals:
         # Should filter out state older than retention period
         assert len(intervals) == 1
         assert intervals[0]["state"] == "off"
-        assert intervals[0]["start_time"] == recent_state_time
+        assert intervals[0]["start_time"] == to_db_utc(recent_state_time)
 
     def test_states_to_intervals_filters_max_duration_on(
         self, coordinator: AreaOccupancyCoordinator
@@ -245,11 +246,11 @@ class TestStatesToIntervals:
         # Should be sorted by last_changed
         assert len(intervals) == 3
         assert intervals[0]["state"] == "off"
-        assert intervals[0]["start_time"] == start
+        assert intervals[0]["start_time"] == to_db_utc(start)
         assert intervals[1]["state"] == "on"
-        assert intervals[1]["start_time"] == start + timedelta(seconds=10)
+        assert intervals[1]["start_time"] == to_db_utc(start + timedelta(seconds=10))
         assert intervals[2]["state"] == "on"
-        assert intervals[2]["start_time"] == start + timedelta(seconds=20)
+        assert intervals[2]["start_time"] == to_db_utc(start + timedelta(seconds=20))
 
 
 class TestSyncStates:

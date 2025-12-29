@@ -18,7 +18,6 @@ from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.db.correlation import (
-    _map_binary_state_to_semantic,
     _prune_old_correlations,
     analyze_and_save_correlation,
     analyze_binary_likelihoods,
@@ -1294,6 +1293,16 @@ class TestPruneOldCorrelations:
     - Handling duplicates within the same month
     - Edge cases (empty list, exactly at limit)
     """
+
+    @pytest.fixture(autouse=True)
+    def _set_default_tz_utc(self):
+        """Correlation month grouping is local-time based; keep tests deterministic."""
+        original = dt_util.DEFAULT_TIME_ZONE
+        dt_util.set_default_time_zone(dt_util.UTC)
+        try:
+            yield
+        finally:
+            dt_util.set_default_time_zone(original)
 
     def test_prune_old_correlations_excess_records(
         self, coordinator: AreaOccupancyCoordinator
@@ -2636,49 +2645,6 @@ class TestConvertIntervalsToSamples:
         assert len(samples) == 1
         # Midpoint should be within period boundaries
         assert period_start <= samples[0].timestamp <= period_end
-
-
-class TestMapBinaryStateToSemantic:
-    """Test _map_binary_state_to_semantic function.
-
-    Tests mapping of binary sensor states ('on'/'off') to semantic states
-    ('open'/'closed') for door and window sensors.
-    """
-
-    @pytest.mark.parametrize(
-        ("input_state", "active_states", "expected_result", "description"),
-        [
-            ("off", ["closed"], "closed", "door closed (off → closed)"),
-            ("on", ["open"], "open", "door open (on → open)"),
-            ("on", ["open"], "open", "window open (on → open)"),
-            ("off", ["closed"], "closed", "window closed (off → closed)"),
-        ],
-    )
-    def test_map_binary_state_to_semantic(
-        self, input_state, active_states, expected_result, description
-    ):
-        """Test mapping binary states to semantic states."""
-        result = _map_binary_state_to_semantic(input_state, active_states)
-        assert result == expected_result
-
-    @pytest.mark.parametrize(
-        ("input_state", "active_states", "expected_result"),
-        [
-            ("off", ["on"], "off"),  # No mapping when semantic not in active_states
-            ("on", ["off"], "on"),  # No mapping when semantic not in active_states
-        ],
-    )
-    def test_no_mapping_when_semantic_not_present(
-        self, input_state, active_states, expected_result
-    ):
-        """Test that no mapping occurs when semantic states not in active_states."""
-        result = _map_binary_state_to_semantic(input_state, active_states)
-        assert result == expected_result
-
-    def test_mapping_preserves_other_states(self):
-        """Test that non-binary states are preserved."""
-        result = _map_binary_state_to_semantic("playing", ["playing", "paused"])
-        assert result == "playing"
 
 
 class TestGetCorrelatableEntitiesByArea:

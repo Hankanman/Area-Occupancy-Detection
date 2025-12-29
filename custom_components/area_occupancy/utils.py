@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 import math
 from typing import TYPE_CHECKING, Any
@@ -10,30 +9,15 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
 
 _LOGGER = logging.getLogger(__name__)
 
+
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
-
-
-def ensure_timezone_aware(dt: datetime) -> datetime:
-    """Ensure a datetime is timezone-aware, assuming UTC if naive.
-
-    Args:
-        dt: The datetime object to make timezone-aware
-
-    Returns:
-        A timezone-aware datetime object
-
-    """
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=dt_util.UTC)
-    return dt
 
 
 def format_float(value: float) -> float:
@@ -89,6 +73,32 @@ def clamp_probability(
     min_bound = min_val if min_val is not None else MIN_PROBABILITY
     max_bound = max_val if max_val is not None else MAX_PROBABILITY
     return max(min_bound, min(max_bound, value))
+
+
+def map_binary_state_to_semantic(state: str, active_states: list[str]) -> str:
+    """Map binary sensor state ('on'/'off') to semantic state ('open'/'closed') if needed.
+
+    Home Assistant binary sensors always report 'on'/'off', but some configs use
+    semantic states like 'open'/'closed'. This function maps between them.
+
+    Args:
+        state: The actual state from the sensor ('on' or 'off')
+        active_states: List of active states expected by the config
+
+    Returns:
+        The mapped state if mapping is needed, otherwise the original state
+    """
+    # If active_states contains semantic states, map binary states
+    if "closed" in active_states or "open" in active_states:
+        # Map binary states to semantic states
+        # For doors: 'off' means closed, 'on' means open
+        # For windows: 'off' means closed, 'on' means open
+        if state == "off":
+            return "closed"
+        if state == "on":
+            return "open"
+    # No mapping needed, return original state
+    return state
 
 
 # ────────────────────────────────────── Core Bayes ───────────────────────────

@@ -381,15 +381,14 @@ class TestWaspInBoxSensor:
         wasp_coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
-        """Test _get_valid_entities method."""
+        """Test _get_valid_entities method returns all configured entities."""
         area_name = wasp_coordinator.get_area_names()[0]
         handle = wasp_coordinator.get_area_handle(area_name)
         entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
-        # Create actual states in hass.states instead of mocking
-        hass.states.async_set("binary_sensor.door1", STATE_OFF)
-        hass.states.async_set("binary_sensor.motion1", STATE_OFF)
+        # Do NOT create states in hass.states
+        # We want to verify that even nonexistent entities are returned
 
         result = entity._get_valid_entities()
 
@@ -1535,13 +1534,13 @@ class TestWaspInBoxSensorErrorHandling:
         entity._setup_entity_tracking()
         assert entity._remove_state_listener is None
 
-    def test_setup_entity_tracking_no_valid_entities(
+    def test_setup_entity_tracking_with_unavailable_entities(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
         wasp_config_entry: Mock,
     ) -> None:
-        """Test _setup_entity_tracking when no valid entities exist."""
+        """Test _setup_entity_tracking tracks entities even if they don't exist yet."""
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
@@ -1552,26 +1551,26 @@ class TestWaspInBoxSensorErrorHandling:
             window=[],
             media=[],
             appliance=[],
+            _parent_config=area.config,
         )
 
         handle = coordinator.get_area_handle(area_name)
         entity = WaspInBoxSensor(handle, wasp_config_entry)
         entity.hass = hass
 
-        # Should handle gracefully
-        # When _get_valid_entities() returns empty lists, valid_entities dict is not empty
-        # (it has keys with empty lists), so the check passes and async_track_state_change_event
-        # is called with an empty list, which returns a no-op function (not None)
+        # Should track the entities anyway
         with patch(
             "custom_components.area_occupancy.binary_sensor.async_track_state_change_event"
         ) as mock_track:
             entity._setup_entity_tracking()
-            # Should be called with empty list
+            # Should be called with the configured entities
             mock_track.assert_called_once()
-            assert mock_track.call_args[0][1] == []  # Empty list of entities
-            # Returns a no-op function, not None
+            tracked_entities = mock_track.call_args[0][1]
+            assert "binary_sensor.nonexistent" in tracked_entities
+            assert "binary_sensor.nonexistent_door" in tracked_entities
+
+            # Returns a listener
             assert entity._remove_state_listener is not None
-            assert callable(entity._remove_state_listener)
 
     def test_handle_state_change_unknown_state(
         self,
