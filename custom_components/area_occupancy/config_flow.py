@@ -152,6 +152,33 @@ def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
     ]
 
 
+def _entity_contains_keyword(hass: HomeAssistant, entity_id: str, keyword: str) -> bool:
+    """Check if entity ID or friendly name contains a keyword.
+
+    Args:
+        hass: Home Assistant instance
+        entity_id: Entity ID to check
+        keyword: Keyword to search for (case-insensitive)
+
+    Returns:
+        True if keyword is found in entity_id or friendly name
+    """
+    # Convert keyword to lowercase for case-insensitive comparison
+    keyword_lower = keyword.lower()
+
+    # Check entity ID
+    if keyword_lower in entity_id.lower():
+        return True
+
+    # Check friendly name from state
+    state = hass.states.get(entity_id)
+    if state and state.name:
+        if keyword_lower in state.name.lower():
+            return True
+
+    return False
+
+
 def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     """Get lists of entities to include for specific selectors."""
     registry = er.async_get(hass)
@@ -159,14 +186,27 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_window_entities = []
     include_door_entities = []
 
+    door_window_classes = (
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+        BinarySensorDeviceClass.OPENING,
+        BinarySensorDeviceClass.WINDOW,
+    )
+    door_classes = (
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+    )
+    door_keyword_classes = (
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+        BinarySensorDeviceClass.OPENING,
+    )
+
     appliance_excluded_classes = [
         BinarySensorDeviceClass.MOTION,
         BinarySensorDeviceClass.OCCUPANCY,
         BinarySensorDeviceClass.PRESENCE,
-        BinarySensorDeviceClass.WINDOW,
-        BinarySensorDeviceClass.DOOR,
-        BinarySensorDeviceClass.GARAGE_DOOR,
-        BinarySensorDeviceClass.OPENING,
+        *door_window_classes,
     ]
 
     # Check binary_sensor, switch, fan, light for potential appliances
@@ -190,43 +230,43 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
         if entry.domain == Platform.BINARY_SENSOR:
+            device_class = entry.device_class
+            original_device_class = entry.original_device_class
+
+            # Check if entity contains "window" or "door" keyword in entity_id or friendly name
+            has_window_keyword = _entity_contains_keyword(
+                hass, entry.entity_id, "window"
+            )
+            has_door_keyword = _entity_contains_keyword(hass, entry.entity_id, "door")
+
             is_window_candidate = (
-                entry.device_class == BinarySensorDeviceClass.WINDOW
+                device_class == BinarySensorDeviceClass.WINDOW
+                or original_device_class == BinarySensorDeviceClass.WINDOW
                 or (
-                    "window" in entry.entity_id.lower()
+                    has_window_keyword
+                    and not has_door_keyword
                     and (
-                        entry.device_class
-                        in [
-                            BinarySensorDeviceClass.DOOR,
-                            BinarySensorDeviceClass.GARAGE_DOOR,
-                            BinarySensorDeviceClass.OPENING,
-                            BinarySensorDeviceClass.WINDOW,
-                        ]
-                        or entry.original_device_class
-                        in [
-                            BinarySensorDeviceClass.DOOR,
-                            BinarySensorDeviceClass.GARAGE_DOOR,
-                            BinarySensorDeviceClass.OPENING,
-                            BinarySensorDeviceClass.WINDOW,
-                        ]
+                        device_class in door_window_classes
+                        or original_device_class in door_window_classes
                     )
                 )
             )
-            is_door_candidate = entry.device_class == BinarySensorDeviceClass.DOOR or (
-                "window" not in entry.entity_id.lower()
-                and (
-                    entry.device_class
-                    in [
-                        BinarySensorDeviceClass.DOOR,
-                        BinarySensorDeviceClass.GARAGE_DOOR,
-                        BinarySensorDeviceClass.OPENING,
-                    ]
-                    or entry.original_device_class
-                    in [
-                        BinarySensorDeviceClass.DOOR,
-                        BinarySensorDeviceClass.GARAGE_DOOR,
-                        BinarySensorDeviceClass.OPENING,
-                    ]
+            is_door_candidate = (
+                device_class in door_classes
+                or original_device_class in door_classes
+                or (
+                    has_door_keyword
+                    and (
+                        device_class in door_keyword_classes
+                        or original_device_class in door_keyword_classes
+                    )
+                )
+                or (
+                    not has_window_keyword
+                    and (
+                        device_class == BinarySensorDeviceClass.OPENING
+                        or original_device_class == BinarySensorDeviceClass.OPENING
+                    )
                 )
             )
 
