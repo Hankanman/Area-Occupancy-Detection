@@ -408,6 +408,42 @@ class TestHelperFunctions:
         assert "binary_sensor.test_window_1" in result["window"]
         assert "switch.test_appliance_1" in result["appliance"]
 
+    def test_get_include_entities_excludes_area_occupancy_motion(
+        self, hass, entity_registry
+    ):
+        """Test that area occupancy sensors are excluded from motion list."""
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            "living_room_occupancy",
+            original_device_class="occupancy",
+        )
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "zha",
+            "motion_sensor",
+            original_device_class="motion",
+        )
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "mqtt",
+            "room_occupancy",
+            original_device_class="occupancy",
+        )
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "ble_monitor",
+            "person_presence",
+            original_device_class="presence",
+        )
+
+        result = _get_include_entities(hass)
+
+        assert f"binary_sensor.{DOMAIN}_living_room_occupancy" not in result["motion"]
+        assert "binary_sensor.zha_motion_sensor" in result["motion"]
+        assert "binary_sensor.mqtt_room_occupancy" in result["motion"]
+        assert "binary_sensor.ble_monitor_person_presence" in result["motion"]
+
     @pytest.mark.parametrize(
         ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
         [
@@ -1003,6 +1039,7 @@ class TestConfigFlowIntegration:
                 "appliance": ["binary_sensor.motion1", "binary_sensor.door1"],
                 "window": ["binary_sensor.window1"],
                 "door": ["binary_sensor.door1"],
+                "motion": ["binary_sensor.motion1"],
             }
             schema_dict = create_schema(hass)
             assert isinstance(schema_dict, dict)

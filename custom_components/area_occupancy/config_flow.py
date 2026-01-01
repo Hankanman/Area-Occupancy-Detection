@@ -158,6 +158,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_appliance_entities = []
     include_window_entities = []
     include_door_entities = []
+    include_motion_entities = []
 
     appliance_excluded_classes = [
         BinarySensorDeviceClass.MOTION,
@@ -235,14 +236,35 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             elif is_door_candidate:
                 include_door_entities.append(entry.entity_id)
 
+            if entry.platform != DOMAIN:
+                is_motion_candidate = (
+                    entry.device_class
+                    in [
+                        BinarySensorDeviceClass.MOTION,
+                        BinarySensorDeviceClass.OCCUPANCY,
+                        BinarySensorDeviceClass.PRESENCE,
+                    ]
+                    or entry.original_device_class
+                    in [
+                        BinarySensorDeviceClass.MOTION,
+                        BinarySensorDeviceClass.OCCUPANCY,
+                        BinarySensorDeviceClass.PRESENCE,
+                    ]
+                )
+                if is_motion_candidate:
+                    include_motion_entities.append(entry.entity_id)
+
     return {
         "appliance": include_appliance_entities,
         "window": include_window_entities,
         "door": include_door_entities,
+        "motion": include_motion_entities,
     }
 
 
-def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _create_motion_section_schema(
+    defaults: dict[str, Any], motion_entities: list[str]
+) -> vol.Schema:
     """Create schema for the motion section."""
     return vol.Schema(
         {
@@ -250,12 +272,7 @@ def _create_motion_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.BINARY_SENSOR,
-                    device_class=[
-                        BinarySensorDeviceClass.MOTION,
-                        BinarySensorDeviceClass.OCCUPANCY,
-                        BinarySensorDeviceClass.PRESENCE,
-                    ],
+                    include_entities=motion_entities,
                     multiple=True,
                 )
             ),
@@ -787,7 +804,8 @@ def create_schema(
 
     # Add sections by assigning keys directly to the dictionary
     schema_dict[vol.Required("motion")] = section(
-        _create_motion_section_schema(defaults), {"collapsed": True}
+        _create_motion_section_schema(defaults, include_entities["motion"]),
+        {"collapsed": True},
     )
     schema_dict[vol.Required("windows_and_doors")] = section(
         _create_windows_and_doors_section_schema(
