@@ -152,12 +152,64 @@ def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
     ]
 
 
+def _is_weather_entity(entity_id: str, platform: str | None) -> bool:
+    """Check if an entity is from a weather integration.
+
+    Weather entities measure outdoor conditions and are not suitable for
+    room occupancy detection.
+
+    Args:
+        entity_id: Entity ID to check
+        platform: Platform/integration that created the entity
+
+    Returns:
+        True if entity is from a weather integration
+    """
+    # List of weather integration platforms to exclude
+    weather_platforms = {
+        "weather",
+        "met",
+        "openweathermap",
+        "accuweather",
+        "weatherflow",
+        "pirateweather",
+        "darksky",
+        "buienradar",
+        "bom",
+        "weatherkit",
+        "metoffice",
+        "nws",
+        "dwd",  # Deutscher Wetterdienst (German Weather Service) - official integration
+        "dwd_weather",  # DWD Weather by FL550 - HACS custom integration
+    }
+
+    # Check if platform is a known weather integration
+    if platform and platform.lower() in weather_platforms:
+        return True
+
+    # Check if entity_id contains weather-related keywords
+    # (as a fallback for entities without platform info)
+    entity_lower = entity_id.lower()
+    weather_keywords = ["weather", "forecast", "outdoor"]
+    if any(keyword in entity_lower for keyword in weather_keywords):
+        return True
+
+    return False
+
+
+
 def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     """Get lists of entities to include for specific selectors."""
     registry = er.async_get(hass)
     include_appliance_entities = []
     include_window_entities = []
     include_door_entities = []
+    include_temperature_entities = []
+    include_humidity_entities = []
+    include_pressure_entities = []
+    include_air_quality_entities = []
+    include_pm25_entities = []
+    include_pm10_entities = []
 
     appliance_excluded_classes = [
         BinarySensorDeviceClass.MOTION,
@@ -187,7 +239,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             if device_class not in appliance_excluded_classes:
                 include_appliance_entities.append(eid)
 
-    # Check registry for specific door/window classes
+    # Check registry for specific door/window classes and environmental sensors
     for entry in registry.entities.values():
         if entry.domain == Platform.BINARY_SENSOR:
             is_window_candidate = (
@@ -235,10 +287,46 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             elif is_door_candidate:
                 include_door_entities.append(entry.entity_id)
 
+        # Filter environmental sensors to exclude weather entities
+        elif entry.domain == Platform.SENSOR:
+            # Skip weather entities
+            if _is_weather_entity(entry.entity_id, entry.platform):
+                continue
+
+            # Include temperature sensors (excluding weather)
+            if entry.device_class == SensorDeviceClass.TEMPERATURE or entry.original_device_class == SensorDeviceClass.TEMPERATURE:
+                include_temperature_entities.append(entry.entity_id)
+
+            # Include humidity sensors (excluding weather)
+            if entry.device_class in [SensorDeviceClass.HUMIDITY, SensorDeviceClass.MOISTURE] or entry.original_device_class in [SensorDeviceClass.HUMIDITY, SensorDeviceClass.MOISTURE]:
+                include_humidity_entities.append(entry.entity_id)
+
+            # Include pressure sensors (excluding weather)
+            if entry.device_class in [SensorDeviceClass.PRESSURE, SensorDeviceClass.ATMOSPHERIC_PRESSURE] or entry.original_device_class in [SensorDeviceClass.PRESSURE, SensorDeviceClass.ATMOSPHERIC_PRESSURE]:
+                include_pressure_entities.append(entry.entity_id)
+
+            # Include air quality sensors (excluding weather)
+            if entry.device_class == SensorDeviceClass.AQI or entry.original_device_class == SensorDeviceClass.AQI:
+                include_air_quality_entities.append(entry.entity_id)
+
+            # Include PM2.5 sensors (excluding weather)
+            if entry.device_class == SensorDeviceClass.PM25 or entry.original_device_class == SensorDeviceClass.PM25:
+                include_pm25_entities.append(entry.entity_id)
+
+            # Include PM10 sensors (excluding weather)
+            if entry.device_class == SensorDeviceClass.PM10 or entry.original_device_class == SensorDeviceClass.PM10:
+                include_pm10_entities.append(entry.entity_id)
+
     return {
         "appliance": include_appliance_entities,
         "window": include_window_entities,
         "door": include_door_entities,
+        "temperature": include_temperature_entities,
+        "humidity": include_humidity_entities,
+        "pressure": include_pressure_entities,
+        "air_quality": include_air_quality_entities,
+        "pm25": include_pm25_entities,
+        "pm10": include_pm10_entities,
     }
 
 
@@ -454,7 +542,15 @@ def _create_appliances_section_schema(
     )
 
 
-def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _create_environmental_section_schema(
+    defaults: dict[str, Any],
+    temperature_entities: list[str],
+    humidity_entities: list[str],
+    pressure_entities: list[str],
+    air_quality_entities: list[str],
+    pm25_entities: list[str],
+    pm10_entities: list[str],
+) -> vol.Schema:
     """Create schema for the environmental section."""
     return vol.Schema(
         {
@@ -472,11 +568,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 CONF_HUMIDITY_SENSORS, default=defaults.get(CONF_HUMIDITY_SENSORS, [])
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
-                    device_class=[
-                        SensorDeviceClass.HUMIDITY,
-                        SensorDeviceClass.MOISTURE,
-                    ],
+                    include_entities=humidity_entities,
                     multiple=True,
                 )
             ),
@@ -485,8 +577,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 default=defaults.get(CONF_TEMPERATURE_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.TEMPERATURE,
+                    include_entities=temperature_entities,
                     multiple=True,
                 )
             ),
@@ -525,11 +616,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 default=defaults.get(CONF_PRESSURE_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
-                    device_class=[
-                        SensorDeviceClass.PRESSURE,
-                        SensorDeviceClass.ATMOSPHERIC_PRESSURE,
-                    ],
+                    include_entities=pressure_entities,
                     multiple=True,
                 )
             ),
@@ -538,8 +625,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 default=defaults.get(CONF_AIR_QUALITY_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.AQI,
+                    include_entities=air_quality_entities,
                     multiple=True,
                 )
             ),
@@ -561,8 +647,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 default=defaults.get(CONF_PM25_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.PM25,
+                    include_entities=pm25_entities,
                     multiple=True,
                 )
             ),
@@ -571,8 +656,7 @@ def _create_environmental_section_schema(defaults: dict[str, Any]) -> vol.Schema
                 default=defaults.get(CONF_PM10_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
-                    device_class=SensorDeviceClass.PM10,
+                    include_entities=pm10_entities,
                     multiple=True,
                 )
             ),
@@ -814,7 +898,16 @@ def create_schema(
         {"collapsed": True},
     )
     schema_dict[vol.Required("environmental")] = section(
-        _create_environmental_section_schema(defaults), {"collapsed": True}
+        _create_environmental_section_schema(
+            defaults,
+            include_entities["temperature"],
+            include_entities["humidity"],
+            include_entities["pressure"],
+            include_entities["air_quality"],
+            include_entities["pm25"],
+            include_entities["pm10"],
+        ),
+        {"collapsed": True},
     )
     schema_dict[vol.Required("power")] = section(
         _create_power_section_schema(defaults), {"collapsed": True}
