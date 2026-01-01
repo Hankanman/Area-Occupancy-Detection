@@ -659,6 +659,32 @@ class TestHelperFunctions:
         # Should NOT be in window list
         assert "binary_sensor.test_garage_contact" not in result.get("window", [])
 
+    def test_get_include_entities_door_with_both_keywords(
+        self, hass, entity_registry
+    ):
+        """Test that entities with both 'door' and 'window' keywords are doors."""
+        # Register a sensor with opening device class and both keywords in entity_id
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "door_window_contact",
+            original_device_class="opening",
+        )
+
+        # Create state with friendly name containing both keywords
+        hass.states.async_set(
+            "binary_sensor.test_door_window_contact",
+            "off",
+            {"friendly_name": "Patio Door Window Sensor", "device_class": "opening"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the door list, not the window list
+        assert "door" in result
+        assert "binary_sensor.test_door_window_contact" in result["door"]
+        assert "binary_sensor.test_door_window_contact" not in result.get("window", [])
+
     @pytest.mark.parametrize(
         ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
         [

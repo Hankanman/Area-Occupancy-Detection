@@ -186,14 +186,27 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_window_entities = []
     include_door_entities = []
 
+    door_window_classes = (
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+        BinarySensorDeviceClass.OPENING,
+        BinarySensorDeviceClass.WINDOW,
+    )
+    door_classes = (
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+    )
+    door_keyword_classes = (
+        BinarySensorDeviceClass.DOOR,
+        BinarySensorDeviceClass.GARAGE_DOOR,
+        BinarySensorDeviceClass.OPENING,
+    )
+
     appliance_excluded_classes = [
         BinarySensorDeviceClass.MOTION,
         BinarySensorDeviceClass.OCCUPANCY,
         BinarySensorDeviceClass.PRESENCE,
-        BinarySensorDeviceClass.WINDOW,
-        BinarySensorDeviceClass.DOOR,
-        BinarySensorDeviceClass.GARAGE_DOOR,
-        BinarySensorDeviceClass.OPENING,
+        *door_window_classes,
     ]
 
     # Check binary_sensor, switch, fan, light for potential appliances
@@ -217,6 +230,9 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
         if entry.domain == Platform.BINARY_SENSOR:
+            device_class = entry.device_class
+            original_device_class = entry.original_device_class
+
             # Check if entity contains "window" or "door" keyword in entity_id or friendly name
             has_window_keyword = _entity_contains_keyword(
                 hass, entry.entity_id, "window"
@@ -224,57 +240,32 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             has_door_keyword = _entity_contains_keyword(hass, entry.entity_id, "door")
 
             is_window_candidate = (
-                entry.device_class == BinarySensorDeviceClass.WINDOW
-                or entry.original_device_class == BinarySensorDeviceClass.WINDOW
+                device_class == BinarySensorDeviceClass.WINDOW
+                or original_device_class == BinarySensorDeviceClass.WINDOW
                 or (
                     has_window_keyword
                     and not has_door_keyword
                     and (
-                        entry.device_class
-                        in [
-                            BinarySensorDeviceClass.DOOR,
-                            BinarySensorDeviceClass.GARAGE_DOOR,
-                            BinarySensorDeviceClass.OPENING,
-                            BinarySensorDeviceClass.WINDOW,
-                        ]
-                        or entry.original_device_class
-                        in [
-                            BinarySensorDeviceClass.DOOR,
-                            BinarySensorDeviceClass.GARAGE_DOOR,
-                            BinarySensorDeviceClass.OPENING,
-                            BinarySensorDeviceClass.WINDOW,
-                        ]
+                        device_class in door_window_classes
+                        or original_device_class in door_window_classes
                     )
                 )
             )
             is_door_candidate = (
-                entry.device_class == BinarySensorDeviceClass.DOOR
-                or entry.original_device_class == BinarySensorDeviceClass.DOOR
-                or entry.device_class == BinarySensorDeviceClass.GARAGE_DOOR
-                or entry.original_device_class == BinarySensorDeviceClass.GARAGE_DOOR
+                device_class in door_classes
+                or original_device_class in door_classes
                 or (
                     has_door_keyword
                     and (
-                        entry.device_class
-                        in [
-                            BinarySensorDeviceClass.DOOR,
-                            BinarySensorDeviceClass.GARAGE_DOOR,
-                            BinarySensorDeviceClass.OPENING,
-                        ]
-                        or entry.original_device_class
-                        in [
-                            BinarySensorDeviceClass.DOOR,
-                            BinarySensorDeviceClass.GARAGE_DOOR,
-                            BinarySensorDeviceClass.OPENING,
-                        ]
+                        device_class in door_keyword_classes
+                        or original_device_class in door_keyword_classes
                     )
                 )
                 or (
                     not has_window_keyword
                     and (
-                        entry.device_class == BinarySensorDeviceClass.OPENING
-                        or entry.original_device_class
-                        == BinarySensorDeviceClass.OPENING
+                        device_class == BinarySensorDeviceClass.OPENING
+                        or original_device_class == BinarySensorDeviceClass.OPENING
                     )
                 )
             )
