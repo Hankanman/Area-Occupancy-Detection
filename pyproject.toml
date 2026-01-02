@@ -33,7 +33,7 @@ dev = [
   "pre-commit==4.5.1",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.301",
+  "pytest-homeassistant-custom-component==0.13.302",
   "pytest-cov",
 ]
 viz = [
