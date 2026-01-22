@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==80.9.0"]
+requires = ["setuptools==80.10.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -23,7 +23,7 @@ classifiers = [
 ]
 requires-python = ">=3.13.2"
 dependencies = [
-  "homeassistant==2025.12.4",
+  "homeassistant==2026.1.2",
   "numpy>=2.3.2",
 ]
 
@@ -33,7 +33,7 @@ dev = [
   "pre-commit==4.5.1",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.301",
+  "pytest-homeassistant-custom-component==0.13.307",
   "pytest-cov",
 ]
 viz = [
