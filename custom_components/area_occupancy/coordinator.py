@@ -751,17 +751,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         if _now is None:
             _now = dt_util.utcnow()
-        self._analysis_timer = None
 
         # Prevent concurrent analysis runs
         if self._analysis_running:
             _LOGGER.debug("Analysis already running, skipping this trigger")
+            # Cancel existing timer before rescheduling to avoid orphaned timers
+            if self._analysis_timer is not None:
+                self._analysis_timer()
+                self._analysis_timer = None
             # Reschedule to try again later
             next_update = _now + timedelta(minutes=5)
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
             return
+
+        # Clear timer reference now that we're actually running
+        # (timer has fired and called this function)
+        self._analysis_timer = None
 
         self._analysis_running = True
         try:
