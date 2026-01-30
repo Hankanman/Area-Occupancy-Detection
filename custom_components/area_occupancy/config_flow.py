@@ -1549,6 +1549,14 @@ class BaseOccupancyFlow:
                 "Window active state is required when window sensors are configured"
             )
 
+        # Validate covers
+        cover_sensors = data.get(CONF_COVER_SENSORS, [])
+        cover_states = data.get(CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES)
+        if cover_sensors and not cover_states:
+            raise vol.Invalid(
+                "Cover active states are required when cover sensors are configured"
+            )
+
         # Validate weights
         weights = [
             (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
@@ -1559,6 +1567,7 @@ class BaseOccupancyFlow:
             ),
             (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
             (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
+            (CONF_WEIGHT_COVER, data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER)),
             (
                 CONF_WEIGHT_ENVIRONMENTAL,
                 data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),

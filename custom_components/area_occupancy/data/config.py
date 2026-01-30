@@ -477,6 +477,7 @@ class AreaConfig:
             *self.sensors.appliance,
             *self.sensors.door,
             *self.sensors.window,
+            *self.sensors.cover,
             *self.sensors.illuminance,
             *self.sensors.humidity,
             *self.sensors.temperature,
