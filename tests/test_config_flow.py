@@ -659,9 +659,7 @@ class TestHelperFunctions:
         # Should NOT be in window list
         assert "binary_sensor.test_garage_contact" not in result.get("window", [])
 
-    def test_get_include_entities_door_with_both_keywords(
-        self, hass, entity_registry
-    ):
+    def test_get_include_entities_door_with_both_keywords(self, hass, entity_registry):
         """Test that entities with both 'door' and 'window' keywords are doors."""
         # Register a sensor with opening device class and both keywords in entity_id
         entity_registry.async_get_or_create(

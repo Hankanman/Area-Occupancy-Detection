@@ -239,9 +239,10 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             )
             has_door_keyword = _entity_contains_keyword(hass, entry.entity_id, "door")
 
+            window_class = (BinarySensorDeviceClass.WINDOW,)
             is_window_candidate = (
-                device_class == BinarySensorDeviceClass.WINDOW
-                or original_device_class == BinarySensorDeviceClass.WINDOW
+                device_class in window_class
+                or original_device_class in window_class
                 or (
                     has_window_keyword
                     and not has_door_keyword
@@ -264,8 +265,8 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
                 or (
                     not has_window_keyword
                     and (
-                        device_class == BinarySensorDeviceClass.OPENING
-                        or original_device_class == BinarySensorDeviceClass.OPENING
+                        device_class in (BinarySensorDeviceClass.OPENING,)
+                        or original_device_class in (BinarySensorDeviceClass.OPENING,)
                     )
                 )
             )
