@@ -7,6 +7,7 @@ import logging
 from typing import Final, TypedDict
 
 from homeassistant.const import (
+    STATE_BUFFERING,
     STATE_CLOSED,
     STATE_IDLE,
     STATE_OFF,
@@ -324,12 +325,16 @@ WINDOW_STATES: Final[PlatformStates] = {
 }
 
 # Media player states configuration
+# All states from homeassistant.components.media_player.MediaPlayerState
 MEDIA_STATES: Final[PlatformStates] = {
     "options": [
         StateOption(STATE_PLAYING, "Playing", "mdi:play"),
         StateOption(STATE_PAUSED, "Paused", "mdi:pause"),
+        StateOption(STATE_BUFFERING, "Buffering", "mdi:timer-sand"),
         StateOption(STATE_IDLE, "Idle", "mdi:sleep"),
-        StateOption(STATE_OFF, "Off", "mdi:power"),
+        StateOption(STATE_STANDBY, "Standby", "mdi:power-sleep"),
+        StateOption(STATE_ON, "On", "mdi:power"),
+        StateOption(STATE_OFF, "Off", "mdi:power-off"),
     ],
     "default": STATE_PLAYING,
 }
