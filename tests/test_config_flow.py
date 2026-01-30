@@ -760,6 +760,49 @@ class TestHelperFunctions:
         assert "sensor.zha_living_room_temp" in result["temperature"]
         assert "sensor.mqtt_bathroom_humidity" in result["humidity"]
 
+    def test_get_include_entities_excludes_area_occupancy_motion(
+        self, hass, entity_registry
+    ):
+        """Test that area occupancy sensors are excluded from motion list."""
+        # Register an area_occupancy sensor (should be excluded)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            "living_room_occupancy",
+            original_device_class="occupancy",
+        )
+        # Register external motion sensor (should be included)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "zha",
+            "motion_sensor",
+            original_device_class="motion",
+        )
+        # Register external occupancy sensor (should be included)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "mqtt",
+            "room_occupancy",
+            original_device_class="occupancy",
+        )
+        # Register external presence sensor (should be included)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "ble_monitor",
+            "person_presence",
+            original_device_class="presence",
+        )
+
+        result = _get_include_entities(hass)
+
+        # Check that our own sensors are excluded
+        assert f"binary_sensor.{DOMAIN}_living_room_occupancy" not in result["motion"]
+
+        # Check that external sensors are included
+        assert "binary_sensor.zha_motion_sensor" in result["motion"]
+        assert "binary_sensor.mqtt_room_occupancy" in result["motion"]
+        assert "binary_sensor.ble_monitor_person_presence" in result["motion"]
+
     @pytest.mark.parametrize(
         ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
         [
@@ -1361,6 +1404,7 @@ class TestConfigFlowIntegration:
                 "air_quality": ["sensor.aqi1"],
                 "pm25": ["sensor.pm25_1"],
                 "pm10": ["sensor.pm10_1"],
+                "motion": ["binary_sensor.motion1"],
             }
             schema_dict = create_schema(hass)
             assert isinstance(schema_dict, dict)
