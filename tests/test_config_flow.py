@@ -705,10 +705,13 @@ class TestHelperFunctions:
         # Test weather-related keywords in entity_id
         assert _is_weather_entity("sensor.weather_temperature", None) is True
         assert _is_weather_entity("sensor.forecast_humidity", None) is True
-        assert _is_weather_entity("sensor.outdoor_pressure", None) is True
 
-        # Test ecobee outdoor sensors are caught by keyword
-        assert _is_weather_entity("sensor.ecobee_outdoor_temperature", "ecobee") is True
+        # "outdoor" is intentionally NOT a keyword - too generic
+        # Users may have legitimate outdoor sensors (porch, patio) they want to use
+        assert _is_weather_entity("sensor.outdoor_pressure", None) is False
+        assert (
+            _is_weather_entity("sensor.ecobee_outdoor_temperature", "ecobee") is False
+        )
 
         # Test non-weather entity_ids
         assert _is_weather_entity("sensor.living_room_temperature", None) is False
