@@ -95,7 +95,17 @@ class Decay:
 
     @property
     def decay_factor(self) -> float:
-        """Freshness of last motion edge ∈[0,1]; auto-stops below 5 %."""
+        """Freshness of last motion edge ∈[0,1].
+
+        This is a pure read-only property that calculates the decay factor
+        without modifying state. Use tick() to update state based on the
+        decay factor.
+
+        Returns:
+            1.0 if not decaying or decay_start is in the future
+            0.0 if half_life is invalid (zero or negative)
+            Calculated factor otherwise (0.0 to 1.0)
+        """
         if not self.is_decaying:
             return 1.0
 
@@ -111,13 +121,30 @@ class Decay:
                 "Invalid half_life value %s detected, treating as immediate decay",
                 self.half_life,
             )
-            self.is_decaying = False
             return 0.0
 
         factor = float(0.5 ** (age / self.half_life))
-        if factor < 0.05:  # practical zero
-            self.is_decaying = False
+        # Return 0.0 when factor drops below practical threshold
+        if factor < 0.05:
             return 0.0
+        return factor
+
+    def tick(self) -> float:
+        """Update decay state and return current decay factor.
+
+        This method should be called periodically (e.g., by the decay timer)
+        to update the decay state. It stops decay when the factor drops below
+        the practical threshold (5%) or when half_life is invalid.
+
+        Returns:
+            The current decay factor (0.0 to 1.0)
+        """
+        factor = self.decay_factor
+
+        # Stop decay if factor has reached practical zero or half_life is invalid
+        if self.is_decaying and factor <= 0.0:
+            self.is_decaying = False
+
         return factor
 
     def start_decay(self) -> None:

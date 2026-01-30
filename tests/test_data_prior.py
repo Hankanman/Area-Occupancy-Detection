@@ -369,6 +369,34 @@ def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
         assert prior._cached_time_priors is None
 
 
+@pytest.mark.parametrize(
+    ("input_prior", "expected_clamped"),
+    [
+        (0.5, 0.5),  # Normal value - no clamping
+        (0.01, 0.01),  # At MIN_PROBABILITY - no clamping
+        (0.99, 0.99),  # At MAX_PROBABILITY - no clamping
+        (-0.1, MIN_PROBABILITY),  # Below minimum - clamped to MIN_PROBABILITY
+        (1.5, MAX_PROBABILITY),  # Above maximum - clamped to MAX_PROBABILITY
+        (0.0, MIN_PROBABILITY),  # Zero - clamped to MIN_PROBABILITY
+        (1.0, MAX_PROBABILITY),  # One - clamped to MAX_PROBABILITY
+        (float("inf"), MAX_PROBABILITY),  # Infinity - clamped to MAX_PROBABILITY
+        (
+            float("-inf"),
+            MIN_PROBABILITY,
+        ),  # Negative infinity - clamped to MIN_PROBABILITY
+    ],
+)
+def test_set_global_prior_clamping(
+    coordinator: AreaOccupancyCoordinator, input_prior: float, expected_clamped: float
+):
+    """Test that set_global_prior clamps values to valid probability bounds."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    prior.set_global_prior(input_prior)
+    assert prior.global_prior == expected_clamped
+
+
 def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
     """Test time_prior property loads from cache correctly."""
     original_tz = dt_util.DEFAULT_TIME_ZONE

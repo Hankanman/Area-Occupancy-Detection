@@ -67,6 +67,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
+        self._analysis_running: bool = False
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -690,6 +691,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle decay timer firing - refresh coordinator and always reschedule."""
         self._global_decay_timer = None
 
+        # Tick decay for all areas to update state (e.g., stop decay when factor reaches zero)
+        # This must be done before refresh to ensure state transitions happen
+        for area in self.areas.values():
+            if area.config.decay.enabled:
+                area.tick_decay()
+
         # Refresh the coordinator if decay is enabled for any area
         decay_enabled = any(area.config.decay.enabled for area in self.areas.values())
         if decay_enabled:
@@ -723,7 +730,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def run_analysis(self, _now: datetime | None = None) -> None:
         """Handle the historical data import timer.
 
-        Always runs analysis for all areas.
+        Always runs analysis for all areas. Prevents concurrent runs by checking
+        and setting the _analysis_running flag.
 
         Args:
             _now: Optional timestamp for the analysis run (used by timer)
@@ -732,6 +740,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _now = dt_util.utcnow()
         self._analysis_timer = None
 
+        # Prevent concurrent analysis runs
+        if self._analysis_running:
+            _LOGGER.debug("Analysis already running, skipping this trigger")
+            # Reschedule to try again later
+            next_update = _now + timedelta(minutes=5)
+            self._analysis_timer = async_track_point_in_time(
+                self.hass, self.run_analysis, next_update
+            )
+            return
+
+        self._analysis_running = True
         try:
             # Run the full analysis chain
             await run_full_analysis(self, _now)
@@ -751,3 +770,5 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
+        finally:
+            self._analysis_running = False
