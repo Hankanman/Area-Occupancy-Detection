@@ -30,6 +30,7 @@ from ..const import (
     RETENTION_WEEKLY_NUMERIC_YEARS,
 )
 from ..time_utils import from_db_utc, to_db_utc, to_local
+from .utils import batched_delete_by_ids
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -169,12 +170,9 @@ def aggregate_raw_to_daily(
                     created_count += 1
                     created_ids.append(aggregate.id)
 
-            # Delete raw intervals that were aggregated
+            # Delete raw intervals that were aggregated (batched to avoid SQLite limit)
             interval_ids = [interval.id for interval in raw_intervals]
-            if interval_ids:
-                session.query(db.Intervals).filter(
-                    db.Intervals.id.in_(interval_ids)
-                ).delete(synchronize_session=False)
+            batched_delete_by_ids(session, db.Intervals, interval_ids)
 
             session.commit()
             _LOGGER.info(
@@ -336,12 +334,9 @@ def aggregate_daily_to_weekly(
                     created_count += 1
                     created_ids.append(aggregate.id)
 
-            # Delete daily aggregates that were aggregated
+            # Delete daily aggregates that were aggregated (batched to avoid SQLite limit)
             aggregate_ids = [daily.id for daily in daily_aggregates]
-            if aggregate_ids:
-                session.query(db.IntervalAggregates).filter(
-                    db.IntervalAggregates.id.in_(aggregate_ids)
-                ).delete(synchronize_session=False)
+            batched_delete_by_ids(session, db.IntervalAggregates, aggregate_ids)
 
             session.commit()
             _LOGGER.info(
@@ -511,12 +506,9 @@ def aggregate_weekly_to_monthly(
                 session.add_all(new_aggregates)
                 session.flush()  # Flush before deleting to avoid identity map conflicts
 
-            # Delete weekly aggregates that were aggregated
+            # Delete weekly aggregates that were aggregated (batched to avoid SQLite limit)
             aggregate_ids = [weekly.id for weekly in weekly_aggregates]
-            if aggregate_ids:
-                session.query(db.IntervalAggregates).filter(
-                    db.IntervalAggregates.id.in_(aggregate_ids)
-                ).delete(synchronize_session=False)
+            batched_delete_by_ids(session, db.IntervalAggregates, aggregate_ids)
 
             session.commit()
             _LOGGER.info(
@@ -852,14 +844,11 @@ def aggregate_numeric_samples_to_hourly(
                     created_count += 1
                     created_ids.append(aggregate.id)
 
-            # Delete raw samples that were aggregated
-            all_sample_ids = []
+            # Delete raw samples that were aggregated (batched to avoid SQLite limit)
+            all_sample_ids: list[int] = []
             for sample_ids in sample_ids_by_hour.values():
                 all_sample_ids.extend(sample_ids)
-            if all_sample_ids:
-                session.query(db.NumericSamples).filter(
-                    db.NumericSamples.id.in_(all_sample_ids)
-                ).delete(synchronize_session=False)
+            batched_delete_by_ids(session, db.NumericSamples, all_sample_ids)
 
             session.commit()
             _LOGGER.info(
@@ -1039,12 +1028,9 @@ def aggregate_hourly_to_weekly(
                     created_count += 1
                     created_ids.append(aggregate.id)
 
-            # Delete hourly aggregates that were aggregated
+            # Delete hourly aggregates that were aggregated (batched to avoid SQLite limit)
             aggregate_ids = [hourly.id for hourly in hourly_aggregates]
-            if aggregate_ids:
-                session.query(db.NumericAggregates).filter(
-                    db.NumericAggregates.id.in_(aggregate_ids)
-                ).delete(synchronize_session=False)
+            batched_delete_by_ids(session, db.NumericAggregates, aggregate_ids)
 
             session.commit()
             _LOGGER.info(

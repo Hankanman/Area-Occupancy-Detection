@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 import logging
-from typing import Any
+from typing import Any, TypeVar
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -15,6 +17,65 @@ from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
 from ..time_utils import from_db_utc, to_db_utc, to_utc
 
 _LOGGER = logging.getLogger(__name__)
+
+# SQLite has a limit on the number of parameters in a single query.
+# Default SQLITE_MAX_VARIABLE_NUMBER is 999, but some builds use 32766.
+# Use a conservative batch size to avoid "too many SQL variables" errors.
+SQLITE_BATCH_SIZE = 500
+
+T = TypeVar("T")
+
+
+def chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
+    """Yield lists of at most `size` items from the iterable.
+
+    Args:
+        items: Items to chunk
+        size: Maximum size of each chunk
+
+    Yields:
+        Lists of items, each with at most `size` elements
+    """
+    chunk: list[T] = []
+    for item in items:
+        chunk.append(item)
+        if len(chunk) >= size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+def batched_delete_by_ids(
+    session: Session,
+    model: Any,
+    ids: list[int],
+    batch_size: int = SQLITE_BATCH_SIZE,
+) -> int:
+    """Delete records by ID in batches to avoid SQLite parameter limit.
+
+    Args:
+        session: SQLAlchemy session
+        model: SQLAlchemy model class (must have an 'id' attribute)
+        ids: List of IDs to delete
+        batch_size: Maximum IDs per query (default: SQLITE_BATCH_SIZE)
+
+    Returns:
+        Total number of records deleted
+    """
+    if not ids:
+        return 0
+
+    total_deleted = 0
+    for id_chunk in chunked(ids, batch_size):
+        deleted = (
+            session.query(model)
+            .filter(model.id.in_(id_chunk))
+            .delete(synchronize_session=False)
+        )
+        total_deleted += deleted
+
+    return total_deleted
 
 
 def is_valid_state(state: Any) -> bool:

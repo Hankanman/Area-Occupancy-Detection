@@ -59,6 +59,8 @@ from .const import (
     CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
+    CONF_COVER_ACTIVE_STATES,
+    CONF_COVER_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -91,6 +93,7 @@ from .const import (
     CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_COVER,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_MEDIA,
@@ -100,6 +103,7 @@ from .const import (
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -117,6 +121,7 @@ from .const import (
     DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_MEDIA,
@@ -388,10 +393,18 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             if device_class in pm10_class or original_device_class in pm10_class:
                 include_pm10_entities.append(entry.entity_id)
 
+    # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
+    include_cover_entities = [
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.entity_id.startswith("cover.") and not entry.disabled
+    ]
+
     return {
         "appliance": include_appliance_entities,
         "window": include_window_entities,
         "door": include_door_entities,
+        "cover": include_cover_entities,
         "temperature": include_temperature_entities,
         "humidity": include_humidity_entities,
         "pressure": include_pressure_entities,
@@ -473,10 +486,12 @@ def _create_windows_and_doors_section_schema(
     defaults: dict[str, Any],
     door_entities: list[str],
     window_entities: list[str],
+    cover_entities: list[str],
     door_state_options: list[SelectOptionDict],
     window_state_options: list[SelectOptionDict],
+    cover_state_options: list[SelectOptionDict],
 ) -> vol.Schema:
-    """Create schema for the combined windows and doors section."""
+    """Create schema for the combined windows, doors, and covers section."""
     return vol.Schema(
         {
             vol.Optional(
@@ -521,6 +536,34 @@ def _create_windows_and_doors_section_schema(
             vol.Optional(
                 CONF_WEIGHT_WINDOW,
                 default=defaults.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_COVER_SENSORS, default=defaults.get(CONF_COVER_SENSORS, [])
+            ): EntitySelector(
+                EntitySelectorConfig(include_entities=cover_entities, multiple=True)
+            ),
+            vol.Optional(
+                CONF_COVER_ACTIVE_STATES,
+                default=defaults.get(
+                    CONF_COVER_ACTIVE_STATES, list(DEFAULT_COVER_ACTIVE_STATES)
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=cover_state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_COVER,
+                default=defaults.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -916,6 +959,7 @@ def create_schema(
     door_state_options = _get_state_select_options("door")
     media_state_options = _get_state_select_options("media")
     window_state_options = _get_state_select_options("window")
+    cover_state_options = _get_state_select_options("cover")
     appliance_state_options = _get_state_select_options("appliance")
 
     # Initialize the dictionary for the schema
@@ -948,8 +992,10 @@ def create_schema(
             defaults,
             include_entities["door"],
             include_entities["window"],
+            include_entities["cover"],
             cast("list[SelectOptionDict]", door_state_options),
             cast("list[SelectOptionDict]", window_state_options),
+            cast("list[SelectOptionDict]", cover_state_options),
         ),
         {"collapsed": True},
     )
@@ -1503,6 +1549,14 @@ class BaseOccupancyFlow:
                 "Window active state is required when window sensors are configured"
             )
 
+        # Validate covers
+        cover_sensors = data.get(CONF_COVER_SENSORS, [])
+        cover_states = data.get(CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES)
+        if cover_sensors and not cover_states:
+            raise vol.Invalid(
+                "Cover active states are required when cover sensors are configured"
+            )
+
         # Validate weights
         weights = [
             (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
@@ -1513,6 +1567,7 @@ class BaseOccupancyFlow:
             ),
             (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
             (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
+            (CONF_WEIGHT_COVER, data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER)),
             (
                 CONF_WEIGHT_ENVIRONMENTAL,
                 data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),

@@ -15,9 +15,7 @@ from homeassistant.util import dt as dt_util
 from ..const import (
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
-    MAX_PROBABILITY,
     MIN_PRIOR,
-    MIN_PROBABILITY,
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
@@ -65,36 +63,31 @@ class Prior:
 
     @property
     def value(self) -> float:
-        """Return the current prior value or minimum if not calculated."""
+        """Return the current prior value or minimum if not calculated.
+
+        The prior is calculated by combining global_prior and time_prior,
+        applying PRIOR_FACTOR boost, and clamping to [MIN_PRIOR, MAX_PRIOR].
+
+        Returns:
+            Prior probability in range [MIN_PRIOR, MAX_PRIOR]
+        """
         # Initialize result to MIN_PRIOR if global_prior is None
         # This allows min_prior_override to be applied even when prior hasn't been calculated
         if self.global_prior is None:
             result = MIN_PRIOR
         else:
             # Use global_prior directly if time_prior is None, otherwise combine them
+            # Both global_prior (via set_global_prior) and combine_priors output
+            # are already clamped to [MIN_PROBABILITY, MAX_PROBABILITY]
             if self.time_prior is None:
                 prior = self.global_prior
             else:
                 prior = combine_priors(self.global_prior, self.time_prior)
 
-            # Track if we needed to clamp the prior
-            was_clamped = False
-
-            # Validate that prior is within reasonable bounds before applying factor
-            if not (MIN_PROBABILITY <= prior <= MAX_PROBABILITY):
-                prior = clamp_probability(prior)
-                was_clamped = True
-
-            # Apply factor and clamp to bounds
+            # Apply PRIOR_FACTOR boost and clamp to [MIN_PRIOR, MAX_PRIOR]
+            # The boost rewards areas with learned occupancy patterns
             adjusted_prior = prior * PRIOR_FACTOR
-
-            # If the prior was clamped to bounds, use the clamped prior value
-            if was_clamped and prior == MIN_PROBABILITY:
-                result = MIN_PRIOR
-            elif was_clamped and prior == MAX_PROBABILITY:
-                result = MAX_PRIOR
-            else:
-                result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
+            result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
         # Apply minimum prior override if configured
         # This check must run for all code paths, including when global_prior is None
@@ -129,8 +122,15 @@ class Prior:
         return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
 
     def set_global_prior(self, prior: float) -> None:
-        """Set the global prior value."""
-        self.global_prior = prior
+        """Set the global prior value.
+
+        The prior is clamped to [MIN_PROBABILITY, MAX_PROBABILITY] to ensure
+        valid probability bounds even when loading from database or external sources.
+
+        Args:
+            prior: The prior probability value (will be clamped to valid bounds)
+        """
+        self.global_prior = clamp_probability(prior)
         self._invalidate_time_prior_cache()
         self._last_updated = dt_util.utcnow()
 

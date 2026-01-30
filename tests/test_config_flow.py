@@ -1401,6 +1401,7 @@ class TestConfigFlowIntegration:
                 "appliance": ["binary_sensor.motion1", "binary_sensor.door1"],
                 "window": ["binary_sensor.window1"],
                 "door": ["binary_sensor.door1"],
+                "cover": ["cover.blinds1"],
                 "temperature": ["sensor.temp1"],
                 "humidity": ["sensor.humidity1"],
                 "pressure": ["sensor.pressure1"],

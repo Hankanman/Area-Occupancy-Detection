@@ -489,6 +489,11 @@ class Entity:
     def has_new_evidence(self) -> bool:
         """Update decay on actual evidence transitions.
 
+        Handles three cases:
+        1. Normal transitions (True→False, False→True)
+        2. Entity becoming unavailable (True/False→None)
+        3. Entity becoming available (None→True/False)
+
         Returns:
             bool: True if evidence transition occurred, False otherwise
 
@@ -499,11 +504,25 @@ class Entity:
         # Capture previous evidence before updating it
         previous_evidence = self.previous_evidence
 
-        # Skip transition logic if current evidence is None (entity unavailable)
-        if current_evidence is None or previous_evidence is None:
-            # Update previous evidence even if skipping to prevent false transitions later
+        # Handle entity becoming unavailable (evidence was known, now None)
+        if current_evidence is None:
+            if previous_evidence is True:
+                # Entity had evidence and became unavailable - treat as evidence lost
+                # Start decay since we lost positive evidence
+                self.decay.start_decay()
+                self.last_updated = dt_util.utcnow()
+            # Update previous evidence to track the unavailable state
             self.previous_evidence = current_evidence
-            return False
+            return False  # No "new evidence" but decay state updated
+
+        # Handle entity becoming available (previous was None, now has evidence)
+        if previous_evidence is None:
+            # Entity just became available - update previous and don't trigger transition
+            # If it has positive evidence, stop any lingering decay
+            if current_evidence:
+                self.decay.stop_decay()
+            self.previous_evidence = current_evidence
+            return False  # Entity just became available, not a true transition
 
         # Fix inconsistent state: if evidence is True but decay is running, stop decay
         if current_evidence and self.decay.is_decaying:
