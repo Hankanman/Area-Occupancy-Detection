@@ -74,6 +74,8 @@ CONF_DOOR_SENSORS: Final = "door_sensors"
 CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
 CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
+CONF_COVER_SENSORS: Final = "cover_sensors"
+CONF_COVER_ACTIVE_STATES: Final = "cover_active_states"
 CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
 CONF_THRESHOLD: Final = "threshold"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
@@ -94,6 +96,7 @@ CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
 CONF_WEIGHT_DOOR: Final = "weight_door"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
+CONF_WEIGHT_COVER: Final = "weight_cover"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 CONF_WEIGHT_POWER: Final = "weight_power"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
@@ -107,6 +110,7 @@ DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
+DEFAULT_COVER_ACTIVE_STATES: Final[list[str]] = [STATE_OPENING, STATE_CLOSING]
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
@@ -128,6 +132,9 @@ DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
+DEFAULT_WEIGHT_COVER: Final = (
+    0.5  # Covers (blinds/shades) being operated is strong activity signal
+)
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 DEFAULT_WEIGHT_POWER: Final = 0.3
 
@@ -167,6 +174,11 @@ MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
 APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
 APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
 APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
+
+# Cover defaults (blinds, shades, garage doors being operated)
+COVER_PROB_GIVEN_TRUE: Final[float] = 0.35
+COVER_PROB_GIVEN_FALSE: Final[float] = 0.02
+COVER_DEFAULT_PRIOR: Final[float] = 0.25
 
 # Environmental defaults
 ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
@@ -357,6 +369,18 @@ APPLIANCE_STATES: Final[PlatformStates] = {
     "default": STATE_ON,
 }
 
+# Cover states configuration (blinds, shades, garage doors, shutters)
+# All states from homeassistant.components.cover.CoverState
+COVER_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_OPENING, "Opening", "mdi:blinds-open"),
+        StateOption(STATE_CLOSING, "Closing", "mdi:blinds"),
+        StateOption(STATE_OPEN, "Open", "mdi:blinds-open"),
+        StateOption(STATE_CLOSED, "Closed", "mdi:blinds"),
+    ],
+    "default": STATE_OPENING,
+}
+
 # Motion sensor states configuration
 MOTION_STATES: Final[PlatformStates] = {
     "options": [
@@ -372,6 +396,7 @@ def get_state_options(platform_type: str) -> PlatformStates:
     platform_map = {
         "door": DOOR_STATES,
         "window": WINDOW_STATES,
+        "cover": COVER_STATES,
         "media": MEDIA_STATES,
         "appliance": APPLIANCE_STATES,
         "motion": MOTION_STATES,
