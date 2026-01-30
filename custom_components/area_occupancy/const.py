@@ -9,10 +9,12 @@ from typing import Final, TypedDict
 from homeassistant.const import (
     STATE_BUFFERING,
     STATE_CLOSED,
+    STATE_CLOSING,
     STATE_IDLE,
     STATE_OFF,
     STATE_ON,
     STATE_OPEN,
+    STATE_OPENING,
     STATE_PAUSED,
     STATE_PLAYING,
     STATE_STANDBY,
@@ -307,19 +309,25 @@ class PlatformStates(TypedDict):
 
 
 # Door states configuration
+# Includes transitional states for garage doors and motorized covers
 DOOR_STATES: Final[PlatformStates] = {
     "options": [
         StateOption(STATE_OPEN, "Open", "mdi:door-open"),
+        StateOption(STATE_OPENING, "Opening", "mdi:door-open"),
         StateOption(STATE_CLOSED, "Closed", "mdi:door"),
+        StateOption(STATE_CLOSING, "Closing", "mdi:door"),
     ],
     "default": STATE_CLOSED,
 }
 
 # Window states configuration
+# Includes transitional states for motorized blinds/shades
 WINDOW_STATES: Final[PlatformStates] = {
     "options": [
         StateOption(STATE_OPEN, "Open", "mdi:window-open"),
+        StateOption(STATE_OPENING, "Opening", "mdi:window-open"),
         StateOption(STATE_CLOSED, "Closed", "mdi:window-closed"),
+        StateOption(STATE_CLOSING, "Closing", "mdi:window-closed"),
     ],
     "default": STATE_OPEN,
 }
