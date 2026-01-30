@@ -20,6 +20,7 @@ from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
 )
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -709,23 +710,35 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _start_analysis_timer(self) -> None:
         """Start the historical data import timer.
 
+        Uses async_at_started to ensure the analysis timer doesn't fire during
+        Home Assistant bootstrap, which could cause startup timeouts.
+
         Note: No staggering needed with single-instance architecture.
         """
         if self._analysis_timer is not None or not self.hass:
             return
 
-        # First analysis: 5 minutes after startup
-        # Subsequent analyses: 1 hour interval
-        next_update = dt_util.utcnow() + timedelta(minutes=5)
+        async def _schedule_first_analysis(_: HomeAssistant) -> None:
+            """Schedule the first analysis after HA is fully started."""
+            if self._analysis_timer is not None:
+                return  # Already scheduled by another call
 
-        _LOGGER.info(
-            "Starting analysis timer for areas: %s",
-            format_area_names(self),
-        )
+            # First analysis: 5 minutes after HA is fully started
+            # This ensures we don't block bootstrap
+            next_update = dt_util.utcnow() + timedelta(minutes=5)
 
-        self._analysis_timer = async_track_point_in_time(
-            self.hass, self.run_analysis, next_update
-        )
+            _LOGGER.info(
+                "Home Assistant started - scheduling analysis timer for areas: %s",
+                format_area_names(self),
+            )
+
+            self._analysis_timer = async_track_point_in_time(
+                self.hass, self.run_analysis, next_update
+            )
+
+        # Use async_at_started to defer analysis until after bootstrap completes
+        # This prevents the analysis from blocking HA startup
+        async_at_started(self.hass, _schedule_first_analysis)
 
     async def run_analysis(self, _now: datetime | None = None) -> None:
         """Handle the historical data import timer.
