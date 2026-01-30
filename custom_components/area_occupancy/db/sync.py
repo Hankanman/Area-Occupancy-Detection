@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 
@@ -18,7 +17,8 @@ from homeassistant.util import dt as dt_util
 from ..const import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, RETENTION_DAYS
 from ..data.entity_type import InputType
 from ..time_utils import to_db_utc, to_utc
-from . import queries, utils
+from . import queries
+from .utils import chunked, is_valid_state
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _INTERVAL_LOOKUP_BATCH = 250
 _NUMERIC_SAMPLE_LOOKUP_BATCH = 250
-T = TypeVar("T")
 _NUMERIC_INPUT_TYPES = {
     InputType.TEMPERATURE,
     InputType.HUMIDITY,
@@ -42,18 +41,6 @@ _NUMERIC_INPUT_TYPES = {
     InputType.POWER,
     InputType.ENVIRONMENTAL,
 }
-
-
-def _chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
-    """Yield lists of at most `size` items from the iterable."""
-    chunk: list[T] = []
-    for item in items:
-        chunk.append(item)
-        if len(chunk) == size:
-            yield chunk
-            chunk = []
-    if chunk:
-        yield chunk
 
 
 def _normalize_db_key_datetime(value: datetime) -> datetime:
@@ -80,7 +67,7 @@ def _get_existing_interval_keys(
     )
     existing_keys: set[tuple[str, datetime, datetime]] = set()
 
-    for chunk in _chunked(keys_list, _INTERVAL_LOOKUP_BATCH):
+    for chunk in chunked(keys_list, _INTERVAL_LOOKUP_BATCH):
         matches = session.query(db.Intervals).filter(interval_tuple.in_(chunk)).all()
         for interval in matches:
             start = _normalize_db_key_datetime(interval.start_time)
@@ -103,7 +90,7 @@ def _get_existing_numeric_sample_keys(
     sample_tuple = sa.tuple_(db.NumericSamples.entity_id, db.NumericSamples.timestamp)
     existing_keys: set[tuple[str, datetime]] = set()
 
-    for chunk in _chunked(keys_list, _NUMERIC_SAMPLE_LOOKUP_BATCH):
+    for chunk in chunked(keys_list, _NUMERIC_SAMPLE_LOOKUP_BATCH):
         matches = session.query(db.NumericSamples).filter(sample_tuple.in_(chunk)).all()
         for sample in matches:
             timestamp = _normalize_db_key_datetime(sample.timestamp)
@@ -219,8 +206,7 @@ def _states_to_intervals(
                         }
                     )
             elif (
-                utils.is_valid_state(state.state)
-                and duration_seconds >= MIN_INTERVAL_SECONDS
+                is_valid_state(state.state) and duration_seconds >= MIN_INTERVAL_SECONDS
             ):
                 intervals.append(
                     {

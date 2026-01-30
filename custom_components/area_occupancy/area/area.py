@@ -219,6 +219,15 @@ class Area:
         decay_sum = sum(entity.decay.decay_factor for entity in entities.values())
         return decay_sum / len(entities)
 
+    def tick_decay(self) -> None:
+        """Tick all entity decays to update their state.
+
+        This method should be called periodically (e.g., by the decay timer)
+        to transition decay states when factors drop below threshold.
+        """
+        for entity in self.entities.entities.values():
+            entity.decay.tick()
+
     def occupied(self) -> bool:
         """Return the current occupancy state (True/False) for this area.
 

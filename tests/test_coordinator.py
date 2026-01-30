@@ -609,6 +609,87 @@ class TestAreaOccupancyCoordinator:
             await coordinator.run_analysis(custom_time)
             assert coordinator._analysis_timer is None
 
+    async def test_run_analysis_concurrent_guard(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that concurrent analysis runs are prevented."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        # Simulate analysis already running
+        coordinator._analysis_running = True
+
+        with (
+            patch(
+                "custom_components.area_occupancy.data.analysis.run_full_analysis",
+                new=AsyncMock(),
+            ) as mock_full_analysis,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=Mock(),
+            ) as mock_track_time,
+        ):
+            await coordinator.run_analysis()
+
+            # Analysis should NOT have run because _analysis_running was True
+            mock_full_analysis.assert_not_called()
+
+            # Timer should be rescheduled for retry
+            mock_track_time.assert_called_once()
+
+            # Flag should still be True (the concurrent call didn't change it)
+            assert coordinator._analysis_running is True
+
+    async def test_run_analysis_flag_reset_on_completion(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that _analysis_running flag is reset after analysis completes."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        # Flag should start as False
+        assert coordinator._analysis_running is False
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.run_full_analysis",
+                new=AsyncMock(),
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator.run_analysis()
+
+            # Flag should be reset to False after completion
+            assert coordinator._analysis_running is False
+
+    async def test_run_analysis_flag_reset_on_error(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that _analysis_running flag is reset even if analysis fails."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._analysis_timer = Mock()
+
+        # Flag should start as False
+        assert coordinator._analysis_running is False
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.run_full_analysis",
+                side_effect=HomeAssistantError("Analysis failed"),
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=Mock(),
+            ),
+        ):
+            await coordinator.run_analysis()
+
+            # Flag should be reset to False even after error (via finally block)
+            assert coordinator._analysis_running is False
+
     async def test_track_entity_state_changes_with_existing_listener(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:

@@ -6,8 +6,10 @@ from typing import Any
 
 from homeassistant.const import (
     STATE_CLOSED,
+    STATE_CLOSING,
     STATE_ON,
     STATE_OPEN,
+    STATE_OPENING,
     STATE_PAUSED,
     STATE_PLAYING,
     STATE_STANDBY,
@@ -24,6 +26,7 @@ class InputType(StrEnum):
     APPLIANCE = "appliance"
     DOOR = "door"
     WINDOW = "window"
+    COVER = "cover"
     TEMPERATURE = "temperature"
     HUMIDITY = "humidity"
     ILLUMINANCE = "illuminance"
@@ -188,6 +191,13 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
         "active_states": [STATE_OPEN],
+        "active_range": None,
+    },
+    InputType.COVER: {
+        "weight": 0.5,
+        "prob_given_true": 0.35,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_OPENING, STATE_CLOSING],
         "active_range": None,
     },
     InputType.TEMPERATURE: {

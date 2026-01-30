@@ -647,6 +647,128 @@ class TestEntityPropertiesAndMethods:
         # stop_decay is called twice: once for inconsistent state, once for transition
         assert entity.decay.stop_decay.call_count == 2
 
+    def test_has_new_evidence_unavailable_transitions(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test has_new_evidence handles entity becoming unavailable correctly.
+
+        When an entity with positive evidence becomes unavailable, decay should start.
+        """
+        mock_entity_type = Mock()
+        mock_entity_type.active_states = [STATE_ON]
+        mock_entity_type.active_range = None
+
+        entity = create_test_entity(
+            entity_type=mock_entity_type,
+            coordinator=coordinator,
+            previous_evidence=True,  # Entity previously had evidence
+        )
+
+        # Mock decay methods
+        entity.decay.start_decay = Mock()
+        entity.decay.stop_decay = Mock()
+        entity.decay.is_decaying = False
+
+        original_states = coordinator.hass.states
+
+        # Test: Entity becomes unavailable (None state)
+        _set_states_get(coordinator.hass, lambda _: None)
+        try:
+            result = entity.has_new_evidence()
+
+            # Should return False (no "new evidence" to trigger refresh)
+            assert result is False
+
+            # But decay should have started since we lost positive evidence
+            entity.decay.start_decay.assert_called_once()
+
+            # previous_evidence should be updated to None
+            assert entity.previous_evidence is None
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_has_new_evidence_unavailable_from_false(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test has_new_evidence when entity with no evidence becomes unavailable.
+
+        When an entity without evidence becomes unavailable, no decay change needed.
+        """
+        mock_entity_type = Mock()
+        mock_entity_type.active_states = [STATE_ON]
+        mock_entity_type.active_range = None
+
+        entity = create_test_entity(
+            entity_type=mock_entity_type,
+            coordinator=coordinator,
+            previous_evidence=False,  # Entity previously had no evidence
+        )
+
+        # Mock decay methods
+        entity.decay.start_decay = Mock()
+        entity.decay.stop_decay = Mock()
+        entity.decay.is_decaying = False
+
+        original_states = coordinator.hass.states
+
+        # Test: Entity becomes unavailable (None state)
+        _set_states_get(coordinator.hass, lambda _: None)
+        try:
+            result = entity.has_new_evidence()
+
+            # Should return False
+            assert result is False
+
+            # Decay should NOT have started (no evidence to lose)
+            entity.decay.start_decay.assert_not_called()
+
+            # previous_evidence should be updated to None
+            assert entity.previous_evidence is None
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_has_new_evidence_available_with_evidence(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test has_new_evidence when unavailable entity becomes available with evidence.
+
+        When an entity becomes available with positive evidence, decay should stop.
+        """
+        mock_entity_type = Mock()
+        mock_entity_type.active_states = [STATE_ON]
+        mock_entity_type.active_range = None
+
+        entity = create_test_entity(
+            entity_type=mock_entity_type,
+            coordinator=coordinator,
+            previous_evidence=None,  # Entity was unavailable
+        )
+
+        # Mock decay methods
+        entity.decay.start_decay = Mock()
+        entity.decay.stop_decay = Mock()
+        entity.decay.is_decaying = True  # Decay was running
+
+        original_states = coordinator.hass.states
+
+        # Test: Entity becomes available with evidence
+        mock_state = Mock()
+        mock_state.state = STATE_ON
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            result = entity.has_new_evidence()
+
+            # Should return False (entity just became available, not a transition)
+            assert result is False
+
+            # Decay should be stopped since entity has positive evidence
+            entity.decay.stop_decay.assert_called_once()
+
+            # previous_evidence should be updated to True
+            assert entity.previous_evidence is True
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
     def test_entity_factory_create_from_db(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:

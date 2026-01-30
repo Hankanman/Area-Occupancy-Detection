@@ -21,6 +21,8 @@ from ..const import (
     CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
+    CONF_COVER_ACTIVE_STATES,
+    CONF_COVER_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -51,6 +53,7 @@ from ..const import (
     CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_COVER,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_MEDIA,
@@ -61,6 +64,7 @@ from ..const import (
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -78,6 +82,7 @@ from ..const import (
     DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_MEDIA,
@@ -181,6 +186,7 @@ class Sensors:
     power: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
+    cover: list[str] = field(default_factory=list)
     _parent_config: "AreaConfig | None" = field(default=None, repr=False, compare=False)
 
     def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
@@ -234,6 +240,7 @@ class SensorStates:
     motion: list[str] = field(default_factory=lambda: [STATE_ON])
     door: list[str] = field(default_factory=lambda: [DEFAULT_DOOR_ACTIVE_STATE])
     window: list[str] = field(default_factory=lambda: [DEFAULT_WINDOW_ACTIVE_STATE])
+    cover: list[str] = field(default_factory=lambda: list(DEFAULT_COVER_ACTIVE_STATES))
     appliance: list[str] = field(
         default_factory=lambda: list(DEFAULT_APPLIANCE_ACTIVE_STATES)
     )
@@ -249,6 +256,7 @@ class Weights:
     appliance: float = DEFAULT_WEIGHT_APPLIANCE
     door: float = DEFAULT_WEIGHT_DOOR
     window: float = DEFAULT_WEIGHT_WINDOW
+    cover: float = DEFAULT_WEIGHT_COVER
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
     power: float = DEFAULT_WEIGHT_POWER
     wasp: float = DEFAULT_WASP_WEIGHT
@@ -393,6 +401,7 @@ class AreaConfig:
             power=data.get(CONF_POWER_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
+            cover=data.get(CONF_COVER_SENSORS, []),
             _parent_config=self,
         )
 
@@ -400,6 +409,7 @@ class AreaConfig:
             motion=[STATE_ON],  # Motion sensors default to STATE_ON
             door=[data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],
             window=[data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)],
+            cover=data.get(CONF_COVER_ACTIVE_STATES, list(DEFAULT_COVER_ACTIVE_STATES)),
             appliance=data.get(
                 CONF_APPLIANCE_ACTIVE_STATES, list(DEFAULT_APPLIANCE_ACTIVE_STATES)
             ),
@@ -412,6 +422,7 @@ class AreaConfig:
             appliance=data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
             door=data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
             window=data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
+            cover=data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER),
             environmental=data.get(
                 CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL
             ),
@@ -466,6 +477,7 @@ class AreaConfig:
             *self.sensors.appliance,
             *self.sensors.door,
             *self.sensors.window,
+            *self.sensors.cover,
             *self.sensors.illuminance,
             *self.sensors.humidity,
             *self.sensors.temperature,

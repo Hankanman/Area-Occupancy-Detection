@@ -93,36 +93,28 @@ class TestDecay:
             "half_life",
             "age_seconds",
             "expected_factor",
-            "expected_is_decaying",
         ),
         [
             # Not decaying
-            (False, None, 60.0, 0, 1.0, False),
+            (False, None, 60.0, 0, 1.0),
             # Zero age
-            (True, dt_util.utcnow(), 60.0, 0, 1.0, True),
+            (True, dt_util.utcnow(), 60.0, 0, 1.0),
             # Various ages relative to half_life
-            (True, dt_util.utcnow(), 60.0, 15.0, 0.8409, True),  # 0.25x half_life
-            (True, dt_util.utcnow(), 60.0, 30.0, 0.7071, True),  # 0.5x half_life
-            (True, dt_util.utcnow(), 60.0, 45.0, 0.5946, True),  # 0.75x half_life
-            (True, dt_util.utcnow(), 60.0, 60.0, 0.5, True),  # 1.0x half_life
-            (True, dt_util.utcnow(), 60.0, 90.0, 0.3536, True),  # 1.5x half_life
-            (True, dt_util.utcnow(), 60.0, 120.0, 0.25, True),  # 2.0x half_life
-            # 5% threshold boundary - just above (should not auto-stop)
-            (
-                True,
-                dt_util.utcnow(),
-                60.0,
-                258.0,
-                0.0501,
-                True,
-            ),  # ~0.0501, just above 0.05
-            # 5% threshold boundary - just below (should auto-stop)
-            (True, dt_util.utcnow(), 60.0, 260.0, 0.0, False),  # ~0.049, below 0.05
-            # Very large age (should auto-stop)
-            (True, dt_util.utcnow(), 60.0, 1000.0, 0.0, False),
+            (True, dt_util.utcnow(), 60.0, 15.0, 0.8409),  # 0.25x half_life
+            (True, dt_util.utcnow(), 60.0, 30.0, 0.7071),  # 0.5x half_life
+            (True, dt_util.utcnow(), 60.0, 45.0, 0.5946),  # 0.75x half_life
+            (True, dt_util.utcnow(), 60.0, 60.0, 0.5),  # 1.0x half_life
+            (True, dt_util.utcnow(), 60.0, 90.0, 0.3536),  # 1.5x half_life
+            (True, dt_util.utcnow(), 60.0, 120.0, 0.25),  # 2.0x half_life
+            # 5% threshold boundary - just above (returns calculated factor)
+            (True, dt_util.utcnow(), 60.0, 258.0, 0.0501),  # ~0.0501, just above 0.05
+            # 5% threshold boundary - just below (returns 0.0)
+            (True, dt_util.utcnow(), 60.0, 260.0, 0.0),  # ~0.049, below 0.05
+            # Very large age (returns 0.0)
+            (True, dt_util.utcnow(), 60.0, 1000.0, 0.0),
             # Very small half_life (edge case)
-            (True, dt_util.utcnow(), 10.0, 5.0, 0.7071, True),  # 0.5x half_life
-            (True, dt_util.utcnow(), 10.0, 50.0, 0.0, False),  # Should auto-stop
+            (True, dt_util.utcnow(), 10.0, 5.0, 0.7071),  # 0.5x half_life
+            (True, dt_util.utcnow(), 10.0, 50.0, 0.0),  # Returns 0.0
         ],
     )
     def test_decay_factor(
@@ -132,9 +124,61 @@ class TestDecay:
         half_life: float,
         age_seconds: float,
         expected_factor: float,
-        expected_is_decaying: bool,
     ) -> None:
-        """Test decay factor calculation with various ages and boundary conditions."""
+        """Test decay factor calculation (pure read-only property, no state mutation)."""
+        decay = Decay(
+            decay_start=decay_start,
+            half_life=half_life,
+            is_decaying=is_decaying,
+        )
+        original_is_decaying = decay.is_decaying
+
+        # Mock datetime.now() to simulate time passing
+        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
+            if decay_start:
+                mock_utcnow.return_value = decay_start + timedelta(seconds=age_seconds)
+            else:
+                mock_utcnow.return_value = dt_util.utcnow()
+
+            factor = decay.decay_factor
+            assert abs(factor - expected_factor) < 0.01
+            # Property should NOT mutate state
+            assert decay.is_decaying == original_is_decaying
+
+    @pytest.mark.parametrize(
+        (
+            "is_decaying",
+            "decay_start",
+            "half_life",
+            "age_seconds",
+            "expected_factor",
+            "expected_is_decaying_after_tick",
+        ),
+        [
+            # Not decaying - tick returns 1.0 and state remains False
+            (False, None, 60.0, 0, 1.0, False),
+            # Zero age - tick returns 1.0, state remains True
+            (True, dt_util.utcnow(), 60.0, 0, 1.0, True),
+            # Above threshold - tick returns factor, state remains True
+            (True, dt_util.utcnow(), 60.0, 60.0, 0.5, True),
+            # Just above 5% threshold - tick returns factor, state remains True
+            (True, dt_util.utcnow(), 60.0, 258.0, 0.0501, True),
+            # Below 5% threshold - tick returns 0.0 and stops decay
+            (True, dt_util.utcnow(), 60.0, 260.0, 0.0, False),
+            # Very large age - tick returns 0.0 and stops decay
+            (True, dt_util.utcnow(), 60.0, 1000.0, 0.0, False),
+        ],
+    )
+    def test_tick(
+        self,
+        is_decaying: bool,
+        decay_start: datetime | None,
+        half_life: float,
+        age_seconds: float,
+        expected_factor: float,
+        expected_is_decaying_after_tick: bool,
+    ) -> None:
+        """Test tick() method updates decay state appropriately."""
         decay = Decay(
             decay_start=decay_start,
             half_life=half_life,
@@ -148,9 +192,10 @@ class TestDecay:
             else:
                 mock_utcnow.return_value = dt_util.utcnow()
 
-            factor = decay.decay_factor
+            factor = decay.tick()
             assert abs(factor - expected_factor) < 0.01
-            assert decay.is_decaying == expected_is_decaying
+            # tick() SHOULD update state when factor reaches zero
+            assert decay.is_decaying == expected_is_decaying_after_tick
 
     @pytest.mark.parametrize(
         ("initial_state", "method", "expected_is_decaying"),
@@ -252,31 +297,65 @@ class TestDecay:
             assert decay.is_decaying is True  # Should still be decaying
 
     @pytest.mark.parametrize(
-        ("half_life", "is_decaying", "expected_factor", "expected_is_decaying"),
+        ("half_life", "is_decaying", "expected_factor"),
         [
-            # Invalid half_life when not decaying
-            (0.0, False, 1.0, False),
-            (-10.0, False, 1.0, False),
-            # Invalid half_life when decaying (should return 0.0 immediately)
-            (0.0, True, 0.0, False),
-            (-10.0, True, 0.0, False),
+            # Invalid half_life when not decaying (returns 1.0)
+            (0.0, False, 1.0),
+            (-10.0, False, 1.0),
+            # Invalid half_life when decaying (returns 0.0 but property doesn't mutate)
+            (0.0, True, 0.0),
+            (-10.0, True, 0.0),
         ],
     )
-    def test_decay_invalid_half_life(
+    def test_decay_invalid_half_life_property(
         self,
         half_life: float,
         is_decaying: bool,
         expected_factor: float,
-        expected_is_decaying: bool,
     ) -> None:
-        """Test decay_factor with invalid half_life values (zero or negative)."""
+        """Test decay_factor property with invalid half_life values (pure read-only)."""
         decay_start = dt_util.utcnow() if is_decaying else None
         decay = Decay(
             half_life=half_life, decay_start=decay_start, is_decaying=is_decaying
         )
+        original_is_decaying = decay.is_decaying
         factor = decay.decay_factor
         assert factor == expected_factor
-        assert decay.is_decaying == expected_is_decaying
+        # Property should NOT mutate state
+        assert decay.is_decaying == original_is_decaying
+
+    @pytest.mark.parametrize(
+        (
+            "half_life",
+            "is_decaying",
+            "expected_factor",
+            "expected_is_decaying_after_tick",
+        ),
+        [
+            # Invalid half_life when not decaying (returns 1.0, state stays False)
+            (0.0, False, 1.0, False),
+            (-10.0, False, 1.0, False),
+            # Invalid half_life when decaying (returns 0.0, tick stops decay)
+            (0.0, True, 0.0, False),
+            (-10.0, True, 0.0, False),
+        ],
+    )
+    def test_decay_invalid_half_life_tick(
+        self,
+        half_life: float,
+        is_decaying: bool,
+        expected_factor: float,
+        expected_is_decaying_after_tick: bool,
+    ) -> None:
+        """Test tick() with invalid half_life values (handles state transition)."""
+        decay_start = dt_util.utcnow() if is_decaying else None
+        decay = Decay(
+            half_life=half_life, decay_start=decay_start, is_decaying=is_decaying
+        )
+        factor = decay.tick()
+        assert factor == expected_factor
+        # tick() SHOULD update state when factor reaches zero
+        assert decay.is_decaying == expected_is_decaying_after_tick
 
     def test_decay_same_start_end_time(self) -> None:
         """Test SLEEPING purpose with same start and end time."""

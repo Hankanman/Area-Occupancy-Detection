@@ -20,6 +20,7 @@ from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
 )
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -67,6 +68,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
+        self._analysis_running: bool = False
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -690,6 +692,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle decay timer firing - refresh coordinator and always reschedule."""
         self._global_decay_timer = None
 
+        # Tick decay for all areas to update state (e.g., stop decay when factor reaches zero)
+        # This must be done before refresh to ensure state transitions happen
+        for area in self.areas.values():
+            if area.config.decay.enabled:
+                area.tick_decay()
+
         # Refresh the coordinator if decay is enabled for any area
         decay_enabled = any(area.config.decay.enabled for area in self.areas.values())
         if decay_enabled:
@@ -702,36 +710,67 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _start_analysis_timer(self) -> None:
         """Start the historical data import timer.
 
+        Uses async_at_started to ensure the analysis timer doesn't fire during
+        Home Assistant bootstrap, which could cause startup timeouts.
+
         Note: No staggering needed with single-instance architecture.
         """
         if self._analysis_timer is not None or not self.hass:
             return
 
-        # First analysis: 5 minutes after startup
-        # Subsequent analyses: 1 hour interval
-        next_update = dt_util.utcnow() + timedelta(minutes=5)
+        async def _schedule_first_analysis(_: HomeAssistant) -> None:
+            """Schedule the first analysis after HA is fully started."""
+            if self._analysis_timer is not None:
+                return  # Already scheduled by another call
 
-        _LOGGER.info(
-            "Starting analysis timer for areas: %s",
-            format_area_names(self),
-        )
+            # First analysis: 5 minutes after HA is fully started
+            # This ensures we don't block bootstrap
+            next_update = dt_util.utcnow() + timedelta(minutes=5)
 
-        self._analysis_timer = async_track_point_in_time(
-            self.hass, self.run_analysis, next_update
-        )
+            _LOGGER.info(
+                "Home Assistant started - scheduling analysis timer for areas: %s",
+                format_area_names(self),
+            )
+
+            self._analysis_timer = async_track_point_in_time(
+                self.hass, self.run_analysis, next_update
+            )
+
+        # Use async_at_started to defer analysis until after bootstrap completes
+        # This prevents the analysis from blocking HA startup
+        async_at_started(self.hass, _schedule_first_analysis)
 
     async def run_analysis(self, _now: datetime | None = None) -> None:
         """Handle the historical data import timer.
 
-        Always runs analysis for all areas.
+        Always runs analysis for all areas. Prevents concurrent runs by checking
+        and setting the _analysis_running flag.
 
         Args:
             _now: Optional timestamp for the analysis run (used by timer)
         """
         if _now is None:
             _now = dt_util.utcnow()
+
+        # Prevent concurrent analysis runs
+        if self._analysis_running:
+            _LOGGER.debug("Analysis already running, skipping this trigger")
+            # Cancel existing timer before rescheduling to avoid orphaned timers
+            if self._analysis_timer is not None:
+                self._analysis_timer()
+                self._analysis_timer = None
+            # Reschedule to try again later
+            next_update = _now + timedelta(minutes=5)
+            self._analysis_timer = async_track_point_in_time(
+                self.hass, self.run_analysis, next_update
+            )
+            return
+
+        # Clear timer reference now that we're actually running
+        # (timer has fired and called this function)
         self._analysis_timer = None
 
+        self._analysis_running = True
         try:
             # Run the full analysis chain
             await run_full_analysis(self, _now)
@@ -751,3 +790,5 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
+        finally:
+            self._analysis_running = False

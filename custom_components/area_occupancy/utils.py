@@ -380,8 +380,10 @@ def combine_priors(
         # Priors are essentially identical, return the common value
         return area_prior
 
-    # Clamp other inputs to valid ranges
+    # Clamp inputs to valid ranges to prevent division by zero in logit conversion
+    # prob_to_logit(p) = log(p / (1 - p)) requires p ∈ (0, 1)
     area_prior = clamp_probability(area_prior)
+    time_prior = clamp_probability(time_prior)
     time_weight = max(0.0, min(1.0, time_weight))
 
     area_weight = 1.0 - time_weight
