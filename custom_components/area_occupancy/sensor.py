@@ -30,6 +30,8 @@ NAME_PRIORS_SENSOR = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_PROBABILITY_SENSOR = "Occupancy Probability"
 NAME_EVIDENCE_SENSOR = "Evidence"
+NAME_PRESENCE_PROBABILITY_SENSOR = "Presence Probability"
+NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR = "Environmental Confidence"
 
 
 class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
@@ -354,6 +356,79 @@ class DecaySensor(AreaOccupancySensorBase):
             return {}
 
 
+class PresenceProbabilitySensor(AreaOccupancySensorBase):
+    """Presence probability sensor showing probability from strong binary indicators."""
+
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle | None = None,
+        all_areas: AllAreas | None = None,
+    ) -> None:
+        """Initialize the presence probability sensor."""
+        super().__init__(area_handle, all_areas)
+        self._attr_name = NAME_PRESENCE_PROBABILITY_SENSOR
+        self._attr_unique_id = generate_entity_unique_id(
+            self._entry_id,
+            self.device_info,
+            NAME_PRESENCE_PROBABILITY_SENSOR,
+        )
+        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
+        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the presence probability as a percentage."""
+        if self._area_name == ALL_AREAS_IDENTIFIER:
+            if self._all_areas is None:
+                return None
+            return format_float(self._all_areas.presence_probability() * 100)
+        area = self._get_area()
+        if area is None:
+            return None
+        return format_float(area.presence_probability() * 100)
+
+
+class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
+    """Environmental confidence sensor showing support from environmental sensors."""
+
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle | None = None,
+        all_areas: AllAreas | None = None,
+    ) -> None:
+        """Initialize the environmental confidence sensor."""
+        super().__init__(area_handle, all_areas)
+        self._attr_name = NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR
+        self._attr_unique_id = generate_entity_unique_id(
+            self._entry_id,
+            self.device_info,
+            NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR,
+        )
+        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
+        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the environmental confidence as a percentage.
+
+        50% is neutral (no environmental influence).
+        >50% means environmental data supports occupancy.
+        <50% means environmental data opposes occupancy.
+        """
+        if self._area_name == ALL_AREAS_IDENTIFIER:
+            if self._all_areas is None:
+                return None
+            return format_float(self._all_areas.environmental_confidence() * 100)
+        area = self._get_area()
+        if area is None:
+            return None
+        return format_float(area.environmental_confidence() * 100)
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: Any
 ) -> None:
@@ -372,6 +447,8 @@ async def async_setup_entry(
                 DecaySensor(area_handle=area_handle),
                 PriorsSensor(area_handle=area_handle),
                 EvidenceSensor(area_handle=area_handle),
+                PresenceProbabilitySensor(area_handle=area_handle),
+                EnvironmentalConfidenceSensor(area_handle=area_handle),
             ]
         )
 
@@ -385,6 +462,8 @@ async def async_setup_entry(
                 ProbabilitySensor(all_areas=all_areas),
                 DecaySensor(all_areas=all_areas),
                 PriorsSensor(all_areas=all_areas),
+                PresenceProbabilitySensor(all_areas=all_areas),
+                EnvironmentalConfidenceSensor(all_areas=all_areas),
             ]
         )
 

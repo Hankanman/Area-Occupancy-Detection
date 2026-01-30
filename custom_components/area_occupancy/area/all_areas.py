@@ -102,3 +102,30 @@ class AllAreas:
         decays = [area.decay() for area in areas]
         avg_decay = sum(decays) / len(areas)
         return max(0.0, min(1.0, avg_decay))
+
+    def presence_probability(self) -> float:
+        """Calculate average presence probability across all areas.
+
+        Returns:
+            Average presence probability (0.0-1.0) across all areas.
+        """
+        areas = list(self.coordinator.areas.values())
+        if not areas:
+            return MIN_PROBABILITY
+        probs = [area.presence_probability() for area in areas]
+        avg_prob = sum(probs) / len(areas)
+        return max(MIN_PROBABILITY, min(1.0, avg_prob))
+
+    def environmental_confidence(self) -> float:
+        """Calculate average environmental confidence across all areas.
+
+        Returns:
+            Average environmental confidence (0.0-1.0) across all areas.
+            0.5 is neutral, >0.5 supports occupancy, <0.5 opposes.
+        """
+        areas = list(self.coordinator.areas.values())
+        if not areas:
+            return 0.5  # Neutral when no areas
+        confs = [area.environmental_confidence() for area in areas]
+        avg_conf = sum(confs) / len(areas)
+        return max(0.0, min(1.0, avg_conf))
