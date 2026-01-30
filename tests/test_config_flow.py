@@ -15,6 +15,7 @@ from custom_components.area_occupancy.config_flow import (
     _build_area_description_placeholders,
     _create_action_selection_schema,
     _create_area_selector_schema,
+    _entity_contains_keyword,
     _find_area_by_id,
     _find_area_by_sanitized_id,
     _flatten_sectioned_input,
@@ -23,6 +24,7 @@ from custom_components.area_occupancy.config_flow import (
     _get_purpose_display_name,
     _get_state_select_options,
     _handle_step_error,
+    _is_weather_entity,
     _remove_area_from_list,
     _update_area_in_list,
     create_schema,
@@ -379,6 +381,54 @@ class TestHelperFunctions:
         with pytest.raises(vol.Invalid):
             schema({"action": "invalid_action"})
 
+    def test_entity_contains_keyword_in_entity_id(self, hass):
+        """Test _entity_contains_keyword finds keyword in entity_id."""
+        # Create a state
+        hass.states.async_set("binary_sensor.test_window_sensor", "off", {})
+
+        # Test that keyword is found in entity_id
+        assert _entity_contains_keyword(
+            hass, "binary_sensor.test_window_sensor", "window"
+        )
+        assert not _entity_contains_keyword(
+            hass, "binary_sensor.test_window_sensor", "door"
+        )
+
+    def test_entity_contains_keyword_in_friendly_name(self, hass):
+        """Test _entity_contains_keyword finds keyword in friendly name."""
+        # Create a state with friendly name
+        hass.states.async_set(
+            "binary_sensor.test_sensor_1",
+            "off",
+            {"friendly_name": "Living Room Window"},
+        )
+
+        # Test that keyword is found in friendly name
+        assert _entity_contains_keyword(hass, "binary_sensor.test_sensor_1", "window")
+        assert _entity_contains_keyword(hass, "binary_sensor.test_sensor_1", "living")
+        assert not _entity_contains_keyword(hass, "binary_sensor.test_sensor_1", "door")
+
+    def test_entity_contains_keyword_case_insensitive(self, hass):
+        """Test _entity_contains_keyword is case insensitive."""
+        # Create a state with mixed case friendly name
+        hass.states.async_set(
+            "binary_sensor.test_sensor_2",
+            "off",
+            {"friendly_name": "Front DOOR Sensor"},
+        )
+
+        # Test case insensitivity
+        assert _entity_contains_keyword(hass, "binary_sensor.test_sensor_2", "door")
+        assert _entity_contains_keyword(hass, "binary_sensor.test_sensor_2", "DOOR")
+        assert _entity_contains_keyword(hass, "binary_sensor.test_sensor_2", "Door")
+        assert _entity_contains_keyword(hass, "binary_sensor.test_sensor_2", "front")
+
+    def test_entity_contains_keyword_no_state(self, hass):
+        """Test _entity_contains_keyword handles missing state gracefully."""
+        # Test with entity that doesn't exist
+        result = _entity_contains_keyword(hass, "binary_sensor.nonexistent", "window")
+        assert not result
+
     def test_get_include_entities(self, hass, entity_registry):
         """Test getting include entities."""
         # Register entities
@@ -407,6 +457,354 @@ class TestHelperFunctions:
         assert "binary_sensor.test_door_1" in result["door"]
         assert "binary_sensor.test_window_1" in result["window"]
         assert "switch.test_appliance_1" in result["appliance"]
+
+    def test_get_include_entities_window_by_original_device_class(
+        self, hass, entity_registry
+    ):
+        """Test that window sensors are detected by original_device_class.
+
+        This tests the fix for the issue where binary_sensor.window type devices
+        with only original_device_class set (not device_class) and without
+        'window' in the entity_id were not showing up in the window picker.
+        """
+        # Register a window sensor with only original_device_class set
+        # and an entity_id that doesn't contain "window"
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "living_room_contact",  # No 'window' in name
+            original_device_class="window",  # original_device_class is 'window'
+        )
+
+        # Create state without device_class attribute (simulating real sensor)
+        hass.states.async_set("binary_sensor.test_living_room_contact", "off", {})
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the window list because of original_device_class
+        assert "window" in result
+        assert "binary_sensor.test_living_room_contact" in result["window"]
+
+    def test_get_include_entities_door_by_original_device_class(
+        self, hass, entity_registry
+    ):
+        """Test that door sensors are detected by original_device_class.
+
+        This tests the fix for the issue where binary_sensor.door type devices
+        with only original_device_class set (not device_class) and without
+        'door' in the entity_id were not showing up in the door picker.
+        """
+        # Register a door sensor with only original_device_class set
+        # and an entity_id that doesn't contain "door"
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "front_entrance_contact",  # No 'door' in name
+            original_device_class="door",  # original_device_class is 'door'
+        )
+
+        # Create state without device_class attribute (simulating real sensor)
+        hass.states.async_set("binary_sensor.test_front_entrance_contact", "off", {})
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the door list because of original_device_class
+        assert "door" in result
+        assert "binary_sensor.test_front_entrance_contact" in result["door"]
+
+    def test_get_include_entities_window_by_friendly_name(self, hass, entity_registry):
+        """Test that window sensors are detected by friendly name.
+
+        This tests that entities with 'window' in their friendly name (user-visible name)
+        are correctly detected as window sensors, even if the entity_id doesn't contain 'window'.
+        """
+        # Register a sensor with opening device class and an entity_id without 'window'
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "contact_sensor_1",  # No 'window' in entity_id
+            original_device_class="opening",
+        )
+
+        # Create state with friendly name containing 'window'
+        hass.states.async_set(
+            "binary_sensor.test_contact_sensor_1",
+            "off",
+            {"friendly_name": "Living Room Window", "device_class": "opening"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the window list because of friendly name
+        assert "window" in result
+        assert "binary_sensor.test_contact_sensor_1" in result["window"]
+
+    def test_get_include_entities_door_by_friendly_name(self, hass, entity_registry):
+        """Test that door sensors are detected by friendly name.
+
+        This tests that entities with 'door' in their friendly name (user-visible name)
+        are correctly detected as door sensors, even if the entity_id doesn't contain 'door'.
+        """
+        # Register a sensor with opening device class and an entity_id without 'door'
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "contact_sensor_2",  # No 'door' in entity_id
+            original_device_class="opening",
+        )
+
+        # Create state with friendly name containing 'door'
+        hass.states.async_set(
+            "binary_sensor.test_contact_sensor_2",
+            "off",
+            {"friendly_name": "Front Door Sensor", "device_class": "opening"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the door list because of friendly name
+        assert "door" in result
+        assert "binary_sensor.test_contact_sensor_2" in result["door"]
+
+    def test_get_include_entities_prioritize_window_in_name_over_door(
+        self, hass, entity_registry
+    ):
+        """Test that window keyword in name takes precedence over door classification.
+
+        When an entity has 'window' in its friendly name, it should be categorized as
+        a window sensor even if it has door-like device class.
+        """
+        # Register a sensor with door device class
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "contact_3",
+            original_device_class="door",
+        )
+
+        # Create state with friendly name containing 'window'
+        hass.states.async_set(
+            "binary_sensor.test_contact_3",
+            "off",
+            {"friendly_name": "Bedroom Window Contact", "device_class": "door"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in window list due to name, not door list
+        assert "window" in result
+        assert "binary_sensor.test_contact_3" in result["window"]
+        # Should NOT be in door list
+        assert "binary_sensor.test_contact_3" not in result.get("door", [])
+
+    def test_get_include_entities_door_with_door_keyword_in_opening(
+        self, hass, entity_registry
+    ):
+        """Test that entities with 'door' keyword and opening device class are detected as doors.
+
+        This tests the fix for the issue where door entities were only showing up in the
+        window dropdown. Entities with 'door' in their name/entity_id and device class
+        'opening' should be categorized as door sensors.
+        """
+        # Register a sensor with opening device class and 'door' in entity_id
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "front_door_contact",  # Has 'door' in entity_id
+            original_device_class="opening",
+        )
+
+        # Create state
+        hass.states.async_set(
+            "binary_sensor.test_front_door_contact",
+            "off",
+            {"friendly_name": "Front Door Contact", "device_class": "opening"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the door list
+        assert "door" in result
+        assert "binary_sensor.test_front_door_contact" in result["door"]
+        # Should NOT be in window list
+        assert "binary_sensor.test_front_door_contact" not in result.get("window", [])
+
+    def test_get_include_entities_door_with_garage_door_class_and_door_keyword(
+        self, hass, entity_registry
+    ):
+        """Test that garage door sensors with 'door' keyword are detected as doors.
+
+        Entities with garage_door device class and 'door' in their name should be
+        categorized as door sensors.
+        """
+        # Register a sensor with garage_door device class
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "garage_contact",  # No 'door' in entity_id
+            original_device_class="garage_door",
+        )
+
+        # Create state with friendly name containing 'door'
+        hass.states.async_set(
+            "binary_sensor.test_garage_contact",
+            "off",
+            {"friendly_name": "Garage Door Sensor", "device_class": "garage_door"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the door list due to garage_door device class
+        assert "door" in result
+        assert "binary_sensor.test_garage_contact" in result["door"]
+        # Should NOT be in window list
+        assert "binary_sensor.test_garage_contact" not in result.get("window", [])
+
+    def test_get_include_entities_door_with_both_keywords(self, hass, entity_registry):
+        """Test that entities with both 'door' and 'window' keywords are doors."""
+        # Register a sensor with opening device class and both keywords in entity_id
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "test",
+            "door_window_contact",
+            original_device_class="opening",
+        )
+
+        # Create state with friendly name containing both keywords
+        hass.states.async_set(
+            "binary_sensor.test_door_window_contact",
+            "off",
+            {"friendly_name": "Patio Door Window Sensor", "device_class": "opening"},
+        )
+
+        result = _get_include_entities(hass)
+
+        # The entity should appear in the door list, not the window list
+        assert "door" in result
+        assert "binary_sensor.test_door_window_contact" in result["door"]
+        assert "binary_sensor.test_door_window_contact" not in result.get("window", [])
+
+    def test_is_weather_entity_by_platform(self):
+        """Test that weather entities are detected by platform."""
+        # Test known weather platforms
+        assert _is_weather_entity("sensor.outdoor_temp", "weather") is True
+        assert _is_weather_entity("sensor.temp", "openweathermap") is True
+        assert _is_weather_entity("sensor.temp", "met") is True
+        assert _is_weather_entity("sensor.temp", "accuweather") is True
+        assert _is_weather_entity("sensor.temp", "dwd") is True
+        assert _is_weather_entity("sensor.temp", "dwd_weather") is True
+
+        # Test non-weather platforms
+        assert _is_weather_entity("sensor.room_temp", "zha") is False
+        assert _is_weather_entity("sensor.room_temp", "mqtt") is False
+        assert _is_weather_entity("sensor.room_temp", "esphome") is False
+        assert _is_weather_entity("sensor.bedroom_temp", "ecobee") is False
+
+    def test_is_weather_entity_by_keyword(self):
+        """Test that weather entities are detected by entity_id keywords."""
+        # Test weather-related keywords in entity_id
+        assert _is_weather_entity("sensor.weather_temperature", None) is True
+        assert _is_weather_entity("sensor.forecast_humidity", None) is True
+
+        # "outdoor" is intentionally NOT a keyword - too generic
+        # Users may have legitimate outdoor sensors (porch, patio) they want to use
+        assert _is_weather_entity("sensor.outdoor_pressure", None) is False
+        assert (
+            _is_weather_entity("sensor.ecobee_outdoor_temperature", "ecobee") is False
+        )
+
+        # Test non-weather entity_ids
+        assert _is_weather_entity("sensor.living_room_temperature", None) is False
+        assert _is_weather_entity("sensor.bedroom_humidity", None) is False
+        assert (
+            _is_weather_entity("sensor.ecobee_bedroom_temperature", "ecobee") is False
+        )
+
+    def test_get_include_entities_excludes_weather_sensors(self, hass, entity_registry):
+        """Test that weather sensors are excluded from environmental entities."""
+        # Register weather temperature sensor (should be excluded)
+        entity_registry.async_get_or_create(
+            "sensor",
+            "weather",
+            "outdoor_temp",
+            original_device_class="temperature",
+        )
+        # Register room temperature sensor (should be included)
+        entity_registry.async_get_or_create(
+            "sensor",
+            "zha",
+            "living_room_temp",
+            original_device_class="temperature",
+        )
+        # Register weather humidity sensor (should be excluded)
+        entity_registry.async_get_or_create(
+            "sensor",
+            "openweathermap",
+            "outdoor_humidity",
+            original_device_class="humidity",
+        )
+        # Register room humidity sensor (should be included)
+        entity_registry.async_get_or_create(
+            "sensor",
+            "mqtt",
+            "bathroom_humidity",
+            original_device_class="humidity",
+        )
+
+        result = _get_include_entities(hass)
+
+        # Check that weather sensors are excluded
+        assert "sensor.weather_outdoor_temp" not in result.get("temperature", [])
+        assert "sensor.openweathermap_outdoor_humidity" not in result.get(
+            "humidity", []
+        )
+
+        # Check that room sensors are included
+        assert "sensor.zha_living_room_temp" in result["temperature"]
+        assert "sensor.mqtt_bathroom_humidity" in result["humidity"]
+
+    def test_get_include_entities_excludes_area_occupancy_motion(
+        self, hass, entity_registry
+    ):
+        """Test that area occupancy sensors are excluded from motion list."""
+        # Register an area_occupancy sensor (should be excluded)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            "living_room_occupancy",
+            original_device_class="occupancy",
+        )
+        # Register external motion sensor (should be included)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "zha",
+            "motion_sensor",
+            original_device_class="motion",
+        )
+        # Register external occupancy sensor (should be included)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "mqtt",
+            "room_occupancy",
+            original_device_class="occupancy",
+        )
+        # Register external presence sensor (should be included)
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "ble_monitor",
+            "person_presence",
+            original_device_class="presence",
+        )
+
+        result = _get_include_entities(hass)
+
+        # Check that our own sensors are excluded
+        assert f"binary_sensor.{DOMAIN}_living_room_occupancy" not in result["motion"]
+
+        # Check that external sensors are included
+        assert "binary_sensor.zha_motion_sensor" in result["motion"]
+        assert "binary_sensor.mqtt_room_occupancy" in result["motion"]
+        assert "binary_sensor.ble_monitor_person_presence" in result["motion"]
 
     @pytest.mark.parametrize(
         ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
@@ -1003,6 +1401,13 @@ class TestConfigFlowIntegration:
                 "appliance": ["binary_sensor.motion1", "binary_sensor.door1"],
                 "window": ["binary_sensor.window1"],
                 "door": ["binary_sensor.door1"],
+                "temperature": ["sensor.temp1"],
+                "humidity": ["sensor.humidity1"],
+                "pressure": ["sensor.pressure1"],
+                "air_quality": ["sensor.aqi1"],
+                "pm25": ["sensor.pm25_1"],
+                "pm10": ["sensor.pm10_1"],
+                "motion": ["binary_sensor.motion1"],
             }
             schema_dict = create_schema(hass)
             assert isinstance(schema_dict, dict)
