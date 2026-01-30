@@ -216,8 +216,9 @@ def _is_weather_entity(entity_id: str, platform: str | None) -> bool:
 
     # Check if entity_id contains weather-related keywords
     # (as a fallback for entities without platform info)
+    # Note: "outdoor" intentionally excluded - too generic, could catch legitimate sensors
     entity_lower = entity_id.lower()
-    weather_keywords = ["weather", "forecast", "outdoor"]
+    weather_keywords = ["weather", "forecast"]
     return any(keyword in entity_lower for keyword in weather_keywords)
 
 
