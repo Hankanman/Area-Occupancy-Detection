@@ -16,6 +16,10 @@ coverage.xml
 config/*
 !config/configuration.yaml
 
+# Explicitly ignore backup files
+*.tar
+config/backups/
+
 # Python Environment
 .venv
 commit_messages.txt
