@@ -6,13 +6,20 @@ from unittest.mock import Mock
 import pytest
 
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
+from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.utils import (
     bayesian_probability,
     clamp_probability,
     combine_priors,
+    combined_probability,
+    environmental_confidence,
     format_float,
     format_percentage,
+    logit,
     map_binary_state_to_semantic,
+    presence_probability,
+    sigmoid,
+    sigmoid_probability,
 )
 
 
@@ -24,6 +31,7 @@ def _create_mock_entity(
     is_decaying: bool = False,
     decay_factor: float = 1.0,
     is_continuous: bool = False,
+    input_type: InputType = InputType.MOTION,
 ) -> Mock:
     """Create a mock entity for testing bayesian_probability.
 
@@ -35,6 +43,7 @@ def _create_mock_entity(
         is_decaying: Whether entity is decaying
         decay_factor: Decay factor (0.0 to 1.0)
         is_continuous: Whether entity uses continuous likelihood
+        input_type: The type of input (motion, temperature, etc.)
 
     Returns:
         Mock entity object
@@ -49,6 +58,8 @@ def _create_mock_entity(
     entity.prob_given_false = prob_given_false
     entity.weight = weight
     entity.is_continuous_likelihood = is_continuous
+    entity.type = Mock()
+    entity.type.input_type = input_type
     return entity
 
 
@@ -693,3 +704,424 @@ class TestMapBinaryStateToSemantic:
         """Test that non-binary states are preserved."""
         result = map_binary_state_to_semantic("playing", ["playing", "paused"])
         assert result == "playing"
+
+
+class TestSigmoidFunctions:
+    """Test sigmoid-based probability functions.
+
+    Tests verify the weighted sigmoid probability model including:
+    - Basic sigmoid and logit mathematical properties
+    - Additive contributions from multiple sensors
+    - Correlation weight integration
+    - Decay factor handling
+    - Presence vs environmental sensor separation
+    """
+
+    def test_sigmoid_basic_properties(self) -> None:
+        """Test that sigmoid has correct mathematical properties."""
+        # sigmoid(0) = 0.5
+        assert abs(sigmoid(0) - 0.5) < 1e-6
+
+        # sigmoid is bounded (0, 1)
+        assert 0 < sigmoid(-10) < 0.5
+        assert 0.5 < sigmoid(10) < 1
+
+        # sigmoid is monotonically increasing
+        assert sigmoid(-2) < sigmoid(-1) < sigmoid(0) < sigmoid(1) < sigmoid(2)
+
+        # Symmetry: sigmoid(-x) = 1 - sigmoid(x)
+        for x in [-3, -1, 0, 1, 3]:
+            assert abs(sigmoid(-x) - (1 - sigmoid(x))) < 1e-6
+
+    def test_sigmoid_numerical_stability(self) -> None:
+        """Test sigmoid handles extreme values without overflow."""
+        # Very large negative values should approach 0
+        result_neg = sigmoid(-100)
+        assert result_neg >= 0  # May be exactly 0 due to floating point
+        assert result_neg < 0.01
+        assert not math.isnan(result_neg)
+        assert not math.isinf(result_neg)
+
+        # Very large positive values should approach 1
+        result_pos = sigmoid(100)
+        assert result_pos <= 1  # May be exactly 1 due to floating point
+        assert result_pos > 0.99
+        assert not math.isnan(result_pos)
+        assert not math.isinf(result_pos)
+
+    def test_logit_basic_properties(self) -> None:
+        """Test that logit has correct mathematical properties."""
+        # logit(0.5) = 0
+        assert abs(logit(0.5)) < 1e-6
+
+        # logit is the inverse of sigmoid
+        for p in [0.1, 0.3, 0.5, 0.7, 0.9]:
+            assert abs(sigmoid(logit(p)) - p) < 1e-6
+
+        # logit is monotonically increasing
+        assert logit(0.2) < logit(0.5) < logit(0.8)
+
+    def test_logit_clamping(self) -> None:
+        """Test that logit clamps values to valid range."""
+        # Values at or beyond bounds are clamped to MIN/MAX_PROBABILITY
+        result_zero = logit(0.0)
+        result_one = logit(1.0)
+
+        # Should produce finite values (not -inf or +inf)
+        assert not math.isinf(result_zero)
+        assert not math.isinf(result_one)
+
+    def test_sigmoid_probability_empty_entities(self) -> None:
+        """Test that sigmoid_probability returns prior when no entities."""
+        prior = 0.3
+        result = sigmoid_probability({}, prior=prior)
+        assert abs(result - clamp_probability(prior)) < 1e-6
+
+    def test_sigmoid_probability_single_active_sensor(self) -> None:
+        """Test single active motion sensor significantly increases probability."""
+        motion = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        prior = 0.3
+        result = sigmoid_probability({"motion": motion}, prior=prior)
+
+        # Active motion sensor should significantly increase probability
+        assert result > prior
+        assert result > 0.5  # Should be well above neutral
+
+    def test_sigmoid_probability_inactive_sensor_no_penalty(self) -> None:
+        """Test that inactive sensors don't penalize probability (OR-like behavior)."""
+        motion = _create_mock_entity(
+            evidence=False,  # Inactive
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        prior = 0.5
+        result = sigmoid_probability({"motion": motion}, prior=prior)
+
+        # Inactive sensor should NOT decrease probability (key difference from Bayesian)
+        # With no active sensors, result should be close to prior
+        assert abs(result - clamp_probability(prior)) < 0.1
+
+    def test_sigmoid_probability_multiple_sensors_additive(self) -> None:
+        """Test that multiple active sensors are additive (OR-like, not AND-like)."""
+        motion1 = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+        motion2 = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+        motion3 = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        prior = 0.3
+        result_1 = sigmoid_probability({"m1": motion1}, prior=prior)
+        result_2 = sigmoid_probability({"m1": motion1, "m2": motion2}, prior=prior)
+        result_3 = sigmoid_probability(
+            {"m1": motion1, "m2": motion2, "m3": motion3}, prior=prior
+        )
+
+        # Each additional sensor should increase probability
+        assert result_1 > prior
+        assert result_2 > result_1
+        assert result_3 > result_2
+
+    def test_sigmoid_probability_with_decay(self) -> None:
+        """Test that decaying sensors contribute proportionally to decay factor."""
+        # Sensor with full evidence
+        motion_active = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        # Sensor that has decayed to 50%
+        motion_decay_50 = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            is_decaying=True,
+            decay_factor=0.5,
+            input_type=InputType.MOTION,
+        )
+
+        # Sensor that has fully decayed
+        motion_decay_0 = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            is_decaying=True,
+            decay_factor=0.0,
+            input_type=InputType.MOTION,
+        )
+
+        prior = 0.3
+        result_active = sigmoid_probability({"m": motion_active}, prior=prior)
+        result_decay_50 = sigmoid_probability({"m": motion_decay_50}, prior=prior)
+        result_decay_0 = sigmoid_probability({"m": motion_decay_0}, prior=prior)
+
+        # Active > 50% decay > 0% decay
+        assert result_active > result_decay_50 > result_decay_0
+        # 0% decay should be close to prior
+        assert abs(result_decay_0 - clamp_probability(prior)) < 0.1
+
+    def test_sigmoid_probability_with_correlations(self) -> None:
+        """Test that correlation weights scale contributions."""
+        motion = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        prior = 0.3
+
+        # No correlation data (default 1.0)
+        result_no_corr = sigmoid_probability({"motion": motion}, prior=prior)
+
+        # Strong correlation (1.0)
+        result_strong_corr = sigmoid_probability(
+            {"motion": motion}, prior=prior, correlations={"motion": 1.0}
+        )
+
+        # Weak correlation (0.3)
+        result_weak_corr = sigmoid_probability(
+            {"motion": motion}, prior=prior, correlations={"motion": 0.3}
+        )
+
+        # No correlation should equal strong correlation
+        assert abs(result_no_corr - result_strong_corr) < 1e-6
+
+        # Weak correlation should contribute less
+        assert result_strong_corr > result_weak_corr
+        assert result_weak_corr > clamp_probability(prior)
+
+    def test_sigmoid_probability_zero_weight_ignored(self) -> None:
+        """Test that zero-weight sensors are ignored."""
+        motion_zero = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=0.0,
+            input_type=InputType.MOTION,
+        )
+
+        motion_normal = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        prior = 0.5
+        result_zero = sigmoid_probability({"m": motion_zero}, prior=prior)
+        result_normal = sigmoid_probability({"m": motion_normal}, prior=prior)
+
+        # Zero weight should return prior
+        assert abs(result_zero - clamp_probability(prior)) < 1e-6
+        # Normal weight should be different
+        assert result_normal > result_zero
+
+
+class TestPresenceEnvironmentalSplit:
+    """Test presence and environmental probability separation."""
+
+    def test_presence_probability_filters_to_presence_types(self) -> None:
+        """Test that presence_probability only considers presence sensor types."""
+        motion = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+        temperature = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.09,
+            prob_given_false=0.01,
+            weight=0.1,
+            input_type=InputType.TEMPERATURE,
+        )
+
+        entities = {"motion": motion, "temperature": temperature}
+        prior = 0.3
+
+        result = presence_probability(entities, prior=prior)
+        result_motion_only = sigmoid_probability({"motion": motion}, prior=prior)
+
+        # Should only use motion (presence type), ignoring temperature
+        assert abs(result - result_motion_only) < 1e-6
+
+    def test_presence_probability_no_presence_sensors(self) -> None:
+        """Test presence_probability with no presence sensors returns reduced prior."""
+        temperature = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.09,
+            prob_given_false=0.01,
+            weight=0.1,
+            input_type=InputType.TEMPERATURE,
+        )
+
+        prior = 0.6
+        result = presence_probability({"temp": temperature}, prior=prior)
+
+        # Should return prior * 0.5 (reduced due to no presence sensors)
+        expected = clamp_probability(prior * 0.5)
+        assert abs(result - expected) < 1e-6
+
+    def test_environmental_confidence_filters_to_env_types(self) -> None:
+        """Test that environmental_confidence only considers environmental types."""
+        motion = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+        temperature = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.09,
+            prob_given_false=0.01,
+            weight=0.1,
+            input_type=InputType.TEMPERATURE,
+        )
+
+        entities = {"motion": motion, "temperature": temperature}
+
+        result = environmental_confidence(entities)
+        result_temp_only = sigmoid_probability({"temperature": temperature}, prior=0.5)
+
+        # Should only use temperature (environmental type), ignoring motion
+        assert abs(result - result_temp_only) < 1e-6
+
+    def test_environmental_confidence_no_env_sensors(self) -> None:
+        """Test environmental_confidence with no env sensors returns 0.5 (neutral)."""
+        motion = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        result = environmental_confidence({"motion": motion})
+
+        # Should return 0.5 (neutral) when no environmental sensors
+        assert result == 0.5
+
+
+class TestCombinedProbability:
+    """Test combined probability function."""
+
+    def test_combined_probability_equal_inputs(self) -> None:
+        """Test combined probability with equal presence and environmental."""
+        result = combined_probability(presence=0.5, environmental=0.5)
+        assert abs(result - 0.5) < 1e-6
+
+    def test_combined_probability_presence_dominant(self) -> None:
+        """Test that presence is weighted more heavily (80%) than environmental."""
+        # High presence, low environmental
+        result_high_presence = combined_probability(presence=0.8, environmental=0.2)
+        # Low presence, high environmental
+        result_high_env = combined_probability(presence=0.2, environmental=0.8)
+
+        # High presence should result in higher overall probability
+        assert result_high_presence > result_high_env
+
+        # With 80/20 weighting, presence should dominate
+        # result_high_presence should be closer to 0.8 than 0.2
+        assert result_high_presence > 0.5
+
+    def test_combined_probability_environmental_influence(self) -> None:
+        """Test that environmental has some influence on result."""
+        result_env_low = combined_probability(presence=0.5, environmental=0.2)
+        result_env_high = combined_probability(presence=0.5, environmental=0.8)
+
+        # Environmental should have some effect (20% weight)
+        assert result_env_high > result_env_low
+
+    def test_combined_probability_clamping(self) -> None:
+        """Test that combined probability is properly clamped."""
+        result_extreme_high = combined_probability(presence=0.99, environmental=0.99)
+        result_extreme_low = combined_probability(presence=0.01, environmental=0.01)
+
+        # Should be within MIN/MAX bounds
+        assert MIN_PROBABILITY <= result_extreme_high <= MAX_PROBABILITY
+        assert MIN_PROBABILITY <= result_extreme_low <= MAX_PROBABILITY
+
+
+class TestSigmoidVsBayesian:
+    """Compare sigmoid vs Bayesian behavior to verify expected differences."""
+
+    def test_inactive_sensors_no_penalty_sigmoid(self) -> None:
+        """Verify sigmoid doesn't penalize inactive sensors (key difference)."""
+        active_sensor = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+        inactive_sensor = _create_mock_entity(
+            evidence=False,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MEDIA,
+        )
+
+        prior = 0.5
+        entities = {"active": active_sensor, "inactive": inactive_sensor}
+
+        result_sigmoid = sigmoid_probability(entities, prior=prior)
+        result_active_only = sigmoid_probability({"active": active_sensor}, prior=prior)
+
+        # In sigmoid model, inactive sensor should NOT decrease probability
+        # Result should be very similar to active-only
+        assert abs(result_sigmoid - result_active_only) < 0.1
+
+    def test_full_dynamic_range_sigmoid(self) -> None:
+        """Test that sigmoid achieves fuller dynamic range than typical Bayesian."""
+        # Create multiple strongly active sensors
+        sensors = {}
+        for i in range(3):
+            sensors[f"motion_{i}"] = _create_mock_entity(
+                evidence=True,
+                prob_given_true=0.95,
+                prob_given_false=0.02,
+                weight=1.0,
+                input_type=InputType.MOTION,
+            )
+
+        prior = 0.3
+        result = sigmoid_probability(sensors, prior=prior)
+
+        # With 3 strong active sensors, should achieve high probability
+        assert result > 0.9  # Should approach upper range

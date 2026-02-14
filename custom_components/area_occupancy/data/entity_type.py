@@ -157,6 +157,32 @@ class EntityType:
             raise ValueError("Cannot provide both active_states and active_range")
 
 
+# Input type classifications for probability calculations
+PRESENCE_INPUT_TYPES: set[InputType] = {
+    InputType.MOTION,
+    InputType.MEDIA,
+    InputType.APPLIANCE,
+    InputType.DOOR,
+    InputType.WINDOW,
+    InputType.COVER,
+    InputType.POWER,
+}
+
+ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {
+    InputType.TEMPERATURE,
+    InputType.HUMIDITY,
+    InputType.ILLUMINANCE,
+    InputType.CO2,
+    InputType.CO,
+    InputType.SOUND_PRESSURE,
+    InputType.PRESSURE,
+    InputType.AIR_QUALITY,
+    InputType.VOC,
+    InputType.PM25,
+    InputType.PM10,
+    InputType.ENVIRONMENTAL,
+}
+
 DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
     InputType.MOTION: {
         "weight": 1,

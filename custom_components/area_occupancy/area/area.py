@@ -20,7 +20,11 @@ from ..const import (
     MIN_PROBABILITY,
 )
 from ..data.analysis import start_prior_analysis
-from ..utils import bayesian_probability
+from ..utils import (
+    combined_probability as calc_combined,
+    environmental_confidence as calc_env,
+    presence_probability as calc_presence,
+)
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -182,7 +186,11 @@ class Area:
         )
 
     def probability(self) -> float:
-        """Calculate and return the current occupancy probability (0.0-1.0) for this area.
+        """Calculate combined occupancy probability using sigmoid model.
+
+        Combines presence probability (from strong binary indicators) with
+        environmental confidence (from environmental sensors) using weighted
+        averaging in logit space.
 
         Returns:
             Probability value (0.0-1.0)
@@ -191,10 +199,69 @@ class Area:
         if not entities:
             return MIN_PROBABILITY
 
-        return bayesian_probability(
-            entities=entities,
-            prior=self.prior.value,
+        presence = self.presence_probability()
+        env = self.environmental_confidence()
+
+        return calc_combined(presence, env)
+
+    def presence_probability(self) -> float:
+        """Calculate presence probability from strong binary indicators.
+
+        Uses motion, media, appliances, doors, windows, covers, and power
+        sensors to determine presence likelihood.
+
+        Returns:
+            Probability value (0.0-1.0)
+        """
+        entities = self.entities.entities
+        if not entities:
+            return MIN_PROBABILITY
+
+        correlations = self._get_entity_correlations()
+
+        return calc_presence(
+            entities, prior=self.prior.value, correlations=correlations
         )
+
+    def environmental_confidence(self) -> float:
+        """Calculate environmental support confidence.
+
+        Uses temperature, humidity, illuminance, CO2, and other environmental
+        sensors to determine how much the environment supports occupancy.
+
+        Returns:
+            Confidence value (0.0-1.0), where 0.5 is neutral
+        """
+        entities = self.entities.entities
+        if not entities:
+            return 0.5  # Neutral when no entities
+
+        correlations = self._get_entity_correlations()
+
+        return calc_env(entities, correlations=correlations)
+
+    def _get_entity_correlations(self) -> dict[str, float]:
+        """Get learned correlation strengths from database.
+
+        Queries the correlations table for this area's entities and returns
+        a dict mapping entity_id to correlation strength (0.0-1.0).
+
+        Returns:
+            Dict of entity_id -> correlation strength. Empty dict if no data.
+        """
+        if self.coordinator.db is None:
+            return {}
+
+        try:
+            from ..db.correlation import get_entity_correlations  # noqa: PLC0415
+
+            return get_entity_correlations(self.coordinator.db, self.area_name)
+        except Exception:  # noqa: BLE001
+            # Don't let correlation lookup failures break probability calculation
+            _LOGGER.debug(
+                "Failed to get entity correlations for area %s", self.area_name
+            )
+            return {}
 
     def area_prior(self) -> float:
         """Get the area's baseline occupancy prior from historical data.

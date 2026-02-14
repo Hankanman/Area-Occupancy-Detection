@@ -13,6 +13,7 @@ from custom_components.area_occupancy.const import (
     MIN_PROBABILITY,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.entity_type import InputType
 
 
 # ruff: noqa: SLF001
@@ -86,7 +87,13 @@ class TestAreaMethods:
         default_area.config.area_id = original_area_id
 
     def test_probability_with_entities(self, default_area: Area) -> None:
-        """Test probability method with entities verifies meaningful calculation."""
+        """Test probability method with entities verifies meaningful calculation.
+
+        The sigmoid probability model:
+        - Active presence sensors increase probability
+        - Inactive sensors do NOT decrease probability (key difference from Bayesian)
+        - Multiple active sensors are additive
+        """
         # Set prior
         default_area.prior.global_prior = 0.3
         default_area.prior._cached_time_prior = None
@@ -99,6 +106,9 @@ class TestAreaMethods:
         mock_active_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
         mock_active_entity.decay_factor = 1.0
         type(mock_active_entity).weight = PropertyMock(return_value=0.85)
+        # Add type.input_type for sigmoid model filtering
+        mock_active_entity.type = Mock()
+        mock_active_entity.type.input_type = InputType.MOTION
 
         default_area.entities._entities = {"binary_sensor.motion": mock_active_entity}
         prob_with_active = default_area.probability()
@@ -107,7 +117,8 @@ class TestAreaMethods:
             f"({default_area.prior.value}) to {prob_with_active}"
         )
 
-        # Test 2: With inactive entity, probability should decrease from prior
+        # Test 2: With inactive entity, probability should stay close to prior
+        # In sigmoid model, inactive sensors don't penalize (OR-like behavior)
         mock_inactive_entity = Mock()
         mock_inactive_entity.evidence = False
         mock_inactive_entity.prob_given_true = 0.7
@@ -115,12 +126,16 @@ class TestAreaMethods:
         mock_inactive_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
         mock_inactive_entity.decay_factor = 1.0
         type(mock_inactive_entity).weight = PropertyMock(return_value=0.7)
+        mock_inactive_entity.type = Mock()
+        mock_inactive_entity.type.input_type = InputType.MEDIA
 
         default_area.entities._entities = {"media_player.tv": mock_inactive_entity}
         prob_with_inactive = default_area.probability()
-        assert prob_with_inactive < default_area.prior.value, (
-            f"Inactive entity should decrease probability from prior "
-            f"({default_area.prior.value}) to {prob_with_inactive}"
+        # Sigmoid model: inactive sensors don't decrease probability
+        # Result should be close to prior (within reasonable tolerance)
+        assert abs(prob_with_inactive - default_area.prior.value) < 0.15, (
+            f"Inactive entity should not significantly affect probability "
+            f"(prior: {default_area.prior.value}, result: {prob_with_inactive})"
         )
 
         # Test 3: Verify probability is in valid range
@@ -309,6 +324,7 @@ class TestAreaMethods:
                     "prob_given_false": 0.1,
                     "weight": 0.85,
                     "entity_id": "binary_sensor.motion",
+                    "input_type": InputType.MOTION,
                 },
                 0.5,
                 0.5,
@@ -324,6 +340,7 @@ class TestAreaMethods:
                     "prob_given_false": 0.3,
                     "weight": 0.3,
                     "entity_id": "media_player.tv",
+                    "input_type": InputType.MEDIA,
                 },
                 0.2,
                 0.5,
@@ -339,6 +356,7 @@ class TestAreaMethods:
                     "prob_given_false": 0.2,
                     "weight": 0.85,
                     "entity_id": "binary_sensor.motion",
+                    "input_type": InputType.MOTION,
                 },
                 0.5,
                 0.5,
@@ -367,6 +385,9 @@ class TestAreaMethods:
         mock_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
         mock_entity.decay_factor = 1.0
         type(mock_entity).weight = PropertyMock(return_value=entity_config["weight"])
+        # Add type.input_type for sigmoid model filtering
+        mock_entity.type = Mock()
+        mock_entity.type.input_type = entity_config["input_type"]
 
         default_area.entities._entities = {entity_config["entity_id"]: mock_entity}
         default_area.prior.global_prior = prior_value
