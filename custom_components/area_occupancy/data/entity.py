@@ -199,9 +199,12 @@ class Entity:
                     )
                     return (self.type.prob_given_true, self.type.prob_given_false)
 
-            except (ValueError, TypeError):
-                # Fall back to EntityType defaults if calculation fails
-                pass
+            except (ValueError, TypeError) as err:
+                _LOGGER.warning(
+                    "Gaussian likelihood calculation failed for %s: %s",
+                    self.entity_id,
+                    err,
+                )
             else:
                 return (p_true, p_false)
 

@@ -220,11 +220,13 @@ class TestLoadData:
     async def test_load_data_handles_errors(
         self, coordinator: AreaOccupancyCoordinator, error_class
     ):
-        """Test load_data handles various error types."""
+        """Test load_data propagates errors."""
         db = coordinator.db
 
-        with patch.object(db, "get_session", side_effect=error_class("Error")):
-            # Should handle error gracefully and not raise
+        with (
+            patch.object(db, "get_session", side_effect=error_class("Error")),
+            pytest.raises(error_class),
+        ):
             await load_data(db)
 
     @pytest.mark.parametrize(

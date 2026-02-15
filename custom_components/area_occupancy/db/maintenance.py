@@ -252,11 +252,11 @@ def _attempt_database_recovery(db: AreaOccupancyDB) -> bool:
 
         with temp_engine.connect() as conn:
             # Try to enable WAL mode
-            with suppress(Exception):
+            with suppress(SQLAlchemyError, OSError):
                 conn.execute(text("PRAGMA journal_mode=WAL"))
 
             # Try to run recovery
-            with suppress(Exception):
+            with suppress(SQLAlchemyError, OSError):
                 conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
 
             # Test if we can read from the database
@@ -296,7 +296,7 @@ def _backup_database(db: AreaOccupancyDB) -> bool:
     try:
         # Checkpoint WAL file to ensure all data is in main database file
         # This ensures the backup includes all committed data
-        with suppress(Exception), db.engine.connect() as conn:
+        with suppress(SQLAlchemyError, OSError), db.engine.connect() as conn:
             conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
 
         backup_path = db.db_path.with_suffix(".db.backup")
@@ -470,7 +470,7 @@ def periodic_health_check(db: AreaOccupancyDB) -> bool:
                     _LOGGER.warning("Failed to create periodic database backup")
 
         # Run database maintenance
-        with suppress(Exception), db.engine.connect() as conn:
+        with suppress(SQLAlchemyError, OSError), db.engine.connect() as conn:
             # Optimize database
             conn.execute(text("PRAGMA optimize"))
             # Update statistics

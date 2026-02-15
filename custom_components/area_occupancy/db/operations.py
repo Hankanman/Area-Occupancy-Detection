@@ -125,8 +125,12 @@ def _update_existing_entity(
             weight_val = float(entity_obj.weight)
             if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
                 existing_entity.type.weight = weight_val
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as err:
+            _LOGGER.warning(
+                "Failed to restore weight for entity %s: %s",
+                entity_obj.entity_id,
+                err,
+            )
     existing_entity.last_updated = entity_obj.last_updated
     existing_entity.previous_evidence = entity_obj.evidence
 
@@ -291,8 +295,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
         RuntimeError,
     ) as err:
         _LOGGER.error("Failed to load area occupancy data: %s", err)
-        # Don't raise the error, just log it and continue
-        # This allows the integration to start even if data loading fails
+        raise
 
 
 def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:

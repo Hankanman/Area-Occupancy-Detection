@@ -912,13 +912,15 @@ class TestSyncStates:
             lambda hass: mock_recorder,
         )
 
-        # Act: Run sync
-        with caplog.at_level(logging.ERROR):
+        # Act: Run sync — errors now propagate as HomeAssistantError
+        with (
+            caplog.at_level(logging.ERROR),
+            pytest.raises(HomeAssistantError, match="Sync states failed"),
+        ):
             await sync_states(db)
 
-        # Assert: Error should be logged, not raised
+        # Assert: Error should be logged
         assert "Failed to sync states" in caplog.text
-        assert error_message in caplog.text
 
 
 class TestIntervalLookup:

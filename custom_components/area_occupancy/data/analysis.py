@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -49,111 +49,103 @@ async def run_full_analysis(
     if _now is None:
         _now = dt_util.utcnow()
 
-    try:
-        analysis_start_time = time.perf_counter()
-        # Step 1: Import recent data from recorder
-        start_time = time.perf_counter()
-        await coordinator.db.sync_states()
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info(
-            "Step 1: Sync states from recorder completed in %.2f ms", elapsed_ms
-        )
+    analysis_start_time = time.perf_counter()
+    failed_steps: list[str] = []
+    total_steps = 10
 
-        # Step 2: Prune old intervals and run health check
-        start_time = time.perf_counter()
+    async def _run_step(step_num: int, step_name: str, coro: Any) -> None:
+        """Run a single analysis step with timing and error tracking."""
+        start = time.perf_counter()
+        try:
+            await coro
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            _LOGGER.info(
+                "Step %d: %s completed in %.2f ms", step_num, step_name, elapsed_ms
+            )
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            failed_steps.append(step_name)
+            _LOGGER.error(
+                "Step %d: %s FAILED in %.2f ms: %s",
+                step_num,
+                step_name,
+                elapsed_ms,
+                err,
+            )
+
+    async def _sync_states() -> None:
+        await coordinator.db.sync_states()
+
+    async def _health_check_and_prune() -> None:
         health_ok = await coordinator.hass.async_add_executor_job(
             coordinator.db.periodic_health_check
         )
         if not health_ok:
-            area_names = format_area_names(coordinator)
             _LOGGER.warning(
                 "Database health check found issues for areas: %s",
-                area_names,
+                format_area_names(coordinator),
             )
-
-        pruned_count = await coordinator.hass.async_add_executor_job(
+        await coordinator.hass.async_add_executor_job(
             coordinator.db.prune_old_intervals
         )
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        if pruned_count > 0:
-            _LOGGER.info(
-                "Step 2: Database health check and pruning completed in %.2f ms (pruned %d intervals)",
-                elapsed_ms,
-                pruned_count,
+
+    async def _recalculate_priors() -> None:
+        for area in coordinator.areas.values():
+            await area.run_prior_analysis()
+
+    async def _run_correlations() -> None:
+        await run_correlation_analysis(coordinator)
+        await coordinator.async_refresh_correlations()
+
+    async def _save_data() -> None:
+        await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
+
+    async def _refresh() -> None:
+        await coordinator.async_refresh()
+
+    try:
+        await _run_step(1, "sync_states", _sync_states())
+        await _run_step(2, "health_check_and_prune", _health_check_and_prune())
+        await _run_step(
+            3,
+            "populate_occupied_intervals_cache",
+            ensure_occupied_intervals_cache(coordinator),
+        )
+        await _run_step(
+            4, "interval_aggregation", run_interval_aggregation(coordinator, _now)
+        )
+        await _run_step(
+            5, "numeric_aggregation", run_numeric_aggregation(coordinator, _now)
+        )
+        await _run_step(6, "recalculate_priors", _recalculate_priors())
+        await _run_step(7, "correlation_analysis", _run_correlations())
+        await _run_step(8, "save_data_before_refresh", _save_data())
+        await _run_step(9, "refresh_coordinator", _refresh())
+        await _run_step(10, "save_data_after_refresh", _save_data())
+
+    except Exception as err:
+        _LOGGER.error("Fatal error during analysis pipeline: %s", err)
+        failed_steps.append("FATAL")
+        raise
+
+    finally:
+        succeeded = total_steps - len(failed_steps)
+        final_elapsed_ms = (time.perf_counter() - analysis_start_time) * 1000
+        if failed_steps:
+            _LOGGER.warning(
+                "Analysis completed: %d/%d steps succeeded (FAILED: %s) in %.2f ms",
+                succeeded,
+                total_steps,
+                ", ".join(failed_steps),
+                final_elapsed_ms,
             )
         else:
             _LOGGER.info(
-                "Step 2: Database health check and pruning completed in %.2f ms",
-                elapsed_ms,
+                "Full analysis completed: %d/%d steps succeeded in %.2f ms",
+                total_steps,
+                total_steps,
+                final_elapsed_ms,
             )
-
-        # Step 3: Ensure OccupiedIntervalsCache is populated before aggregation
-        start_time = time.perf_counter()
-        await ensure_occupied_intervals_cache(coordinator)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info(
-            "Step 3: Populate occupied intervals cache completed in %.2f ms", elapsed_ms
-        )
-
-        # Step 4: Run interval aggregation (safe now that cache exists)
-        start_time = time.perf_counter()
-        await run_interval_aggregation(coordinator, _now)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info("Step 4: Interval aggregation completed in %.2f ms", elapsed_ms)
-
-        # Step 5: Run numeric aggregation
-        start_time = time.perf_counter()
-        await run_numeric_aggregation(coordinator, _now)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info("Step 5: Numeric aggregation completed in %.2f ms", elapsed_ms)
-
-        # Step 6: Recalculate priors with new data for all areas
-        start_time = time.perf_counter()
-        for area in coordinator.areas.values():
-            await area.run_prior_analysis()
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info(
-            "Step 6: Recalculate priors for all areas completed in %.2f ms", elapsed_ms
-        )
-
-        # Step 7: Run correlation analysis (requires OccupiedIntervalsCache)
-        start_time = time.perf_counter()
-        await run_correlation_analysis(coordinator)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info("Step 7: Correlation analysis completed in %.2f ms", elapsed_ms)
-
-        # Refresh cached correlations for probability calculations
-        await coordinator.async_refresh_correlations()
-
-        # Step 8: Save data (preserve decay state before refresh)
-        # This ensures decay state is saved before async_refresh() potentially resets it
-        start_time = time.perf_counter()
-        await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info(
-            "Step 8: Save data (before refresh) completed in %.2f ms", elapsed_ms
-        )
-
-        # Step 9: Refresh the coordinator
-        start_time = time.perf_counter()
-        await coordinator.async_refresh()
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info("Step 9: Refresh coordinator completed in %.2f ms", elapsed_ms)
-
-        # Step 10: Save data (persist all changes after refresh)
-        start_time = time.perf_counter()
-        await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _LOGGER.info(
-            "Step 10: Save data (after refresh) completed in %.2f ms", elapsed_ms
-        )
-
-        final_elapsed_ms = (time.perf_counter() - analysis_start_time) * 1000
-        _LOGGER.info("Full analysis completed in %.2f ms", final_elapsed_ms)
-
-    except (HomeAssistantError, OSError, RuntimeError) as err:
-        _LOGGER.error("Failed to run historical analysis: %s", err)
-        raise
 
 
 async def start_prior_analysis(

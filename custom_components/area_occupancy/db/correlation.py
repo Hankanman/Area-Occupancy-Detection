@@ -1470,12 +1470,12 @@ def get_entity_correlations(db: AreaOccupancyDB, area_name: str) -> dict[str, fl
 
     except (
         SQLAlchemyError,
-        ValueError,
-        TypeError,
-        RuntimeError,
         OSError,
-    ):
-        _LOGGER.exception("Error getting entity correlations for area %s", area_name)
+        RuntimeError,
+    ) as err:
+        _LOGGER.warning(
+            "Error getting entity correlations for area %s: %s", area_name, err
+        )
         return {}
 
 
