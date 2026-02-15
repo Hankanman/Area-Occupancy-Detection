@@ -355,26 +355,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
         except (OSError, RuntimeError) as err:
             _LOGGER.error("Unexpected error during coordinator setup: %s", err)
-            # Try to continue with basic functionality even if some parts fail
-            _LOGGER.info(
-                "Continuing with basic coordinator functionality despite errors"
-            )
-            try:
-                # Start basic timers
-                self._start_decay_timer()
-                self._start_save_timer()
-                # Analysis timer is async and runs in background
-                await self._start_analysis_timer()
-
-                self._setup_complete = True
-
-            except (HomeAssistantError, OSError, RuntimeError) as timer_err:
-                _LOGGER.error(
-                    "Failed to start basic timers for areas: %s: %s",
-                    format_area_names(self),
-                    timer_err,
-                )
-                # Don't set _setup_complete if timers completely failed
+            raise ConfigEntryNotReady(f"Setup failed: {err}. Will retry.") from err
 
     async def update(self) -> dict[str, Any]:
         """Update and return the current coordinator data (in-memory only).
@@ -822,24 +803,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._analysis_timer = None
 
         self._analysis_running = True
+        _failed = False
         try:
             # Run the full analysis chain
             await run_full_analysis(self, _now)
-
-            # Schedule next run (1 hour interval)
-            next_update = _now + timedelta(
-                seconds=self.integration_config.analysis_interval
-            )
-            self._analysis_timer = async_track_point_in_time(
-                self.hass, self.run_analysis, next_update
-            )
-
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error("Failed to run historical analysis: %s", err)
-            # Reschedule analysis even if it failed
-            next_update = _now + timedelta(minutes=15)  # Retry sooner if failed
+            _failed = True
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("Unexpected analysis error: %s", err)
+            _failed = True
+        finally:
+            self._analysis_running = False
+            # Always reschedule — retry sooner on failure
+            if _failed:
+                next_update = _now + timedelta(minutes=15)
+            else:
+                next_update = _now + timedelta(
+                    seconds=self.integration_config.analysis_interval
+                )
             self._analysis_timer = async_track_point_in_time(
                 self.hass, self.run_analysis, next_update
             )
-        finally:
-            self._analysis_running = False

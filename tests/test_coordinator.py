@@ -1000,7 +1000,7 @@ class TestAreaOccupancyCoordinator:
     async def test_setup_with_unexpected_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test setup with unexpected error that should continue with basic functionality."""
+        """Test setup with unexpected RuntimeError raises ConfigEntryNotReady."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
@@ -1009,41 +1009,23 @@ class TestAreaOccupancyCoordinator:
                 "load_data",
                 side_effect=RuntimeError("Unexpected error"),
             ),
-            patch.object(
-                coordinator,
-                "_start_decay_timer",
-                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
-            ),
-            patch.object(
-                coordinator,
-                "_start_analysis_timer",
-                new=AsyncMock(
-                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
-                ),
-            ),
-            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            pytest.raises(ConfigEntryNotReady),
         ):
             await coordinator.setup()
 
     async def test_setup_with_timer_start_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test setup with timer start error."""
+        """Test setup with OSError raises ConfigEntryNotReady."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(
                 coordinator.db,
                 "load_data",
-                side_effect=RuntimeError("Unexpected error"),
+                side_effect=OSError("Load error"),
             ),
-            patch.object(
-                coordinator, "_start_decay_timer", side_effect=OSError("Timer error")
-            ),
-            patch.object(
-                coordinator, "_start_analysis_timer", side_effect=OSError("Timer error")
-            ),
-            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            pytest.raises(ConfigEntryNotReady),
         ):
             await coordinator.setup()
 
