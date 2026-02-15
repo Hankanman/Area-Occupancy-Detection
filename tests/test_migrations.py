@@ -662,9 +662,7 @@ class TestRegistryCleanup:
 
         # Track remove calls
         remove_calls = []
-        entity_registry.async_remove = Mock(
-            side_effect=lambda eid: remove_calls.append(eid)
-        )
+        entity_registry.async_remove = Mock(side_effect=remove_calls.append)
 
         # Create mock device entries using Mock objects
         device_1 = Mock()
@@ -683,7 +681,7 @@ class TestRegistryCleanup:
         # Track device remove calls
         device_remove_calls = []
         device_registry.async_remove_device = Mock(
-            side_effect=lambda did: device_remove_calls.append(did)
+            side_effect=device_remove_calls.append
         )
 
         # Call cleanup

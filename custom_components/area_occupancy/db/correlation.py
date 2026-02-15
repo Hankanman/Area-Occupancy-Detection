@@ -1408,6 +1408,77 @@ def analyze_and_save_correlation(
     return None
 
 
+def get_entity_correlations(db: AreaOccupancyDB, area_name: str) -> dict[str, float]:
+    """Get normalized correlation strengths for all entities in an area.
+
+    Queries the correlations table and returns a dict mapping entity_id to
+    correlation strength (0.0-1.0) for use in sigmoid probability calculation.
+    Only entities with positive correlations and sufficient data are included.
+
+    Args:
+        db: Database instance
+        area_name: Area name to query correlations for
+
+    Returns:
+        Dict mapping entity_id to correlation strength (0.0-1.0).
+        Entities with insufficient data or negative/no correlation return 0.0
+        and are excluded from the result.
+    """
+    try:
+        with db.get_session() as session:
+            # Query all correlations for this area, newest first
+            correlations = (
+                session.query(db.Correlations)
+                .filter(
+                    db.Correlations.entry_id == db.coordinator.entry_id,
+                    db.Correlations.area_name == area_name,
+                )
+                .order_by(db.Correlations.calculation_date.desc())
+                .all()
+            )
+
+            result: dict[str, float] = {}
+            for corr in correlations:
+                # Only accept the first (newest) row per entity
+                if corr.entity_id in result:
+                    continue
+
+                # Get correlation coefficient (may be None for binary likelihoods)
+                coef = corr.correlation_coefficient
+                if coef is None:
+                    # Binary likelihoods don't have correlation coefficient
+                    # Use mean_value_when_occupied (prob_given_true) as proxy
+                    # Normalize: higher prob_given_true = stronger correlation
+                    prob_true = corr.mean_value_when_occupied
+                    if prob_true is not None and prob_true > 0:
+                        # Scale prob_given_true to 0-1 correlation strength
+                        # 0.5 -> 0.5, 0.95 -> 0.95
+                        result[corr.entity_id] = min(1.0, max(0.0, float(prob_true)))
+                    continue
+
+                # Skip if insufficient samples for reliability
+                if corr.sample_count < MIN_CORRELATION_SAMPLES:
+                    continue
+
+                # Only use positive correlations with sufficient confidence
+                if coef > 0:
+                    # Normalize to 0-1 range
+                    # Correlation coefficient is typically -1 to 1
+                    result[corr.entity_id] = min(1.0, max(0.0, float(coef)))
+
+            return result
+
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ):
+        _LOGGER.exception("Error getting entity correlations for area %s", area_name)
+        return {}
+
+
 def get_correlation_for_entity(
     db: AreaOccupancyDB, area_name: str, entity_id: str
 ) -> dict[str, Any] | None:

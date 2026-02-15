@@ -10,18 +10,6 @@ The integration learns from your patterns over time, uses decay functions to han
 
 ## Development Commands
 
-### Cloning the Repository
-
-**Important:** Use the optimized clone command to avoid downloading bloated PR history:
-
-```bash
-# Efficient clone (recommended - downloads only ~6MB)
-git clone --single-branch --branch main https://github.com/Hankanman/Area-Occupancy-Detection.git
-
-# Regular clone downloads ~445MB due to historical PR refs
-# If you already cloned normally, your local repo works fine but is larger than necessary
-```
-
 ### Environment Setup
 
 ```bash
