@@ -201,9 +201,7 @@ class Entity:
 
             except (ValueError, TypeError) as err:
                 _LOGGER.warning(
-                    "Gaussian likelihood calculation failed for %s: %s",
-                    self.entity_id,
-                    err,
+                    f"Gaussian likelihood calculation failed for {self.entity_id}: {err}",  # noqa: G004
                 )
             else:
                 return (p_true, p_false)

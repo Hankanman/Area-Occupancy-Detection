@@ -351,7 +351,7 @@ class TestCollectLikelihoodData:
         active_range: tuple[float, float] | None,
         has_active_range: bool,
         expected_active_range: list | None,
-        analysis_data: dict | None,
+        analysis_data: GaussianParams | None,
         analysis_error: str | None,
         correlation_type: str | None,
     ) -> None:

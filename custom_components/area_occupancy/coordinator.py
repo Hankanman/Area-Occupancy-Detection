@@ -354,7 +354,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Failed to set up coordinator: %s", err)
             raise ConfigEntryNotReady(f"Failed to set up coordinator: {err}") from err
         except (OSError, RuntimeError) as err:
-            _LOGGER.error("Unexpected error during coordinator setup: %s", err)
+            _LOGGER.exception("Unexpected error during coordinator setup")
             raise ConfigEntryNotReady(f"Setup failed: {err}. Will retry.") from err
 
     async def update(self) -> dict[str, Any]:

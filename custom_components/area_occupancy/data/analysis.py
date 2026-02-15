@@ -147,6 +147,14 @@ async def run_full_analysis(
                 final_elapsed_ms,
             )
 
+    # Reached only when no fatal error occurred — step-level failures should
+    # still trigger coordinator backoff via the raised exception.
+    if failed_steps:
+        raise HomeAssistantError(
+            f"Analysis pipeline had {len(failed_steps)} failed step(s): "
+            f"{', '.join(failed_steps)}"
+        )
+
 
 async def start_prior_analysis(
     coordinator: AreaOccupancyCoordinator,
