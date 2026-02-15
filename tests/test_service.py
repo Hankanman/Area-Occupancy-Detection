@@ -9,8 +9,9 @@ import pytest
 from custom_components.area_occupancy.const import DEVICE_SW_VERSION, DOMAIN
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay as DecayClass
-from custom_components.area_occupancy.data.entity import Entity, GaussianParams
+from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.service import (
     _build_analysis_data,
     _collect_entity_states,

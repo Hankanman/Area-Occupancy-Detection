@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Final, TypedDict
+from typing import Any, Final, TypedDict
 
 from homeassistant.const import (
     STATE_BUFFERING,
@@ -426,3 +426,37 @@ def get_default_state(platform_type: str) -> str:
     """Get the default state for a given platform type."""
     states = get_state_options(platform_type)
     return states["default"]
+
+
+# Sensor type string -> InputType mapping (alphabetized).
+# Lazy-loaded to avoid circular imports with data.entity_type.
+_SENSOR_TYPE_MAPPING: dict[str, Any] | None = None
+
+
+def get_sensor_type_mapping() -> dict[str, Any]:
+    """Get sensor type mapping, building lazily to avoid circular imports."""
+    global _SENSOR_TYPE_MAPPING  # noqa: PLW0603
+    if _SENSOR_TYPE_MAPPING is None:
+        from .data.entity_type import InputType  # noqa: PLC0415
+
+        _SENSOR_TYPE_MAPPING = {
+            "air_quality": InputType.AIR_QUALITY,
+            "appliance": InputType.APPLIANCE,
+            "co": InputType.CO,
+            "co2": InputType.CO2,
+            "cover": InputType.COVER,
+            "door": InputType.DOOR,
+            "humidity": InputType.HUMIDITY,
+            "illuminance": InputType.ILLUMINANCE,
+            "media": InputType.MEDIA,
+            "motion": InputType.MOTION,
+            "pm10": InputType.PM10,
+            "pm25": InputType.PM25,
+            "power": InputType.POWER,
+            "pressure": InputType.PRESSURE,
+            "sound_pressure": InputType.SOUND_PRESSURE,
+            "temperature": InputType.TEMPERATURE,
+            "voc": InputType.VOC,
+            "window": InputType.WINDOW,
+        }
+    return _SENSOR_TYPE_MAPPING

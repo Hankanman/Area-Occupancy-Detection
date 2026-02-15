@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -53,7 +54,7 @@ async def run_full_analysis(
     failed_steps: list[str] = []
     total_steps = 10
 
-    async def _run_step(step_num: int, step_name: str, coro: Any) -> None:
+    async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
         start = time.perf_counter()
         try:
@@ -62,15 +63,14 @@ async def run_full_analysis(
             _LOGGER.info(
                 "Step %d: %s completed in %.2f ms", step_num, step_name, elapsed_ms
             )
-        except (HomeAssistantError, OSError, RuntimeError) as err:
+        except (HomeAssistantError, OSError, RuntimeError):
             elapsed_ms = (time.perf_counter() - start) * 1000
             failed_steps.append(step_name)
-            _LOGGER.error(
-                "Step %d: %s FAILED in %.2f ms: %s",
+            _LOGGER.exception(
+                "Step %d: %s FAILED in %.2f ms",
                 step_num,
                 step_name,
                 elapsed_ms,
-                err,
             )
 
     async def _sync_states() -> None:

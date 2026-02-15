@@ -1603,14 +1603,15 @@ class BaseOccupancyFlow:
             area_id: Area ID being acted upon
         """
         if action == CONF_ACTION_EDIT:
-            # User wants to edit the area - no state change needed
-            pass
+            # User wants to edit the area - clear any stale removal state
+            self._area_to_remove = None
         elif action == CONF_ACTION_REMOVE:
             # User wants to remove the area
             self._area_to_remove = area_id
             self._area_being_edited = None
         elif action == CONF_ACTION_CANCEL:
-            # User cancelled
+            # User cancelled - clear any stale removal state
+            self._area_to_remove = None
             self._area_being_edited = None
 
 

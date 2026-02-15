@@ -1509,7 +1509,7 @@ class TestRunAnalysisWithPruning:
                 new=AsyncMock(),
             ),
         ):
-            # Step 2 fails, but pipeline continues
+            # Step 2 fails, but pipeline continues.
             await coordinator.run_analysis()
 
             # Verify subsequent steps still executed despite step 2 failure

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_WEIGHT, MIN_WEIGHT
+from ..const import MAX_WEIGHT, MIN_WEIGHT, get_sensor_type_mapping
 from ..time_utils import to_utc
 from ..utils import map_binary_state_to_semantic
 from .decay import Decay
@@ -24,43 +24,13 @@ from .entity_type import (
     InputType,
 )
 from .purpose import get_default_decay_half_life
+from .types import GaussianParams
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
     from ..db import AreaOccupancyDB as DB
 
 _LOGGER = logging.getLogger(__name__)
-
-SENSOR_TYPE_MAPPING: dict[str, InputType] = {
-    "motion": InputType.MOTION,
-    "media": InputType.MEDIA,
-    "appliance": InputType.APPLIANCE,
-    "door": InputType.DOOR,
-    "window": InputType.WINDOW,
-    "illuminance": InputType.ILLUMINANCE,
-    "humidity": InputType.HUMIDITY,
-    "temperature": InputType.TEMPERATURE,
-    "co2": InputType.CO2,
-    "co": InputType.CO,
-    "sound_pressure": InputType.SOUND_PRESSURE,
-    "pressure": InputType.PRESSURE,
-    "air_quality": InputType.AIR_QUALITY,
-    "voc": InputType.VOC,
-    "pm25": InputType.PM25,
-    "pm10": InputType.PM10,
-    "power": InputType.POWER,
-    "cover": InputType.COVER,
-}
-
-
-@dataclass(frozen=True)
-class GaussianParams:
-    """Learned Gaussian distribution parameters for numeric sensor likelihoods."""
-
-    mean_occupied: float
-    std_occupied: float
-    mean_unoccupied: float
-    std_unoccupied: float
 
 
 @dataclass
@@ -897,7 +867,7 @@ class EntityFactory:
         specs = {}
 
         # Process each sensor type using the mapping
-        for sensor_type, input_type in SENSOR_TYPE_MAPPING.items():
+        for sensor_type, input_type in get_sensor_type_mapping().items():
             sensor_list = getattr(self.config.sensors, sensor_type)
 
             # Special handling for motion sensors (includes wasp)

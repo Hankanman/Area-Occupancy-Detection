@@ -810,8 +810,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error("Failed to run historical analysis: %s", err)
             _failed = True
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error("Unexpected analysis error: %s", err)
+        except Exception:
+            # Last-resort safety net — keeps the analysis timer alive
+            _LOGGER.exception("Unexpected analysis error")
             _failed = True
         finally:
             self._analysis_running = False

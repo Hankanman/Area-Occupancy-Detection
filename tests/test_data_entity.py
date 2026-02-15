@@ -12,9 +12,9 @@ from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
-    GaussianParams,
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.types import GaussianParams
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
