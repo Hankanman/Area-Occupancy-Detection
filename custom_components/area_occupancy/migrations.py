@@ -82,8 +82,10 @@ async def async_reset_database_if_needed(hass: HomeAssistant, version: int) -> N
         except FileNotFoundError:
             # Handled by exists check, but safe to catch just in case
             pass
-        except Exception as e:  # noqa: BLE001
-            _LOGGER.warning("Failed to delete database file %s: %s", db_path, e)
+        except OSError as e:
+            _LOGGER.warning(
+                "Failed to delete database file %s: %s", db_path, e, exc_info=True
+            )
 
         # Delete WAL and shared memory files if they exist
         wal_path = storage_dir / (DB_NAME + "-wal")
@@ -93,8 +95,8 @@ async def async_reset_database_if_needed(hass: HomeAssistant, version: int) -> N
                 try:
                     path.unlink()
                     _LOGGER.debug("Deleted database file: %s", path)
-                except Exception as e:  # noqa: BLE001
-                    _LOGGER.debug("Failed to delete %s: %s", path, e)
+                except OSError as e:
+                    _LOGGER.debug("Failed to delete %s: %s", path, e, exc_info=True)
 
     await hass.async_add_executor_job(_delete_database_file)
 
@@ -669,7 +671,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 )
                 return False  # noqa: TRY300
 
-            except Exception:
+            except (KeyError, ValueError, TypeError, OSError, RuntimeError):
                 _LOGGER.exception("Unexpected error during migration")
                 return False
 

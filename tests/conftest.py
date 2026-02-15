@@ -89,7 +89,7 @@ from custom_components.area_occupancy.const import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import (
     AreaConfig,
-    Decay,
+    DecayConfig,
     Sensors,
     SensorStates,
     WaspInBox,
@@ -1251,7 +1251,7 @@ def mock_config() -> Mock:
     )
 
     # Create decay configuration
-    config.decay = Decay(half_life=300, enabled=True)
+    config.decay = DecayConfig(half_life=300, enabled=True)
 
     # Create wasp configuration
     config.wasp_in_box = WaspInBox(

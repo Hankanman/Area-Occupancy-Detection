@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(uv run ruff check:*)"
+      "Bash(scripts/lint:*)",
+      "Bash(source:*)",
+      "Bash(ruff format:*)",
+      "Bash(ruff check:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)"
     ]
   }
 }

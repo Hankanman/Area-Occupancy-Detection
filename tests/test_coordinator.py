@@ -1000,7 +1000,7 @@ class TestAreaOccupancyCoordinator:
     async def test_setup_with_unexpected_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test setup with unexpected error that should continue with basic functionality."""
+        """Test setup with unexpected RuntimeError raises ConfigEntryNotReady."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
@@ -1009,41 +1009,23 @@ class TestAreaOccupancyCoordinator:
                 "load_data",
                 side_effect=RuntimeError("Unexpected error"),
             ),
-            patch.object(
-                coordinator,
-                "_start_decay_timer",
-                side_effect=lambda: setattr(coordinator, "_global_decay_timer", Mock()),
-            ),
-            patch.object(
-                coordinator,
-                "_start_analysis_timer",
-                new=AsyncMock(
-                    side_effect=lambda: setattr(coordinator, "_analysis_timer", Mock())
-                ),
-            ),
-            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            pytest.raises(ConfigEntryNotReady),
         ):
             await coordinator.setup()
 
     async def test_setup_with_timer_start_error(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test setup with timer start error."""
+        """Test setup with OSError raises ConfigEntryNotReady."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         with (
             patch.object(
                 coordinator.db,
                 "load_data",
-                side_effect=RuntimeError("Unexpected error"),
+                side_effect=OSError("Load error"),
             ),
-            patch.object(
-                coordinator, "_start_decay_timer", side_effect=OSError("Timer error")
-            ),
-            patch.object(
-                coordinator, "_start_analysis_timer", side_effect=OSError("Timer error")
-            ),
-            patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            pytest.raises(ConfigEntryNotReady),
         ):
             await coordinator.setup()
 
@@ -1481,7 +1463,11 @@ class TestRunAnalysisWithPruning:
     async def test_run_analysis_pruning_error_handling(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:
-        """Test that analysis continues if pruning raises an exception."""
+        """Test that analysis continues if pruning raises an exception.
+
+        With step-level error tracking, individual step failures don't stop
+        the pipeline — subsequent steps still execute.
+        """
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         coordinator._analysis_timer = Mock()
         coordinator._is_master = True  # Enable pruning (master-only)
@@ -1495,29 +1481,41 @@ class TestRunAnalysisWithPruning:
             patch.object(coordinator.db, "sync_states", new=AsyncMock()),
             patch.object(
                 coordinator.db,
-                "prune_old_intervals",
-                side_effect=RuntimeError("Pruning failed"),
+                "periodic_health_check",
+                side_effect=RuntimeError("Health check failed"),
             ),
             patch.object(area, "run_prior_analysis", new=AsyncMock()) as mock_prior,
             patch.object(coordinator, "async_refresh", new=AsyncMock()),
+            patch.object(coordinator, "async_refresh_correlations", new=AsyncMock()),
             patch.object(coordinator.db, "save_data"),
             patch(
                 "custom_components.area_occupancy.coordinator.async_track_point_in_time",
                 return_value=None,
             ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.ensure_occupied_intervals_cache",
+                new=AsyncMock(),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.run_interval_aggregation",
+                new=AsyncMock(),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.run_numeric_aggregation",
+                new=AsyncMock(),
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation.run_correlation_analysis",
+                new=AsyncMock(),
+            ),
         ):
-            # Should not raise exception, but analysis should fail due to pruning error
+            # Step 2 fails, but pipeline continues.
             await coordinator.run_analysis()
 
-            # Verify pruning was called
-            coordinator.db.prune_old_intervals.assert_called_once()
-            # Verify other steps were NOT called due to exception handling
-            # run_analysis calls area.run_prior_analysis()
-            # but these should not be called if pruning raises an exception
-            mock_prior.assert_not_called()
-            coordinator.async_refresh.assert_not_called()
-            coordinator.db.save_data.assert_not_called()
-            assert coordinator._analysis_timer is None
+            # Verify subsequent steps still executed despite step 2 failure
+            mock_prior.assert_called_once()
+            coordinator.async_refresh.assert_called_once()
+            coordinator.db.save_data.assert_called()
 
 
 class TestCoordinatorTimerCallbacks:

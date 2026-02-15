@@ -31,6 +31,7 @@ from ..const import (
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
+from ..data.entity_type import CorrelationType
 from ..time_utils import to_db_utc
 from . import maintenance, queries
 
@@ -107,7 +108,7 @@ def _build_binary_likelihood_data(corr_data: dict[str, Any]) -> dict[str, Any]:
 
 def _apply_correlation_data(entity: Any, corr_data: dict[str, Any]) -> None:
     """Apply correlation or binary likelihood data to an entity."""
-    if corr_data.get("correlation_type") == "binary_likelihood":
+    if corr_data.get("correlation_type") == CorrelationType.BINARY_LIKELIHOOD:
         binary_likelihood_data = _build_binary_likelihood_data(corr_data)
         entity.update_binary_likelihoods(binary_likelihood_data)
     else:
@@ -125,8 +126,12 @@ def _update_existing_entity(
             weight_val = float(entity_obj.weight)
             if MIN_WEIGHT <= weight_val <= MAX_WEIGHT:
                 existing_entity.type.weight = weight_val
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as err:
+            _LOGGER.warning(
+                "Failed to restore weight for entity %s: %s",
+                entity_obj.entity_id,
+                err,
+            )
     existing_entity.last_updated = entity_obj.last_updated
     existing_entity.previous_evidence = entity_obj.evidence
 
@@ -188,10 +193,10 @@ async def load_data(db: AreaOccupancyDB) -> None:
             for corr in all_corrs:
                 if corr.entity_id not in correlations:
                     correlations[corr.entity_id] = _convert_correlation_to_dict(corr)
-                elif corr.correlation_type == "binary_likelihood":
+                elif corr.correlation_type == CorrelationType.BINARY_LIKELIHOOD:
                     # Prefer binary_likelihood over correlation if both exist
                     existing_type = correlations[corr.entity_id].get("correlation_type")
-                    if existing_type != "binary_likelihood":
+                    if existing_type != CorrelationType.BINARY_LIKELIHOOD:
                         correlations[corr.entity_id] = _convert_correlation_to_dict(
                             corr
                         )
@@ -291,8 +296,7 @@ async def load_data(db: AreaOccupancyDB) -> None:
         RuntimeError,
     ) as err:
         _LOGGER.error("Failed to load area occupancy data: %s", err)
-        # Don't raise the error, just log it and continue
-        # This allows the integration to start even if data loading fails
+        raise
 
 
 def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
@@ -557,6 +561,71 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
         raise
 
 
+def _cleanup_area_orphans(db: AreaOccupancyDB, area_name: str, area_data: Any) -> int:
+    """Clean up orphaned entities for a single area.
+
+    Returns:
+        int: Number of entities cleaned up
+    """
+    with db.get_session() as session:
+        # Get all entity IDs currently configured for this area
+        # EntityManager always has entity_ids property
+        current_entity_ids = set(area_data.entities.entity_ids)
+
+        # Query all entities for this area_name from database
+        db_entities = session.query(db.Entities).filter_by(area_name=area_name).all()
+
+        # Find entities that exist in database but not in current config
+        orphaned_entities = [
+            entity
+            for entity in db_entities
+            if entity.entity_id not in current_entity_ids
+        ]
+
+        if not orphaned_entities:
+            return 0
+
+        # Collect orphaned entity IDs for bulk operations
+        orphaned_entity_ids = [entity.entity_id for entity in orphaned_entities]
+
+        # Log orphaned entities being removed
+        for entity_id in orphaned_entity_ids:
+            _LOGGER.info(
+                "Removing orphaned entity %s from database for area %s (no longer in config)",
+                entity_id,
+                area_name,
+            )
+
+        # Bulk delete all intervals for orphaned entities in a single query
+        # Filter by both area_name and entity_id to avoid deleting intervals
+        # for entities with the same ID in other areas
+        intervals_deleted = (
+            session.query(db.Intervals)
+            .filter(db.Intervals.area_name == area_name)
+            .filter(db.Intervals.entity_id.in_(orphaned_entity_ids))
+            .delete(synchronize_session=False)
+        )
+
+        # Bulk delete all orphaned entities in a single query
+        # Filter by both area_name and entity_id to avoid deleting entities
+        # with the same ID in other areas
+        entities_deleted = (
+            session.query(db.Entities)
+            .filter(db.Entities.area_name == area_name)
+            .filter(db.Entities.entity_id.in_(orphaned_entity_ids))
+            .delete(synchronize_session=False)
+        )
+
+        session.commit()
+        _LOGGER.info(
+            "Cleaned up %d orphaned entities for area %s (deleted %d intervals)",
+            entities_deleted,
+            area_name,
+            intervals_deleted,
+        )
+        return entities_deleted
+
+
 def _cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
     """Clean up entities from database that are no longer in the current configuration.
 
@@ -570,71 +639,7 @@ def _cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
     try:
         for area_name in db.coordinator.get_area_names():
             area_data = db.coordinator.get_area(area_name)
-
-            def _cleanup_operation(area_name: str, area_data: Any) -> int:
-                with db.get_session() as session:
-                    # Get all entity IDs currently configured for this area
-                    # EntityManager always has entity_ids property
-                    current_entity_ids = set(area_data.entities.entity_ids)
-
-                    # Query all entities for this area_name from database
-                    db_entities = (
-                        session.query(db.Entities).filter_by(area_name=area_name).all()
-                    )
-
-                    # Find entities that exist in database but not in current config
-                    orphaned_entities = [
-                        entity
-                        for entity in db_entities
-                        if entity.entity_id not in current_entity_ids
-                    ]
-
-                    if not orphaned_entities:
-                        return 0
-
-                    # Collect orphaned entity IDs for bulk operations
-                    orphaned_entity_ids = [
-                        entity.entity_id for entity in orphaned_entities
-                    ]
-
-                    # Log orphaned entities being removed
-                    for entity_id in orphaned_entity_ids:
-                        _LOGGER.info(
-                            "Removing orphaned entity %s from database for area %s (no longer in config)",
-                            entity_id,
-                            area_name,
-                        )
-
-                    # Bulk delete all intervals for orphaned entities in a single query
-                    # Filter by both area_name and entity_id to avoid deleting intervals
-                    # for entities with the same ID in other areas
-                    intervals_deleted = (
-                        session.query(db.Intervals)
-                        .filter(db.Intervals.area_name == area_name)
-                        .filter(db.Intervals.entity_id.in_(orphaned_entity_ids))
-                        .delete(synchronize_session=False)
-                    )
-
-                    # Bulk delete all orphaned entities in a single query
-                    # Filter by both area_name and entity_id to avoid deleting entities
-                    # with the same ID in other areas
-                    entities_deleted = (
-                        session.query(db.Entities)
-                        .filter(db.Entities.area_name == area_name)
-                        .filter(db.Entities.entity_id.in_(orphaned_entity_ids))
-                        .delete(synchronize_session=False)
-                    )
-
-                    session.commit()
-                    _LOGGER.info(
-                        "Cleaned up %d orphaned entities for area %s (deleted %d intervals)",
-                        entities_deleted,
-                        area_name,
-                        intervals_deleted,
-                    )
-                    return entities_deleted
-
-            result = _cleanup_operation(area_name, area_data)
+            result = _cleanup_area_orphans(db, area_name, area_data)
             total_cleaned += result
 
     except (

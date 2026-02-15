@@ -263,7 +263,7 @@ class Weights:
 
 
 @dataclass
-class Decay:
+class DecayConfig:
     """Decay configuration."""
 
     enabled: bool = DEFAULT_DECAY_ENABLED
@@ -435,7 +435,7 @@ class AreaConfig:
         if half_life_value == 0:
             half_life_value = int(get_default_decay_half_life(self.purpose))
 
-        self.decay = Decay(
+        self.decay = DecayConfig(
             half_life=half_life_value,
             enabled=bool(data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)),
         )

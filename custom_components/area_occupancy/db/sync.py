@@ -343,5 +343,4 @@ async def sync_states(db: AreaOccupancyDB) -> None:
         RuntimeError,
     ) as err:
         _LOGGER.error("Failed to sync states: %s", err)
-        # Don't raise - let the caller handle it if needed
-        # This allows the function to be called without breaking the caller
+        raise HomeAssistantError(f"Sync states failed: {err}") from err

@@ -285,7 +285,7 @@ def combined_probability(
 
 
 # ────────────────────────────────────── Core Bayes ───────────────────────────
-def _validate_entity_likelihoods(
+def _filter_invalid_entity_likelihoods(
     active_entities: dict[str, Entity],
 ) -> dict[str, Entity]:
     """Validate entity likelihoods and filter out invalid entities.
@@ -436,7 +436,7 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
         return clamp_probability(prior)
 
     # Check for entities with invalid likelihoods
-    active_entities = _validate_entity_likelihoods(active_entities)
+    active_entities = _filter_invalid_entity_likelihoods(active_entities)
 
     if not active_entities:
         # All entities had invalid likelihoods - return prior
@@ -516,7 +516,7 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
         # Both probabilities are zero - return prior as fallback
         return prior
 
-    return true_prob / total_prob
+    return clamp_probability(true_prob / total_prob)
 
 
 def combine_priors(
@@ -571,20 +571,13 @@ def combine_priors(
 
     area_weight = 1.0 - time_weight
 
-    # Convert to logit space for better interpolation
-    def prob_to_logit(p: float) -> float:
-        return math.log(p / (1 - p))
-
-    def logit_to_prob(logit: float) -> float:
-        return 1 / (1 + math.exp(-logit))
-
     # Interpolate in logit space for more principled combination
-    area_logit = prob_to_logit(area_prior)
-    time_logit = prob_to_logit(time_prior)
+    area_logit = logit(area_prior)
+    time_logit = logit(time_prior)
 
     # Weighted combination in logit space
     combined_logit = area_weight * area_logit + time_weight * time_logit
-    combined_prior = logit_to_prob(combined_logit)
+    combined_prior = sigmoid(combined_logit)
 
     return clamp_probability(combined_prior)
 

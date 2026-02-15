@@ -1,5 +1,6 @@
 """Tests for service module."""
 
+from dataclasses import asdict
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -10,6 +11,7 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.decay import Decay as DecayClass
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.service import (
     _build_analysis_data,
     _collect_entity_states,
@@ -328,7 +330,12 @@ class TestCollectLikelihoodData:
                 None,
                 False,
                 None,
-                {"mean": 25.0, "std": 5.0},
+                GaussianParams(
+                    mean_occupied=25.0,
+                    std_occupied=5.0,
+                    mean_unoccupied=20.0,
+                    std_unoccupied=3.0,
+                ),
                 None,
                 "positive",
             ),
@@ -344,7 +351,7 @@ class TestCollectLikelihoodData:
         active_range: tuple[float, float] | None,
         has_active_range: bool,
         expected_active_range: list | None,
-        analysis_data: dict | None,
+        analysis_data: GaussianParams | None,
         analysis_error: str | None,
         correlation_type: str | None,
     ) -> None:
@@ -397,7 +404,7 @@ class TestCollectLikelihoodData:
 
         # Verify analysis data values if provided
         if analysis_data is not None:
-            assert entity_data["analysis_data"] == analysis_data
+            assert entity_data["analysis_data"] == asdict(analysis_data)
         if correlation_type is not None:
             assert entity_data["correlation_type"] == correlation_type
 
