@@ -182,11 +182,7 @@ def segment_interval_with_motion(
             if motion_timeout_end is not None and motion_timeout_end < gap_end:
                 segments.append((motion_timeout_end, gap_end))
 
-    after_start = (
-        last_motion_timeout_end
-        if last_motion_timeout_end
-        else min(sorted_motion[-1][1], merged_end)
-    )
+    after_start = last_motion_timeout_end or min(sorted_motion[-1][1], merged_end)
     if after_start < merged_end:
         segments.append((after_start, merged_end))
 

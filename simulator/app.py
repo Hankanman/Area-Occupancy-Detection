@@ -98,7 +98,7 @@ def _json_error(message: str, status: int = 400):
 
 
 def _friendly_name(entity_id: str) -> str:
-    object_id = entity_id.split(".")[-1]
+    object_id = entity_id.rsplit(".", maxsplit=1)[-1]
     return object_id.replace("_", " ").title()
 
 

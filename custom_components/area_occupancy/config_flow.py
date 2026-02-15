@@ -320,8 +320,8 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
                 or (
                     not has_window_keyword
                     and (
-                        device_class in (BinarySensorDeviceClass.OPENING,)
-                        or original_device_class in (BinarySensorDeviceClass.OPENING,)
+                        BinarySensorDeviceClass.OPENING
+                        in (device_class, original_device_class)
                     )
                 )
             )

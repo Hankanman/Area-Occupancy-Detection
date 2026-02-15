@@ -566,7 +566,7 @@ class EntityFactory:
             available = list(coordinator.areas.keys())
             raise ValueError(
                 f"Area '{area_name}' not found. "
-                f"Available areas: {available if available else '(none)'}"
+                f"Available areas: {available or '(none)'}"
             )
         self.config = coordinator.areas[area_name].config
 
@@ -924,7 +924,7 @@ class EntityManager:
             available = list(coordinator.areas.keys())
             raise ValueError(
                 f"Area '{area_name}' not found. "
-                f"Available areas: {available if available else '(none)'}"
+                f"Available areas: {available or '(none)'}"
             )
         self.config = coordinator.areas[area_name].config
         self.hass = coordinator.hass
