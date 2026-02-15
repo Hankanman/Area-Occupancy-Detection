@@ -1426,20 +1426,21 @@ def get_entity_correlations(db: AreaOccupancyDB, area_name: str) -> dict[str, fl
     """
     try:
         with db.get_session() as session:
-            # Query all correlations for this area
+            # Query all correlations for this area, newest first
             correlations = (
                 session.query(db.Correlations)
                 .filter(
                     db.Correlations.entry_id == db.coordinator.entry_id,
                     db.Correlations.area_name == area_name,
                 )
+                .order_by(db.Correlations.calculation_date.desc())
                 .all()
             )
 
             result: dict[str, float] = {}
             for corr in correlations:
-                # Skip if insufficient samples for reliability
-                if corr.sample_count < MIN_CORRELATION_SAMPLES:
+                # Only accept the first (newest) row per entity
+                if corr.entity_id in result:
                     continue
 
                 # Get correlation coefficient (may be None for binary likelihoods)
@@ -1453,6 +1454,10 @@ def get_entity_correlations(db: AreaOccupancyDB, area_name: str) -> dict[str, fl
                         # Scale prob_given_true to 0-1 correlation strength
                         # 0.5 -> 0.5, 0.95 -> 0.95
                         result[corr.entity_id] = min(1.0, max(0.0, float(prob_true)))
+                    continue
+
+                # Skip if insufficient samples for reliability
+                if corr.sample_count < MIN_CORRELATION_SAMPLES:
                     continue
 
                 # Only use positive correlations with sufficient confidence
@@ -1469,8 +1474,8 @@ def get_entity_correlations(db: AreaOccupancyDB, area_name: str) -> dict[str, fl
         TypeError,
         RuntimeError,
         OSError,
-    ) as e:
-        _LOGGER.error("Error getting entity correlations for area %s: %s", area_name, e)
+    ):
+        _LOGGER.exception("Error getting entity correlations for area %s", area_name)
         return {}
 
 

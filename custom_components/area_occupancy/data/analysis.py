@@ -122,6 +122,9 @@ async def run_full_analysis(
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         _LOGGER.info("Step 7: Correlation analysis completed in %.2f ms", elapsed_ms)
 
+        # Refresh cached correlations for probability calculations
+        await coordinator.async_refresh_correlations()
+
         # Step 8: Save data (preserve decay state before refresh)
         # This ensures decay state is saved before async_refresh() potentially resets it
         start_time = time.perf_counter()

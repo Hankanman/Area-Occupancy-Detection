@@ -69,6 +69,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._save_timer: CALLBACK_TYPE | None = None
         self._setup_complete: bool = False
         self._analysis_running: bool = False
+        self._cached_correlations: dict[str, dict[str, float]] = {}
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -90,6 +91,50 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Failed to initialize database for entry %s: %s", self.entry_id, err
             )
             raise
+
+    async def async_refresh_correlations(self) -> None:
+        """Refresh cached entity correlations for all areas from database.
+
+        Loads correlations via executor to avoid blocking the event loop,
+        then stores them on the coordinator for synchronous access during
+        probability calculations.
+        """
+        if self.db is None:
+            return
+
+        for area_name in self.areas:
+            try:
+                from .db.correlation import get_entity_correlations  # noqa: PLC0415
+
+                correlations = await self.hass.async_add_executor_job(
+                    get_entity_correlations, self.db, area_name
+                )
+                self._cached_correlations[area_name] = correlations
+            except ImportError:
+                _LOGGER.debug(
+                    "Failed to import correlation module for area %s",
+                    area_name,
+                    exc_info=True,
+                )
+                self._cached_correlations[area_name] = {}
+            except (AttributeError, ValueError, OSError, RuntimeError):
+                _LOGGER.debug(
+                    "Failed to load entity correlations for area %s",
+                    area_name,
+                    exc_info=True,
+                )
+                self._cached_correlations[area_name] = {}
+
+    def get_cached_correlations(self, area_name: str) -> dict[str, float]:
+        """Return cached correlation strengths for the given area.
+
+        Args:
+            area_name: Name of the area to get correlations for
+
+        Returns:
+            Dict of entity_id -> correlation strength. Empty dict if no data.
+        """
+        return self._cached_correlations.get(area_name, {})
 
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
@@ -263,6 +308,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Load data from database
             await self.db.load_data()
+
+            # Load cached correlations for probability calculations
+            await self.async_refresh_correlations()
 
             # Ensure areas and entities exist in database and persist configuration/state
             # This must happen before analysis runs so that get_occupied_intervals() can
@@ -587,6 +635,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # state can be applied to the correctly configured entities
         # This is critical to restore state after config changes without requiring a full reload
         await self.db.load_data()
+
+        # Refresh cached correlations for new areas
+        await self.async_refresh_correlations()
 
         # Re-establish entity state tracking with new entity lists
         all_entity_ids = []

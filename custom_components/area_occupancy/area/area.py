@@ -241,27 +241,15 @@ class Area:
         return calc_env(entities, correlations=correlations)
 
     def _get_entity_correlations(self) -> dict[str, float]:
-        """Get learned correlation strengths from database.
+        """Get cached correlation strengths for this area.
 
-        Queries the correlations table for this area's entities and returns
-        a dict mapping entity_id to correlation strength (0.0-1.0).
+        Returns correlations loaded asynchronously by the coordinator.
+        No DB calls are made in this method.
 
         Returns:
             Dict of entity_id -> correlation strength. Empty dict if no data.
         """
-        if self.coordinator.db is None:
-            return {}
-
-        try:
-            from ..db.correlation import get_entity_correlations  # noqa: PLC0415
-
-            return get_entity_correlations(self.coordinator.db, self.area_name)
-        except Exception:  # noqa: BLE001
-            # Don't let correlation lookup failures break probability calculation
-            _LOGGER.debug(
-                "Failed to get entity correlations for area %s", self.area_name
-            )
-            return {}
+        return self.coordinator.get_cached_correlations(self.area_name)
 
     def area_prior(self) -> float:
         """Get the area's baseline occupancy prior from historical data.
