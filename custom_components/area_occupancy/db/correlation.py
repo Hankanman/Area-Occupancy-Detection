@@ -24,7 +24,7 @@ from ..const import (
     MIN_CORRELATION_SAMPLES,
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
 )
-from ..data.entity_type import InputType
+from ..data.entity_type import CorrelationType, InputType
 from ..time_utils import from_db_utc, to_db_utc, to_local, to_utc
 from ..utils import clamp_probability, map_binary_state_to_semantic
 from .utils import (
@@ -628,7 +628,7 @@ def analyze_correlation(  # noqa: C901
                 "calculation_date": to_db_utc(dt_util.utcnow()),
                 "correlation_coefficient": 0.0,
                 "sample_count": 0,
-                "correlation_type": "none",
+                "correlation_type": CorrelationType.NONE,
                 "confidence": 0.0,
             }
 
@@ -944,24 +944,24 @@ def analyze_correlation(  # noqa: C901
 
             # Determine correlation type
             abs_correlation = abs(correlation)
-            correlation_type = "none"
+            correlation_type: str = CorrelationType.NONE
             analysis_error = None
 
             if abs_correlation >= CORRELATION_MODERATE_THRESHOLD:
                 # Strong correlation (>= 0.4)
                 if correlation > 0:
-                    correlation_type = "strong_positive"
+                    correlation_type = CorrelationType.STRONG_POSITIVE
                 else:
-                    correlation_type = "strong_negative"
+                    correlation_type = CorrelationType.STRONG_NEGATIVE
             elif abs_correlation >= CORRELATION_WEAK_THRESHOLD:
                 # Weak correlation (0.15 to 0.4)
                 if correlation > 0:
-                    correlation_type = "positive"
+                    correlation_type = CorrelationType.POSITIVE
                 else:
-                    correlation_type = "negative"
+                    correlation_type = CorrelationType.NEGATIVE
             else:
                 # Very weak correlation (< 0.15) - no meaningful correlation
-                correlation_type = "none"
+                correlation_type = CorrelationType.NONE
                 analysis_error = "no_correlation"
 
             # Calculate confidence (based on correlation strength and sample size)
@@ -1075,7 +1075,7 @@ def save_binary_likelihood_result(
             "entity_id": likelihood_data["entity_id"],
             "input_type": input_type_value,
             "correlation_coefficient": 0.0,  # Binary sensors don't have correlation
-            "correlation_type": "binary_likelihood",
+            "correlation_type": CorrelationType.BINARY_LIKELIHOOD,
             "analysis_period_start": to_db_utc(
                 likelihood_data["analysis_period_start"]
             ),

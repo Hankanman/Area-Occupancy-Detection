@@ -1595,6 +1595,24 @@ class BaseOccupancyFlow:
                     "Decay half life must be 0 (use purpose value) or between 10 and 3600 seconds"
                 )
 
+    def _route_area_action(self, action: str, area_id: str) -> None:
+        """Route area action to appropriate step.
+
+        Args:
+            action: Action selected by user
+            area_id: Area ID being acted upon
+        """
+        if action == CONF_ACTION_EDIT:
+            # User wants to edit the area - no state change needed
+            pass
+        elif action == CONF_ACTION_REMOVE:
+            # User wants to remove the area
+            self._area_to_remove = area_id
+            self._area_being_edited = None
+        elif action == CONF_ACTION_CANCEL:
+            # User cancelled
+            self._area_being_edited = None
+
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection.
@@ -1833,24 +1851,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
             data_schema=vol.Schema(schema_dict),
             errors=errors,
         )
-
-    def _route_area_action(self, action: str, area_id: str) -> None:
-        """Route area action to appropriate step.
-
-        Args:
-            action: Action selected by user
-            area_id: Area ID being acted upon
-        """
-        if action == CONF_ACTION_EDIT:
-            # User wants to edit the area - no state change needed
-            pass
-        elif action == CONF_ACTION_REMOVE:
-            # User wants to remove the area
-            self._area_to_remove = area_id
-            self._area_being_edited = None
-        elif action == CONF_ACTION_CANCEL:
-            # User cancelled
-            self._area_being_edited = None
 
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None
@@ -2155,24 +2155,6 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             data_schema=vol.Schema(schema_dict),
             errors=errors,
         )
-
-    def _route_area_action(self, action: str, area_id: str) -> None:
-        """Route area action to appropriate step.
-
-        Args:
-            action: Action selected by user
-            area_id: Area ID being acted upon
-        """
-        if action == CONF_ACTION_EDIT:
-            # User wants to edit the area - no state change needed
-            pass
-        elif action == CONF_ACTION_REMOVE:
-            # User wants to remove the area
-            self._area_to_remove = area_id
-            self._area_being_edited = None
-        elif action == CONF_ACTION_CANCEL:
-            # User cancelled
-            self._area_being_edited = None
 
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None

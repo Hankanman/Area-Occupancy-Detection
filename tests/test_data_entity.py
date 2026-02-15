@@ -12,6 +12,7 @@ from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
+    GaussianParams,
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from homeassistant.const import STATE_OFF, STATE_ON
@@ -1147,10 +1148,10 @@ class TestEntityPropertiesAndMethods:
 
         # Should store Gaussian params
         assert entity.learned_gaussian_params is not None
-        assert entity.learned_gaussian_params["mean_occupied"] == 20.0
-        assert entity.learned_gaussian_params["std_occupied"] == 3.0
-        assert entity.learned_gaussian_params["mean_unoccupied"] == 10.0
-        assert entity.learned_gaussian_params["std_unoccupied"] == 2.0
+        assert entity.learned_gaussian_params.mean_occupied == 20.0
+        assert entity.learned_gaussian_params.std_occupied == 3.0
+        assert entity.learned_gaussian_params.mean_unoccupied == 10.0
+        assert entity.learned_gaussian_params.std_unoccupied == 2.0
 
         # Should also set learned_active_range
         assert entity.learned_active_range == (14.0, 26.0)  # 10+2*2, 20+2*3
@@ -1419,12 +1420,12 @@ class TestEntityPropertiesAndMethods:
         )
 
         # Set up Gaussian parameters
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         # Set current state value
         original_states = coordinator.hass.states
@@ -1456,12 +1457,12 @@ class TestEntityPropertiesAndMethods:
         )
 
         # Set Gaussian params with NaN in mean_occupied
-        entity.learned_gaussian_params = {
-            "mean_occupied": float("nan"),
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=float("nan"),
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         prob_true, prob_false = entity.get_likelihoods()
         # Should fall back to EntityType defaults
@@ -1469,12 +1470,12 @@ class TestEntityPropertiesAndMethods:
         assert prob_false == entity.type.prob_given_false
 
         # Test with inf in mean_unoccupied
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": float("inf"),
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=float("inf"),
+            std_unoccupied=50.0,
+        )
 
         prob_true, prob_false = entity.get_likelihoods()
         assert prob_true == entity.type.prob_given_true
@@ -1490,12 +1491,12 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(input_type=InputType.CO2),
         )
 
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         original_states = coordinator.hass.states
         # Test with NaN state (string that converts to NaN float)
@@ -1531,12 +1532,12 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(input_type=InputType.CO2),
         )
 
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         original_states = coordinator.hass.states
         # Test with non-numeric state
@@ -1560,12 +1561,12 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(input_type=InputType.CO2),
         )
 
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         original_states = coordinator.hass.states
         _set_states_get(coordinator.hass, lambda _: None)
@@ -1586,12 +1587,12 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(input_type=InputType.CO2),
         )
 
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 0.0,  # Zero std - will be clamped to 0.05
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": -1.0,  # Negative std - will be clamped to 0.05
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=0.0,  # Zero std - will be clamped to 0.05
+            mean_unoccupied=400.0,
+            std_unoccupied=-1.0,  # Negative std - will be clamped to 0.05
+        )
 
         original_states = coordinator.hass.states
         mock_state = Mock()
@@ -1620,18 +1621,18 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(input_type=InputType.CO2),
         )
 
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         # Mock _calculate_gaussian_density to return inf for p_true to test inf handling
         original_calc = entity._calculate_gaussian_density
 
         def mock_calc_inf(value, mean, std):
-            if mean == entity.learned_gaussian_params["mean_occupied"]:
+            if mean == entity.learned_gaussian_params.mean_occupied:
                 return float("inf")
             return original_calc(value, mean, std)
 
@@ -1670,18 +1671,18 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(input_type=InputType.CO2),
         )
 
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
 
         # Mock _calculate_gaussian_density to return NaN for target mean
         original_calc = entity._calculate_gaussian_density
 
         def mock_calc_nan(value, mean, std):
-            if mean == entity.learned_gaussian_params[mean_key]:
+            if mean == getattr(entity.learned_gaussian_params, mean_key):
                 return float("nan")
             return original_calc(value, mean, std)
 
@@ -1730,12 +1731,12 @@ class TestEntityPropertiesAndMethods:
         assert entity.is_continuous_likelihood is False
 
         # With Gaussian params, should be True
-        entity.learned_gaussian_params = {
-            "mean_occupied": 1000.0,
-            "std_occupied": 100.0,
-            "mean_unoccupied": 400.0,
-            "std_unoccupied": 50.0,
-        }
+        entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=1000.0,
+            std_occupied=100.0,
+            mean_unoccupied=400.0,
+            std_unoccupied=50.0,
+        )
         assert entity.is_continuous_likelihood is True
 
     def test_calculate_gaussian_density_std_zero(
@@ -1989,12 +1990,12 @@ class TestGaussianLikelihood:
         assert not mock_numeric_entity.is_continuous_likelihood
 
         # Set gaussian params
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
 
         # Now true
         assert mock_numeric_entity.is_continuous_likelihood
@@ -2035,12 +2036,12 @@ class TestGaussianLikelihood:
     ):
         """Test get_likelihoods with continuous parameters for numeric sensor."""
         # Setup: Occupied Mean 22, Std 1; Unoccupied Mean 20, Std 1
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
 
         mock_numeric_entity.state_provider = lambda x: value
         p_t, p_f = mock_numeric_entity.get_likelihoods()
@@ -2100,12 +2101,12 @@ class TestGaussianLikelihood:
         assert p_f == 0.5
 
         # With params but invalid state -> uses representative value (average of means)
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
         mock_numeric_entity.state_provider = lambda x: "unavailable"
         p_t, p_f = mock_numeric_entity.get_likelihoods()
         # Should use representative value (average of means = 21.0) to calculate probabilities
@@ -2129,10 +2130,10 @@ class TestGaussianLikelihood:
         mock_numeric_entity.update_correlation(correlation_data)
 
         assert mock_numeric_entity.learned_gaussian_params is not None
-        assert mock_numeric_entity.learned_gaussian_params["mean_occupied"] == 22.0
-        assert mock_numeric_entity.learned_gaussian_params["std_occupied"] == 1.5
-        assert mock_numeric_entity.learned_gaussian_params["mean_unoccupied"] == 20.0
-        assert mock_numeric_entity.learned_gaussian_params["std_unoccupied"] == 1.2
+        assert mock_numeric_entity.learned_gaussian_params.mean_occupied == 22.0
+        assert mock_numeric_entity.learned_gaussian_params.std_occupied == 1.5
+        assert mock_numeric_entity.learned_gaussian_params.mean_unoccupied == 20.0
+        assert mock_numeric_entity.learned_gaussian_params.std_unoccupied == 1.2
 
         # Should also populate learned_active_range for UI
         assert mock_numeric_entity.learned_active_range is not None
@@ -2159,12 +2160,12 @@ class TestGaussianLikelihood:
     def test_get_likelihoods_nan_mean_occupied(self, mock_numeric_entity):
         """Test get_likelihoods with NaN mean_occupied falls back to EntityType defaults."""
 
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": float("nan"),
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=float("nan"),
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
 
         p_t, p_f = mock_numeric_entity.get_likelihoods()
 
@@ -2175,12 +2176,12 @@ class TestGaussianLikelihood:
     def test_get_likelihoods_nan_mean_unoccupied(self, mock_numeric_entity):
         """Test get_likelihoods with NaN mean_unoccupied falls back to EntityType defaults."""
 
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": float("nan"),
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=float("nan"),
+            std_unoccupied=1.0,
+        )
 
         p_t, p_f = mock_numeric_entity.get_likelihoods()
 
@@ -2191,12 +2192,12 @@ class TestGaussianLikelihood:
     def test_get_likelihoods_inf_mean_occupied(self, mock_numeric_entity):
         """Test get_likelihoods with inf mean_occupied falls back to EntityType defaults."""
 
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": float("inf"),
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=float("inf"),
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
 
         p_t, p_f = mock_numeric_entity.get_likelihoods()
 
@@ -2207,12 +2208,12 @@ class TestGaussianLikelihood:
     def test_get_likelihoods_inf_mean_unoccupied(self, mock_numeric_entity):
         """Test get_likelihoods with inf mean_unoccupied falls back to EntityType defaults."""
 
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": float("inf"),
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=float("inf"),
+            std_unoccupied=1.0,
+        )
 
         p_t, p_f = mock_numeric_entity.get_likelihoods()
 
@@ -2223,12 +2224,12 @@ class TestGaussianLikelihood:
     def test_get_likelihoods_nan_state_value(self, mock_numeric_entity):
         """Test get_likelihoods with NaN state value uses mean of means."""
 
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
 
         # Set state to NaN
         mock_numeric_entity.state_provider = lambda x: float("nan")
@@ -2246,12 +2247,12 @@ class TestGaussianLikelihood:
     def test_get_likelihoods_inf_state_value(self, mock_numeric_entity):
         """Test get_likelihoods with inf state value uses mean of means."""
 
-        mock_numeric_entity.learned_gaussian_params = {
-            "mean_occupied": 22.0,
-            "std_occupied": 1.0,
-            "mean_unoccupied": 20.0,
-            "std_unoccupied": 1.0,
-        }
+        mock_numeric_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=22.0,
+            std_occupied=1.0,
+            mean_unoccupied=20.0,
+            std_unoccupied=1.0,
+        )
 
         # Set state to inf
         mock_numeric_entity.state_provider = lambda x: float("inf")
@@ -2289,12 +2290,12 @@ class TestGaussianLikelihood:
         )
 
         # Even with Gaussian params, motion sensors should use configured values
-        motion_entity.learned_gaussian_params = {
-            "mean_occupied": 0.9,
-            "std_occupied": 0.3,
-            "mean_unoccupied": 0.1,
-            "std_unoccupied": 0.3,
-        }
+        motion_entity.learned_gaussian_params = GaussianParams(
+            mean_occupied=0.9,
+            std_occupied=0.3,
+            mean_unoccupied=0.1,
+            std_unoccupied=0.3,
+        )
 
         p_t, p_f = motion_entity.get_likelihoods()
         # Should use configured values, not Gaussian params or EntityType defaults

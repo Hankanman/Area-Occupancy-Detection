@@ -15,7 +15,14 @@ from ..const import MAX_WEIGHT, MIN_WEIGHT
 from ..time_utils import to_utc
 from ..utils import map_binary_state_to_semantic
 from .decay import Decay
-from .entity_type import DEFAULT_TYPES, EntityType, InputType
+from .entity_type import (
+    BINARY_INPUT_TYPES,
+    DEFAULT_TYPES,
+    AnalysisStatus,
+    CorrelationType,
+    EntityType,
+    InputType,
+)
 from .purpose import get_default_decay_half_life
 
 if TYPE_CHECKING:
@@ -23,6 +30,37 @@ if TYPE_CHECKING:
     from ..db import AreaOccupancyDB as DB
 
 _LOGGER = logging.getLogger(__name__)
+
+SENSOR_TYPE_MAPPING: dict[str, InputType] = {
+    "motion": InputType.MOTION,
+    "media": InputType.MEDIA,
+    "appliance": InputType.APPLIANCE,
+    "door": InputType.DOOR,
+    "window": InputType.WINDOW,
+    "illuminance": InputType.ILLUMINANCE,
+    "humidity": InputType.HUMIDITY,
+    "temperature": InputType.TEMPERATURE,
+    "co2": InputType.CO2,
+    "co": InputType.CO,
+    "sound_pressure": InputType.SOUND_PRESSURE,
+    "pressure": InputType.PRESSURE,
+    "air_quality": InputType.AIR_QUALITY,
+    "voc": InputType.VOC,
+    "pm25": InputType.PM25,
+    "pm10": InputType.PM10,
+    "power": InputType.POWER,
+    "cover": InputType.COVER,
+}
+
+
+@dataclass(frozen=True)
+class GaussianParams:
+    """Learned Gaussian distribution parameters for numeric sensor likelihoods."""
+
+    mean_occupied: float
+    std_occupied: float
+    mean_unoccupied: float
+    std_unoccupied: float
 
 
 @dataclass
@@ -40,7 +78,7 @@ class Entity:
     last_updated: datetime | None = None
     previous_evidence: bool | None = None
     learned_active_range: tuple[float, float] | None = None
-    learned_gaussian_params: dict[str, float] | None = None
+    learned_gaussian_params: GaussianParams | None = None
     analysis_error: str | None = None
     correlation_type: str | None = None
 
@@ -107,16 +145,10 @@ class Entity:
             return (self.prob_given_true, self.prob_given_false)
 
         # Binary sensors: Use static probabilities if learned, otherwise EntityType defaults
-        binary_input_types = {
-            InputType.MEDIA,
-            InputType.APPLIANCE,
-            InputType.DOOR,
-            InputType.WINDOW,
-        }
-        if self.type.input_type in binary_input_types:
+        if self.type.input_type in BINARY_INPUT_TYPES:
             # If analysis has been run (not "not_analyzed"), use learned probabilities
             # Otherwise fall back to EntityType defaults
-            if self.analysis_error != "not_analyzed":
+            if self.analysis_error != AnalysisStatus.NOT_ANALYZED:
                 # Analysis has been run - use stored probabilities
                 return (self.prob_given_true, self.prob_given_false)
             # Not analyzed yet - use EntityType defaults
@@ -125,8 +157,8 @@ class Entity:
         # Numeric sensors: Use Gaussian PDF if available
         if self.learned_gaussian_params:
             # Validate mean values first
-            mean_occupied = self.learned_gaussian_params["mean_occupied"]
-            mean_unoccupied = self.learned_gaussian_params["mean_unoccupied"]
+            mean_occupied = self.learned_gaussian_params.mean_occupied
+            mean_unoccupied = self.learned_gaussian_params.mean_unoccupied
 
             # Check for NaN/inf in mean values
             if math.isnan(mean_occupied) or math.isinf(mean_occupied):
@@ -165,10 +197,8 @@ class Entity:
             try:
                 # Clamp std dev to minimum 0.05 to prevent numerical issues (division by zero)
                 # We do NOT clamp maximum as numeric sensors (e.g. CO2) can have large variance
-                std_occupied = max(0.05, self.learned_gaussian_params["std_occupied"])
-                std_unoccupied = max(
-                    0.05, self.learned_gaussian_params["std_unoccupied"]
-                )
+                std_occupied = max(0.05, self.learned_gaussian_params.std_occupied)
+                std_unoccupied = max(0.05, self.learned_gaussian_params.std_unoccupied)
 
                 # Calculate density for occupied state
                 p_true = self._calculate_gaussian_density(
@@ -294,7 +324,7 @@ class Entity:
     @property
     def active(self) -> bool:
         """Get the entity active status."""
-        return self.evidence or self.decay.is_decaying
+        return bool(self.evidence) or self.decay.is_decaying
 
     @property
     def active_states(self) -> list[str] | None:
@@ -344,7 +374,7 @@ class Entity:
         if (
             mean_unoccupied is None
             or std_unoccupied is None
-            or correlation_type == "none"
+            or correlation_type == CorrelationType.NONE
         ):
             self.learned_active_range = None
             self.learned_gaussian_params = None
@@ -352,34 +382,29 @@ class Entity:
 
         # Store Gaussian parameters if available
         if mean_occupied is not None and std_occupied is not None:
-            self.learned_gaussian_params = {
-                "mean_occupied": mean_occupied,
-                "std_occupied": std_occupied,
-                "mean_unoccupied": mean_unoccupied,
-                "std_unoccupied": std_unoccupied,
-            }
+            self.learned_gaussian_params = GaussianParams(
+                mean_occupied=mean_occupied,
+                std_occupied=std_occupied,
+                mean_unoccupied=mean_unoccupied,
+                std_unoccupied=std_unoccupied,
+            )
             # When using Gaussian params, we don't update static likelihoods
             # because they are calculated dynamically
         else:
             self.learned_gaussian_params = None
 
         # Only set learned_active_range for numeric sensors
-        # Binary sensors (MEDIA, APPLIANCE, DOOR, WINDOW) shouldn't have active_range
-        binary_input_types = {
-            InputType.MEDIA,
-            InputType.APPLIANCE,
-            InputType.DOOR,
-            InputType.WINDOW,
-        }
-
-        if self.type.input_type in binary_input_types:
+        if self.type.input_type in BINARY_INPUT_TYPES:
             # Binary sensors: don't set learned_active_range
             self.learned_active_range = None
         else:
             # Numeric sensors: calculate thresholds (mean ± 2σ)
             k_factor = 2.0
 
-            if correlation_type in ("strong_positive", "positive"):
+            if correlation_type in (
+                CorrelationType.STRONG_POSITIVE,
+                CorrelationType.POSITIVE,
+            ):
                 # Active > mean_unoccupied + K*std_unoccupied
                 # Same logic for both strong and weak positive correlations
                 lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
@@ -397,7 +422,10 @@ class Entity:
 
                 self.learned_active_range = (lower_bound, upper_bound)
 
-            elif correlation_type in ("strong_negative", "negative"):
+            elif correlation_type in (
+                CorrelationType.STRONG_NEGATIVE,
+                CorrelationType.NEGATIVE,
+            ):
                 # Active < mean_unoccupied - K*std_unoccupied
                 # Same logic for both strong and weak negative correlations
                 upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
@@ -726,9 +754,9 @@ class EntityFactory:
         # Set default analysis_error based on entity type
         # Motion sensors are excluded from correlation analysis
         analysis_error = (
-            "motion_sensor_excluded"
+            AnalysisStatus.MOTION_EXCLUDED
             if input_type == InputType.MOTION
-            else "not_analyzed"
+            else AnalysisStatus.NOT_ANALYZED
         )
 
         return Entity(
@@ -867,27 +895,6 @@ class EntityFactory:
         directly for entity creation.
         """
         specs = {}
-
-        # Define sensor type mappings to eliminate repetition
-        SENSOR_TYPE_MAPPING = {
-            "motion": InputType.MOTION,
-            "media": InputType.MEDIA,
-            "appliance": InputType.APPLIANCE,
-            "door": InputType.DOOR,
-            "window": InputType.WINDOW,
-            "illuminance": InputType.ILLUMINANCE,
-            "humidity": InputType.HUMIDITY,
-            "temperature": InputType.TEMPERATURE,
-            "co2": InputType.CO2,
-            "co": InputType.CO,
-            "sound_pressure": InputType.SOUND_PRESSURE,
-            "pressure": InputType.PRESSURE,
-            "air_quality": InputType.AIR_QUALITY,
-            "voc": InputType.VOC,
-            "pm25": InputType.PM25,
-            "pm10": InputType.PM10,
-            "power": InputType.POWER,
-        }
 
         # Process each sensor type using the mapping
         for sensor_type, input_type in SENSOR_TYPE_MAPPING.items():

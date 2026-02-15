@@ -18,6 +18,25 @@ from homeassistant.const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+class CorrelationType(StrEnum):
+    """Correlation type for sensor-occupancy analysis."""
+
+    STRONG_POSITIVE = "strong_positive"
+    POSITIVE = "positive"
+    STRONG_NEGATIVE = "strong_negative"
+    NEGATIVE = "negative"
+    NONE = "none"
+    BINARY_LIKELIHOOD = "binary_likelihood"
+
+
+class AnalysisStatus(StrEnum):
+    """Analysis status for entity correlation analysis."""
+
+    NOT_ANALYZED = "not_analyzed"
+    MOTION_EXCLUDED = "motion_sensor_excluded"
+    ANALYZED = "analyzed"
+
+
 class InputType(StrEnum):
     """Input type."""
 
@@ -166,6 +185,13 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.WINDOW,
     InputType.COVER,
     InputType.POWER,
+}
+
+BINARY_INPUT_TYPES: set[InputType] = {
+    InputType.MEDIA,
+    InputType.APPLIANCE,
+    InputType.DOOR,
+    InputType.WINDOW,
 }
 
 ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {

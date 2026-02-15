@@ -1,5 +1,6 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
+from dataclasses import asdict
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -88,7 +89,8 @@ def _collect_likelihood_data(area: "Area") -> dict[str, dict[str, Any]]:
         }
 
         # Always include analysis data and errors (even if None) for visibility
-        analysis_data = getattr(entity, "learned_gaussian_params", None)
+        gaussian_params = getattr(entity, "learned_gaussian_params", None)
+        analysis_data = asdict(gaussian_params) if gaussian_params else None
         analysis_error = getattr(entity, "analysis_error", None)
         correlation_type = getattr(entity, "correlation_type", None)
 
