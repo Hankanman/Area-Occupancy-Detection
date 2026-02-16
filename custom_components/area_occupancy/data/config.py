@@ -187,17 +187,25 @@ class IntegrationConfig:
             if not person_entity or not sleep_sensor or not sleep_area:
                 _LOGGER.warning("Skipping incomplete person config: %s", person_data)
                 continue
+            try:
+                threshold = int(
+                    person_data.get(
+                        CONF_PERSON_CONFIDENCE_THRESHOLD,
+                        DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
+                    )
+                )
+            except (ValueError, TypeError):
+                _LOGGER.warning(
+                    "Invalid confidence threshold for %s, using default",
+                    person_entity,
+                )
+                threshold = DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
             result.append(
                 PersonConfig(
                     person_entity=person_entity,
                     sleep_confidence_sensor=sleep_sensor,
                     sleep_area_id=sleep_area,
-                    confidence_threshold=int(
-                        person_data.get(
-                            CONF_PERSON_CONFIDENCE_THRESHOLD,
-                            DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
-                        )
-                    ),
+                    confidence_threshold=threshold,
                 )
             )
         return result

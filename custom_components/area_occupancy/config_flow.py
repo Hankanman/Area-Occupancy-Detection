@@ -1311,13 +1311,22 @@ def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
     if not sleep_area:
         raise vol.Invalid("Sleep area is required")
 
+    raw_threshold = user_input.get(
+        CONF_PERSON_CONFIDENCE_THRESHOLD, DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
+    )
+    try:
+        threshold = int(raw_threshold)
+    except (ValueError, TypeError) as err:
+        raise vol.Invalid(
+            f"Confidence threshold must be a number, got: {raw_threshold}"
+        ) from err
+    threshold = max(1, min(100, threshold))
+
     return {
         CONF_PERSON_ENTITY: person_entity,
         CONF_PERSON_SLEEP_SENSOR: sleep_sensor,
         CONF_PERSON_SLEEP_AREA: sleep_area,
-        CONF_PERSON_CONFIDENCE_THRESHOLD: user_input.get(
-            CONF_PERSON_CONFIDENCE_THRESHOLD, DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
-        ),
+        CONF_PERSON_CONFIDENCE_THRESHOLD: threshold,
     }
 
 

@@ -321,6 +321,7 @@ ATTR_SLEEP_CONFIDENCE: Final = "sleep_confidence"
 ATTR_PERSON_STATE: Final = "person_state"
 ATTR_SLEEP_THRESHOLD: Final = "sleep_threshold"
 ATTR_PEOPLE_SLEEPING: Final = "people_sleeping"
+ATTR_PEOPLE_DETAILS: Final = "people"
 
 
 # ────────────────────────────────────── State Mapping ───────────────────────────

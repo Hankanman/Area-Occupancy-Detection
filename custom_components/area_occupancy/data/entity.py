@@ -981,6 +981,12 @@ class EntityManager:
         """Add an entity to the manager."""
         self._entities[entity.entity_id] = entity
 
+    def register_entity(self, entity_id: str, input_type: str) -> None:
+        """Create and register an entity from a config spec if not already tracked."""
+        if entity_id not in self._entities:
+            entity = self._factory.create_from_config_spec(entity_id, input_type)
+            self._entities[entity_id] = entity
+
     async def cleanup(self) -> None:
         """Clean up resources and recreate from config.
 

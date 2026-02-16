@@ -13,7 +13,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_HOME, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
@@ -34,6 +34,7 @@ from .const import (
     ATTR_MAX_DURATION,
     ATTR_MOTION_STATE,
     ATTR_MOTION_TIMEOUT,
+    ATTR_PEOPLE_DETAILS,
     ATTR_PEOPLE_SLEEPING,
     ATTR_PERSON_STATE,
     ATTR_SLEEP_CONFIDENCE,
@@ -798,9 +799,15 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
             self._state = last_state.state
             self._attr_is_on = self._state == STATE_ON
 
-        # Register entity_id with the area
+        # Register entity_id with the area and add to EntityManager
         if (area := self._get_area()) is not None:
             area.sleep_entity_id = self.entity_id
+
+            # Add sleep entity to EntityManager so it's tracked for occupancy
+            # calculation. EntityManager is created before platform setup, so
+            # sleep_entity_id is None at that point — we must register it now.
+            area.entities.register_entity(self.entity_id, "sleep")
+            _LOGGER.debug("Registered sleep entity %s in EntityManager", self.entity_id)
 
         # Set up state tracking for all person + sleep confidence entities
         self._setup_entity_tracking()
@@ -843,7 +850,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
             confidence_state = self.hass.states.get(person.sleep_confidence_sensor)
             if (
                 person_state
-                and person_state.state == "home"
+                and person_state.state == STATE_HOME
                 and confidence_state
                 and confidence_state.state not in ("unknown", "unavailable", None, "")
             ):
@@ -896,7 +903,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                 with suppress(ValueError, TypeError):
                     confidence_val = float(confidence_state.state)
 
-            is_home = person_state and person_state.state == "home"
+            is_home = person_state and person_state.state == STATE_HOME
             is_sleeping = (
                 is_home
                 and confidence_val is not None
@@ -920,7 +927,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
 
         return {
             ATTR_PEOPLE_SLEEPING: people_sleeping,
-            "people": person_details,
+            ATTR_PEOPLE_DETAILS: person_details,
         }
 
     async def async_will_remove_from_hass(self) -> None:
