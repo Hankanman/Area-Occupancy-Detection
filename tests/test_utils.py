@@ -59,7 +59,7 @@ def _create_mock_entity(
     entity.prob_given_true = prob_given_true
     entity.prob_given_false = prob_given_false
     entity.weight = weight
-    # effective_weight defaults to weight (full information gain)
+    # effective_weight defaults to weight (full information gain).
     entity.effective_weight = (
         effective_weight if effective_weight is not None else weight
     )

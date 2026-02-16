@@ -469,11 +469,11 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
 
     # Test data with values outside bounds
     test_data = {
-        (0, 0): 0.02,  # Below TIME_PRIOR_MIN_BOUND (0.03)
-        (0, 1): 0.95,  # Above TIME_PRIOR_MAX_BOUND (0.9)
-        (0, 2): 0.5,  # Within bounds
-        (1, 0): TIME_PRIOR_MIN_BOUND,  # At minimum bound
-        (1, 1): TIME_PRIOR_MAX_BOUND,  # At maximum bound
+        (0, 0): 0.02,  # Below TIME_PRIOR_MIN_BOUND (0.03).
+        (0, 1): 0.95,  # Above TIME_PRIOR_MAX_BOUND (0.9).
+        (0, 2): 0.5,  # Within bounds.
+        (1, 0): TIME_PRIOR_MIN_BOUND,  # At minimum bound.
+        (1, 1): TIME_PRIOR_MAX_BOUND,  # At maximum bound.
     }
 
     with patch.object(

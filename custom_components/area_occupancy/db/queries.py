@@ -350,7 +350,7 @@ def build_presence_query(
         )
         .filter(
             *base_filters,
-            db.Entities.entity_type.in_([InputType.SLEEP.value, InputType.MEDIA.value]),
+            db.Entities.entity_type.in_([InputType.MEDIA.value, InputType.SLEEP.value]),
             db.Intervals.state == "on",
         )
     )
@@ -358,7 +358,7 @@ def build_presence_query(
 
 def execute_union_queries(session: Any, db: AreaOccupancyDB, queries: list[Any]) -> Any:
     """Execute and union multiple interval queries, returning ordered results."""
-    # Filter out None queries (presence query may return no results)
+    # Filter out None queries (presence query may return no results).
     valid_queries = [q for q in queries if q is not None]
     if not valid_queries:
         return []
@@ -367,7 +367,7 @@ def execute_union_queries(session: Any, db: AreaOccupancyDB, queries: list[Any])
         combined_query = valid_queries[0].order_by(db.Intervals.start_time)
         return combined_query.all()
 
-    # Union all queries then order
+    # Union all queries then order.
     combined = valid_queries[0].union_all(*valid_queries[1:])
     return combined.order_by(db.Intervals.start_time).all()
 

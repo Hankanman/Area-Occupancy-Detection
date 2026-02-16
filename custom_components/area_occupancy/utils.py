@@ -189,8 +189,8 @@ def sigmoid_probability(
         # contribute less. Falls back to weight if effective_weight is not available.
         ew = getattr(entity, "effective_weight", entity.weight)
 
-        # Add to z: effective_weight × evidence × correlation × strength_factor
-        # strength_factor (×2) converts prob_given_true to appropriate logit-space contribution
+        # Add to z: effective_weight × evidence × correlation × strength_factor.
+        # strength_factor (×2) converts prob_given_true to appropriate logit-space contribution.
         contribution = ew * evidence * correlation * (strength * 2)
         z += contribution
 
@@ -503,7 +503,7 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
 
         log_p_t = math.log(p_t)
         log_p_f = math.log(p_f)
-        # Use effective_weight so uninformative sensors contribute less
+        # Use effective_weight so uninformative sensors contribute less.
         ew = getattr(entity, "effective_weight", entity.weight)
         contribution_true = log_p_t * ew
         contribution_false = log_p_f * ew

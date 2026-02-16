@@ -441,7 +441,7 @@ class TestGetOccupiedIntervals:
             session.commit()
 
         # Occupied intervals now include motion + media (presence sensors),
-        # but NOT appliances
+        # but NOT appliances.
         result = get_occupied_intervals(
             db,
             db.coordinator.entry_id,
@@ -450,7 +450,7 @@ class TestGetOccupiedIntervals:
             motion_timeout_seconds=0,
         )
 
-        # Should return motion + media intervals (2 intervals, not merged since non-overlapping)
+        # Should return motion + media intervals (2 intervals, not merged since non-overlapping).
         assert len(result) == 2
 
     def test_get_occupied_intervals_includes_sleep(
@@ -469,7 +469,7 @@ class TestGetOccupiedIntervals:
             session.commit()
 
         with db.get_session() as session:
-            # 8-hour sleep interval
+            # 8-hour sleep interval.
             _create_test_interval(
                 session,
                 db,
@@ -488,9 +488,9 @@ class TestGetOccupiedIntervals:
             motion_timeout_seconds=0,
         )
 
-        # Sleep interval should be included
+        # Sleep interval should be included.
         assert len(result) == 1
-        # Duration should be approximately 8 hours
+        # Duration should be approximately 8 hours.
         duration = (result[0][1] - result[0][0]).total_seconds()
         assert abs(duration - 8 * 3600) < 1.0
 

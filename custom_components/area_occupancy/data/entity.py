@@ -279,7 +279,7 @@ class Entity:
         Additionally, sensors with analysis errors (e.g., no_correlation, insufficient_data)
         are clamped to a low value since correlation analysis couldn't establish their value.
         """
-        # Sensors with analysis failures get a low information gain
+        # Sensors with analysis failures get a low information gain.
         if self.analysis_error is not None and self.analysis_error not in (
             AnalysisStatus.NOT_ANALYZED,
             AnalysisStatus.MOTION_EXCLUDED,

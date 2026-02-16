@@ -580,7 +580,7 @@ class TestEntityPropertiesAndMethods:
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test information_gain for highly informative sensors (large pgt/pgf gap)."""
-        # Motion sensor: prob_given_true=0.95, prob_given_false=0.02
+        # Motion sensor: prob_given_true=0.95, prob_given_false=0.02.
         entity = create_test_entity(
             prob_given_true=0.95,
             prob_given_false=0.02,
@@ -627,7 +627,7 @@ class TestEntityPropertiesAndMethods:
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test information_gain for not_analyzed and motion_excluded uses likelihoods."""
-        # NOT_ANALYZED should not trigger the low-gain clamp
+        # NOT_ANALYZED should not trigger the low-gain clamp.
         entity = create_test_entity(
             prob_given_true=0.95,
             prob_given_false=0.02,
@@ -636,7 +636,7 @@ class TestEntityPropertiesAndMethods:
         )
         assert entity.information_gain > 0.9
 
-        # MOTION_EXCLUDED should not trigger the low-gain clamp
+        # MOTION_EXCLUDED should not trigger the low-gain clamp.
         entity2 = create_test_entity(
             prob_given_true=0.95,
             prob_given_false=0.02,
@@ -647,7 +647,7 @@ class TestEntityPropertiesAndMethods:
 
     def test_effective_weight(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test effective_weight = weight × information_gain."""
-        # Highly informative sensor
+        # Highly informative sensor.
         entity_type = EntityType(
             input_type=InputType.MOTION,
             weight=0.85,
@@ -664,7 +664,7 @@ class TestEntityPropertiesAndMethods:
         assert entity.effective_weight == pytest.approx(
             entity.weight * entity.information_gain, abs=1e-6
         )
-        assert entity.effective_weight > 0.8  # Nearly full weight
+        assert entity.effective_weight > 0.8  # Nearly full weight.
 
     def test_effective_weight_uninformative_is_zero(
         self, coordinator: AreaOccupancyCoordinator
