@@ -14,11 +14,13 @@ from sqlalchemy.sql import literal
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TIME_PRIOR
-from ..data.entity_type import InputType
+from ..data.entity_type import DEFAULT_TYPES, InputType
 from ..time_utils import from_db_utc, to_db_utc, to_utc
 from .utils import apply_motion_timeout, merge_overlapping_intervals
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Query, Session
+
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
@@ -176,10 +178,11 @@ def get_occupied_intervals(
     lookback_days: int,
     motion_timeout_seconds: int,
 ) -> list[tuple[datetime, datetime]]:
-    """Fetch occupied intervals from motion sensors only (direct query).
+    """Fetch occupied intervals from presence sensors (direct query).
 
-    Occupied intervals are determined exclusively by motion sensors to ensure
-    consistent ground truth for prior calculations and correlation analysis.
+    Occupied intervals are determined by motion, sleep, and media sensors
+    to provide comprehensive ground truth for prior calculations and
+    correlation analysis. Motion timeout is only applied to motion intervals.
 
     For cached version with prior-specific caching, use analysis.get_occupied_intervals_with_cache.
     """
@@ -194,8 +197,11 @@ def get_occupied_intervals(
         with db.get_session() as session:
             base_filters = build_base_filters(db, entry_id, lookback_date_db, area_name)
             motion_query = build_motion_query(session, db, base_filters)
+            presence_query = build_presence_query(session, db, base_filters)
 
-            all_results = execute_union_queries(session, db, [motion_query])
+            all_results = execute_union_queries(
+                session, db, [motion_query, presence_query]
+            )
             all_intervals, motion_raw = process_query_results(all_results)
 
         query_time = (dt_util.utcnow() - start_time).total_seconds()
@@ -325,21 +331,66 @@ def build_motion_query(
     )
 
 
-def execute_union_queries(session: Any, db: AreaOccupancyDB, queries: list[Any]) -> Any:
-    """Execute motion query, returning results.
+def build_presence_query(
+    session: Session, db: AreaOccupancyDB, base_filters: list[sa.ColumnElement[bool]]
+) -> Query[Any]:
+    """Create query selecting sleep and media presence intervals.
 
-    Since occupied intervals are motion-only, this always executes a single motion query.
+    These sensors indicate sustained presence (e.g., sleeping, watching TV)
+    that motion sensors may miss.
     """
-    combined_query = queries[0].order_by(db.Intervals.start_time)
-    return combined_query.all()
+    # Collect active states from DEFAULT_TYPES for each presence type.
+    presence_types = [InputType.MEDIA, InputType.SLEEP]
+    active_states: set[str] = set()
+    for ptype in presence_types:
+        defaults = DEFAULT_TYPES.get(ptype)
+        if defaults and defaults.get("active_states"):
+            active_states.update(defaults["active_states"])
+
+    return (
+        session.query(
+            db.Intervals.start_time,
+            db.Intervals.end_time,
+            literal("presence").label("sensor_type"),
+        )
+        .join(
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
+        )
+        .filter(
+            *base_filters,
+            db.Entities.entity_type.in_([InputType.MEDIA.value, InputType.SLEEP.value]),
+            db.Intervals.state.in_(sorted(active_states)),
+        )
+    )
+
+
+def execute_union_queries(
+    session: Session, db: AreaOccupancyDB, queries: list[Query[Any]]
+) -> list[Any]:
+    """Execute and union multiple interval queries, returning ordered results."""
+    # Filter out None queries (presence query may return no results).
+    valid_queries = [q for q in queries if q is not None]
+    if not valid_queries:
+        return []
+
+    if len(valid_queries) == 1:
+        combined_query = valid_queries[0].order_by(db.Intervals.start_time)
+        return combined_query.all()
+
+    # Union all queries then order.
+    combined = valid_queries[0].union_all(*valid_queries[1:])
+    return combined.order_by(db.Intervals.start_time).all()
 
 
 def process_query_results(
     results: list[tuple[datetime, datetime, str]],
 ) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
-    """Process query results into intervals and motion intervals.
+    """Process query results into all intervals and motion-only intervals.
 
-    Since occupied intervals are motion-only, all results are motion intervals.
+    Motion intervals are tracked separately because apply_motion_timeout()
+    only extends motion segments (not sleep/media presence).
     """
     motion_raw: list[tuple[datetime, datetime]] = []
     all_intervals: list[tuple[datetime, datetime]] = []

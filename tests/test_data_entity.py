@@ -576,6 +576,116 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
+    def test_information_gain_highly_informative(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test information_gain for highly informative sensors (large pgt/pgf gap)."""
+        # Motion sensor: prob_given_true=0.95, prob_given_false=0.02.
+        entity = create_test_entity(
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            coordinator=coordinator,
+        )
+        gain = entity.information_gain
+        assert gain > 0.9
+        assert gain <= 1.0
+
+    def test_information_gain_uninformative(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test information_gain for uninformative sensors (pgt ≈ pgf)."""
+        entity_type = EntityType(
+            input_type=InputType.DOOR,
+            weight=0.3,
+            prob_given_true=0.50,
+            prob_given_false=0.50,
+            active_states=["closed"],
+        )
+        entity = create_test_entity(
+            entity_type=entity_type,
+            prob_given_true=0.50,
+            prob_given_false=0.50,
+            coordinator=coordinator,
+            analysis_error=None,
+        )
+        gain = entity.information_gain
+        assert gain == 0.0
+
+    def test_information_gain_with_analysis_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test information_gain is clamped to 0.1 for sensors with analysis errors."""
+        entity = create_test_entity(
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            coordinator=coordinator,
+            analysis_error="no_correlation",
+        )
+        assert entity.information_gain == 0.1
+
+    def test_information_gain_not_analyzed_uses_likelihoods(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test information_gain for not_analyzed and motion_excluded uses likelihoods."""
+        # NOT_ANALYZED should not trigger the low-gain clamp.
+        entity = create_test_entity(
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            coordinator=coordinator,
+            analysis_error="not_analyzed",
+        )
+        assert entity.information_gain > 0.9
+
+        # MOTION_EXCLUDED should not trigger the low-gain clamp.
+        entity2 = create_test_entity(
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            coordinator=coordinator,
+            analysis_error="motion_sensor_excluded",
+        )
+        assert entity2.information_gain > 0.9
+
+    def test_effective_weight(self, coordinator: AreaOccupancyCoordinator) -> None:
+        """Test effective_weight = weight × information_gain."""
+        # Highly informative sensor.
+        entity_type = EntityType(
+            input_type=InputType.MOTION,
+            weight=0.85,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            active_states=[STATE_ON],
+        )
+        entity = create_test_entity(
+            entity_type=entity_type,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            coordinator=coordinator,
+        )
+        assert entity.effective_weight == pytest.approx(
+            entity.weight * entity.information_gain, abs=1e-6
+        )
+        assert entity.effective_weight > 0.8  # Nearly full weight.
+
+    def test_effective_weight_uninformative_is_zero(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test effective_weight is zero for uninformative sensors."""
+        entity_type = EntityType(
+            input_type=InputType.DOOR,
+            weight=0.3,
+            prob_given_true=0.50,
+            prob_given_false=0.50,
+            active_states=["closed"],
+        )
+        entity = create_test_entity(
+            entity_type=entity_type,
+            prob_given_true=0.50,
+            prob_given_false=0.50,
+            coordinator=coordinator,
+            analysis_error=None,
+        )
+        assert entity.effective_weight == 0.0
+
     def test_entity_methods_update_decay(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:

@@ -17,6 +17,7 @@ from custom_components.area_occupancy.db.operations import (
 from custom_components.area_occupancy.db.queries import (
     build_base_filters,
     build_motion_query,
+    build_presence_query,
     get_all_time_priors,
     get_area_data,
     get_global_prior,
@@ -391,10 +392,10 @@ class TestGetOccupiedIntervals:
         )
         assert result == []
 
-    def test_get_occupied_intervals_motion_only(
+    def test_get_occupied_intervals_presence_sensors(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test retrieval with motion sensors only (prior calculations use motion-only)."""
+        """Test retrieval includes motion + media + sleep but not appliances."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         db.save_area_data(area_name)
@@ -440,7 +441,8 @@ class TestGetOccupiedIntervals:
             )
             session.commit()
 
-        # Test motion-only retrieval (occupied intervals are motion-only)
+        # Occupied intervals now include motion + media (presence sensors),
+        # but NOT appliances.
         result = get_occupied_intervals(
             db,
             db.coordinator.entry_id,
@@ -449,8 +451,49 @@ class TestGetOccupiedIntervals:
             motion_timeout_seconds=0,
         )
 
-        # Should only return motion sensor intervals
+        # Should return motion + media intervals (2 intervals, not merged since non-overlapping).
+        assert len(result) == 2
+
+    def test_get_occupied_intervals_includes_sleep(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that sleep sensor intervals are included in occupied intervals."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        start = now - timedelta(hours=8)
+
+        with db.get_session() as session:
+            _create_test_entity(session, db, "binary_sensor.sleep1", "sleep", area_name)
+            session.commit()
+
+        with db.get_session() as session:
+            # 8-hour sleep interval.
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.sleep1",
+                start,
+                now,
+                area_name,
+            )
+            session.commit()
+
+        result = get_occupied_intervals(
+            db,
+            db.coordinator.entry_id,
+            area_name,
+            lookback_days=1,
+            motion_timeout_seconds=0,
+        )
+
+        # Sleep interval should be included.
         assert len(result) == 1
+        # Duration should be approximately 8 hours.
+        duration = (result[0][1] - result[0][0]).total_seconds()
+        assert abs(duration - 8 * 3600) < 1.0
 
     def test_get_occupied_intervals_overlapping_merge(
         self, coordinator: AreaOccupancyCoordinator
@@ -734,6 +777,22 @@ class TestBuildFilters:
             # Check that query filters by entity_type == MOTION and state == "on"
             # Query should filter by motion entity type and "on" state
             # Note: Query may fail due to missing tables/data, but structure should be valid
+            with suppress(Exception):
+                _ = query.all()
+
+    def test_build_presence_query(self, coordinator: AreaOccupancyCoordinator) -> None:
+        """Test build_presence_query function."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        lookback_date = dt_util.utcnow() - timedelta(days=90)
+        base_filters = build_base_filters(
+            db, db.coordinator.entry_id, lookback_date, area_name
+        )
+
+        with db.get_session() as session:
+            query = build_presence_query(session, db, base_filters)
+            assert query is not None
+
             with suppress(Exception):
                 _ = query.all()
 

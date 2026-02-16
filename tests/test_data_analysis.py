@@ -608,7 +608,7 @@ class TestPriorAnalyzerCalculateTimePriors:
     def test_safety_bounds_clamping(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
     ) -> None:
-        """Test that time priors are clamped to [0.1, 0.9] bounds."""
+        """Test that time priors are clamped to [0.03, 0.9] bounds."""
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
@@ -629,14 +629,14 @@ class TestPriorAnalyzerCalculateTimePriors:
 
         slot_key = (0, 10)
         assert slot_key in time_priors
-        # Should be clamped to 0.9
+        # Should be clamped to 0.9.
         assert time_priors[slot_key] == TIME_PRIOR_MAX_BOUND
 
-        # Test minimum bound: very low occupancy
+        # Test minimum bound: very low occupancy.
         interval_start2 = monday
         interval_end2 = monday + timedelta(
-            minutes=5
-        )  # 5 minutes = 0.083, should clamp to 0.1
+            seconds=60
+        )  # 1 minute = 0.017, should clamp to 0.03.
         intervals2 = [(interval_start2, interval_end2)]
 
         time_priors2, _ = analyzer.calculate_time_priors(
@@ -644,7 +644,7 @@ class TestPriorAnalyzerCalculateTimePriors:
         )
 
         assert slot_key in time_priors2
-        # Should be clamped to 0.1
+        # Should be clamped to 0.03.
         assert time_priors2[slot_key] == TIME_PRIOR_MIN_BOUND
 
     def test_empty_slots_skipped(

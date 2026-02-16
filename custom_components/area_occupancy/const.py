@@ -161,7 +161,7 @@ MIN_WEIGHT: Final[float] = 0.01
 MAX_WEIGHT: Final[float] = 0.99
 
 # Time Prior Bounds
-TIME_PRIOR_MIN_BOUND: Final[float] = 0.1
+TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
 
 # Default prior probabilities

@@ -32,6 +32,7 @@ def _create_mock_entity(
     decay_factor: float = 1.0,
     is_continuous: bool = False,
     input_type: InputType = InputType.MOTION,
+    effective_weight: float | None = None,
 ) -> Mock:
     """Create a mock entity for testing bayesian_probability.
 
@@ -44,6 +45,7 @@ def _create_mock_entity(
         decay_factor: Decay factor (0.0 to 1.0)
         is_continuous: Whether entity uses continuous likelihood
         input_type: The type of input (motion, temperature, etc.)
+        effective_weight: Effective weight (defaults to weight if not specified)
 
     Returns:
         Mock entity object
@@ -57,6 +59,10 @@ def _create_mock_entity(
     entity.prob_given_true = prob_given_true
     entity.prob_given_false = prob_given_false
     entity.weight = weight
+    # effective_weight defaults to weight (full information gain).
+    entity.effective_weight = (
+        effective_weight if effective_weight is not None else weight
+    )
     entity.is_continuous_likelihood = is_continuous
     entity.type = Mock()
     entity.type.input_type = input_type
@@ -170,7 +176,7 @@ class TestCombinePriors:
         result = combine_priors(0.3, 0.7)
         assert 0.3 < result < 0.7  # Should be between the two priors
 
-        # With default time_weight (0.2), result should be closer to area_prior
+        # With default time_weight (0.4), result should be closer to area_prior
         result = combine_priors(0.2, 0.8)
         assert 0.2 < result < 0.8
         # Should be closer to area_prior (0.2) than time_prior (0.8)
