@@ -429,6 +429,7 @@ class TestGetOccupiedIntervals:
                 start + timedelta(minutes=40),
                 start + timedelta(minutes=80),
                 area_name,
+                state="playing",
             )
             _create_test_interval(
                 session,
@@ -455,7 +456,7 @@ class TestGetOccupiedIntervals:
 
     def test_get_occupied_intervals_includes_sleep(
         self, coordinator: AreaOccupancyCoordinator
-    ):
+    ) -> None:
         """Test that sleep sensor intervals are included in occupied intervals."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
@@ -779,7 +780,7 @@ class TestBuildFilters:
             with suppress(Exception):
                 _ = query.all()
 
-    def test_build_presence_query(self, coordinator: AreaOccupancyCoordinator):
+    def test_build_presence_query(self, coordinator: AreaOccupancyCoordinator) -> None:
         """Test build_presence_query function."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]

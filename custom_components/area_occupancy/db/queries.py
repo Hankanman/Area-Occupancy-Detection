@@ -14,11 +14,13 @@ from sqlalchemy.sql import literal
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TIME_PRIOR
-from ..data.entity_type import InputType
+from ..data.entity_type import DEFAULT_TYPES, InputType
 from ..time_utils import from_db_utc, to_db_utc, to_utc
 from .utils import apply_motion_timeout, merge_overlapping_intervals
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Query, Session
+
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
@@ -330,13 +332,21 @@ def build_motion_query(
 
 
 def build_presence_query(
-    session: Any, db: AreaOccupancyDB, base_filters: list[Any]
-) -> Any:
+    session: Session, db: AreaOccupancyDB, base_filters: list[sa.ColumnElement[bool]]
+) -> Query[Any]:
     """Create query selecting sleep and media presence intervals.
 
     These sensors indicate sustained presence (e.g., sleeping, watching TV)
     that motion sensors may miss.
     """
+    # Collect active states from DEFAULT_TYPES for each presence type.
+    presence_types = [InputType.MEDIA, InputType.SLEEP]
+    active_states: set[str] = set()
+    for ptype in presence_types:
+        defaults = DEFAULT_TYPES.get(ptype)
+        if defaults and defaults.get("active_states"):
+            active_states.update(defaults["active_states"])
+
     return (
         session.query(
             db.Intervals.start_time,
@@ -351,12 +361,14 @@ def build_presence_query(
         .filter(
             *base_filters,
             db.Entities.entity_type.in_([InputType.MEDIA.value, InputType.SLEEP.value]),
-            db.Intervals.state == "on",
+            db.Intervals.state.in_(sorted(active_states)),
         )
     )
 
 
-def execute_union_queries(session: Any, db: AreaOccupancyDB, queries: list[Any]) -> Any:
+def execute_union_queries(
+    session: Session, db: AreaOccupancyDB, queries: list[Query[Any]]
+) -> list[Any]:
     """Execute and union multiple interval queries, returning ordered results."""
     # Filter out None queries (presence query may return no results).
     valid_queries = [q for q in queries if q is not None]
