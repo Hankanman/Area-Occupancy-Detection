@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AllAreas, AreaDeviceHandle
 from .const import ALL_AREAS_IDENTIFIER
+from .data.activity import ActivityId
 from .utils import format_float, format_percentage, generate_entity_unique_id
 
 if TYPE_CHECKING:
@@ -32,6 +33,8 @@ NAME_PROBABILITY_SENSOR = "Occupancy Probability"
 NAME_EVIDENCE_SENSOR = "Evidence"
 NAME_PRESENCE_PROBABILITY_SENSOR = "Presence Probability"
 NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR = "Environmental Confidence"
+NAME_DETECTED_ACTIVITY_SENSOR = "Detected Activity"
+NAME_ACTIVITY_CONFIDENCE_SENSOR = "Activity Confidence"
 
 
 class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
@@ -429,6 +432,78 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
         return format_float(area.environmental_confidence() * 100)
 
 
+class DetectedActivitySensor(AreaOccupancySensorBase):
+    """Enum sensor reporting the detected activity in an area."""
+
+    _unrecorded_attributes = frozenset({"all_scores"})
+
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle,
+    ) -> None:
+        """Initialize the detected activity sensor."""
+        super().__init__(area_handle=area_handle)
+        self._attr_unique_id = generate_entity_unique_id(
+            self._entry_id,
+            self.device_info,
+            NAME_DETECTED_ACTIVITY_SENSOR,
+        )
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = [a.value for a in ActivityId]
+        self._attr_translation_key = "detected_activity"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the detected activity identifier."""
+        area = self._get_area()
+        if area is None:
+            return None
+        return area.detected_activity().activity_id.value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return confidence, matching indicators, and all scored activities."""
+        try:
+            area = self._get_area()
+            if area is None:
+                return {}
+            result = area.detected_activity()
+            return {
+                "confidence": round(result.confidence * 100, 1),
+                "matching_indicators": result.matching_indicators,
+            }
+        except (TypeError, AttributeError, KeyError):
+            return {}
+
+
+class ActivityConfidenceSensor(AreaOccupancySensorBase):
+    """Percentage sensor reporting confidence in the detected activity."""
+
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle,
+    ) -> None:
+        """Initialize the activity confidence sensor."""
+        super().__init__(area_handle=area_handle)
+        self._attr_unique_id = generate_entity_unique_id(
+            self._entry_id,
+            self.device_info,
+            NAME_ACTIVITY_CONFIDENCE_SENSOR,
+        )
+        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
+        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_translation_key = "activity_confidence"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the activity confidence as a percentage."""
+        area = self._get_area()
+        if area is None:
+            return None
+        return format_float(area.detected_activity().confidence * 100)
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: Any
 ) -> None:
@@ -449,6 +524,8 @@ async def async_setup_entry(
                 EvidenceSensor(area_handle=area_handle),
                 PresenceProbabilitySensor(area_handle=area_handle),
                 EnvironmentalConfidenceSensor(area_handle=area_handle),
+                DetectedActivitySensor(area_handle=area_handle),
+                ActivityConfidenceSensor(area_handle=area_handle),
             ]
         )
 
