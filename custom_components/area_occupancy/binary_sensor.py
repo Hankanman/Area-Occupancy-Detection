@@ -942,6 +942,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         area = self._get_area()
         if area is not None and area.sleep_entity_id == self.entity_id:
             area.sleep_entity_id = None
+            area.entities.deregister_entity(self.entity_id)
 
         await super().async_will_remove_from_hass()
 

@@ -992,6 +992,10 @@ class EntityManager:
             entity = self._factory.create_from_config_spec(entity_id, input_type)
             self._entities[entity_id] = entity
 
+    def deregister_entity(self, entity_id: str) -> None:
+        """Remove an entity from the manager if it exists."""
+        self._entities.pop(entity_id, None)
+
     async def cleanup(self) -> None:
         """Clean up resources and recreate from config.
 
