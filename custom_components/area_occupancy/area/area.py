@@ -19,6 +19,7 @@ from ..const import (
     DOMAIN,
     MIN_PROBABILITY,
 )
+from ..data.activity import DetectedActivity, detect_activity
 from ..data.analysis import start_prior_analysis
 from ..utils import (
     combined_probability as calc_combined,
@@ -123,6 +124,10 @@ class Area:
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
         self.sleep_entity_id: str | None = None
+
+        # Activity detection cache
+        self._activity_cache: DetectedActivity | None = None
+        self._activity_cache_key: tuple[frozenset[str], float] | None = None
 
     @property
     def factory(self) -> EntityFactory:
@@ -291,6 +296,27 @@ class Area:
             True if occupied, False otherwise
         """
         return self.probability() >= self.config.threshold
+
+    def detected_activity(self) -> DetectedActivity:
+        """Detect the current activity in this area.
+
+        Results are cached and recomputed only when the set of active
+        entity IDs or the occupancy probability changes.
+
+        Returns:
+            DetectedActivity with activity_id, confidence, and matching indicators.
+        """
+        active_ids = frozenset(e.entity_id for e in self.entities.active_entities)
+        prob = round(self.probability(), 4)
+        cache_key = (active_ids, prob)
+
+        if self._activity_cache_key == cache_key and self._activity_cache is not None:
+            return self._activity_cache
+
+        result = detect_activity(self)
+        self._activity_cache = result
+        self._activity_cache_key = cache_key
+        return result
 
     def threshold(self) -> float:
         """Return the current occupancy threshold (0.0-1.0) for this area.

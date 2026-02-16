@@ -747,13 +747,14 @@ class TestAsyncSetupEntry:
 
         mock_async_add_entities.assert_called_once()
         entities = mock_async_add_entities.call_args[0][0]
-        # Should have 6 sensors per area + 5 All Areas sensors (no EvidenceSensor for All Areas)
-        # With 1 area: 6 (area) + 5 (All Areas) = 11 total
+        # Should have 8 sensors per area + 5 All Areas sensors (no EvidenceSensor/Activity for All Areas)
+        # With 1 area: 8 (area) + 5 (All Areas) = 13 total
         # Area sensors: ProbabilitySensor, DecaySensor, PriorsSensor, EvidenceSensor,
-        #               PresenceProbabilitySensor, EnvironmentalConfidenceSensor
+        #               PresenceProbabilitySensor, EnvironmentalConfidenceSensor,
+        #               DetectedActivitySensor, ActivityConfidenceSensor
         # All Areas: ProbabilitySensor, DecaySensor, PriorsSensor,
         #            PresenceProbabilitySensor, EnvironmentalConfidenceSensor
-        assert len(entities) == 11
+        assert len(entities) == 13
 
         entity_types = [type(entity).__name__ for entity in entities]
         expected_types = [
@@ -763,6 +764,8 @@ class TestAsyncSetupEntry:
             "DecaySensor",
             "PresenceProbabilitySensor",
             "EnvironmentalConfidenceSensor",
+            "DetectedActivitySensor",
+            "ActivityConfidenceSensor",
         ]
         # All expected types should be present (from area sensors)
         for expected_type in expected_types:
@@ -793,10 +796,13 @@ class TestAsyncSetupEntry:
         assert "EnvironmentalConfidenceSensor" in all_areas_types
         # EvidenceSensor should NOT be in All Areas
         assert "EvidenceSensor" not in all_areas_types
+        # Activity sensors should NOT be in All Areas
+        assert "DetectedActivitySensor" not in all_areas_types
+        assert "ActivityConfidenceSensor" not in all_areas_types
 
-        # Should have 6 area sensors (one for each area)
-        assert len(area_entities) == 6, (
-            f"Expected 6 area sensors, got {len(area_entities)}"
+        # Should have 8 area sensors (one for each sensor type)
+        assert len(area_entities) == 8, (
+            f"Expected 8 area sensors, got {len(area_entities)}"
         )
 
         # Verify all entities have correct coordinator assignment

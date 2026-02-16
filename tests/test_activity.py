@@ -1,0 +1,730 @@
+"""Tests for activity detection module."""
+
+from __future__ import annotations
+
+from unittest.mock import Mock
+
+import pytest
+
+from custom_components.area_occupancy.area.area import Area
+from custom_components.area_occupancy.data.activity import (
+    ACTIVITY_DEFINITIONS,
+    ActivityId,
+    DetectedActivity,
+    _environmental_signal_strength,
+    detect_activity,
+)
+from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.data.purpose import AreaPurpose
+from custom_components.area_occupancy.data.types import GaussianParams
+
+# ruff: noqa: SLF001
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────
+
+
+def _make_entity(
+    entity_id: str,
+    input_type: InputType,
+    *,
+    evidence: bool | None = False,
+    is_decaying: bool = False,
+    decay_factor: float = 1.0,
+    state: str | float | None = None,
+    gaussian_params: GaussianParams | None = None,
+) -> Mock:
+    """Build a lightweight mock entity for scoring tests."""
+    entity = Mock()
+    entity.entity_id = entity_id
+    entity.type = Mock()
+    entity.type.input_type = input_type
+    entity.evidence = evidence
+    entity.decay = Mock()
+    entity.decay.is_decaying = is_decaying
+    entity.decay_factor = decay_factor
+    entity.state = state
+    entity.learned_gaussian_params = gaussian_params
+    entity.active = evidence is True or is_decaying
+    return entity
+
+
+def _make_area(
+    *,
+    occupied: bool = True,
+    probability: float = 0.7,
+    purpose: AreaPurpose = AreaPurpose.SOCIAL,
+    entities_by_type: dict[InputType, list[Mock]] | None = None,
+) -> Mock:
+    """Build a lightweight mock Area for detect_activity tests."""
+    area = Mock()
+    area.occupied.return_value = occupied
+    area.probability.return_value = probability
+    area.purpose = Mock()
+    area.purpose.purpose = purpose
+
+    entities_by_type = entities_by_type or {}
+    all_entities: dict[str, Mock] = {}
+    for ents in entities_by_type.values():
+        for e in ents:
+            all_entities[e.entity_id] = e
+
+    def _get_by_type(it: InputType) -> dict[str, Mock]:
+        return {e.entity_id: e for e in entities_by_type.get(it, [])}
+
+    area.entities = Mock()
+    area.entities.entities = all_entities
+    area.entities.get_entities_by_input_type = Mock(side_effect=_get_by_type)
+
+    active = [e for e in all_entities.values() if e.active]
+    area.entities.active_entities = active
+
+    return area
+
+
+# ─── Environmental Signal Strength ───────────────────────────────────
+
+
+class TestEnvironmentalSignalStrength:
+    """Test _environmental_signal_strength helper."""
+
+    def test_elevated_full_signal(self) -> None:
+        """Value at mean_occupied → 1.0."""
+        assert _environmental_signal_strength(25.0, 25.0, 20.0, "elevated") == 1.0
+
+    def test_elevated_zero_signal(self) -> None:
+        """Value at mean_unoccupied → 0.0."""
+        assert _environmental_signal_strength(20.0, 25.0, 20.0, "elevated") == 0.0
+
+    def test_elevated_midpoint(self) -> None:
+        """Value halfway between means → 0.5."""
+        assert _environmental_signal_strength(22.5, 25.0, 20.0, "elevated") == 0.5
+
+    def test_elevated_clamped_above(self) -> None:
+        """Value above mean_occupied → clamped to 1.0."""
+        assert _environmental_signal_strength(30.0, 25.0, 20.0, "elevated") == 1.0
+
+    def test_elevated_clamped_below(self) -> None:
+        """Value below mean_unoccupied → clamped to 0.0."""
+        assert _environmental_signal_strength(15.0, 25.0, 20.0, "elevated") == 0.0
+
+    def test_suppressed_full_signal(self) -> None:
+        """Illuminance at mean_occupied (low) → 1.0 for suppressed."""
+        # mean_occ=10, mean_unocc=50 → suppressed: value at mean_occ should be 1.0.
+        assert _environmental_signal_strength(10.0, 10.0, 50.0, "suppressed") == 1.0
+
+    def test_suppressed_zero_signal(self) -> None:
+        """Illuminance at mean_unoccupied → 0.0 for suppressed."""
+        assert _environmental_signal_strength(50.0, 10.0, 50.0, "suppressed") == 0.0
+
+    def test_suppressed_midpoint(self) -> None:
+        """Value halfway → 0.5 for suppressed."""
+        assert _environmental_signal_strength(30.0, 10.0, 50.0, "suppressed") == 0.5
+
+    def test_identical_means_returns_zero(self) -> None:
+        """When means are identical, signal should be 0.0 (no information)."""
+        assert _environmental_signal_strength(25.0, 25.0, 25.0, "elevated") == 0.0
+
+    def test_unknown_condition_returns_zero(self) -> None:
+        """Unknown condition string → 0.0."""
+        assert _environmental_signal_strength(25.0, 30.0, 20.0, "unknown") == 0.0
+
+
+# ─── Activity Definitions Sanity ─────────────────────────────────────
+
+
+class TestActivityDefinitions:
+    """Verify ACTIVITY_DEFINITIONS are well-formed."""
+
+    def test_all_activities_have_indicators(self) -> None:
+        """Every definition must have at least one indicator."""
+        for defn in ACTIVITY_DEFINITIONS:
+            assert len(defn.indicators) > 0, f"{defn.activity_id} has no indicators"
+
+    def test_indicator_weights_sum_to_one(self) -> None:
+        """Indicator weights within each definition should sum to ~1.0."""
+        for defn in ACTIVITY_DEFINITIONS:
+            total = sum(i.weight for i in defn.indicators)
+            assert abs(total - 1.0) < 0.01, (
+                f"{defn.activity_id} indicator weights sum to {total}"
+            )
+
+    def test_no_duplicate_activity_ids(self) -> None:
+        """No two definitions should share the same activity_id."""
+        ids = [d.activity_id for d in ACTIVITY_DEFINITIONS]
+        assert len(ids) == len(set(ids))
+
+    def test_cleaning_has_no_purpose_restriction(self) -> None:
+        """Cleaning should match any room purpose."""
+        cleaning = [
+            d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.CLEANING
+        ]
+        assert len(cleaning) == 1
+        assert cleaning[0].purposes == frozenset()
+
+    def test_showering_restricted_to_bathroom(self) -> None:
+        """Showering should only match bathroom areas."""
+        showering = [
+            d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.SHOWERING
+        ]
+        assert len(showering) == 1
+        assert showering[0].purposes == frozenset({AreaPurpose.BATHROOM})
+
+
+# ─── Unoccupied Detection ────────────────────────────────────────────
+
+
+class TestUnoccupiedDetection:
+    """Test that unoccupied areas return ActivityId.UNOCCUPIED."""
+
+    def test_unoccupied_returns_unoccupied(self) -> None:
+        """When area is not occupied, result is UNOCCUPIED."""
+        area = _make_area(occupied=False, probability=0.2)
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.UNOCCUPIED
+        assert result.confidence == pytest.approx(0.8, abs=0.01)
+
+    def test_unoccupied_high_probability(self) -> None:
+        """Unoccupied confidence should be 1 - probability."""
+        area = _make_area(occupied=False, probability=0.05)
+        result = detect_activity(area)
+        assert result.confidence == pytest.approx(0.95, abs=0.01)
+
+
+# ─── Idle Detection ──────────────────────────────────────────────────
+
+
+class TestIdleDetection:
+    """Test fallback to Idle when no activity matches."""
+
+    def test_idle_when_no_matching_purpose(self) -> None:
+        """Occupied area with unmatched purpose returns Idle."""
+        # Use GARAGE with a DOOR sensor — no activity definitions target GARAGE
+        # with DOOR, and cleaning doesn't use DOOR.
+        door = _make_entity("binary_sensor.d1", InputType.DOOR, evidence=True)
+        area = _make_area(
+            purpose=AreaPurpose.GARAGE,
+            entities_by_type={InputType.DOOR: [door]},
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.IDLE
+
+    def test_idle_when_no_sensors_match(self) -> None:
+        """Occupied area with sensors but no matching evidence returns Idle."""
+        # All sensors off in a bathroom — showering won't trigger without humidity.
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=False)
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={InputType.MOTION: [motion]},
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.IDLE
+
+    def test_idle_confidence_equals_probability(self) -> None:
+        """Idle confidence should equal area probability."""
+        area = _make_area(
+            probability=0.65,
+            purpose=AreaPurpose.GARAGE,
+            entities_by_type={
+                InputType.DOOR: [
+                    _make_entity("binary_sensor.d1", InputType.DOOR, evidence=True)
+                ],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.IDLE
+        assert result.confidence == pytest.approx(0.65, abs=0.01)
+
+
+# ─── Specific Activity Scoring ───────────────────────────────────────
+
+
+class TestSpecificActivityScoring:
+    """Test detection of specific activities with matching sensors."""
+
+    def test_showering_detected_in_bathroom(self) -> None:
+        """Bathroom with active humidity and motion → showering."""
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state="85.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=80.0,
+                std_occupied=5.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=5.0,
+            ),
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        door = _make_entity("binary_sensor.door", InputType.DOOR, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={
+                InputType.HUMIDITY: [humidity],
+                InputType.MOTION: [motion],
+                InputType.DOOR: [door],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.SHOWERING
+        assert result.confidence > 0.3
+
+    def test_cooking_detected_in_kitchen(self) -> None:
+        """Kitchen with active appliance and elevated temp → cooking."""
+        appliance = _make_entity("switch.oven", InputType.APPLIANCE, evidence=True)
+        temp = _make_entity(
+            "sensor.temp",
+            InputType.TEMPERATURE,
+            state="28.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=27.0,
+                std_occupied=2.0,
+                mean_unoccupied=21.0,
+                std_unoccupied=1.0,
+            ),
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.FOOD_PREP,
+            entities_by_type={
+                InputType.APPLIANCE: [appliance],
+                InputType.TEMPERATURE: [temp],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.COOKING
+        assert result.confidence > 0.3
+
+    def test_watching_tv_in_living_room(self) -> None:
+        """Social area with active media → watching TV."""
+        media = _make_entity("media_player.tv", InputType.MEDIA, evidence=True)
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.WATCHING_TV
+        assert result.confidence > 0.3
+
+    def test_working_in_office(self) -> None:
+        """Office with active appliance and power → working."""
+        appliance = _make_entity("switch.computer", InputType.APPLIANCE, evidence=True)
+        power = _make_entity("sensor.power", InputType.POWER, evidence=True)
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.WORKING,
+            entities_by_type={
+                InputType.APPLIANCE: [appliance],
+                InputType.POWER: [power],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.WORKING
+        assert result.confidence > 0.3
+
+    def test_sleeping_in_bedroom(self) -> None:
+        """Bedroom with active sleep sensor → sleeping."""
+        sleep = _make_entity("binary_sensor.sleep", InputType.SLEEP, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SLEEPING,
+            entities_by_type={
+                InputType.SLEEP: [sleep],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.SLEEPING
+        assert result.confidence > 0.3
+
+    def test_cleaning_matches_any_purpose(self) -> None:
+        """Cleaning should match in any area with sufficient indicators."""
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        appliance = _make_entity("switch.vacuum", InputType.APPLIANCE, evidence=True)
+        power = _make_entity("sensor.power", InputType.POWER, evidence=True)
+
+        # Use BATHROOM — cleaning has empty purposes so it matches anything.
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={
+                InputType.MOTION: [motion],
+                InputType.APPLIANCE: [appliance],
+                InputType.POWER: [power],
+            },
+        )
+        result = detect_activity(area)
+        # The area may also match showering/bathing definitions for BATHROOM,
+        # but cleaning should be a candidate. We just verify it's detected as
+        # one of the valid activities (cleaning may win or lose vs bathroom-specific).
+        assert result.activity_id in (
+            ActivityId.CLEANING,
+            ActivityId.SHOWERING,
+            ActivityId.BATHING,
+        )
+
+
+# ─── Decay Handling ──────────────────────────────────────────────────
+
+
+class TestDecayHandling:
+    """Test that decaying sensors contribute partial scores."""
+
+    def test_decaying_sensor_contributes_partial_score(self) -> None:
+        """A decaying media sensor should still contribute to watching TV."""
+        media = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            evidence=False,
+            is_decaying=True,
+            decay_factor=0.5,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # With media decaying at 0.5, the activity should still be detected
+        # but with lower confidence than full evidence.
+        assert result.activity_id in (
+            ActivityId.WATCHING_TV,
+            ActivityId.LISTENING_TO_MUSIC,
+        )
+
+    def test_fully_decayed_sensor_no_contribution(self) -> None:
+        """A fully decayed sensor (factor=0) should not contribute."""
+        media = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            evidence=False,
+            is_decaying=True,
+            decay_factor=0.0,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # Media contributes 0, only motion (weight 0.1) matches.
+        # Confidence = 0.1 / 0.7 ≈ 0.14 — below min_match_weight of 0.3.
+        # Should fall to Idle or listening_to_music (also has media).
+        assert result.activity_id in (ActivityId.IDLE, ActivityId.LISTENING_TO_MUSIC)
+
+
+# ─── Environmental Graceful Degradation ──────────────────────────────
+
+
+class TestGracefulDegradation:
+    """Test that missing Gaussian params degrade gracefully."""
+
+    def test_no_gaussian_params_excludes_environmental(self) -> None:
+        """Without learned params, environmental indicators contribute 0."""
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state="85.0",
+            gaussian_params=None,  # No learned params.
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        door = _make_entity("binary_sensor.door", InputType.DOOR, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={
+                InputType.HUMIDITY: [humidity],
+                InputType.MOTION: [motion],
+                InputType.DOOR: [door],
+            },
+        )
+        result = detect_activity(area)
+        # Without humidity signal, showering still possible from motion+door,
+        # but humidity indicator scores 0 (has sensors but no params).
+        assert result.activity_id in (
+            ActivityId.SHOWERING,
+            ActivityId.BATHING,
+            ActivityId.CLEANING,
+        )
+
+    def test_no_sensors_for_type_excluded_from_possible_weight(self) -> None:
+        """Input types with no sensors should not count toward possible_weight."""
+        # Bathroom with only motion — no humidity, no door, no temp.
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={InputType.MOTION: [motion]},
+        )
+        result = detect_activity(area)
+        # Only motion available → matched_weight is below min_match_weight for
+        # all candidates (showering motion=0.15 < 0.3, cleaning motion=0.4 < 0.5).
+        # Falls back to Idle.
+        assert result.activity_id == ActivityId.IDLE
+
+
+# ─── Area.detected_activity() Caching ───────────────────────────────
+
+
+class TestAreaDetectedActivityCache:
+    """Test caching behavior of Area.detected_activity()."""
+
+    def test_cache_hit(self) -> None:
+        """Second call with same state returns cached result."""
+        area = Mock(spec=Area)
+        area.entities = Mock()
+        area.entities.active_entities = []
+        area.probability.return_value = 0.3
+        area.occupied.return_value = False
+        area.purpose = Mock()
+        area.purpose.purpose = AreaPurpose.SOCIAL
+
+        # Initialize cache attributes.
+        area._activity_cache = None
+        area._activity_cache_key = None
+
+        # Call the real method by using the unbound method pattern.
+        result1 = Area.detected_activity(area)
+        assert result1.activity_id == ActivityId.UNOCCUPIED
+
+        # Now set up a cached result.
+        cache_key = (frozenset(), round(0.3, 4))
+        area._activity_cache_key = cache_key
+        area._activity_cache = result1
+
+        # Second call should return the same cached object.
+        result2 = Area.detected_activity(area)
+        assert result2 is result1
+
+    def test_cache_invalidated_on_change(self) -> None:
+        """Cache is invalidated when active entities change."""
+        area = Mock(spec=Area)
+        area.purpose = Mock()
+        area.purpose.purpose = AreaPurpose.SOCIAL
+
+        # First call: unoccupied.
+        area.entities = Mock()
+        area.entities.active_entities = []
+        area.probability.return_value = 0.3
+        area.occupied.return_value = False
+        area._activity_cache = None
+        area._activity_cache_key = None
+
+        result1 = Area.detected_activity(area)
+        assert result1.activity_id == ActivityId.UNOCCUPIED
+
+        # Save cache state.
+        area._activity_cache = result1
+        area._activity_cache_key = (frozenset(), round(0.3, 4))
+
+        # Change state: add an active entity.
+        mock_entity = Mock()
+        mock_entity.entity_id = "binary_sensor.motion"
+        area.entities.active_entities = [mock_entity]
+        area.probability.return_value = 0.7
+        area.occupied.return_value = True
+        area.entities.get_entities_by_input_type = Mock(return_value={})
+
+        result2 = Area.detected_activity(area)
+        # Cache key changed, so result should be recomputed.
+        assert result2 is not result1
+
+
+# ─── Edge Cases ──────────────────────────────────────────────────────
+
+
+class TestEdgeCases:
+    """Test edge cases in activity detection."""
+
+    def test_empty_entities(self) -> None:
+        """Area with no entities at all should return Idle when occupied."""
+        area = _make_area(occupied=True, probability=0.6, entities_by_type={})
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.IDLE
+
+    def test_multiple_candidates_highest_confidence_wins(self) -> None:
+        """When multiple activities match, highest confidence wins."""
+        # In a SOCIAL area with both media and motion, watching TV and
+        # listening to music are both candidates. Media has higher weight
+        # in watching_tv (0.6) vs listening_to_music (0.5).
+        media = _make_entity("media_player.tv", InputType.MEDIA, evidence=True)
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        sound = _make_entity(
+            "sensor.sound",
+            InputType.SOUND_PRESSURE,
+            state="65.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=60.0,
+                std_occupied=10.0,
+                mean_unoccupied=35.0,
+                std_unoccupied=5.0,
+            ),
+        )
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+                InputType.SOUND_PRESSURE: [sound],
+            },
+        )
+        result = detect_activity(area)
+        # Both watching_tv and listening_to_music are candidates.
+        # The one with higher confidence should win.
+        assert result.activity_id in (
+            ActivityId.WATCHING_TV,
+            ActivityId.LISTENING_TO_MUSIC,
+        )
+
+    def test_below_min_match_weight_excluded(self) -> None:
+        """Activities scoring below min_match_weight are excluded."""
+        # Cleaning has min_match_weight=0.5. Only motion (weight=0.4) active.
+        # Score = 0.4/0.4 = 1.0 — but wait, we only have motion.
+        # Actually with only motion, possible_weight = 0.4, matched = 0.4,
+        # confidence = 1.0 which is > 0.5. Let's test with partial match.
+        # Use an area where only motion is active but not strongly.
+        motion = _make_entity(
+            "binary_sensor.m1",
+            InputType.MOTION,
+            evidence=False,
+            is_decaying=True,
+            decay_factor=0.3,
+        )
+        appliance = _make_entity("switch.vac", InputType.APPLIANCE, evidence=False)
+        power = _make_entity("sensor.power", InputType.POWER, evidence=False)
+
+        area = _make_area(
+            purpose=AreaPurpose.GARAGE,  # Only cleaning matches garage.
+            entities_by_type={
+                InputType.MOTION: [motion],
+                InputType.APPLIANCE: [appliance],
+                InputType.POWER: [power],
+            },
+        )
+        result = detect_activity(area)
+        # Motion decaying at 0.3: score = 0.4 * 0.3 = 0.12.
+        # Possible = 0.4 + 0.3 + 0.2 = 0.9. Confidence = 0.12/0.9 ≈ 0.13.
+        # Below min_match_weight 0.5, so cleaning excluded → Idle.
+        assert result.activity_id == ActivityId.IDLE
+
+    def test_entity_with_none_state_skipped_for_environmental(self) -> None:
+        """Environmental entities with None state should not crash."""
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state=None,
+            gaussian_params=GaussianParams(
+                mean_occupied=80.0,
+                std_occupied=5.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=5.0,
+            ),
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        door = _make_entity("binary_sensor.door", InputType.DOOR, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={
+                InputType.HUMIDITY: [humidity],
+                InputType.MOTION: [motion],
+                InputType.DOOR: [door],
+            },
+        )
+        # Should not raise.
+        result = detect_activity(area)
+        assert result.activity_id is not None
+
+    def test_entity_with_non_numeric_state_skipped(self) -> None:
+        """Environmental entities with non-numeric state should not crash."""
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state="unavailable",
+            gaussian_params=GaussianParams(
+                mean_occupied=80.0,
+                std_occupied=5.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=5.0,
+            ),
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={
+                InputType.HUMIDITY: [humidity],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id is not None
+
+
+# ─── DetectedActivity Dataclass ──────────────────────────────────────
+
+
+class TestDetectedActivityDataclass:
+    """Test DetectedActivity dataclass."""
+
+    def test_defaults(self) -> None:
+        """Test default values."""
+        result = DetectedActivity(activity_id=ActivityId.IDLE, confidence=0.5)
+        assert result.matching_indicators == []
+
+    def test_with_matching_indicators(self) -> None:
+        """Test with matching indicators populated."""
+        result = DetectedActivity(
+            activity_id=ActivityId.COOKING,
+            confidence=0.8,
+            matching_indicators=["switch.oven", "sensor.temp"],
+        )
+        assert len(result.matching_indicators) == 2
+        assert "switch.oven" in result.matching_indicators
+
+
+# ─── ActivityId Enum ─────────────────────────────────────────────────
+
+
+class TestActivityIdEnum:
+    """Test ActivityId StrEnum."""
+
+    def test_all_values_are_strings(self) -> None:
+        """All ActivityId values should be valid strings."""
+        for activity in ActivityId:
+            assert isinstance(activity.value, str)
+            assert len(activity.value) > 0
+
+    def test_expected_members(self) -> None:
+        """Verify expected members exist."""
+        expected = {
+            "bathing",
+            "cleaning",
+            "cooking",
+            "eating",
+            "idle",
+            "listening_to_music",
+            "showering",
+            "sleeping",
+            "unoccupied",
+            "watching_tv",
+            "working",
+        }
+        actual = {a.value for a in ActivityId}
+        assert actual == expected
