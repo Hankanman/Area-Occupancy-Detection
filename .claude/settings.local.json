@@ -6,7 +6,8 @@
       "Bash(ruff format:*)",
       "Bash(ruff check:*)",
       "Bash(pytest:*)",
-      "Bash(python -m pytest:*)"
+      "Bash(python -m pytest:*)",
+      "Bash(scripts/test)"
     ]
   }
 }
