@@ -443,7 +443,6 @@ class DetectedActivitySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the detected activity sensor."""
         super().__init__(area_handle=area_handle)
-        self._attr_name = NAME_DETECTED_ACTIVITY_SENSOR
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
@@ -486,7 +485,6 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the activity confidence sensor."""
         super().__init__(area_handle=area_handle)
-        self._attr_name = NAME_ACTIVITY_CONFIDENCE_SENSOR
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
@@ -495,6 +493,7 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_translation_key = "activity_confidence"
 
     @property
     def native_value(self) -> float | None:
