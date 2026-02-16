@@ -1305,11 +1305,11 @@ def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
     sleep_area = user_input.get(CONF_PERSON_SLEEP_AREA, "")
 
     if not person_entity:
-        raise vol.Invalid("Person entity is required")
+        raise vol.Invalid("person_entity_required")
     if not sleep_sensor:
-        raise vol.Invalid("Sleep confidence sensor is required")
+        raise vol.Invalid("sleep_sensor_required")
     if not sleep_area:
-        raise vol.Invalid("Sleep area is required")
+        raise vol.Invalid("sleep_area_required")
 
     raw_threshold = user_input.get(
         CONF_PERSON_CONFIDENCE_THRESHOLD, DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
@@ -1317,9 +1317,7 @@ def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
     try:
         threshold = int(raw_threshold)
     except (ValueError, TypeError) as err:
-        raise vol.Invalid(
-            f"Confidence threshold must be a number, got: {raw_threshold}"
-        ) from err
+        raise vol.Invalid("confidence_not_number") from err
     threshold = max(1, min(100, threshold))
 
     return {
@@ -2149,17 +2147,25 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 self._person_being_edited = None
                 return await self.async_step_person_config()
             if selected.startswith("edit_"):
-                idx = int(selected.replace("edit_", ""))
+                try:
+                    idx = int(selected.replace("edit_", ""))
+                except (ValueError, TypeError):
+                    idx = -1
                 if 0 <= idx < len(people):
                     self._person_being_edited = idx
                     return await self.async_step_person_config()
-            if selected.startswith("remove_"):
-                idx = int(selected.replace("remove_", ""))
+                errors["base"] = "invalid_selection"
+            elif selected.startswith("remove_"):
+                try:
+                    idx = int(selected.replace("remove_", ""))
+                except (ValueError, TypeError):
+                    idx = -1
                 if 0 <= idx < len(people):
                     updated_people = [p for i, p in enumerate(people) if i != idx]
                     config_data = dict(self.config_entry.options)
                     config_data[CONF_PEOPLE] = updated_people
                     return self.async_create_entry(title="", data=config_data)
+                errors["base"] = "invalid_selection"
 
         # Build options list
         options: list[SelectOptionDict] = []

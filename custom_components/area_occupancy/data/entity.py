@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_WEIGHT, MIN_WEIGHT, get_sensor_type_mapping
+from ..const import (
+    MAX_WEIGHT,
+    MIN_WEIGHT,
+    SLEEP_PRESENCE_HALF_LIFE,
+    get_sensor_type_mapping,
+)
 from ..time_utils import to_utc
 from ..utils import map_binary_state_to_semantic
 from .decay import Decay
@@ -699,7 +704,7 @@ class EntityFactory:
         if is_wasp:
             half_life = 0.1  # Effectively zero decay (clears in <0.5s)
         elif is_sleep:
-            half_life = 7200  # 2 hour half-life for sleep (persistent presence)
+            half_life = SLEEP_PRESENCE_HALF_LIFE
 
         # Get sleep settings from integration config
         # For WASP/SLEEP entities, bypass sleeping semantics
@@ -790,7 +795,7 @@ class EntityFactory:
         if is_wasp:
             half_life = 0.1  # Effectively zero decay (clears in <0.5s)
         elif is_sleep:
-            half_life = 7200  # 2 hour half-life for sleep (persistent presence)
+            half_life = SLEEP_PRESENCE_HALF_LIFE
 
         # Get sleep settings from integration config
         # For WASP/SLEEP entities, bypass sleeping semantics

@@ -130,6 +130,9 @@ DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 50
 DEFAULT_SLEEP_WEIGHT: Final = 0.9
+SLEEP_PRESENCE_HALF_LIFE: Final = (
+    7200  # 2 hour half-life for sleep (persistent presence)
+)
 
 # Database recovery defaults
 DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
@@ -322,6 +325,8 @@ ATTR_PERSON_STATE: Final = "person_state"
 ATTR_SLEEP_THRESHOLD: Final = "sleep_threshold"
 ATTR_PEOPLE_SLEEPING: Final = "people_sleeping"
 ATTR_PEOPLE_DETAILS: Final = "people"
+ATTR_PERSON_NAME: Final = "name"
+ATTR_PERSON_SLEEPING: Final = "sleeping"
 
 
 # ────────────────────────────────────── State Mapping ───────────────────────────

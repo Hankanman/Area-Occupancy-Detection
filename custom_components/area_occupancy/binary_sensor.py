@@ -36,6 +36,8 @@ from .const import (
     ATTR_MOTION_TIMEOUT,
     ATTR_PEOPLE_DETAILS,
     ATTR_PEOPLE_SLEEPING,
+    ATTR_PERSON_NAME,
+    ATTR_PERSON_SLEEPING,
     ATTR_PERSON_STATE,
     ATTR_SLEEP_CONFIDENCE,
     ATTR_SLEEP_THRESHOLD,
@@ -915,13 +917,13 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
 
             person_details.append(
                 {
-                    "name": friendly_name,
+                    ATTR_PERSON_NAME: friendly_name,
                     ATTR_PERSON_STATE: person_state.state
                     if person_state
                     else "unknown",
                     ATTR_SLEEP_CONFIDENCE: confidence_val,
                     ATTR_SLEEP_THRESHOLD: person.confidence_threshold,
-                    "sleeping": is_sleeping,
+                    ATTR_PERSON_SLEEPING: is_sleeping,
                 }
             )
 

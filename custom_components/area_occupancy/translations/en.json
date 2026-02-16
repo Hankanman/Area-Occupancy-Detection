@@ -204,6 +204,14 @@
                     "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
                 }
             }
+        },
+        "error": {
+            "person_entity_required": "A person entity is required.",
+            "sleep_sensor_required": "A sleep confidence sensor is required.",
+            "sleep_area_required": "A sleep area is required.",
+            "confidence_not_number": "Confidence threshold must be a number.",
+            "invalid_selection": "Invalid selection. Please try again.",
+            "unknown": "An unexpected error occurred."
         }
     },
     "options": {
@@ -444,6 +452,14 @@
                     "confidence_threshold": "Minimum sleep confidence percentage to consider the person as sleeping. Default: 50%."
                 }
             }
+        },
+        "error": {
+            "person_entity_required": "A person entity is required.",
+            "sleep_sensor_required": "A sleep confidence sensor is required.",
+            "sleep_area_required": "A sleep area is required.",
+            "confidence_not_number": "Confidence threshold must be a number.",
+            "invalid_selection": "Invalid selection. Please try again.",
+            "unknown": "An unexpected error occurred."
         }
     },
     "entity": {
