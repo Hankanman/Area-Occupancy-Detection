@@ -69,21 +69,27 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows & Doors",
-                        "description": "Configure door and window sensors and their states",
+                        "name": "Windows, Doors & Covers",
+                        "description": "Configure door, window, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
-                            "weight_window": "Window Weight"
+                            "weight_window": "Window Weight",
+                            "cover_sensors": "Cover Sensors",
+                            "cover_active_states": "Cover Active States",
+                            "weight_cover": "Cover Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the value your sensors report when the door is closed.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
-                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
+                            "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
+                            "cover_active_states": "The states of the covers that indicate occupancy (e.g., open, opening, closing).",
+                            "weight_cover": "The weight given to cover sensor inputs in the occupancy calculation."
                         }
                     },
                     "wasp_in_box": {
@@ -268,21 +274,27 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows & Doors",
-                        "description": "Configure door and window sensors and their states",
+                        "name": "Windows, Doors & Covers",
+                        "description": "Configure door, window, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
-                            "weight_window": "Window Weight"
+                            "weight_window": "Window Weight",
+                            "cover_sensors": "Cover Sensors",
+                            "cover_active_states": "Cover Active States",
+                            "weight_cover": "Cover Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the value your sensors report when the door is closed.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
-                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
+                            "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
+                            "cover_active_states": "The states of the covers that indicate occupancy (e.g., open, opening, closing).",
+                            "weight_cover": "The weight given to cover sensor inputs in the occupancy calculation."
                         }
                     },
                     "wasp_in_box": {
