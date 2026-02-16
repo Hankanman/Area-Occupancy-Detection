@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_WEIGHT, MIN_WEIGHT, get_sensor_type_mapping
+from ..const import (
+    MAX_WEIGHT,
+    MIN_WEIGHT,
+    SLEEP_PRESENCE_HALF_LIFE,
+    get_sensor_type_mapping,
+)
 from ..time_utils import to_utc
 from ..utils import map_binary_state_to_semantic
 from .decay import Decay
@@ -687,6 +692,7 @@ class EntityFactory:
 
         # Create decay object
         # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        # Sleep sensors use a very long half-life (persistent presence)
         half_life = self.config.decay.half_life
         # If half_life is 0, resolve from purpose
         if half_life == 0:
@@ -694,12 +700,15 @@ class EntityFactory:
 
         area = self.coordinator.areas.get(self.area_name)
         is_wasp = area and area.wasp_entity_id == entity_id
+        is_sleep = area and area.sleep_entity_id == entity_id
         if is_wasp:
             half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+        elif is_sleep:
+            half_life = SLEEP_PRESENCE_HALF_LIFE
 
         # Get sleep settings from integration config
-        # For WASP entities, bypass sleeping semantics to ensure immediate vacancy
-        if is_wasp:
+        # For WASP/SLEEP entities, bypass sleeping semantics
+        if is_wasp or is_sleep:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
@@ -720,10 +729,10 @@ class EntityFactory:
         )
 
         # Set default analysis_error based on entity type
-        # Motion sensors are excluded from correlation analysis
+        # Motion and Sleep sensors are excluded from correlation analysis
         analysis_error = (
             AnalysisStatus.MOTION_EXCLUDED
-            if input_type == InputType.MOTION
+            if input_type in (InputType.MOTION, InputType.SLEEP)
             else AnalysisStatus.NOT_ANALYZED
         )
 
@@ -774,6 +783,7 @@ class EntityFactory:
         )
 
         # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        # Sleep sensors use a very long half-life (persistent presence)
         half_life = self.config.decay.half_life
         # If half_life is 0, resolve from purpose
         if half_life == 0:
@@ -781,12 +791,15 @@ class EntityFactory:
 
         area = self.coordinator.areas.get(self.area_name)
         is_wasp = area and area.wasp_entity_id == entity_id
+        is_sleep = area and area.sleep_entity_id == entity_id
         if is_wasp:
             half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+        elif is_sleep:
+            half_life = SLEEP_PRESENCE_HALF_LIFE
 
         # Get sleep settings from integration config
-        # For WASP entities, bypass sleeping semantics to ensure immediate vacancy
-        if is_wasp:
+        # For WASP/SLEEP entities, bypass sleeping semantics
+        if is_wasp or is_sleep:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
@@ -826,10 +839,10 @@ class EntityFactory:
             prob_given_false = entity_type.prob_given_false
 
         # Set default analysis_error based on entity type
-        # Motion sensors are excluded from correlation analysis
+        # Motion and Sleep sensors are excluded from correlation analysis
         analysis_error = (
             "motion_sensor_excluded"
-            if input_type_enum == InputType.MOTION
+            if input_type_enum in (InputType.MOTION, InputType.SLEEP)
             else "not_analyzed"
         )
 
@@ -866,7 +879,11 @@ class EntityFactory:
 
         # Process each sensor type using the mapping
         for sensor_type, input_type in get_sensor_type_mapping().items():
-            sensor_list = getattr(self.config.sensors, sensor_type)
+            # Skip sleep — handled separately below (virtual sensor like wasp)
+            if sensor_type == "sleep":
+                continue
+
+            sensor_list = getattr(self.config.sensors, sensor_type, [])
 
             # Special handling for motion sensors (includes wasp)
             if sensor_type == "motion":
@@ -874,6 +891,11 @@ class EntityFactory:
 
             for entity_id in sensor_list:
                 specs[entity_id] = input_type.value
+
+        # Add sleep presence sensor if registered for this area
+        sleep_sensors = self.config.sensors.get_sleep_sensors(self.coordinator)
+        for entity_id in sleep_sensors:
+            specs[entity_id] = InputType.SLEEP.value
 
         return specs
 
@@ -963,6 +985,16 @@ class EntityManager:
     def add_entity(self, entity: Entity) -> None:
         """Add an entity to the manager."""
         self._entities[entity.entity_id] = entity
+
+    def register_entity(self, entity_id: str, input_type: str) -> None:
+        """Create and register an entity from a config spec if not already tracked."""
+        if entity_id not in self._entities:
+            entity = self._factory.create_from_config_spec(entity_id, input_type)
+            self._entities[entity_id] = entity
+
+    def deregister_entity(self, entity_id: str) -> None:
+        """Remove an entity from the manager if it exists."""
+        self._entities.pop(entity_id, None)
 
     async def cleanup(self) -> None:
         """Clean up resources and recreate from config.

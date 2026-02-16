@@ -58,6 +58,7 @@ class InputType(StrEnum):
     PM25 = "pm25"
     PM10 = "pm10"
     POWER = "power"
+    SLEEP = "sleep"
     ENVIRONMENTAL = "environmental"
     UNKNOWN = "unknown"
 
@@ -185,6 +186,7 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.WINDOW,
     InputType.COVER,
     InputType.POWER,
+    InputType.SLEEP,
 }
 
 BINARY_INPUT_TYPES: set[InputType] = {
@@ -335,6 +337,13 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_false": 0.02,
         "active_states": None,
         "active_range": (0.1, 10.0),
+    },
+    InputType.SLEEP: {
+        "weight": 0.9,
+        "prob_given_true": 0.95,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_ON],
+        "active_range": None,
     },
     InputType.ENVIRONMENTAL: {
         "weight": 0.1,

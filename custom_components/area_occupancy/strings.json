@@ -69,21 +69,27 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows & Doors",
-                        "description": "Configure door and window sensors and their states",
+                        "name": "Windows, Doors & Covers",
+                        "description": "Configure door, window, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
-                            "weight_window": "Window Weight"
+                            "weight_window": "Window Weight",
+                            "cover_sensors": "Cover Sensors",
+                            "cover_active_states": "Cover Active States",
+                            "weight_cover": "Cover Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the value your sensors report when the door is closed.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
-                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
+                            "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
+                            "cover_active_states": "The states of the covers that indicate occupancy (e.g., open, opening, closing).",
+                            "weight_cover": "The weight given to cover sensor inputs in the occupancy calculation."
                         }
                     },
                     "wasp_in_box": {
@@ -198,6 +204,14 @@
                     "confirm": "Check this box to confirm you want to remove this area. All sensors and entities for this area will be removed."
                 }
             }
+        },
+        "error": {
+            "person_entity_required": "A person entity is required.",
+            "sleep_sensor_required": "A sleep confidence sensor is required.",
+            "sleep_area_required": "A sleep area is required.",
+            "confidence_not_number": "Confidence threshold must be a number.",
+            "invalid_selection": "Invalid selection. Please try again.",
+            "unknown": "An unexpected error occurred."
         }
     },
     "options": {
@@ -208,7 +222,8 @@
                 "menu_options": {
                     "global_settings": "Global Settings",
                     "add_area": "Add New Area",
-                    "manage_areas": "Manage Areas"
+                    "manage_areas": "Manage Areas",
+                    "manage_people": "Manage People"
                 },
                 "data": {
                     "selected_option": "Select an area or action"
@@ -267,21 +282,27 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows & Doors",
-                        "description": "Configure door and window sensors and their states",
+                        "name": "Windows, Doors & Covers",
+                        "description": "Configure door, window, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
-                            "weight_window": "Window Weight"
+                            "weight_window": "Window Weight",
+                            "cover_sensors": "Cover Sensors",
+                            "cover_active_states": "Cover Active States",
+                            "weight_cover": "Cover Weight"
                         },
                         "data_description": {
                             "door_active_state": "This is the value your sensors report when the door is closed.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
-                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation."
+                            "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
+                            "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
+                            "cover_active_states": "The states of the covers that indicate occupancy (e.g., open, opening, closing).",
+                            "weight_cover": "The weight given to cover sensor inputs in the occupancy calculation."
                         }
                     },
                     "wasp_in_box": {
@@ -407,7 +428,38 @@
                     "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
                     "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours."
                 }
+            },
+            "manage_people": {
+                "title": "Manage People",
+                "description": "Configure people for sleep presence detection. Each person needs a Home Assistant person entity and a sleep confidence sensor from the Companion App.",
+                "data": {
+                    "selected_option": "Select an action"
+                }
+            },
+            "person_config": {
+                "title": "Configure Person",
+                "description": "Configure a person's sleep tracking. The person entity provides home/away state, and the sleep confidence sensor comes from the HA Companion App.",
+                "data": {
+                    "person_entity": "Person",
+                    "sleep_confidence_sensor": "Sleep Confidence Sensor",
+                    "sleep_area_id": "Sleep Area",
+                    "confidence_threshold": "Sleep Confidence Threshold (%)"
+                },
+                "data_description": {
+                    "person_entity": "Select the Home Assistant person entity. This provides home/not_home state.",
+                    "sleep_confidence_sensor": "Select the sleep confidence sensor from the HA Companion App (e.g., sensor.phone_sleep_confidence). Reports 0-100%.",
+                    "sleep_area_id": "Select the area where this person sleeps (e.g., bedroom).",
+                    "confidence_threshold": "Minimum sleep confidence percentage to consider the person as sleeping. Default: 50%."
+                }
             }
+        },
+        "error": {
+            "person_entity_required": "A person entity is required.",
+            "sleep_sensor_required": "A sleep confidence sensor is required.",
+            "sleep_area_required": "A sleep area is required.",
+            "confidence_not_number": "Confidence threshold must be a number.",
+            "invalid_selection": "Invalid selection. Please try again.",
+            "unknown": "An unexpected error occurred."
         }
     },
     "entity": {
@@ -417,6 +469,9 @@
             },
             "wasp_in_box": {
                 "name": "Wasp in Box"
+            },
+            "sleep_presence": {
+                "name": "Sleep Presence"
             }
         },
         "sensor": {

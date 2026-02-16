@@ -122,6 +122,7 @@ class Area:
         # Entity IDs for platform entities (set by platform modules)
         self.occupancy_entity_id: str | None = None
         self.wasp_entity_id: str | None = None
+        self.sleep_entity_id: str | None = None
 
     @property
     def factory(self) -> EntityFactory:
