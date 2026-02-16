@@ -208,7 +208,8 @@
                 "menu_options": {
                     "global_settings": "Global Settings",
                     "add_area": "Add New Area",
-                    "manage_areas": "Manage Areas"
+                    "manage_areas": "Manage Areas",
+                    "manage_people": "Manage People"
                 },
                 "data": {
                     "selected_option": "Select an area or action"
@@ -407,6 +408,29 @@
                     "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
                     "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours."
                 }
+            },
+            "manage_people": {
+                "title": "Manage People",
+                "description": "Configure people for sleep presence detection. Each person needs a Home Assistant person entity and a sleep confidence sensor from the Companion App.",
+                "data": {
+                    "selected_option": "Select an action"
+                }
+            },
+            "person_config": {
+                "title": "Configure Person",
+                "description": "Configure a person's sleep tracking. The person entity provides home/away state, and the sleep confidence sensor comes from the HA Companion App.",
+                "data": {
+                    "person_entity": "Person",
+                    "sleep_confidence_sensor": "Sleep Confidence Sensor",
+                    "sleep_area_id": "Sleep Area",
+                    "confidence_threshold": "Sleep Confidence Threshold (%)"
+                },
+                "data_description": {
+                    "person_entity": "Select the Home Assistant person entity. This provides home/not_home state.",
+                    "sleep_confidence_sensor": "Select the sleep confidence sensor from the HA Companion App (e.g., sensor.phone_sleep_confidence). Reports 0-100%.",
+                    "sleep_area_id": "Select the area where this person sleeps (e.g., bedroom).",
+                    "confidence_threshold": "Minimum sleep confidence percentage to consider the person as sleeping. Default: 50%."
+                }
             }
         }
     },
@@ -417,6 +441,9 @@
             },
             "wasp_in_box": {
                 "name": "Wasp in Box"
+            },
+            "sleep_presence": {
+                "name": "Sleep Presence"
             }
         },
         "sensor": {

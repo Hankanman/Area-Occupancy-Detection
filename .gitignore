@@ -27,3 +27,4 @@ release_diff.txt
 codex.patch
 testlog.log
 build
+tmp/

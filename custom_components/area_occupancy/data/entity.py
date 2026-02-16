@@ -687,6 +687,7 @@ class EntityFactory:
 
         # Create decay object
         # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        # Sleep sensors use a very long half-life (persistent presence)
         half_life = self.config.decay.half_life
         # If half_life is 0, resolve from purpose
         if half_life == 0:
@@ -694,12 +695,15 @@ class EntityFactory:
 
         area = self.coordinator.areas.get(self.area_name)
         is_wasp = area and area.wasp_entity_id == entity_id
+        is_sleep = area and area.sleep_entity_id == entity_id
         if is_wasp:
             half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+        elif is_sleep:
+            half_life = 7200  # 2 hour half-life for sleep (persistent presence)
 
         # Get sleep settings from integration config
-        # For WASP entities, bypass sleeping semantics to ensure immediate vacancy
-        if is_wasp:
+        # For WASP/SLEEP entities, bypass sleeping semantics
+        if is_wasp or is_sleep:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
@@ -720,10 +724,10 @@ class EntityFactory:
         )
 
         # Set default analysis_error based on entity type
-        # Motion sensors are excluded from correlation analysis
+        # Motion and Sleep sensors are excluded from correlation analysis
         analysis_error = (
             AnalysisStatus.MOTION_EXCLUDED
-            if input_type == InputType.MOTION
+            if input_type in (InputType.MOTION, InputType.SLEEP)
             else AnalysisStatus.NOT_ANALYZED
         )
 
@@ -774,6 +778,7 @@ class EntityFactory:
         )
 
         # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        # Sleep sensors use a very long half-life (persistent presence)
         half_life = self.config.decay.half_life
         # If half_life is 0, resolve from purpose
         if half_life == 0:
@@ -781,12 +786,15 @@ class EntityFactory:
 
         area = self.coordinator.areas.get(self.area_name)
         is_wasp = area and area.wasp_entity_id == entity_id
+        is_sleep = area and area.sleep_entity_id == entity_id
         if is_wasp:
             half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+        elif is_sleep:
+            half_life = 7200  # 2 hour half-life for sleep (persistent presence)
 
         # Get sleep settings from integration config
-        # For WASP entities, bypass sleeping semantics to ensure immediate vacancy
-        if is_wasp:
+        # For WASP/SLEEP entities, bypass sleeping semantics
+        if is_wasp or is_sleep:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
@@ -826,10 +834,10 @@ class EntityFactory:
             prob_given_false = entity_type.prob_given_false
 
         # Set default analysis_error based on entity type
-        # Motion sensors are excluded from correlation analysis
+        # Motion and Sleep sensors are excluded from correlation analysis
         analysis_error = (
             "motion_sensor_excluded"
-            if input_type_enum == InputType.MOTION
+            if input_type_enum in (InputType.MOTION, InputType.SLEEP)
             else "not_analyzed"
         )
 
@@ -866,7 +874,11 @@ class EntityFactory:
 
         # Process each sensor type using the mapping
         for sensor_type, input_type in get_sensor_type_mapping().items():
-            sensor_list = getattr(self.config.sensors, sensor_type)
+            # Skip sleep — handled separately below (virtual sensor like wasp)
+            if sensor_type == "sleep":
+                continue
+
+            sensor_list = getattr(self.config.sensors, sensor_type, [])
 
             # Special handling for motion sensors (includes wasp)
             if sensor_type == "motion":
@@ -874,6 +886,11 @@ class EntityFactory:
 
             for entity_id in sensor_list:
                 specs[entity_id] = input_type.value
+
+        # Add sleep presence sensor if registered for this area
+        sleep_sensors = self.config.sensors.get_sleep_sensors(self.coordinator)
+        for entity_id in sleep_sensors:
+            specs[entity_id] = InputType.SLEEP.value
 
         return specs
 

@@ -47,6 +47,7 @@ CONF_ACTION_EDIT: Final = "edit"
 CONF_ACTION_REMOVE: Final = "remove"
 CONF_ACTION_CANCEL: Final = "cancel"
 CONF_ACTION_GLOBAL_SETTINGS: Final = "global_settings"
+CONF_ACTION_MANAGE_PEOPLE: Final = "manage_people"
 CONF_OPTION_PREFIX_AREA: Final = "area_"
 
 # Configuration constants
@@ -89,8 +90,16 @@ CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 
+# People configuration constants
+CONF_PEOPLE: Final = "people"
+CONF_PERSON_ENTITY: Final = "person_entity"
+CONF_PERSON_SLEEP_SENSOR: Final = "sleep_confidence_sensor"
+CONF_PERSON_SLEEP_AREA: Final = "sleep_area_id"
+CONF_PERSON_CONFIDENCE_THRESHOLD: Final = "confidence_threshold"
+
 
 # Configured Weights
+CONF_WEIGHT_SLEEP: Final = "weight_sleep"
 CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
@@ -119,6 +128,8 @@ DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = 0.02  # Matches DEFAULT_TYPES[InputType
 DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
+DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 50
+DEFAULT_SLEEP_WEIGHT: Final = 0.9
 
 # Database recovery defaults
 DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
@@ -189,6 +200,10 @@ ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
 WASP_PROB_GIVEN_TRUE: Final[float] = 0.95
 WASP_PROB_GIVEN_FALSE: Final[float] = 0.05
 WASP_DEFAULT_PRIOR: Final[float] = 0.60
+
+# Sleep presence defaults (High confidence when active)
+SLEEP_PROB_GIVEN_TRUE: Final[float] = 0.95
+SLEEP_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
@@ -274,6 +289,7 @@ SAVE_INTERVAL: Final = 600  # seconds (10 minutes) - periodic database save inte
 
 # Entity naming
 NAME_WASP_IN_BOX: Final = "Wasp in Box"
+NAME_SLEEP_PRESENCE: Final = "Sleep Presence"
 
 # Configuration keys
 CONF_WASP_ENABLED: Final = "wasp_enabled"
@@ -299,6 +315,12 @@ ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
 ATTR_MAX_DURATION: Final = "max_duration"
 ATTR_VERIFICATION_DELAY: Final = "verification_delay"
 ATTR_VERIFICATION_PENDING: Final = "verification_pending"
+
+# Sleep Presence attributes
+ATTR_SLEEP_CONFIDENCE: Final = "sleep_confidence"
+ATTR_PERSON_STATE: Final = "person_state"
+ATTR_SLEEP_THRESHOLD: Final = "sleep_threshold"
+ATTR_PEOPLE_SLEEPING: Final = "people_sleeping"
 
 
 # ────────────────────────────────────── State Mapping ───────────────────────────
@@ -454,6 +476,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "pm25": InputType.PM25,
             "power": InputType.POWER,
             "pressure": InputType.PRESSURE,
+            "sleep": InputType.SLEEP,
             "sound_pressure": InputType.SOUND_PRESSURE,
             "temperature": InputType.TEMPERATURE,
             "voc": InputType.VOC,

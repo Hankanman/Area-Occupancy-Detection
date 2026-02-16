@@ -36,6 +36,11 @@ from ..const import (
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
     CONF_MOTION_TIMEOUT,
+    CONF_PEOPLE,
+    CONF_PERSON_CONFIDENCE_THRESHOLD,
+    CONF_PERSON_ENTITY,
+    CONF_PERSON_SLEEP_AREA,
+    CONF_PERSON_SLEEP_SENSOR,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
     CONF_POWER_SENSORS,
@@ -74,6 +79,7 @@ from ..const import (
     DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
     DEFAULT_THRESHOLD,
@@ -99,6 +105,16 @@ if TYPE_CHECKING:
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class PersonConfig:
+    """Configuration for a person's sleep tracking."""
+
+    person_entity: str  # e.g. "person.seb" — provides home/not_home state
+    sleep_confidence_sensor: str  # e.g. "sensor.phone_seb_sleep_confidence"
+    sleep_area_id: str  # e.g. "bedroom" — HA area ID
+    confidence_threshold: int = DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
 
 
 class IntegrationConfig:
@@ -156,6 +172,39 @@ class IntegrationConfig:
     def sleep_end(self) -> str:
         """Get sleep end time from config entry options."""
         return self.config_entry.options.get(CONF_SLEEP_END, DEFAULT_SLEEP_END)
+
+    @property
+    def people(self) -> list[PersonConfig]:
+        """Get configured people from config entry options."""
+        raw_people = self.config_entry.options.get(CONF_PEOPLE, [])
+        result: list[PersonConfig] = []
+        for person_data in raw_people:
+            if not isinstance(person_data, dict):
+                continue
+            person_entity = person_data.get(CONF_PERSON_ENTITY)
+            sleep_sensor = person_data.get(CONF_PERSON_SLEEP_SENSOR)
+            sleep_area = person_data.get(CONF_PERSON_SLEEP_AREA)
+            if not person_entity or not sleep_sensor or not sleep_area:
+                _LOGGER.warning("Skipping incomplete person config: %s", person_data)
+                continue
+            result.append(
+                PersonConfig(
+                    person_entity=person_entity,
+                    sleep_confidence_sensor=sleep_sensor,
+                    sleep_area_id=sleep_area,
+                    confidence_threshold=int(
+                        person_data.get(
+                            CONF_PERSON_CONFIDENCE_THRESHOLD,
+                            DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
+                        )
+                    ),
+                )
+            )
+        return result
+
+    def get_people_for_area(self, area_id: str) -> list[PersonConfig]:
+        """Get people configured for a specific area."""
+        return [p for p in self.people if p.sleep_area_id == area_id]
 
     def __repr__(self) -> str:
         """Return a string representation of the integration config."""
@@ -231,6 +280,32 @@ class Sensors:
                 )
 
         return motion_sensors
+
+    def get_sleep_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
+        """Get sleep presence sensors assigned to this area.
+
+        Args:
+            coordinator: The coordinator instance
+
+        Returns:
+            list[str]: List of sleep sensor entity_ids for this area
+        """
+        sleep_sensors: list[str] = []
+        if (
+            self._parent_config
+            and hasattr(self._parent_config, "area_name")
+            and self._parent_config.area_name
+            and self._parent_config.area_name in coordinator.areas
+        ):
+            area_data = coordinator.areas[self._parent_config.area_name]
+            sleep_id = getattr(area_data, "sleep_entity_id", None)
+            if sleep_id is not None:
+                sleep_sensors.append(sleep_id)
+                _LOGGER.debug(
+                    "Adding sleep sensor %s to sleep sensors list",
+                    sleep_id,
+                )
+        return sleep_sensors
 
 
 @dataclass
