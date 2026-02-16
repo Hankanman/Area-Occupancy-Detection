@@ -106,6 +106,7 @@ class TestAreaMethods:
         mock_active_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
         mock_active_entity.decay_factor = 1.0
         type(mock_active_entity).weight = PropertyMock(return_value=0.85)
+        mock_active_entity.effective_weight = 0.85
         # Add type.input_type for sigmoid model filtering
         mock_active_entity.type = Mock()
         mock_active_entity.type.input_type = InputType.MOTION
@@ -126,6 +127,7 @@ class TestAreaMethods:
         mock_inactive_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
         mock_inactive_entity.decay_factor = 1.0
         type(mock_inactive_entity).weight = PropertyMock(return_value=0.7)
+        mock_inactive_entity.effective_weight = 0.7
         mock_inactive_entity.type = Mock()
         mock_inactive_entity.type.input_type = InputType.MEDIA
 
@@ -385,6 +387,7 @@ class TestAreaMethods:
         mock_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
         mock_entity.decay_factor = 1.0
         type(mock_entity).weight = PropertyMock(return_value=entity_config["weight"])
+        mock_entity.effective_weight = entity_config["weight"]
         # Add type.input_type for sigmoid model filtering
         mock_entity.type = Mock()
         mock_entity.type.input_type = entity_config["input_type"]

@@ -1306,7 +1306,7 @@ class TestSaveTimePriors:
 
         # Try to save values outside bounds
         time_priors = {
-            (0, 0): 0.05,  # Below minimum
+            (0, 0): 0.02,  # Below minimum (0.03)
             (0, 1): 0.95,  # Above maximum
             (1, 0): 0.5,  # Within bounds
         }

@@ -270,6 +270,32 @@ class Entity:
         return self.type.weight
 
     @property
+    def information_gain(self) -> float:
+        """Measure how informative this sensor is (0.0 = uninformative, 1.0 = highly informative).
+
+        Sensors where prob_given_true ≈ prob_given_false provide no discriminative
+        information for occupancy detection. This metric quantifies the gap.
+
+        Additionally, sensors with analysis errors (e.g., no_correlation, insufficient_data)
+        are clamped to a low value since correlation analysis couldn't establish their value.
+        """
+        # Sensors with analysis failures get a low information gain
+        if self.analysis_error is not None and self.analysis_error not in (
+            AnalysisStatus.NOT_ANALYZED,
+            AnalysisStatus.MOTION_EXCLUDED,
+        ):
+            return 0.1
+
+        pgt, pgf = self.get_likelihoods()
+        denominator = max(pgt, pgf, 0.01)
+        return min(1.0, abs(pgt - pgf) / denominator)
+
+    @property
+    def effective_weight(self) -> float:
+        """Weight scaled by information gain — uninformative sensors contribute less."""
+        return self.weight * self.information_gain
+
+    @property
     def evidence(self) -> bool | None:
         """Determine if entity is active.
 

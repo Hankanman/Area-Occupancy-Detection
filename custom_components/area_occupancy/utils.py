@@ -185,9 +185,13 @@ def sigmoid_probability(
         # Motion (0.95) contributes more than door (0.2)
         strength = entity.prob_given_true
 
-        # Add to z: weight × evidence × correlation × strength_factor
+        # Use effective_weight (weight × information_gain) so uninformative sensors
+        # contribute less. Falls back to weight if effective_weight is not available.
+        ew = getattr(entity, "effective_weight", entity.weight)
+
+        # Add to z: effective_weight × evidence × correlation × strength_factor
         # strength_factor (×2) converts prob_given_true to appropriate logit-space contribution
-        contribution = entity.weight * evidence * correlation * (strength * 2)
+        contribution = ew * evidence * correlation * (strength * 2)
         z += contribution
 
     return clamp_probability(sigmoid(z))
@@ -499,8 +503,10 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
 
         log_p_t = math.log(p_t)
         log_p_f = math.log(p_f)
-        contribution_true = log_p_t * entity.weight
-        contribution_false = log_p_f * entity.weight
+        # Use effective_weight so uninformative sensors contribute less
+        ew = getattr(entity, "effective_weight", entity.weight)
+        contribution_true = log_p_t * ew
+        contribution_false = log_p_f * ew
 
         log_true += contribution_true
         log_false += contribution_false
@@ -520,14 +526,14 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
 
 
 def combine_priors(
-    area_prior: float, time_prior: float, time_weight: float = 0.2
+    area_prior: float, time_prior: float, time_weight: float = 0.4
 ) -> float:
     """Combine area prior and time prior using weighted averaging in logit space.
 
     Args:
         area_prior: Base prior probability of occupancy for this area
         time_prior: Time-based modifier for the prior
-        time_weight: Weight given to time_prior (0.0 to 1.0, default: 0.2)
+        time_weight: Weight given to time_prior (0.0 to 1.0, default: 0.4)
 
     Returns:
         float: Combined prior probability

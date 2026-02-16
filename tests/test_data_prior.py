@@ -296,7 +296,7 @@ def test_value_property_complex_clamping(
         # Test 3: combined prior below threshold
         (0.25, 0.1, 0.3, 0.3, "combined prior below threshold"),
         # Test 4: min_override disabled (0.0)
-        (0.05, None, 0.0, MIN_PRIOR, "min_override disabled"),
+        (0.05, None, 0.0, 0.05, "min_override disabled"),
         # Test 5: combined prior + PRIOR_FACTOR exceeds min_override
         (0.5, 0.6, 0.4, None, "combined prior + PRIOR_FACTOR exceeds min_override"),
         # Test 6: min_override when global_prior is None
@@ -469,7 +469,7 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
 
     # Test data with values outside bounds
     test_data = {
-        (0, 0): 0.05,  # Below TIME_PRIOR_MIN_BOUND (0.1)
+        (0, 0): 0.02,  # Below TIME_PRIOR_MIN_BOUND (0.03)
         (0, 1): 0.95,  # Above TIME_PRIOR_MAX_BOUND (0.9)
         (0, 2): 0.5,  # Within bounds
         (1, 0): TIME_PRIOR_MIN_BOUND,  # At minimum bound

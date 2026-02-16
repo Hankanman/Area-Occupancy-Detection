@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 # Prior calculation constants
-PRIOR_FACTOR = 1.05
+PRIOR_FACTOR = 1.0
 DEFAULT_PRIOR = 0.5
 SIGNIFICANT_CHANGE_THRESHOLD = 0.1
 
