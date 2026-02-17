@@ -336,7 +336,11 @@ def _score_binary_indicator(
     matched_ids: list[str] = []
 
     for entity_id, entity in entities.items():
-        # Skip entities that don't match required device_class
+        # Skip entities that don't match required device_class.
+        # When all entities are filtered out, this returns (0.0, []) — not
+        # (-1.0, []) — because the area *has* sensors of this type, they just
+        # aren't the right kind. With total-weight normalization the outcome
+        # is identical, but semantically "no matching device" ≠ "no sensor."
         if indicator.ha_device_classes is not None:
             if entity.ha_device_class not in indicator.ha_device_classes:
                 continue
