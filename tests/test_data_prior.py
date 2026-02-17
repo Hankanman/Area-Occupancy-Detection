@@ -15,7 +15,12 @@ from custom_components.area_occupancy.const import (
     TIME_PRIOR_MIN_BOUND,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.prior import PRIOR_FACTOR, Prior
+from custom_components.area_occupancy.data.prior import (
+    PRIOR_FACTOR,
+    PURPOSE_MIN_PRIORS,
+    Prior,
+)
+from custom_components.area_occupancy.data.purpose import AreaPurpose, Purpose
 from custom_components.area_occupancy.utils import combine_priors
 from homeassistant.util import dt as dt_util
 
@@ -577,3 +582,49 @@ def test_clear_cache(coordinator: AreaOccupancyCoordinator):
     assert prior.global_prior is None
     assert prior._last_updated is None
     assert prior._cached_time_priors is None
+
+
+def test_passageway_purpose_min_prior(coordinator: AreaOccupancyCoordinator):
+    """Test that passageway areas get a minimum prior floor."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    # Set a very low global prior (typical for passageways)
+    prior.global_prior = 0.015
+
+    # With social purpose (default), the prior should stay low
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        result_social = prior.value
+    assert result_social < 0.1
+
+    # Switch area purpose to passageway
+    area._purpose = Purpose(purpose=AreaPurpose.PASSAGEWAY)
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        result_passageway = prior.value
+
+    assert result_passageway == PURPOSE_MIN_PRIORS[AreaPurpose.PASSAGEWAY]
+    assert result_passageway == 0.1
+
+
+def test_purpose_min_prior_does_not_override_higher_value(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """Test that purpose min prior doesn't lower an already-higher prior."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    area._purpose = Purpose(purpose=AreaPurpose.PASSAGEWAY)
+    prior.global_prior = 0.5
+
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        result = prior.value
+
+    assert result == 0.5
