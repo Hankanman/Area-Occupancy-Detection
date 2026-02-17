@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy simulator requirements file first for better layer caching
-COPY simulator/requirements.txt /app/simulator/requirements.txt
+# Copy simulator pyproject.toml first for better layer caching
+COPY simulator/pyproject.toml /app/simulator/pyproject.toml
 
-# Install Python dependencies from simulator requirements only
+# Install Python dependencies from simulator pyproject.toml
 # This file contains all dependencies needed: Flask, Home Assistant, etc.
 # Note: Home Assistant includes many dependencies like SQLAlchemy, PyYAML, etc.
-RUN pip install --no-cache-dir -r simulator/requirements.txt
+RUN pip install --no-cache-dir /app/simulator/
 
 # Remove build dependencies to reduce image size
 RUN apt-get purge -y --auto-remove \
@@ -50,10 +50,9 @@ ENV PORT=10000
 ENV FLASK_DEBUG=0
 ENV FLASK_HOST=0.0.0.0
 
-# Health check (checks if Flask app is responding)
-# Uses default port 10000 - if PORT env var changes, update this accordingly
+# Health check (checks if Flask app is responding, using PORT env var)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:10000/api/get-purposes').read()" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"10000\")}/api/get-purposes').read()" || exit 1
 
 # Run the Flask application
 CMD ["python", "main.py"]

@@ -10,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import DEVICE_SW_VERSION, DOMAIN
+from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
 
 if TYPE_CHECKING:
@@ -126,9 +127,15 @@ def _build_analysis_data(
     entity_states = _collect_entity_states(hass, area)
     likelihood_data = _collect_likelihood_data(area)
 
+    # Resolve half_life: use configured value, or derive from purpose if set to auto (0)
+    half_life = area.config.decay.half_life
+    if half_life == 0:
+        half_life = get_default_decay_half_life(area.config.purpose)
+
     data = {
         "area_name": area_name,
         "purpose": area.purpose.name,
+        "half_life": half_life,
         "current_probability": area.probability(),
         "current_occupied": area.occupied(),
         "current_threshold": area.threshold(),
