@@ -33,6 +33,7 @@ def _make_entity(
     decay_factor: float = 1.0,
     state: str | float | None = None,
     gaussian_params: GaussianParams | None = None,
+    ha_device_class: str | None = None,
 ) -> Mock:
     """Build a lightweight mock entity for scoring tests."""
     entity = Mock()
@@ -45,6 +46,7 @@ def _make_entity(
     entity.decay_factor = decay_factor
     entity.state = state
     entity.learned_gaussian_params = gaussian_params
+    entity.ha_device_class = ha_device_class
     entity.active = evidence is True or is_decaying
     return entity
 
@@ -271,7 +273,7 @@ class TestSpecificActivityScoring:
         assert result.confidence > 0.3
 
     def test_cooking_detected_in_kitchen(self) -> None:
-        """Kitchen with active appliance and elevated temp → cooking."""
+        """Kitchen with active appliance and elevated temp/humidity → cooking."""
         appliance = _make_entity("switch.oven", InputType.APPLIANCE, evidence=True)
         temp = _make_entity(
             "sensor.temp",
@@ -284,6 +286,17 @@ class TestSpecificActivityScoring:
                 std_unoccupied=1.0,
             ),
         )
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state="70.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=65.0,
+                std_occupied=10.0,
+                mean_unoccupied=40.0,
+                std_unoccupied=5.0,
+            ),
+        )
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
 
         area = _make_area(
@@ -291,6 +304,7 @@ class TestSpecificActivityScoring:
             entities_by_type={
                 InputType.APPLIANCE: [appliance],
                 InputType.TEMPERATURE: [temp],
+                InputType.HUMIDITY: [humidity],
                 InputType.MOTION: [motion],
             },
         )
@@ -300,7 +314,9 @@ class TestSpecificActivityScoring:
 
     def test_watching_tv_in_living_room(self) -> None:
         """Social area with active media → watching TV."""
-        media = _make_entity("media_player.tv", InputType.MEDIA, evidence=True)
+        media = _make_entity(
+            "media_player.tv", InputType.MEDIA, evidence=True, ha_device_class="tv"
+        )
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
 
         area = _make_area(
@@ -315,10 +331,21 @@ class TestSpecificActivityScoring:
         assert result.confidence > 0.3
 
     def test_working_in_office(self) -> None:
-        """Office with active appliance and power → working."""
+        """Office with active appliance, power, and elevated CO2 → working."""
         appliance = _make_entity("switch.computer", InputType.APPLIANCE, evidence=True)
         power = _make_entity("sensor.power", InputType.POWER, evidence=True)
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        co2 = _make_entity(
+            "sensor.co2",
+            InputType.CO2,
+            state="800.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=750.0,
+                std_occupied=100.0,
+                mean_unoccupied=420.0,
+                std_unoccupied=30.0,
+            ),
+        )
 
         area = _make_area(
             purpose=AreaPurpose.WORKING,
@@ -326,6 +353,7 @@ class TestSpecificActivityScoring:
                 InputType.APPLIANCE: [appliance],
                 InputType.POWER: [power],
                 InputType.MOTION: [motion],
+                InputType.CO2: [co2],
             },
         )
         result = detect_activity(area)
@@ -386,6 +414,7 @@ class TestDecayHandling:
             evidence=False,
             is_decaying=True,
             decay_factor=0.5,
+            ha_device_class="tv",
         )
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
 
@@ -412,6 +441,7 @@ class TestDecayHandling:
             evidence=False,
             is_decaying=True,
             decay_factor=0.0,
+            ha_device_class="tv",
         )
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
 
@@ -424,9 +454,8 @@ class TestDecayHandling:
         )
         result = detect_activity(area)
         # Media contributes 0, only motion (weight 0.1) matches.
-        # Confidence = 0.1 / 0.7 ≈ 0.14 — below min_match_weight of 0.3.
-        # Should fall to Idle or listening_to_music (also has media).
-        assert result.activity_id in (ActivityId.IDLE, ActivityId.LISTENING_TO_MUSIC)
+        # With total_weight normalization, confidence is too low to match.
+        assert result.activity_id == ActivityId.IDLE
 
 
 # ─── Environmental Graceful Degradation ──────────────────────────────
@@ -463,8 +492,8 @@ class TestGracefulDegradation:
             ActivityId.CLEANING,
         )
 
-    def test_no_sensors_for_type_excluded_from_possible_weight(self) -> None:
-        """Input types with no sensors should not count toward possible_weight."""
+    def test_missing_sensors_reduce_confidence(self) -> None:
+        """Missing sensor types reduce confidence via total weight normalization."""
         # Bathroom with only motion — no humidity, no door, no temp.
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
         area = _make_area(
@@ -559,10 +588,14 @@ class TestEdgeCases:
 
     def test_multiple_candidates_highest_confidence_wins(self) -> None:
         """When multiple activities match, highest confidence wins."""
-        # In a SOCIAL area with both media and motion, watching TV and
-        # listening to music are both candidates. Media has higher weight
-        # in watching_tv (0.6) vs listening_to_music (0.5).
-        media = _make_entity("media_player.tv", InputType.MEDIA, evidence=True)
+        # In a SOCIAL area with a receiver (matches both tv and music filters),
+        # watching TV and listening to music are both candidates.
+        media = _make_entity(
+            "media_player.receiver",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="receiver",
+        )
         motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
         sound = _make_entity(
             "sensor.sound",
@@ -619,7 +652,7 @@ class TestEdgeCases:
         )
         result = detect_activity(area)
         # Motion decaying at 0.3: score = 0.4 * 0.3 = 0.12.
-        # Possible = 0.4 + 0.3 + 0.2 = 0.9. Confidence = 0.12/0.9 ≈ 0.13.
+        # Total weight = 1.0. Confidence = 0.12/1.0 = 0.12.
         # Below min_match_weight 0.5, so cleaning excluded → Idle.
         assert result.activity_id == ActivityId.IDLE
 
@@ -728,3 +761,323 @@ class TestActivityIdEnum:
         }
         actual = {a.value for a in ActivityId}
         assert actual == expected
+
+
+# ─── Device Class Filtering ─────────────────────────────────────────
+
+
+class TestDeviceClassFiltering:
+    """Test ha_device_classes filtering on media indicators."""
+
+    def test_watching_tv_requires_tv_device_class(self) -> None:
+        """Speaker playing should NOT trigger watching_tv."""
+        speaker = _make_entity(
+            "media_player.speaker",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="speaker",
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [speaker],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # Speaker doesn't match watching_tv (needs tv/receiver).
+        # Should detect listening_to_music or idle, not watching_tv.
+        assert result.activity_id != ActivityId.WATCHING_TV
+
+    def test_listening_to_music_requires_speaker_device_class(self) -> None:
+        """TV playing should NOT trigger listening_to_music."""
+        tv = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="tv",
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [tv],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # TV matches watching_tv but not listening_to_music.
+        assert result.activity_id == ActivityId.WATCHING_TV
+
+    def test_receiver_matches_both_tv_and_music(self) -> None:
+        """Receiver device_class should match both watching_tv and listening_to_music."""
+        receiver = _make_entity(
+            "media_player.receiver",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="receiver",
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [receiver],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # Receiver matches both; watching_tv has higher media weight (0.6 vs 0.5).
+        assert result.activity_id in (
+            ActivityId.WATCHING_TV,
+            ActivityId.LISTENING_TO_MUSIC,
+        )
+
+    def test_media_without_device_class_matches_no_filtered_activity(self) -> None:
+        """Media entity with no device_class should not match filtered indicators."""
+        media = _make_entity(
+            "media_player.unknown",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class=None,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # None device_class doesn't match {"tv","receiver"} or {"speaker","receiver"}.
+        # Neither watching_tv nor listening_to_music should trigger.
+        assert result.activity_id not in (
+            ActivityId.WATCHING_TV,
+            ActivityId.LISTENING_TO_MUSIC,
+        )
+
+
+# ─── Confidence Normalization ────────────────────────────────────────
+
+
+class TestConfidenceNormalization:
+    """Test that confidence uses total definition weight, not possible weight."""
+
+    def test_confidence_uses_total_weight(self) -> None:
+        """Confidence = matched/total_weight, not matched/possible_weight."""
+        # Watching TV: media(0.6) + illuminance(0.15) + motion(0.1) + sound(0.15) = 1.0
+        # Only provide media (tv) and motion — no illuminance, no sound.
+        tv = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="tv",
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [tv],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.WATCHING_TV
+        # matched = 0.6 + 0.1 = 0.7, total = 1.0, confidence = 0.7
+        # Old behavior: possible = 0.7, confidence = 1.0 (inflated)
+        assert result.confidence == pytest.approx(0.7, abs=0.01)
+
+
+# ─── Environmental Signal Validity ───────────────────────────────────
+
+
+class TestEnvironmentalSignalValidity:
+    """Test that noisy environmental signals are skipped."""
+
+    def test_environmental_signal_skipped_for_tiny_span(self) -> None:
+        """Entity with indistinguishable means should not contribute."""
+        # bedroom_lux_1 scenario: means nearly identical, huge std devs
+        lux = _make_entity(
+            "sensor.bedroom_lux",
+            InputType.ILLUMINANCE,
+            state="32.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=33.42,
+                std_occupied=100.0,
+                mean_unoccupied=31.79,
+                std_unoccupied=94.0,
+            ),
+        )
+        sleep = _make_entity("binary_sensor.sleep", InputType.SLEEP, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SLEEPING,
+            entities_by_type={
+                InputType.ILLUMINANCE: [lux],
+                InputType.SLEEP: [sleep],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.SLEEPING
+        # The lux sensor should be skipped (span=1.63 < avg_std=97 * 0.5=48.5).
+        # So illuminance contributes 0, confidence = 0.5/1.0 = 0.5
+        assert result.confidence == pytest.approx(0.5, abs=0.01)
+
+    def test_environmental_signal_kept_for_meaningful_span(self) -> None:
+        """Entity with clearly separated means should contribute normally."""
+        lux = _make_entity(
+            "sensor.living_lux",
+            InputType.ILLUMINANCE,
+            state="15.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=10.0,
+                std_occupied=5.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=5.0,
+            ),
+        )
+        sleep = _make_entity("binary_sensor.sleep", InputType.SLEEP, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SLEEPING,
+            entities_by_type={
+                InputType.ILLUMINANCE: [lux],
+                InputType.SLEEP: [sleep],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.SLEEPING
+        # span=40 > avg_std=5 * 0.5=2.5, so illuminance contributes.
+        # Suppressed: (50-15)/40 = 0.875 → signal=0.875
+        # matched = 0.5 + 0.2*0.875 = 0.675, total=1.0, confidence=0.675
+        assert result.confidence > 0.5
+
+
+# ─── Tiebreaker Behavior ────────────────────────────────────────────
+
+
+class TestTiebreaker:
+    """Test tiebreaker uses matched_weight instead of possible_weight."""
+
+    def test_tiebreaker_uses_matched_weight(self) -> None:
+        """Equal confidence → higher matched_weight wins."""
+        # Create two areas that would tie on confidence but differ in matched_weight.
+        # Use a receiver (matches both watching_tv and listening_to_music).
+        # watching_tv: media=0.6, motion=0.1 → matched=0.7, total=1.0, conf=0.7
+        # listening_to_music: media=0.5, motion=0.2 → matched=0.7, total=1.0, conf=0.7
+        # Both have same confidence AND same matched_weight.
+        # watching_tv is evaluated first → wins (or ties keep first).
+        receiver = _make_entity(
+            "media_player.receiver",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="receiver",
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [receiver],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        # Both candidates have same confidence (0.7). watching_tv is evaluated
+        # first in ACTIVITY_DEFINITIONS, so it wins the tie.
+        assert result.activity_id in (
+            ActivityId.WATCHING_TV,
+            ActivityId.LISTENING_TO_MUSIC,
+        )
+        assert result.confidence == pytest.approx(0.7, abs=0.01)
+
+
+# ─── Bedroom Scenario Tests ─────────────────────────────────────────
+
+
+class TestBedroomScenario:
+    """Test the exact overnight bedroom scenario that prompted this fix."""
+
+    def test_bedroom_sleeping_vs_watching_tv_speaker(self) -> None:
+        """Speaker playing white noise + sleep ON → sleeping, NOT watching_tv."""
+        speaker = _make_entity(
+            "media_player.bedroom_clock",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="speaker",
+        )
+        sleep = _make_entity("binary_sensor.sleep", InputType.SLEEP, evidence=True)
+        lux = _make_entity(
+            "sensor.bedroom_lux",
+            InputType.ILLUMINANCE,
+            state="2.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=5.0,
+                std_occupied=3.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=10.0,
+            ),
+        )
+
+        area = _make_area(
+            purpose=AreaPurpose.SLEEPING,
+            entities_by_type={
+                InputType.MEDIA: [speaker],
+                InputType.SLEEP: [sleep],
+                InputType.ILLUMINANCE: [lux],
+            },
+        )
+        result = detect_activity(area)
+        # Speaker doesn't match watching_tv (needs tv/receiver).
+        # Sleep sensor triggers sleeping.
+        assert result.activity_id == ActivityId.SLEEPING
+        assert result.confidence > 0.3
+
+    def test_bedroom_speaker_sleep_off_is_idle(self) -> None:
+        """Speaker playing + sleep OFF → idle (not watching_tv)."""
+        speaker = _make_entity(
+            "media_player.bedroom_clock",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="speaker",
+        )
+        sleep = _make_entity("binary_sensor.sleep", InputType.SLEEP, evidence=False)
+
+        area = _make_area(
+            purpose=AreaPurpose.SLEEPING,
+            entities_by_type={
+                InputType.MEDIA: [speaker],
+                InputType.SLEEP: [sleep],
+            },
+        )
+        result = detect_activity(area)
+        # Speaker doesn't match watching_tv, sleep is off → no activity matches.
+        # listening_to_music doesn't target SLEEPING purpose.
+        assert result.activity_id != ActivityId.WATCHING_TV
+
+    def test_bedroom_tv_on_detects_watching_tv(self) -> None:
+        """Actual TV playing in bedroom → watching_tv (not listening_to_music)."""
+        tv = _make_entity(
+            "media_player.bedroom_tv_shield",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="tv",
+        )
+        sleep = _make_entity("binary_sensor.sleep", InputType.SLEEP, evidence=False)
+
+        area = _make_area(
+            purpose=AreaPurpose.SLEEPING,
+            entities_by_type={
+                InputType.MEDIA: [tv],
+                InputType.SLEEP: [sleep],
+            },
+        )
+        result = detect_activity(area)
+        # TV matches watching_tv (SLEEPING purpose is included).
+        assert result.activity_id == ActivityId.WATCHING_TV

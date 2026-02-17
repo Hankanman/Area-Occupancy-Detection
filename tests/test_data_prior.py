@@ -408,11 +408,21 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
         # Initially cache is None
         assert prior._cached_time_priors is None
 
-        # Mock database get_all_time_priors to return test data
+        # Mock database get_all_time_priors to return test data.
+        # Derive "other" slot keys relative to current time so they never collide
+        # with the current slot (avoids time-dependent test failures).
         current_day = prior.day_of_week
         current_slot = prior.time_slot
         slot_key = (current_day, current_slot)
-        test_cache = {slot_key: 0.6, (1, 10): 0.4, (2, 5): 0.3}
+        other_day = (current_day + 1) % 7
+        other_slot = (current_slot + 3) % 24
+        missing_day = (current_day + 3) % 7
+        missing_slot = (current_slot + 7) % 24
+        test_cache = {
+            slot_key: 0.6,
+            (other_day, other_slot): 0.4,
+            ((current_day + 2) % 7, (current_slot + 5) % 24): 0.3,
+        }
 
         with patch.object(
             prior.db,
@@ -434,27 +444,26 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
             mock_get_all.assert_not_called()
             assert result2 == 0.6
 
-        # Test accessing a different slot by patching dt_util.utcnow() to return different time
-        # This allows us to test that different slot keys work correctly
+        # Test accessing a different slot by patching dt_util.utcnow()
         from datetime import datetime
 
-        # Test slot (1, 10) - Tuesday at 10:00
-        tuesday_10am = datetime(2024, 1, 2, 10, 0, 0, tzinfo=UTC)  # Tuesday (weekday=1)
+        # Build a datetime that maps to (other_day, other_slot)
+        # Monday 2024-01-01 is weekday=0, so add other_day days
+        other_dt = datetime(2024, 1, 1 + other_day, other_slot, 0, 0, tzinfo=UTC)
         prior._cached_time_priors = test_cache.copy()
         with patch(
             "custom_components.area_occupancy.data.prior.dt_util.utcnow",
-            return_value=tuesday_10am,
+            return_value=other_dt,
         ):
             result3 = prior.time_prior
-            assert result3 == 0.4  # Should return value for slot (1, 10)
+            assert result3 == 0.4  # Should return value for the other slot
 
         # Test accessing a slot not in cache (should return DEFAULT_TIME_PRIOR)
-        # Use Friday at 20:00 (slot 20) which is not in test_cache
-        friday_8pm = datetime(2024, 1, 5, 20, 0, 0, tzinfo=UTC)  # Friday (weekday=4)
+        missing_dt = datetime(2024, 1, 1 + missing_day, missing_slot, 0, 0, tzinfo=UTC)
         prior._cached_time_priors = test_cache.copy()
         with patch(
             "custom_components.area_occupancy.data.prior.dt_util.utcnow",
-            return_value=friday_8pm,
+            return_value=missing_dt,
         ):
             result4 = prior.time_prior
             assert result4 == DEFAULT_TIME_PRIOR

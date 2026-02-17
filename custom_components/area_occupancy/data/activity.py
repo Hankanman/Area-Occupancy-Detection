@@ -17,6 +17,7 @@ from .purpose import AreaPurpose
 
 if TYPE_CHECKING:
     from ..area.area import Area
+    from .entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class Indicator:
     weight: float
     require_active: bool = True
     environmental_condition: str | None = None
+    ha_device_classes: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -145,7 +147,11 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
     ActivityDefinition(
         activity_id=ActivityId.WATCHING_TV,
         indicators=(
-            Indicator(InputType.MEDIA, 0.6),
+            Indicator(
+                InputType.MEDIA,
+                0.6,
+                ha_device_classes=frozenset({"tv", "receiver"}),
+            ),
             Indicator(
                 InputType.ILLUMINANCE,
                 0.15,
@@ -167,7 +173,11 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
     ActivityDefinition(
         activity_id=ActivityId.LISTENING_TO_MUSIC,
         indicators=(
-            Indicator(InputType.MEDIA, 0.5),
+            Indicator(
+                InputType.MEDIA,
+                0.5,
+                ha_device_classes=frozenset({"speaker", "receiver"}),
+            ),
             Indicator(
                 InputType.SOUND_PRESSURE,
                 0.3,
@@ -304,8 +314,7 @@ def _score_indicator(indicator: Indicator, area: Area) -> tuple[float, list[str]
     Returns:
         Tuple of (weighted_score, list_of_matching_entity_ids).
         weighted_score is indicator.weight * match_strength.
-        If the area has no sensor of the required type, returns (-1.0, [])
-        to signal the indicator should be excluded from possible_weight.
+        Returns (-1.0, []) if no sensors of the required type exist.
     """
     entities = area.entities.get_entities_by_input_type(indicator.input_type)
     if not entities:
@@ -321,13 +330,22 @@ def _score_indicator(indicator: Indicator, area: Area) -> tuple[float, list[str]
 def _score_binary_indicator(
     indicator: Indicator,
     area: Area,
-    entities: dict[str, object],
+    entities: dict[str, Entity],
 ) -> tuple[float, list[str]]:
     """Score a binary (active/inactive) indicator."""
     best_strength = 0.0
     matched_ids: list[str] = []
 
     for entity_id, entity in entities.items():
+        # Skip entities that don't match required device_class.
+        # When all entities are filtered out, this returns (0.0, []) — not
+        # (-1.0, []) — because the area *has* sensors of this type, they just
+        # aren't the right kind. With total-weight normalization the outcome
+        # is identical, but semantically "no matching device" ≠ "no sensor."
+        if indicator.ha_device_classes is not None:
+            if entity.ha_device_class not in indicator.ha_device_classes:
+                continue
+
         if indicator.require_active:
             if entity.evidence is True:
                 strength = 1.0
@@ -354,7 +372,7 @@ def _score_binary_indicator(
 
 def _score_environmental_indicator(
     indicator: Indicator,
-    entities: dict[str, object],
+    entities: dict[str, Entity],
 ) -> tuple[float, list[str]]:
     """Score an environmental (Gaussian-based) indicator."""
     best_strength = 0.0
@@ -373,6 +391,12 @@ def _score_environmental_indicator(
         with suppress(ValueError, TypeError):
             val = float(state)
         if val is None:
+            continue
+
+        # Skip entities where means are not statistically distinguishable
+        span = abs(params.mean_occupied - params.mean_unoccupied)
+        avg_std = (params.std_occupied + params.std_unoccupied) / 2
+        if avg_std > 0 and span < avg_std * 0.5:
             continue
 
         strength = _environmental_signal_strength(
@@ -398,10 +422,12 @@ def detect_activity(area: Area) -> DetectedActivity:
     1. If unoccupied, return Unoccupied.
     2. Filter definitions to matching purposes (empty = any).
     3. Score each candidate's indicators.
-    4. Normalize by possible weight (only indicators where the area
-       has at least one sensor of that type).
+    4. Normalize by total definition weight (sum of all indicator weights).
+       Missing sensors naturally reduce the maximum achievable confidence.
     5. Discard below min_match_weight.
-    6. Highest confidence wins; if none match, return Idle.
+    6. Highest confidence wins; ties broken by purpose-specificity,
+       then by matched_weight (more actual evidence). If none match,
+       return Idle.
     """
     if not area.occupied():
         return DetectedActivity(
@@ -412,7 +438,7 @@ def detect_activity(area: Area) -> DetectedActivity:
     purpose = area.purpose.purpose
 
     best: DetectedActivity | None = None
-    best_possible_weight = 0.0
+    best_matched_weight = 0.0
     best_is_specific = False
 
     for defn in ACTIVITY_DEFINITIONS:
@@ -421,19 +447,22 @@ def detect_activity(area: Area) -> DetectedActivity:
             continue
 
         matched_weight = 0.0
-        possible_weight = 0.0
         all_matched_ids: list[str] = []
 
         for indicator in defn.indicators:
             score, matched_ids = _score_indicator(indicator, area)
             if score < 0:
-                # No sensor of this type — skip from possible weight.
+                # No sensor of this type — scores 0, but total weight
+                # still includes it (no inflation from missing sensors).
                 continue
-            possible_weight += indicator.weight
             matched_weight += score
             all_matched_ids.extend(matched_ids)
 
-        if possible_weight <= 0:
+        # Normalize by total definition weight (always ~1.0), not just
+        # the weight of sensors present. Missing sensors naturally reduce
+        # the maximum achievable confidence.
+        total_weight = sum(ind.weight for ind in defn.indicators)
+        if total_weight <= 0:
             continue
 
         # Raw matched weight must meet the minimum threshold to prevent
@@ -441,12 +470,12 @@ def detect_activity(area: Area) -> DetectedActivity:
         if matched_weight < defn.min_match_weight:
             continue
 
-        confidence = matched_weight / possible_weight
+        confidence = matched_weight / total_weight
         if confidence < defn.min_match_weight:
             continue
 
         # Prefer higher confidence; break ties by purpose-specificity,
-        # then by more sensor coverage.
+        # then by more actual evidence (matched_weight).
         is_specific = bool(defn.purposes)
         if (
             best is None
@@ -455,7 +484,7 @@ def detect_activity(area: Area) -> DetectedActivity:
             or (
                 confidence == best.confidence
                 and is_specific == best_is_specific
-                and possible_weight > best_possible_weight
+                and matched_weight > best_matched_weight
             )
         ):
             best = DetectedActivity(
@@ -463,7 +492,7 @@ def detect_activity(area: Area) -> DetectedActivity:
                 confidence=round(confidence, 4),
                 matching_indicators=all_matched_ids,
             )
-            best_possible_weight = possible_weight
+            best_matched_weight = matched_weight
             best_is_specific = is_specific
 
     if best is not None:
