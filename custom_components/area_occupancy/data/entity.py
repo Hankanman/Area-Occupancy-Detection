@@ -231,6 +231,21 @@ class Entity:
         return ha_state.name if ha_state else None
 
     @property
+    def ha_device_class(self) -> str | None:
+        """Get the entity device_class from HA attributes."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "attributes"):
+                return state_obj.attributes.get("device_class")
+            return None
+        if self.hass is None:
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
+        if ha_state is None:
+            return None
+        return ha_state.attributes.get("device_class")
+
+    @property
     def available(self) -> bool:
         """Get the entity availability."""
         return self.state is not None
