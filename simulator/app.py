@@ -36,6 +36,7 @@ from custom_components.area_occupancy.data.purpose import (
     PURPOSE_DEFINITIONS,
     AreaPurpose,
 )
+from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.utils import bayesian_probability, combine_priors
 
 
@@ -145,11 +146,13 @@ def _serialize_entities(
     serialized: list[dict[str, Any]] = []
 
     for entity_id, entity in entities.items():
+        pgt, pgf = entity.get_likelihoods()
+
         details_parts = [
             f"Type: {entity.type.input_type.value}",
             f"Weight: {entity.weight:.2f}",
-            f"P(active|occupied): {entity.prob_given_true:.2f}",
-            f"P(active|vacant): {entity.prob_given_false:.2f}",
+            f"P(active|occupied): {pgt:.4f}",
+            f"P(active|vacant): {pgf:.4f}",
         ]
 
         if entity.type.active_states:
@@ -160,11 +163,11 @@ def _serialize_entities(
             details_parts.append(f"Active range: {min_val} – {max_val}")
 
         if entity.evidence is True:
-            likelihood = entity.prob_given_true
+            likelihood = pgt
         elif entity.evidence is False:
-            likelihood = entity.prob_given_false
+            likelihood = pgf
         else:
-            likelihood = entity.prob_given_true
+            likelihood = pgt
 
         entity_dict = {
             "entity_id": entity_id,
@@ -200,12 +203,13 @@ def _serialize_breakdown(
         if entity is None:
             continue
 
+        pgt, pgf = entity.get_likelihoods()
         if entity.evidence is True:
-            likelihood = entity.prob_given_true
+            likelihood = pgt
         elif entity.evidence is False:
-            likelihood = entity.prob_given_false
+            likelihood = pgf
         else:
-            likelihood = entity.prob_given_true
+            likelihood = pgt
 
         result.append(
             {
@@ -409,21 +413,34 @@ def _build_entity_inputs_from_entities(
         if not isinstance(decay_start, datetime):
             decay_start = dt_util.utcnow()
 
-        entity_inputs.append(
-            {
-                "entity_id": entity_id,
-                "type": entity_type_value,
-                "state": state_map.get(entity_id),
-                "prob_given_true": float(entity.prob_given_true),
-                "prob_given_false": float(entity.prob_given_false),
-                "weight": weight_value,
-                "previous_evidence": entity.evidence,
-                "decay": {
-                    "is_decaying": entity.decay.is_decaying,
-                    "decay_start": decay_start.isoformat(),
-                },
+        entity_input: dict[str, Any] = {
+            "entity_id": entity_id,
+            "type": entity_type_value,
+            "state": state_map.get(entity_id),
+            "prob_given_true": float(entity.prob_given_true),
+            "prob_given_false": float(entity.prob_given_false),
+            "weight": weight_value,
+            "previous_evidence": entity.evidence,
+            "decay": {
+                "is_decaying": entity.decay.is_decaying,
+                "decay_start": decay_start.isoformat(),
+            },
+        }
+
+        # Preserve analysis fields through the round-trip
+        if entity.analysis_error is not None:
+            entity_input["analysis_error"] = entity.analysis_error
+        if entity.correlation_type is not None:
+            entity_input["correlation_type"] = entity.correlation_type
+        if entity.learned_gaussian_params is not None:
+            entity_input["analysis_data"] = {
+                "mean_occupied": entity.learned_gaussian_params.mean_occupied,
+                "std_occupied": entity.learned_gaussian_params.std_occupied,
+                "mean_unoccupied": entity.learned_gaussian_params.mean_unoccupied,
+                "std_unoccupied": entity.learned_gaussian_params.std_unoccupied,
             }
-        )
+
+        entity_inputs.append(entity_input)
 
     return entity_inputs
 
@@ -488,6 +505,18 @@ def _create_entities_from_inputs(
             default_half_life=area_half_life,
         )
 
+        # Parse analysis_data into GaussianParams for numeric sensors
+        learned_gaussian_params = None
+        analysis_data = entity_input.get("analysis_data")
+        if isinstance(analysis_data, dict):
+            with suppress(KeyError, TypeError, ValueError):
+                learned_gaussian_params = GaussianParams(
+                    mean_occupied=float(analysis_data["mean_occupied"]),
+                    std_occupied=float(analysis_data["std_occupied"]),
+                    mean_unoccupied=float(analysis_data["mean_unoccupied"]),
+                    std_unoccupied=float(analysis_data["std_unoccupied"]),
+                )
+
         entity = Entity(
             entity_id=entity_id,
             type=entity_type,
@@ -495,6 +524,9 @@ def _create_entities_from_inputs(
             prob_given_false=prob_false,
             decay=decay,
             state_provider=_build_state_provider(state_map),
+            analysis_error=entity_input.get("analysis_error"),
+            correlation_type=entity_input.get("correlation_type"),
+            learned_gaussian_params=learned_gaussian_params,
         )
 
         previous_evidence = entity_input.get("previous_evidence")
@@ -705,6 +737,9 @@ def _normalize_entity_payloads(
                 "weight": payload.get("weight"),
                 "previous_evidence": payload.get("previous_evidence"),
                 "decay": payload.get("decay"),
+                "analysis_error": payload.get("analysis_error"),
+                "analysis_data": payload.get("analysis_data"),
+                "correlation_type": payload.get("correlation_type"),
             }
         )
 

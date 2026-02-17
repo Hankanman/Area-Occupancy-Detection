@@ -1,7 +1,5 @@
 .md-content__inner {
   margin: 0;
-}
-.md-content__inner {
   padding: 0;
 }
 .md-content__inner:before {
@@ -10,7 +8,7 @@
 .md-content__button {
   display: none;
 }
-p:first-of-type {
+.md-content__inner > p:first-of-type {
   display: none;
 }
 
@@ -53,13 +51,10 @@ sl-details.md-card {
 }
 
 .sim-header-content {
-  gap: 1.5rem;
-}
-
-.sim-header-content {
   display: flex;
   align-items: stretch;
   flex: 1 1 auto;
+  gap: 1.5rem;
 }
 
 .sim-prob-chart {
@@ -125,7 +120,7 @@ sl-details.md-card {
   margin: 0;
   max-width: unset;
 }
-h1:first-of-type {
+.md-content__inner > h1:first-of-type {
   display: none;
 }
 
