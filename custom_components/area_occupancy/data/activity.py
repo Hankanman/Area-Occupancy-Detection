@@ -17,6 +17,7 @@ from .purpose import AreaPurpose
 
 if TYPE_CHECKING:
     from ..area.area import Area
+    from .entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -329,7 +330,7 @@ def _score_indicator(indicator: Indicator, area: Area) -> tuple[float, list[str]
 def _score_binary_indicator(
     indicator: Indicator,
     area: Area,
-    entities: dict[str, object],
+    entities: dict[str, Entity],
 ) -> tuple[float, list[str]]:
     """Score a binary (active/inactive) indicator."""
     best_strength = 0.0
@@ -371,7 +372,7 @@ def _score_binary_indicator(
 
 def _score_environmental_indicator(
     indicator: Indicator,
-    entities: dict[str, object],
+    entities: dict[str, Entity],
 ) -> tuple[float, list[str]]:
     """Score an environmental (Gaussian-based) indicator."""
     best_strength = 0.0
