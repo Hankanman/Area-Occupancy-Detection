@@ -783,6 +783,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         )
         self._attr_name = NAME_SLEEP_PRESENCE
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+        self._attr_icon = "mdi:sleep"
         self._attr_device_info = area.device_info()
         self._attr_available = True
         self._attr_is_on = False

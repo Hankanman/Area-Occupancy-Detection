@@ -31,7 +31,7 @@ NAME_PRIORS_SENSOR = "Prior Probability"
 NAME_DECAY_SENSOR = "Decay Status"
 NAME_PROBABILITY_SENSOR = "Occupancy Probability"
 NAME_EVIDENCE_SENSOR = "Evidence"
-NAME_PRESENCE_PROBABILITY_SENSOR = "Presence Probability"
+NAME_PRESENCE_PROBABILITY_SENSOR = "Presence Confidence"
 NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR = "Environmental Confidence"
 NAME_DETECTED_ACTIVITY_SENSOR = "Detected Activity"
 NAME_ACTIVITY_CONFIDENCE_SENSOR = "Activity Confidence"
@@ -493,6 +493,7 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
         self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_translation_key = "activity_confidence"
 
     @property

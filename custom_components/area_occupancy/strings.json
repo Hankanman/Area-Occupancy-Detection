@@ -470,8 +470,8 @@
             "wasp_in_box": {
                 "name": "Wasp in Box"
             },
-            "sleep_presence": {
-                "name": "Sleep Presence"
+            "sleeping": {
+                "name": "Sleeping"
             }
         },
         "sensor": {

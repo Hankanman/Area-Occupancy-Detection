@@ -294,7 +294,7 @@ SAVE_INTERVAL: Final = 600  # seconds (10 minutes) - periodic database save inte
 
 # Entity naming
 NAME_WASP_IN_BOX: Final = "Wasp in Box"
-NAME_SLEEP_PRESENCE: Final = "Sleep Presence"
+NAME_SLEEP_PRESENCE: Final = "Sleeping"
 
 # Configuration keys
 CONF_WASP_ENABLED: Final = "wasp_enabled"
