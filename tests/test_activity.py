@@ -156,14 +156,6 @@ class TestActivityDefinitions:
         ids = [d.activity_id for d in ACTIVITY_DEFINITIONS]
         assert len(ids) == len(set(ids))
 
-    def test_cleaning_has_no_purpose_restriction(self) -> None:
-        """Cleaning should match any room purpose."""
-        cleaning = [
-            d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.CLEANING
-        ]
-        assert len(cleaning) == 1
-        assert cleaning[0].purposes == frozenset()
-
     def test_showering_restricted_to_bathroom(self) -> None:
         """Showering should only match bathroom areas."""
         showering = [
@@ -201,8 +193,7 @@ class TestIdleDetection:
 
     def test_idle_when_no_matching_purpose(self) -> None:
         """Occupied area with unmatched purpose returns Idle."""
-        # Use GARAGE with a DOOR sensor — no activity definitions target GARAGE
-        # with DOOR, and cleaning doesn't use DOOR.
+        # Use GARAGE with a DOOR sensor — no activity definitions target GARAGE.
         door = _make_entity("binary_sensor.d1", InputType.DOOR, evidence=True)
         area = _make_area(
             purpose=AreaPurpose.GARAGE,
@@ -374,31 +365,6 @@ class TestSpecificActivityScoring:
         assert result.activity_id == ActivityId.SLEEPING
         assert result.confidence > 0.3
 
-    def test_cleaning_matches_any_purpose(self) -> None:
-        """Cleaning should match in any area with sufficient indicators."""
-        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
-        appliance = _make_entity("switch.vacuum", InputType.APPLIANCE, evidence=True)
-        power = _make_entity("sensor.power", InputType.POWER, evidence=True)
-
-        # Use BATHROOM — cleaning has empty purposes so it matches anything.
-        area = _make_area(
-            purpose=AreaPurpose.BATHROOM,
-            entities_by_type={
-                InputType.MOTION: [motion],
-                InputType.APPLIANCE: [appliance],
-                InputType.POWER: [power],
-            },
-        )
-        result = detect_activity(area)
-        # The area may also match showering/bathing definitions for BATHROOM,
-        # but cleaning should be a candidate. We just verify it's detected as
-        # one of the valid activities (cleaning may win or lose vs bathroom-specific).
-        assert result.activity_id in (
-            ActivityId.CLEANING,
-            ActivityId.SHOWERING,
-            ActivityId.BATHING,
-        )
-
 
 # ─── Decay Handling ──────────────────────────────────────────────────
 
@@ -489,7 +455,6 @@ class TestGracefulDegradation:
         assert result.activity_id in (
             ActivityId.SHOWERING,
             ActivityId.BATHING,
-            ActivityId.CLEANING,
         )
 
     def test_missing_sensors_reduce_confidence(self) -> None:
@@ -502,7 +467,7 @@ class TestGracefulDegradation:
         )
         result = detect_activity(area)
         # Only motion available → matched_weight is below min_match_weight for
-        # all candidates (showering motion=0.15 < 0.3, cleaning motion=0.4 < 0.5).
+        # all candidates (showering motion=0.15 < 0.3, bathing motion=0.1 < 0.3).
         # Falls back to Idle.
         assert result.activity_id == ActivityId.IDLE
 
@@ -627,11 +592,8 @@ class TestEdgeCases:
 
     def test_below_min_match_weight_excluded(self) -> None:
         """Activities scoring below min_match_weight are excluded."""
-        # Cleaning has min_match_weight=0.5. Only motion (weight=0.4) active.
-        # Score = 0.4/0.4 = 1.0 — but wait, we only have motion.
-        # Actually with only motion, possible_weight = 0.4, matched = 0.4,
-        # confidence = 1.0 which is > 0.5. Let's test with partial match.
-        # Use an area where only motion is active but not strongly.
+        # Showering has min_match_weight=0.3. Only weakly decaying motion
+        # (weight=0.15) is active — other sensors present but inactive.
         motion = _make_entity(
             "binary_sensor.m1",
             InputType.MOTION,
@@ -639,21 +601,32 @@ class TestEdgeCases:
             is_decaying=True,
             decay_factor=0.3,
         )
-        appliance = _make_entity("switch.vac", InputType.APPLIANCE, evidence=False)
-        power = _make_entity("sensor.power", InputType.POWER, evidence=False)
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state="50.0",
+            gaussian_params=GaussianParams(
+                mean_occupied=80.0,
+                std_occupied=5.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=5.0,
+            ),
+        )
+        door = _make_entity("binary_sensor.door", InputType.DOOR, evidence=False)
 
         area = _make_area(
-            purpose=AreaPurpose.GARAGE,  # Only cleaning matches garage.
+            purpose=AreaPurpose.BATHROOM,
             entities_by_type={
                 InputType.MOTION: [motion],
-                InputType.APPLIANCE: [appliance],
-                InputType.POWER: [power],
+                InputType.HUMIDITY: [humidity],
+                InputType.DOOR: [door],
             },
         )
         result = detect_activity(area)
-        # Motion decaying at 0.3: score = 0.4 * 0.3 = 0.12.
-        # Total weight = 1.0. Confidence = 0.12/1.0 = 0.12.
-        # Below min_match_weight 0.5, so cleaning excluded → Idle.
+        # Motion decaying at 0.3: score = 0.15 * 0.3 = 0.045.
+        # Humidity at mean_unoccupied: signal = 0.0, score = 0.0.
+        # Door inactive: score = 0.0. Total matched = 0.045.
+        # Below min_match_weight 0.3, so showering excluded → Idle.
         assert result.activity_id == ActivityId.IDLE
 
     def test_entity_with_none_state_skipped_for_environmental(self) -> None:
@@ -748,7 +721,6 @@ class TestActivityIdEnum:
         """Verify expected members exist."""
         expected = {
             "bathing",
-            "cleaning",
             "cooking",
             "eating",
             "idle",

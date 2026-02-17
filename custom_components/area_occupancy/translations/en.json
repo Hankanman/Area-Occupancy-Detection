@@ -488,7 +488,6 @@
                 "name": "Detected Activity",
                 "state": {
                     "bathing": "Bathing",
-                    "cleaning": "Cleaning",
                     "cooking": "Cooking",
                     "eating": "Eating",
                     "idle": "Idle",

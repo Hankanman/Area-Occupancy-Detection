@@ -26,7 +26,6 @@ class ActivityId(StrEnum):
     """Detectable activities."""
 
     BATHING = "bathing"
-    CLEANING = "cleaning"
     COOKING = "cooking"
     EATING = "eating"
     IDLE = "idle"
@@ -261,22 +260,6 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.MEDIA, 0.1),
         ),
         purposes=frozenset({AreaPurpose.EATING}),
-    ),
-    ActivityDefinition(
-        activity_id=ActivityId.CLEANING,
-        indicators=(
-            Indicator(InputType.MOTION, 0.4),
-            Indicator(InputType.APPLIANCE, 0.3),
-            Indicator(InputType.POWER, 0.2),
-            Indicator(
-                InputType.SOUND_PRESSURE,
-                0.1,
-                require_active=False,
-                environmental_condition="elevated",
-            ),
-        ),
-        min_match_weight=0.5,
-        purposes=frozenset(),  # Any purpose.
     ),
 )
 
