@@ -33,6 +33,7 @@ You will be prompted to select entities for various categories. You only need to
 - Motion Sensors (active, inactive)
 - Door Sensors (open, closed)
 - Window Sensors (open, closed)
+- Cover Sensors (opening, closing)
 - Media Devices (playing, paused, idle, off)
 - Appliances/Switches (on, off, standby)
 - Illuminance (lx)
@@ -47,6 +48,19 @@ You will be prompted to select entities for various categories. You only need to
 - Power (W/kW)
 
 More information on the [Sensors](../features/sensors.md) page.
+
+## People Management
+
+You can configure sleep presence detection through the **Manage People** option in the integration's main menu. This allows the integration to detect when people are sleeping and maintain high occupancy probability in bedrooms overnight.
+
+For each person, you configure:
+
+- **Person Entity**: The `person.<name>` entity to track
+- **Sleep Confidence Sensor**: The Companion App sleep confidence sensor
+- **Sleep Area**: Which area this person sleeps in
+- **Confidence Threshold**: Minimum confidence to consider the person sleeping (default: 50)
+
+When configured, a **Sleeping** binary sensor is created for each assigned area. See [Sleep Presence](../features/sleep-presence.md) for details.
 
 ## Wasp in Box
 

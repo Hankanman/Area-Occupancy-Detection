@@ -32,7 +32,7 @@ Have you ever had your lights turn off while you're still in the room? Or watche
 
 **Core HA**: Basic features only.
 
-✨ **AOD**: Special features like "Wasp in Box" (for bathrooms), whole-home aggregation, purpose-based defaults.
+✨ **AOD**: Activity detection (what's happening, not just who's there), sleep presence tracking, "Wasp in Box" for bathrooms, whole-home aggregation, purpose-based defaults.
 
 **The bottom line:** AOD provides intelligent occupancy sensors that your automations can use. It learns, adapts, and understands context—so when you build automations that respond to occupancy, they work reliably instead of turning lights off while you're still in the room.
 
@@ -54,6 +54,9 @@ AOD creates sensors that your automations can use:
 
 - **Occupancy Status**: Binary sensor (`on` = occupied, `off` = clear) - use this in most automations
 - **Occupancy Probability**: Percentage (0-100%) - use this for conditional or gradual actions
+- **Detected Activity**: What's happening in the room (showering, cooking, watching TV, sleeping, etc.) - use this for context-aware automations
+- **Sleeping**: Whether people are sleeping in the area - use for overnight occupancy
+- **Presence Confidence / Environmental Confidence**: Split view of what's driving the probability
 - **Prior Probability**: Baseline from learned patterns - useful for monitoring and debugging
 - **Threshold**: Adjustable setting - fine-tune without reconfiguration
 
@@ -68,7 +71,7 @@ You create automations that respond to AOD's sensors. For example:
 
 The key difference: AOD provides intelligent occupancy data. You decide what actions to take based on that data.
 
-For automation examples, see the [Basic Usage Guide](getting-started/basic-usage.md).
+For automation examples, see the [Basic Usage Guide](basic-usage.md).
 
 ## What Core Home Assistant Can Do
 
@@ -105,7 +108,9 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 | **Sensor Reliability**   | You must configure manually  | Learns automatically                   |
 | **Multi-Sensor Fusion**  | Manual templates/automations | Automatic with learned weights         |
 | **Time-Based Patterns**  | Manual configuration         | Learns day/time patterns automatically |
-| **Specialized Features** | None                         | Wasp in Box, whole-home aggregation    |
+| **Activity Detection**   | None                         | Detects what's happening (cooking, showering, etc.) |
+| **Sleep Tracking**       | None                         | Detects sleep via phone companion app  |
+| **Specialized Features** | None                         | Wasp in Box, whole-home aggregation, purpose-based config |
 
 ## What Makes AOD Different
 
@@ -141,8 +146,8 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 
 **AOD Approach:**
 
-- **Prior Learning**: Automatically learns baseline occupancy patterns (global and time-based). See [Prior Learning](features/prior-learning.md) for details
-- **Likelihood Learning**: Learns how reliable each sensor is. See [Sensor Likelihoods](features/likelihood.md) for details
+- **Prior Learning**: Automatically learns baseline occupancy patterns (global and time-based). See [Prior Learning](../features/prior-learning.md) for details
+- **Likelihood Learning**: Learns how reliable each sensor is. See [Sensor Likelihoods](../features/likelihood.md) for details
 - **Time-based Patterns**: Learns day-of-week and time-of-day patterns automatically
 
 **Benefit:** Gets smarter over time. The longer it runs, the more accurate it becomes. No manual tuning required.
@@ -158,9 +163,10 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 
 **AOD Approach:**
 
-- Automatically combines motion, media, appliances, doors, windows, environmental sensors, and power sensors
+- Automatically combines motion, media, appliances, doors, windows, covers, power sensors, sleep presence, and environmental sensors
+- Separates presence indicators (80% weight) from environmental support (20% weight) for more accurate results
 - Each sensor type has learned reliability with weighted contributions
-- See [Bayesian Calculation](features/calculation.md) for details
+- See [Bayesian Calculation](../features/calculation.md) for details
 
 **Example:**
 
@@ -181,7 +187,7 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 
 - Gradual probability decay when activity stops
 - Occupancy sensor stays on longer, giving your automations better data
-- See [Probability Decay](features/decay.md) for details
+- See [Probability Decay](../features/decay.md) for details
 
 **Example:**
 
@@ -194,9 +200,27 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 
 AOD includes features not available in core Home Assistant:
 
+#### Activity Detection
+
+Identifies *what* is happening in a room — not just that someone is there. The system can detect activities like showering, cooking, watching TV, working, sleeping, and more. Activities are tied to room purpose, so "showering" only appears in bathrooms and "cooking" only in kitchens. See [Activity Detection](../features/activity-detection.md) for details.
+
+**Example:**
+
+- **Core HA**: Motion detected in kitchen → you know someone is there, but not what they're doing
+- **AOD**: Appliance on + humidity elevated + temperature elevated = `cooking` with 85% confidence → your automation can turn on the extractor fan
+
+#### Sleep Presence Detection
+
+Detects when people are sleeping by combining Home Assistant Person entities with phone-reported sleep confidence from the Companion App. When sleep is detected, the area maintains high occupancy probability overnight. See [Sleep Presence](../features/sleep-presence.md) for details.
+
+**Example:**
+
+- **Core HA**: No motion in bedroom overnight → occupancy turns off → heating turns off while you sleep
+- **AOD**: Person home + phone reports sleeping → Sleeping sensor on → occupancy probability stays high → your automation keeps heating on
+
 #### Wasp in Box
 
-Special logic for rooms with a single entry/exit point (bathrooms, closets, small offices). If someone enters and the door closes, they remain until the door opens again. See [Wasp in Box](features/wasp-in-box.md) for details.
+Special logic for rooms with a single entry/exit point (bathrooms, closets, small offices). If someone enters and the door closes, they remain until the door opens again. See [Wasp in Box](../features/wasp-in-box.md) for details.
 
 **Example:**
 
@@ -209,7 +233,7 @@ Automatically creates aggregated entities across all configured areas for whole-
 
 #### Purpose-Based Configuration
 
-Selecting a room purpose (Living Room, Bedroom, Kitchen, etc.) automatically sets sensible defaults for decay half-life and other parameters. See [Purpose-Based Configuration](features/purpose.md) for details.
+Selecting a room purpose (Living Room, Bedroom, Kitchen, etc.) automatically sets sensible defaults for decay half-life and other parameters. See [Purpose-Based Configuration](../features/purpose.md) for details.
 
 ## Real-World Scenarios
 
@@ -305,9 +329,11 @@ You're in the bathroom. Motion stops, but the door is closed.
 - ✅ You have multiple sensors per area (motion, media, doors, etc.)
 - ✅ You want automatic learning from your patterns
 - ✅ You need probability-based detection (not just binary)
+- ✅ You want to know *what* is happening in a room (activity detection)
+- ✅ You need reliable overnight bedroom occupancy (sleep presence)
 - ✅ You want specialized features (Wasp in Box, whole-home aggregation)
 - ✅ You want less maintenance (system learns and adapts)
-- ✅ You're frustrated with automations turning lights off while you're still in the room (because occupancy sensors aren't reliable)
+- ✅ You're frustrated with automations turning lights off while you're still in the room
 - ✅ You want your smart home to feel truly smart
 
 ### Use Core HA When:
@@ -324,18 +350,22 @@ You're in the bathroom. Motion stops, but the door is closed.
 1. **Accuracy**: Multi-sensor fusion + learning = fewer false positives/negatives
 2. **Adaptability**: Learns your patterns automatically, gets smarter over time
 3. **Intelligence**: Bayesian probability vs. simple binary logic
-4. **Convenience**: UI-based configuration, automatic learning, purpose-based defaults
-5. **Specialized Features**: Wasp in Box, whole-home aggregation, purpose-based config
-6. **Privacy**: Runs locally, no cloud services, full control
+4. **Context**: Activity detection tells you *what* is happening, not just *if* someone is there
+5. **Overnight**: Sleep presence keeps bedrooms occupied while you sleep
+6. **Convenience**: UI-based configuration, automatic learning, purpose-based defaults
+7. **Specialized Features**: Wasp in Box, whole-home aggregation, dual presence/environmental model
+8. **Privacy**: Runs locally, no cloud services, full control
 
 ## Getting Started
 
-Ready to try Area Occupancy Detection? See the [Installation Guide](getting-started/installation.md) and [Configuration Guide](getting-started/configuration.md) to get started. The integration creates occupancy sensors that you can use in your automations. It starts learning from your sensor history immediately and gets smarter over time.
+Ready to try Area Occupancy Detection? See the [Installation Guide](installation.md) and [Configuration Guide](configuration.md) to get started. The integration creates occupancy sensors that you can use in your automations. It starts learning from your sensor history immediately and gets smarter over time.
 
 ## Learn More
 
-- **[Bayesian Calculation](features/calculation.md)**: How probability is calculated
-- **[Prior Learning](features/prior-learning.md)**: How the system learns from history
-- **[Probability Decay](features/decay.md)**: How decay prevents false negatives
-- **[Wasp in Box](features/wasp-in-box.md)**: Special logic for single-entry rooms
-- **[Sensor Likelihoods](features/likelihood.md)**: How sensor reliability is learned
+- **[Bayesian Calculation](../features/calculation.md)**: How probability is calculated
+- **[Prior Learning](../features/prior-learning.md)**: How the system learns from history
+- **[Activity Detection](../features/activity-detection.md)**: How activity detection works
+- **[Sleep Presence](../features/sleep-presence.md)**: How sleep detection works
+- **[Probability Decay](../features/decay.md)**: How decay prevents false negatives
+- **[Wasp in Box](../features/wasp-in-box.md)**: Special logic for single-entry rooms
+- **[Sensor Likelihoods](../features/likelihood.md)**: How sensor reliability is learned

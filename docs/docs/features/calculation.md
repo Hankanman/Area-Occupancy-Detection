@@ -120,6 +120,33 @@ The normalization process:
 3. Normalises: `probability = true_prob / (true_prob + false_prob)`
 4. Handles edge case where both probabilities are zero (returns prior)
 
+## Dual-Model Approach: Presence + Environmental
+
+The integration splits sensor evidence into two independent models before combining them:
+
+### Presence Confidence
+
+Filters to **presence-related sensor types** — motion, media, appliance, door, window, cover, power, and sleep — and calculates a probability using the sigmoid model. This represents the "hard evidence" of someone being in the area.
+
+The result is exposed as the **Presence Confidence** diagnostic sensor.
+
+### Environmental Confidence
+
+Filters to **environmental sensor types** (temperature, humidity, illuminance, CO2, etc.) and calculates a 0-1 confidence score. A value of **50% is neutral** (no environmental influence), values above 50% support occupancy, and values below 50% oppose it.
+
+The result is exposed as the **Environmental Confidence** diagnostic sensor.
+
+### Combined Probability (Occupancy Probability)
+
+The two models are combined in **logit space** with an 80/20 weighting:
+
+```
+z_combined = 0.8 × logit(presence) + 0.2 × logit(environmental)
+probability = sigmoid(z_combined)
+```
+
+This means presence indicators dominate the final probability, while environmental data provides supporting or opposing evidence. The combination in logit space (rather than simple averaging) preserves the probabilistic meaning of the values.
+
 ## Output
 
 The result of this calculation is shown by the **Occupancy Probability** sensor, which displays the calculated probability as a percentage (0% to 100%).
@@ -142,10 +169,15 @@ The weight is applied as a multiplier to the log probability contribution:
 
 Default weights by entity type:
 
-- Motion sensors: 0.85 (high reliability)
-- Media players: 0.70 (medium-high reliability)
-- Appliances: 0.40 (medium reliability)
-- Doors/Windows: 0.20-0.30 (low reliability)
+- Motion sensors: 1.00 (highest reliability, ground truth)
+- Sleep: 0.90 (very high reliability)
+- Media players: 0.85 (high reliability)
+- Wasp in Box: 0.80 (high reliability)
+- Cover sensors: 0.50 (moderate reliability)
+- Appliances: 0.40 (moderate reliability)
+- Door sensors: 0.30 (lower reliability)
+- Power sensors: 0.30 (lower reliability)
+- Window sensors: 0.20 (low reliability)
 - Environmental sensors: 0.10 (very low reliability) - includes temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors
 
 ## Decay Interpolation

@@ -22,6 +22,7 @@ You will be prompted to select entities for various categories. You only need to
 | VOC Sensors                  | `sensor`                            | Volatile organic compound sensors measuring VOC levels (ppb)         | `200.0 - 1000.0`     |
 | PM2.5 Sensors                | `sensor`                            | Particulate matter sensors measuring PM2.5 levels (µg/m³)            | `12.0 - 55.0`        |
 | PM10 Sensors                 | `sensor`                            | Particulate matter sensors measuring PM10 levels (µg/m³)             | `55.0 - 155.0`       |
+| Cover Sensors                | `cover`                             | Blinds, shades, shutters, garage doors being operated                | `opening`, `closing`  |
 | Power Sensors                | `sensor`                            | Power sensors measuring power consumption (W/kW)                     | `0.1 - 10.0`         |
 
 ## Sensor Weights
@@ -31,10 +32,15 @@ Weights allow you to adjust the influence of different _types_ of sensors on the
 | Sensor Type          | Default Weight |
 | -------------------- | -------------- |
 | Motion Sensor        | 1.00           |
+| Sleep                | 0.90           |
+| Media Device         | 0.85           |
 | Wasp in Box          | 0.80           |
-| Media Device         | 0.70           |
+| Cover Sensor         | 0.50           |
 | Appliance            | 0.40           |
 | Door Sensor          | 0.30           |
 | Power Sensor         | 0.30           |
 | Window Sensor        | 0.20           |
 | Environmental Sensor | 0.10           |
+
+!!! note
+    The **Sleep** weight is not user-configurable per sensor. It is automatically applied when sleep presence is detected via [People Management](sleep-presence.md).
