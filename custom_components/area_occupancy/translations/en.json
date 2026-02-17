@@ -65,7 +65,7 @@
                             "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation.",
                             "motion_timeout": "This adds an additional timeout to historical motion sensor data. You can use this to effectively adjust the prior probability for the area and the likelihood of occupancy for any given sensor.",
                             "motion_prob_given_true": "The probability that a motion sensor is active when the area is actually occupied. Higher values (closer to 1.0) mean the motion sensor is more reliable when the area is occupied. Default: 0.95 (95%).",
-                            "motion_prob_given_false": "The probability that a motion sensor is active when the area is not occupied (false positive rate). Lower values (closer to 0.0) mean fewer false positives. Default: 0.02 (2%)."
+                            "motion_prob_given_false": "The probability that a motion sensor is active when the area is not occupied (false positive rate). Lower values (closer to 0.0) mean fewer false positives. Default: 0.005 (0.5%)."
                         }
                     },
                     "windows_and_doors": {
@@ -278,7 +278,7 @@
                             "weight_motion": "The weight given to motion sensor inputs in the occupancy calculation.",
                             "motion_timeout": "This adds an additional timeout to historical motion sensor data. You can use this to effectively adjust the prior probability for the area and the likelihood of occupancy for any given sensor.",
                             "motion_prob_given_true": "The probability that a motion sensor is active when the area is actually occupied. Higher values (closer to 1.0) mean the motion sensor is more reliable when the area is occupied. Default: 0.95 (95%).",
-                            "motion_prob_given_false": "The probability that a motion sensor is active when the area is not occupied (false positive rate). Lower values (closer to 0.0) mean fewer false positives. Default: 0.02 (2%)."
+                            "motion_prob_given_false": "The probability that a motion sensor is active when the area is not occupied (false positive rate). Lower values (closer to 0.0) mean fewer false positives. Default: 0.005 (0.5%)."
                         }
                     },
                     "windows_and_doors": {

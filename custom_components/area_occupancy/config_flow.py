@@ -479,9 +479,9 @@ def _create_motion_section_schema(
                 ),
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=MIN_PROBABILITY,
+                    min=0.001,
                     max=MAX_PROBABILITY,
-                    step=0.01,
+                    step=0.001,
                     mode=NumberSelectorMode.BOX,
                 )
             ),

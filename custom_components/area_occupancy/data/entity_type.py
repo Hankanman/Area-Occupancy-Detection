@@ -215,7 +215,7 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
     InputType.MOTION: {
         "weight": 1,
         "prob_given_true": 0.95,  # Much higher for ground truth
-        "prob_given_false": 0.02,  # Lower false positive rate
+        "prob_given_false": 0.005,  # PIR sensors rarely false-trigger
         "active_states": [STATE_ON],
         "active_range": None,
     },
