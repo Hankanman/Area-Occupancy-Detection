@@ -14,33 +14,21 @@ Have you ever had your lights turn off while you're still in the room? Or watche
 
 **Area Occupancy Detection** solves these real-world problems by thinking more intelligently about what "occupied" really means. Instead of just checking if motion was detected, it combines multiple clues, learns from your patterns, and calculates the probability that someone is actually there.
 
-**Area Occupancy Detection doesn't automate anything for you**—it provides the intelligent occupancy information you need to create reliable automations. AOD creates sensors that your automations can use to control lights, heating, and other devices. Think of AOD as the "smart sensor" that gives your automations better data to work with.
+**Replace Dozens of Templates and Groups** it provides the intelligent occupancy information you need to create reliable automations. AOD creates sensors that your automations can use to control lights, heating, and other devices. Without AOD this means setting up lots of groups, template sensors and jinja logic, with AOD you just give it all the entities and it creates reliable entities for you.
+
+![Probability Cards](docs/docs/images/probability-cards.png)
 
 ## The Quick Answer
 
 **Here's why AOD is different:**
 
-**HA**: "Motion detected? Occupied. Motion stopped? Not occupied."
-
-🎯 **AOD**: "Let me check motion, TV, doors, appliances, learned patterns, and time of day... 75% confident someone is there."
-
-**HA**: You configure everything manually. It never learns.
-
-🧠 **AOD**: Learns from your history automatically. Gets smarter over time. Knows you're usually in the kitchen Sunday mornings.
-
-**Core HA**: One sensor fails → wrong answer.
-
-🔀 **AOD**: Combines multiple sensors intelligently. If motion misses you, TV being on maintains occupancy probability → your automations keep lights on.
-
-**Core HA**: Motion stops → occupancy sensor turns off → automations turn lights off immediately.
-
-⏱️ **AOD**: Motion stops → probability gradually decreases → occupancy sensor stays on longer → your automations keep lights on while you sit still.
-
-**Core HA**: Basic features only.
-
-✨ **AOD**: Activity detection (what's happening, not just who's there), sleep presence tracking, "Wasp in Box" for bathrooms, whole-home aggregation, purpose-based defaults.
-
-**The bottom line:** AOD provides intelligent occupancy sensors that your automations can use. It learns, adapts, and understands context—so when you build automations that respond to occupancy, they work reliably instead of turning lights off while you're still in the room.
+| HA                                             | AOD                                                                                                                                           |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Motion On. Occupied. Motion Off. Not occupied. | Checks motion, TV, doors, appliances, history, time of day... 75% confident someone is there.                                                 |
+| No Learning                                    | Learns from your history automatically. Gets smarter over time. Knows you're usually in the kitchen Sunday mornings.                          |
+| One sensor fails → wrong answer.               | Combines multiple sensors intelligently. If motion misses you, TV being on maintains occupancy probability → your automations keep lights on. |
+| Needs automation timeouts to keep lights on    | Motion stops → probability gradually decreases → occupancy sensor stays on longer → your automations keep lights on while you sit still.      |
+| No Native Activity Detection                   | Activity detection (what's happening), sleep presence tracking, "Wasp in Box" for bathrooms, whole-home aggregation, purpose-based defaults.  |
 
 ## Creating Automations with AOD
 
@@ -66,18 +54,18 @@ AOD creates sensors that your automations can use:
 - **Prior Probability**: Baseline from learned patterns - useful for monitoring and debugging
 - **Threshold**: Adjustable setting - fine-tune without reconfiguration
 
+![Probability Cards](docs/docs/images/exposed_sensors.png)
+
 ### How You Use It
 
 You create automations that respond to AOD's sensors. For example:
 
 - **Turn lights on** when occupancy status turns `on`
-- **Turn lights off** when occupancy status turns `off` (with a delay to prevent flickering)
+- **Turn lights off** when occupancy status turns `off`
 - **Adjust heating** based on occupancy probability
 - **Dim lights gradually** as probability decreases
 
 The key difference: AOD provides intelligent occupancy data. You decide what actions to take based on that data.
-
-![Probability Cards](docs/docs/images/probability-cards.png)
 
 ## Documentation
 
@@ -129,36 +117,23 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 3. **Search for Area Occupancy Detection:** Search for "Area Occupancy Detection" and select then **Download**.
 4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
 
+When you first create the integration you will be taken straight to configuring the first area.
+
+When adding new areas you will need to navigate to **Integrations** -> **Area Occupancy Detection** -> **Configure (⚙️ Cog icon)**. This will bring up the configuration menu.
+
+There is detailed documentation on the configuration options here: [Configuration](https://hankanman.github.io/Area-Occupancy-Detection/getting-started/configuration/).
+
+Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
+
+- A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
+- A Purpose. What the room is used for, [see more about purposes here](https://hankanman.github.io/Area-Occupancy-Detection/features/purpose/)
+- 1 Motion sensor. A physical device in the area like PIR, mmWave
+
+The integration will work with just these configured. Everything else can be added as you get new devices. However the more you add in, the more accurate the predictions will be.
+
 ## Entities Created
 
-The integration creates the following entities for each configured area. An "All Areas" aggregation device is also created automatically. See the [Entities documentation](https://hankanman.github.io/Area-Occupancy-Detection/features/entities/) for full details.
-
-### Primary Entities
-
-| Entity | Type | Description |
-| --- | --- | --- |
-| `binary_sensor.[area]_occupancy_status` | Binary Sensor | `on` when probability meets threshold, `off` otherwise |
-| `sensor.[area]_occupancy_probability` | Sensor (%) | Current occupancy probability (1-99%) |
-| `number.[area]_occupancy_threshold` | Number (%) | Adjustable threshold for occupancy status (1-99%) |
-| `sensor.[area]_detected_activity` | Sensor (enum) | Current activity: showering, cooking, watching_tv, working, sleeping, idle, etc. |
-
-### Diagnostic Entities
-
-| Entity | Type | Description |
-| --- | --- | --- |
-| `sensor.[area]_presence_confidence` | Sensor (%) | Probability from presence indicators only (motion, media, covers, etc.) |
-| `sensor.[area]_environmental_confidence` | Sensor (%) | Environmental support (50% = neutral, >50% supports occupancy) |
-| `sensor.[area]_prior_probability` | Sensor (%) | Learned baseline probability from historical patterns |
-| `sensor.[area]_evidence` | Sensor | Lists active/inactive sensors with detailed per-entity information |
-| `sensor.[area]_decay_status` | Sensor (%) | Decay progress when probability is decreasing |
-| `sensor.[area]_activity_confidence` | Sensor (%) | Confidence in the detected activity |
-
-### Optional Entities
-
-| Entity | Type | Description |
-| --- | --- | --- |
-| `binary_sensor.[area]_sleeping` | Binary Sensor | Sleep presence — `on` when people are sleeping (requires People configuration) |
-| `binary_sensor.[area]_wasp_in_box` | Binary Sensor | Wasp in Box — maintains occupancy when door closes after motion (requires enabling) |
+The integration creates entities for each configured area. An "All Areas" aggregation device is also created automatically. See the [Entities documentation](https://hankanman.github.io/Area-Occupancy-Detection/features/entities/) for full details.
 
 ## Debugging
 

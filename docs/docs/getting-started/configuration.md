@@ -2,6 +2,16 @@
 
 Area Occupancy Detection is built for simplicity: just specify the sensors available in each area and a purpose, the integration will then intelligently handle occupancy detection for you. While some customization options are available, the system’s powerful history-based intelligence learns your habits over time—automatically refining its accuracy without constant manual tweaking.
 
+### Before You Start
+
+Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
+
+- A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
+- A Purpose. What the room is used for, [see more about purposes here](../features/purpose.md)
+- 1 Motion sensor. A physical device in the area like PIR, mmWave
+
+The integration will work with just these configured. Everything else can be added as you get new devices. However the more you add in, the more accurate the predictions will be.
+
 ## Purpose
 
 The first step after naming the area is choosing its [Purpose](../features/purpose.md). This sets a sensible default for the [decay](../features/decay.md) half life used when probability decreases. [Decay](../features/decay.md) half life affects how quickly the system reduces the probability of occupancy after activity stops. This essentially works like a gradual timeout for the area.

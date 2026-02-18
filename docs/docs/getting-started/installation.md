@@ -31,6 +31,16 @@ When adding new areas you will need to navigate to **Integrations** -> **Area Oc
 
 There is detailed documentation on the configuration options here: [Configuration](configuration.md).
 
+### Before You Start
+
+Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
+
+- A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
+- A Purpose. What the room is used for, [see more about purposes here](../features/purpose.md)
+- 1 Motion sensor. A physical device in the area like PIR, mmWave
+
+The integration will work with just these configured. Everything else can be added as you get new devices. However the more you add in, the more accurate the predictions will be.
+
 ### Main Menu
 
 The main menu allows you to modify global settings, add a new area, manage existing areas, or manage people for sleep presence detection.
@@ -56,6 +66,14 @@ The manage areas menu allows you to manage existing areas, you can see a summary
 ![Manage Areas](../images/config_manage_areas.png)
 
 ![Manage Area](../images/config_manage_area.png)
+
+### Manage People
+
+The manage people menu allows you to add and configure people associated with your home, they must be set up as people in Home Assistant first so they can be selected in the people picker. Choosing entities for sleep confidence and device tracking (from HA Companion app for example) allows AOD to track sleep for a given area. Choosing an area for a person essentially defines their bedroom.
+
+![Manage People](../images/config_manage_people.png)
+
+![Manage Person](../images/config_manage_person.png)
 
 ## Getting Help
 
