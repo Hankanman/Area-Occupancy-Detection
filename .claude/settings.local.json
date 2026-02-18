@@ -13,7 +13,11 @@
       "Bash(.venv/bin/ruff format:*)",
       "Bash(.venv/bin/ruff check:*)",
       "Bash(.venv/bin/pytest:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(wc:*)",
+      "Bash(uv run mkdocs:*)"
     ]
   }
 }
