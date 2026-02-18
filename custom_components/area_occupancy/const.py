@@ -96,6 +96,7 @@ CONF_PERSON_ENTITY: Final = "person_entity"
 CONF_PERSON_SLEEP_SENSOR: Final = "sleep_confidence_sensor"
 CONF_PERSON_SLEEP_AREA: Final = "sleep_area_id"
 CONF_PERSON_CONFIDENCE_THRESHOLD: Final = "confidence_threshold"
+CONF_PERSON_DEVICE_TRACKER: Final = "device_tracker"
 
 
 # Configured Weights

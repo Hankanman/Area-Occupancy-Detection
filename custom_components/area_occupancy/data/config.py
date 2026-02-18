@@ -38,6 +38,7 @@ from ..const import (
     CONF_MOTION_TIMEOUT,
     CONF_PEOPLE,
     CONF_PERSON_CONFIDENCE_THRESHOLD,
+    CONF_PERSON_DEVICE_TRACKER,
     CONF_PERSON_ENTITY,
     CONF_PERSON_SLEEP_AREA,
     CONF_PERSON_SLEEP_SENSOR,
@@ -115,6 +116,7 @@ class PersonConfig:
     sleep_confidence_sensor: str  # e.g. "sensor.phone_seb_sleep_confidence"
     sleep_area_id: str  # e.g. "bedroom" — HA area ID
     confidence_threshold: int = DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
+    device_tracker: str | None = None  # optional override for home/away state
 
 
 class IntegrationConfig:
@@ -200,12 +202,14 @@ class IntegrationConfig:
                     person_entity,
                 )
                 threshold = DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
+            device_tracker = person_data.get(CONF_PERSON_DEVICE_TRACKER) or None
             result.append(
                 PersonConfig(
                     person_entity=person_entity,
                     sleep_confidence_sensor=sleep_sensor,
                     sleep_area_id=sleep_area,
                     confidence_threshold=threshold,
+                    device_tracker=device_tracker,
                 )
             )
         return result

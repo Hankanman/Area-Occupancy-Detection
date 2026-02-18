@@ -78,6 +78,7 @@ from .const import (
     CONF_OPTION_PREFIX_AREA,
     CONF_PEOPLE,
     CONF_PERSON_CONFIDENCE_THRESHOLD,
+    CONF_PERSON_DEVICE_TRACKER,
     CONF_PERSON_ENTITY,
     CONF_PERSON_SLEEP_AREA,
     CONF_PERSON_SLEEP_SENSOR,
@@ -1320,12 +1321,18 @@ def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
         raise vol.Invalid("confidence_not_number") from err
     threshold = max(1, min(100, threshold))
 
-    return {
+    result = {
         CONF_PERSON_ENTITY: person_entity,
         CONF_PERSON_SLEEP_SENSOR: sleep_sensor,
         CONF_PERSON_SLEEP_AREA: sleep_area,
         CONF_PERSON_CONFIDENCE_THRESHOLD: threshold,
     }
+
+    device_tracker = user_input.get(CONF_PERSON_DEVICE_TRACKER, "")
+    if device_tracker:
+        result[CONF_PERSON_DEVICE_TRACKER] = device_tracker
+
+    return result
 
 
 def _handle_step_error(err: Exception) -> str:
@@ -2282,6 +2289,12 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                         mode=NumberSelectorMode.SLIDER,
                     )
                 ),
+                vol.Optional(
+                    CONF_PERSON_DEVICE_TRACKER,
+                    description={
+                        "suggested_value": defaults.get(CONF_PERSON_DEVICE_TRACKER, "")
+                    },
+                ): EntitySelector(EntitySelectorConfig(domain="device_tracker")),
             }
         )
 
