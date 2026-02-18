@@ -6,10 +6,13 @@ Sleep presence detection identifies when people are sleeping in an area, using H
 
 The system pairs two pieces of information per person:
 
-1. **Person entity** (`person.<name>`): Tracks whether the person is `home` or `not_home`.
+1. **Person entity** (`person.<name>`): Tracks whether the person is `home` or `not_home`. If a **device tracker** override is configured, that entity's state is used instead.
 2. **Sleep confidence sensor** (`sensor.<name>_sleep_confidence`): A numeric sensor (0-100) reported by the HA Companion App indicating how confident the phone is that the user is sleeping.
 
-When both conditions are met — the person is **home** and their sleep confidence is **at or above the configured threshold** — the sleep presence sensor for the assigned area turns **on**.
+When both conditions are met — the person is **home** (per the person entity or the overriding device tracker) and their sleep confidence is **at or above the configured threshold** — the sleep presence sensor for the assigned area turns **on**.
+
+!!! tip "When to use the device tracker override"
+    HA's Person entity aggregates all associated device trackers and reports `home` when *any* tracker is home. If you have multiple trackers (e.g., phone GPS, router presence) and one is more reliable for sleep detection, set it as the override so the sleep check uses that specific tracker instead of the aggregated result.
 
 ## Configuration
 
@@ -25,6 +28,7 @@ Sleep presence is configured through the **Manage People** option in the integra
 | **Sleep Confidence Sensor** | The Companion App sleep confidence sensor (`sensor.<name>_sleep_confidence`) |
 | **Sleep Area** | Which area this person sleeps in |
 | **Confidence Threshold** | Minimum sleep confidence (0-100) required to consider the person sleeping. Default: **75** |
+| **Device Tracker** *(optional)* | A specific `device_tracker` entity to use for home/away detection instead of the person entity. When set, this tracker's state is checked instead of `person.<name>`. Leave empty to use the person entity (default). |
 
 You can add multiple people, each assigned to a different (or the same) sleep area.
 
