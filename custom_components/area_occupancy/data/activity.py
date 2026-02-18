@@ -56,6 +56,7 @@ class ActivityDefinition:
     indicators: tuple[Indicator, ...]
     min_match_weight: float = 0.3
     purposes: frozenset[AreaPurpose] = frozenset()
+    occupancy_boost: float = 0.0
 
 
 @dataclass
@@ -65,6 +66,7 @@ class DetectedActivity:
     activity_id: ActivityId
     confidence: float
     matching_indicators: list[str] = field(default_factory=list)
+    occupancy_boost: float = 0.0
 
 
 # --- Activity Definitions ---
@@ -89,6 +91,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.DOOR, 0.15),
         ),
         purposes=frozenset({AreaPurpose.BATHROOM}),
+        occupancy_boost=1.5,
     ),
     ActivityDefinition(
         activity_id=ActivityId.BATHING,
@@ -110,6 +113,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
         ),
         min_match_weight=0.3,
         purposes=frozenset({AreaPurpose.BATHROOM}),
+        occupancy_boost=1.5,
     ),
     ActivityDefinition(
         activity_id=ActivityId.COOKING,
@@ -142,6 +146,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.MOTION, 0.1),
         ),
         purposes=frozenset({AreaPurpose.FOOD_PREP}),
+        occupancy_boost=1.0,
     ),
     ActivityDefinition(
         activity_id=ActivityId.WATCHING_TV,
@@ -168,6 +173,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
         purposes=frozenset(
             {AreaPurpose.SOCIAL, AreaPurpose.RELAXING, AreaPurpose.SLEEPING}
         ),
+        occupancy_boost=1.2,
     ),
     ActivityDefinition(
         activity_id=ActivityId.LISTENING_TO_MUSIC,
@@ -188,6 +194,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
         purposes=frozenset(
             {AreaPurpose.SOCIAL, AreaPurpose.RELAXING, AreaPurpose.WORKING}
         ),
+        occupancy_boost=0.8,
     ),
     ActivityDefinition(
         activity_id=ActivityId.WORKING,
@@ -209,6 +216,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             ),
         ),
         purposes=frozenset({AreaPurpose.WORKING}),
+        occupancy_boost=1.0,
     ),
     ActivityDefinition(
         activity_id=ActivityId.SLEEPING,
@@ -234,6 +242,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             ),
         ),
         purposes=frozenset({AreaPurpose.SLEEPING}),
+        occupancy_boost=1.5,
     ),
     ActivityDefinition(
         activity_id=ActivityId.EATING,
@@ -260,6 +269,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.MEDIA, 0.1),
         ),
         purposes=frozenset({AreaPurpose.EATING}),
+        occupancy_boost=0.8,
     ),
 )
 
@@ -398,8 +408,20 @@ def _score_environmental_indicator(
     return (indicator.weight * best_strength, matched_ids)
 
 
-def detect_activity(area: Area) -> DetectedActivity:
+def detect_activity(
+    area: Area,
+    *,
+    base_probability: float | None = None,
+    is_occupied: bool | None = None,
+) -> DetectedActivity:
     """Detect the most likely activity in an area.
+
+    Args:
+        area: The area to detect activity in.
+        base_probability: If provided, use this instead of calling area.probability().
+            Used by Area.probability() to break circular dependency.
+        is_occupied: If provided, use this instead of calling area.occupied().
+            Used by Area.probability() to break circular dependency.
 
     Algorithm:
     1. If unoccupied, return Unoccupied.
@@ -412,10 +434,13 @@ def detect_activity(area: Area) -> DetectedActivity:
        then by matched_weight (more actual evidence). If none match,
        return Idle.
     """
-    if not area.occupied():
+    occupied = is_occupied if is_occupied is not None else area.occupied()
+    prob = base_probability if base_probability is not None else area.probability()
+
+    if not occupied:
         return DetectedActivity(
             activity_id=ActivityId.UNOCCUPIED,
-            confidence=round(1.0 - area.probability(), 4),
+            confidence=round(1.0 - prob, 4),
         )
 
     purpose = area.purpose.purpose
@@ -474,6 +499,7 @@ def detect_activity(area: Area) -> DetectedActivity:
                 activity_id=defn.activity_id,
                 confidence=round(confidence, 4),
                 matching_indicators=all_matched_ids,
+                occupancy_boost=defn.occupancy_boost,
             )
             best_matched_weight = matched_weight
             best_is_specific = is_specific
@@ -484,5 +510,5 @@ def detect_activity(area: Area) -> DetectedActivity:
     # No specific activity detected — area is occupied but idle.
     return DetectedActivity(
         activity_id=ActivityId.IDLE,
-        confidence=round(area.probability(), 4),
+        confidence=round(prob, 4),
     )

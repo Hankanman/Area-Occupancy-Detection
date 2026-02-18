@@ -483,8 +483,9 @@ class TestAreaDetectedActivityCache:
         area = Mock(spec=Area)
         area.entities = Mock()
         area.entities.active_entities = []
-        area.probability.return_value = 0.3
-        area.occupied.return_value = False
+        area._base_probability.return_value = 0.3
+        area.config = Mock()
+        area.config.threshold = 0.5
         area.purpose = Mock()
         area.purpose.purpose = AreaPurpose.SOCIAL
 
@@ -510,12 +511,13 @@ class TestAreaDetectedActivityCache:
         area = Mock(spec=Area)
         area.purpose = Mock()
         area.purpose.purpose = AreaPurpose.SOCIAL
+        area.config = Mock()
+        area.config.threshold = 0.5
 
         # First call: unoccupied.
         area.entities = Mock()
         area.entities.active_entities = []
-        area.probability.return_value = 0.3
-        area.occupied.return_value = False
+        area._base_probability.return_value = 0.3
         area._activity_cache = None
         area._activity_cache_key = None
 
@@ -530,8 +532,7 @@ class TestAreaDetectedActivityCache:
         mock_entity = Mock()
         mock_entity.entity_id = "binary_sensor.motion"
         area.entities.active_entities = [mock_entity]
-        area.probability.return_value = 0.7
-        area.occupied.return_value = True
+        area._base_probability.return_value = 0.7
         area.entities.get_entities_by_input_type = Mock(return_value={})
 
         result2 = Area.detected_activity(area)
@@ -1053,3 +1054,135 @@ class TestBedroomScenario:
         result = detect_activity(area)
         # TV matches watching_tv (SLEEPING purpose is included).
         assert result.activity_id == ActivityId.WATCHING_TV
+
+
+# ─── Occupancy Boost ────────────────────────────────────────────────
+
+
+class TestOccupancyBoost:
+    """Test occupancy_boost field on definitions and DetectedActivity."""
+
+    def test_all_definitions_have_boost(self) -> None:
+        """Every ActivityDefinition must have an occupancy_boost >= 0."""
+        for defn in ACTIVITY_DEFINITIONS:
+            assert defn.occupancy_boost >= 0.0, (
+                f"{defn.activity_id} has negative occupancy_boost"
+            )
+
+    def test_showering_has_high_boost(self) -> None:
+        """Showering should have a high occupancy boost."""
+        showering = [
+            d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.SHOWERING
+        ]
+        assert showering[0].occupancy_boost == 1.5
+
+    def test_watching_tv_has_moderate_boost(self) -> None:
+        """Watching TV should have a moderate occupancy boost."""
+        watching = [
+            d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.WATCHING_TV
+        ]
+        assert watching[0].occupancy_boost == 1.2
+
+    def test_detected_activity_carries_boost(self) -> None:
+        """DetectedActivity should carry the boost from the matched definition."""
+        media = _make_entity(
+            "media_player.tv", InputType.MEDIA, evidence=True, ha_device_class="tv"
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.WATCHING_TV
+        assert result.occupancy_boost == 1.2
+
+    def test_idle_has_zero_boost(self) -> None:
+        """IDLE activity should have zero boost."""
+        door = _make_entity("binary_sensor.d1", InputType.DOOR, evidence=True)
+        area = _make_area(
+            purpose=AreaPurpose.GARAGE,
+            entities_by_type={InputType.DOOR: [door]},
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.IDLE
+        assert result.occupancy_boost == 0.0
+
+    def test_unoccupied_has_zero_boost(self) -> None:
+        """UNOCCUPIED activity should have zero boost."""
+        area = _make_area(occupied=False, probability=0.2)
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.UNOCCUPIED
+        assert result.occupancy_boost == 0.0
+
+    def test_default_detected_activity_boost(self) -> None:
+        """DetectedActivity default occupancy_boost should be 0.0."""
+        result = DetectedActivity(activity_id=ActivityId.IDLE, confidence=0.5)
+        assert result.occupancy_boost == 0.0
+
+
+# ─── Explicit Parameters ────────────────────────────────────────────
+
+
+class TestExplicitParameters:
+    """Test detect_activity with explicit base_probability and is_occupied."""
+
+    def test_explicit_is_occupied_false(self) -> None:
+        """Passing is_occupied=False should return UNOCCUPIED without calling area.occupied()."""
+        area = _make_area(occupied=True, probability=0.3)
+        result = detect_activity(area, base_probability=0.3, is_occupied=False)
+        assert result.activity_id == ActivityId.UNOCCUPIED
+        # area.occupied() should NOT have been called
+        area.occupied.assert_not_called()
+
+    def test_explicit_is_occupied_true(self) -> None:
+        """Passing is_occupied=True should skip the unoccupied check."""
+        area = _make_area(occupied=False, probability=0.3)
+        # Despite area.occupied() returning False, explicit is_occupied=True wins
+        result = detect_activity(area, base_probability=0.3, is_occupied=True)
+        assert result.activity_id != ActivityId.UNOCCUPIED
+        area.occupied.assert_not_called()
+
+    def test_explicit_base_probability_used_for_idle_confidence(self) -> None:
+        """Idle confidence should use explicit base_probability."""
+        area = _make_area(
+            occupied=True,
+            probability=0.99,
+            purpose=AreaPurpose.GARAGE,
+            entities_by_type={
+                InputType.DOOR: [
+                    _make_entity("binary_sensor.d1", InputType.DOOR, evidence=True)
+                ],
+            },
+        )
+        result = detect_activity(area, base_probability=0.42, is_occupied=True)
+        assert result.activity_id == ActivityId.IDLE
+        assert result.confidence == pytest.approx(0.42, abs=0.01)
+        # area.probability() should NOT have been called
+        area.probability.assert_not_called()
+
+    def test_no_circular_dependency(self) -> None:
+        """When explicit params are provided, area.occupied/probability are not called."""
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [
+                    _make_entity(
+                        "media_player.tv",
+                        InputType.MEDIA,
+                        evidence=True,
+                        ha_device_class="tv",
+                    )
+                ],
+                InputType.MOTION: [
+                    _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+                ],
+            },
+        )
+        detect_activity(area, base_probability=0.6, is_occupied=True)
+        area.occupied.assert_not_called()
+        area.probability.assert_not_called()

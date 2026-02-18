@@ -13,7 +13,9 @@ from custom_components.area_occupancy.const import (
     MIN_PROBABILITY,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.activity import ActivityId
 from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 
 
 # ruff: noqa: SLF001
@@ -410,3 +412,108 @@ class TestAreaMethods:
             f"occupied() should return {expected_occupied} for scenario: {description} "
             f"(probability={prob}, threshold={default_area.config.threshold})"
         )
+
+
+class TestTwoPhaseActivityBoost:
+    """Test two-phase probability with activity-based boost."""
+
+    def test_base_probability_matches_no_boost_scenario(
+        self, default_area: Area
+    ) -> None:
+        """_base_probability() should return sensor-only probability."""
+        default_area.entities._entities = {}
+        assert default_area._base_probability() == MIN_PROBABILITY
+
+    def test_probability_no_boost_when_idle(self, default_area: Area) -> None:
+        """probability() should equal _base_probability() when no activity detected."""
+        # Set up area as a garage (no activity definitions target it)
+        default_area.purpose._purpose = AreaPurpose.GARAGE
+        default_area.prior.global_prior = 0.3
+        default_area.prior._cached_time_prior = None
+
+        mock_entity = Mock()
+        mock_entity.evidence = True
+        mock_entity.prob_given_true = 0.9
+        mock_entity.prob_given_false = 0.1
+        mock_entity.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_entity.decay_factor = 1.0
+        type(mock_entity).weight = PropertyMock(return_value=0.85)
+        mock_entity.effective_weight = 0.85
+        mock_entity.type = Mock()
+        mock_entity.type.input_type = InputType.MOTION
+
+        default_area.entities._entities = {"binary_sensor.motion": mock_entity}
+
+        base = default_area._base_probability()
+        full = default_area.probability()
+
+        # For an area where no activity matches, probability == base
+        assert abs(full - base) < 1e-6
+
+    def test_probability_boosted_when_activity_detected(
+        self, default_area: Area
+    ) -> None:
+        """probability() should be higher than _base_probability() when activity detected."""
+        # Set up as SOCIAL area with TV active → should detect WATCHING_TV
+        default_area.purpose._purpose = AreaPurpose.SOCIAL
+        default_area.prior.global_prior = 0.5
+        default_area.prior._cached_time_prior = None
+        default_area.config.threshold = 0.3
+
+        mock_tv = Mock()
+        mock_tv.entity_id = "media_player.tv"
+        mock_tv.evidence = True
+        mock_tv.prob_given_true = 0.9
+        mock_tv.prob_given_false = 0.1
+        mock_tv.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_tv.decay_factor = 1.0
+        type(mock_tv).weight = PropertyMock(return_value=0.85)
+        mock_tv.effective_weight = 0.85
+        mock_tv.type = Mock()
+        mock_tv.type.input_type = InputType.MEDIA
+        mock_tv.ha_device_class = "tv"
+        mock_tv.active = True
+        mock_tv.learned_gaussian_params = None
+        mock_tv.state = None
+
+        mock_motion = Mock()
+        mock_motion.entity_id = "binary_sensor.motion"
+        mock_motion.evidence = True
+        mock_motion.prob_given_true = 0.95
+        mock_motion.prob_given_false = 0.02
+        mock_motion.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_motion.decay_factor = 1.0
+        type(mock_motion).weight = PropertyMock(return_value=0.85)
+        mock_motion.effective_weight = 0.85
+        mock_motion.type = Mock()
+        mock_motion.type.input_type = InputType.MOTION
+        mock_motion.ha_device_class = None
+        mock_motion.active = True
+        mock_motion.learned_gaussian_params = None
+        mock_motion.state = None
+
+        default_area.entities._entities = {
+            "media_player.tv": mock_tv,
+            "binary_sensor.motion": mock_motion,
+        }
+
+        base = default_area._base_probability()
+        full = default_area.probability()
+
+        # The boosted probability should be higher than base
+        assert full > base
+
+    def test_probability_no_stack_overflow(self, default_area: Area) -> None:
+        """Calling probability() should not cause infinite recursion."""
+        default_area.entities._entities = {}
+        # Should return without stack overflow
+        result = default_area.probability()
+        assert result == MIN_PROBABILITY
+
+    def test_detected_activity_uses_base_probability(self, default_area: Area) -> None:
+        """detected_activity() should use _base_probability() for cache key."""
+        default_area.entities._entities = {}
+        default_area.config.threshold = 0.5
+
+        result = default_area.detected_activity()
+        assert result.activity_id == ActivityId.UNOCCUPIED
