@@ -113,6 +113,8 @@ nav:
       - Sensor Likelihoods: features/likelihood.md
       - Sensor Correlation: features/sensor-correlation.md
       - Wasp in Box: features/wasp-in-box.md
+      - Sleep Presence: features/sleep-presence.md
+      - Activity Detection: features/activity-detection.md
       - Decay: features/decay.md
       - Entities: features/entities.md
       - Services: features/services.md

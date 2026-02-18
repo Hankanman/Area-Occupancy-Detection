@@ -1,37 +1,49 @@
 # Basic Usage
 
-Once [configured](configuration.md), there are four entities to monitor, Occupancy Status, Occupancy Probability, Prior Probability, and Threshold. The history panel in Home Assistant is great for visualising the data over time.
+Once [configured](configuration.md), the integration creates entities for each area. The two you'll use most are **Occupancy Status** (a binary sensor for automations) and **Occupancy Probability** (the underlying confidence percentage). Everything else helps you understand and tune the system.
 
-The graph below shows a 24-hour period for the Lounge. I added some annotations to show my threshold is set at 75% because I have strong occupancy indicators and multiple motion sensors and my TV as a media player configured. You can see that we can determine some very clear periods of occupancy from the Occupancy Status and the spikes in the graph of Occupancy Probability.
+## What to Focus on First
 
-We can also see the prior probability in yellow on the graph. This is the probability before any evidence is observed. Think of it as a percentage of total time that the area is occupied. In this case you can see that around 20% of the time someone is in the lounge. This fluctuates based on the time of day and day of week, it will get more accurate the longer you have the integration running. This is figured out by the integration based on previous evidence from sensors in your Home Assistant history data.
+After your first area is set up:
 
-If you get too many false positives, you can adjust the threshold up or down. You can also adjust the weights of the sensors to give more or less influence to the sensors in the [configuration](configuration.md).
+1. **Watch the Occupancy Probability graph** in the History panel for a few hours to see how it responds to your activity
+2. **Adjust the Threshold** if needed — start at 50%, raise it if you get false positives, lower it for more sensitivity
+3. **Let it learn** — the integration analyses your sensor history automatically and gets more accurate over time
 
 ![alt text](../images/lounge_occupancy_graph.png)
 
+The graph above shows a 24-hour period for a lounge. The threshold is set at 75% because there are strong occupancy indicators (multiple motion sensors + TV as a media player). You can see clear periods of occupancy from the spikes in Occupancy Probability and the corresponding Occupancy Status turning on/off.
+
+The prior probability (yellow) shows the baseline — around 20% of the time someone is in this room. It fluctuates by time-of-day and day-of-week, getting more accurate the longer the integration runs.
+
 ## Created Entities
 
-After setup, the integration creates several entities:
+### Primary Entities (Use in Automations)
 
-### Occupancy Status
+These are the entities you'll use day to day:
 
-This entity shows the overall occupancy status, you can use it in automations such as turning on lights when the area is occupied
+**Occupancy Status** — Binary sensor showing whether the area is occupied.
 
 | State             | Description                                                         |
 | ----------------- | ------------------------------------------------------------------- |
-| **Occupied** (on) | This means the probability of occupancy is above the set threshold. |
-| **Clear** (off)   | This means the probability of occupancy is below the set threshold. |
+| **Occupied** (on) | Probability of occupancy is at or above the threshold. |
+| **Clear** (off)   | Probability of occupancy is below the threshold. |
 
-### Occupancy Probability
+**Occupancy Probability** — The calculated probability (0-100%) based on all sensor inputs, learned patterns, and decay.
 
-This entity shows the calculated probability of occupancy based on the sensors and their weights that are currently active based on your configuration as a percentage.
+**Threshold** — Adjustable number entity (1-99%) controlling when the Occupancy Status turns on. Change this to tune sensitivity without reconfiguring the integration.
 
-### Prior Probability
+**Detected Activity** — An enum sensor showing what activity is happening: `showering`, `cooking`, `watching_tv`, `listening_to_music`, `working`, `eating`, `sleeping`, `idle`, or `unoccupied`. Activities are constrained by the area's [purpose](../features/purpose.md) — for example, "showering" only appears in bathrooms. Note: the `sleeping` activity value here is inferred from sensor indicators and is separate from the **Sleeping** binary sensor (under Optional Entities), which uses the Companion App's sleep confidence. See [Activity Detection](../features/activity-detection.md) for details.
 
-The prior probability is the probability of occupancy before any evidence is observed. It is used to provide a baseline probability of occupancy as a percentage.
+### Diagnostic Entities (For Tuning and Understanding)
 
-**Attributes:**
+These help you understand *why* the system reached its conclusion. All are marked as diagnostic in Home Assistant.
+
+**Presence Confidence** — Probability from strong presence indicators only (motion, media, appliances, doors, windows, covers, power, sleep). Shows the "hard evidence" side of the calculation.
+
+**Environmental Confidence** — How much environmental sensors (temperature, humidity, CO2, etc.) support or oppose occupancy. 50% is neutral, above supports, below opposes.
+
+**Prior Probability** — The baseline probability before any current evidence is considered. Useful for seeing learned time-of-day patterns.
 
 | Attribute      | Description                                     |
 | -------------- | ----------------------------------------------- |
@@ -40,11 +52,7 @@ The prior probability is the probability of occupancy before any evidence is obs
 | `day_of_week`  | Day-of-week index used for time prior           |
 | `time_slot`    | Time slot index used for time prior             |
 
-### Evidence
-
-Lists active and inactive entities and provides detailed information about each entity.
-
-**Attributes:**
+**Evidence** — Lists which sensors are currently providing evidence and which are inactive.
 
 | Attribute     | Description                                                                   |
 | ------------- | ----------------------------------------------------------------------------- |
@@ -53,17 +61,13 @@ Lists active and inactive entities and provides detailed information about each 
 | `total`       | Total number of entities                                                      |
 | `details`     | Detailed information for each entity including probabilities and decay status |
 
-### Decay Status
+**Decay Status** — Shows decay progress (0-100%) when probability is decreasing after activity stops.
 
-This entity shows the status of the decay process.
+**Activity Confidence** — Confidence (0-100%) in the currently detected activity.
 
-**State**: % of decay active (0-100)
+### Optional Entities
 
-### Threshold
-
-This number entity shows the threshold for occupancy.
-
-You can change the threshold using this entity and will be reflected in the occupancy status entity immediately. This is great for quickly testing different thresholds without having to reconfigure the integration.
+**Sleeping** — A binary sensor that turns `on` when people assigned to this area are detected as sleeping. Only created when people are configured via **Manage People** in the integration options. See [Sleep Presence](../features/sleep-presence.md) for details.
 
 ## Basic Automations
 
@@ -110,6 +114,18 @@ automation:
           message: "Living Room occupancy probability is {{ states('sensor.living_room_occupancy_probability') }}%"
 ```
 
+## Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| **Probability stuck low** | Verify sensors are reporting correctly in Developer Tools > States. Check the Evidence sensor to see which entities are active. |
+| **Sensors missing from evidence** | Ensure the sensor is added in the area's configuration and its state matches the expected active states (e.g., `on` for motion, `playing` for media). |
+| **Activity not detected** | Activity detection is purpose-aware — check the area's purpose matches the expected activity (e.g., "showering" requires Bathroom purpose). |
+| **Too many false positives** | Raise the Occupancy Threshold or reduce weights for unreliable sensors. |
+| **Too many false negatives** | Lower the threshold, add more sensors, or increase weights for reliable sensors. |
+
+For detailed debugging, see the [Debugging guide](../technical/debug.md).
+
 ## Tips and Tricks
 
 1. **Optimal Threshold**:
@@ -131,6 +147,6 @@ automation:
    - Shorter windows for high traffic
 
 4. **Historical Learning**:
-   - Enable for better accuracy
-   - Use longer periods when stable
-   - Update regularly
+   - Allow time to accumulate data
+   - Accuracy improves over the first few weeks
+   - Use the `area_occupancy.run_analysis` service to trigger a manual refresh

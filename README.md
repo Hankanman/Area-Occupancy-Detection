@@ -38,7 +38,7 @@ Have you ever had your lights turn off while you're still in the room? Or watche
 
 **Core HA**: Basic features only.
 
-✨ **AOD**: Special features like "Wasp in Box" (for bathrooms), whole-home aggregation, purpose-based defaults.
+✨ **AOD**: Activity detection (what's happening, not just who's there), sleep presence tracking, "Wasp in Box" for bathrooms, whole-home aggregation, purpose-based defaults.
 
 **The bottom line:** AOD provides intelligent occupancy sensors that your automations can use. It learns, adapts, and understands context—so when you build automations that respond to occupancy, they work reliably instead of turning lights off while you're still in the room.
 
@@ -59,7 +59,10 @@ Here's how AOD fits into your automation workflow:
 AOD creates sensors that your automations can use:
 
 - **Occupancy Status**: Binary sensor (`on` = occupied, `off` = clear) - use this in most automations
-- **Occupancy Probability**: Percentage (0-100%) - use this for conditional or gradual actions
+- **Occupancy Probability**: Percentage (1-99%) - use this for conditional or gradual actions
+- **Detected Activity**: What's happening in the room (showering, cooking, watching TV, sleeping, etc.) - use for context-aware automations
+- **Sleeping**: Whether people are sleeping in the area - use for overnight occupancy
+- **Presence Confidence / Environmental Confidence**: Split view of what's driving the probability
 - **Prior Probability**: Baseline from learned patterns - useful for monitoring and debugging
 - **Threshold**: Adjustable setting - fine-tune without reconfiguration
 
@@ -82,34 +85,38 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 ## Features
 
-- **Intelligent Occupancy Detection**: Uses multiple sensor inputs and Bayesian statistics.
+- **Bayesian Occupancy Detection**: Combines multiple sensor inputs using Bayesian probability for accurate occupancy detection.
+- **Dual-Model Approach**: Separates presence indicators (motion, media, appliances, doors, windows, covers, power, sleep — 80% weight) from environmental support (temperature, humidity, CO2, etc. — 20% weight) for more accurate results.
 - **Multiple Sensor Support**:
-  - **Motion/Occupancy Sensors**: Primary input for detecting presence.
-  - **Media Devices**: TV, media players, and similar devices used as activity indicators.
-  - **Appliances**: Sensors or switches representing devices like fans, PCs, or other appliances.
-  - **Environmental Sensors**: Illuminance, humidity, and temperature sensors contribute subtle occupancy clues.
-  - **Doors, Windows, and Lights**: These can influence or correlate with presence.
+  - **Motion/Occupancy Sensors**: Primary input and ground truth for detecting presence.
+  - **Media Devices**: TV, media players, and similar devices as activity indicators.
+  - **Appliances**: Switches or sensors representing devices like fans, PCs, or other appliances.
+  - **Cover Sensors**: Blinds, shades, shutters, and garage doors being operated.
+  - **Environmental Sensors**: Temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors contribute subtle occupancy clues.
+  - **Doors and Windows**: Entry/exit and ventilation patterns.
+  - **Power Sensors**: Power consumption as an activity indicator.
+- **Activity Detection**: Identifies what activity is happening in a room (showering, cooking, watching TV, working, sleeping, eating, etc.) — constrained by room purpose so "showering" only appears in bathrooms.
+- **Sleep Presence Detection**: Detects when people are sleeping using HA Person entities combined with phone sleep confidence from the Companion App, keeping bedrooms occupied overnight.
 - **Probability-Based Output**: Provides an occupancy probability (1-99%) and a binary occupancy status based on a configurable threshold.
 - **Time-Based Priors**: Learns occupancy patterns by **day of week** and **time of day**, adjusting probability dynamically based on historical usage.
-- **Adaptive Historical Analysis**: Learns sensor priors over time, improving accuracy as it gathers data.
-- **Configurable Motion Timeout**: Specify how long motion remains active after last detection (default: 5 minutes).
-- **Configurable Time Decay**: Gradually reduces occupancy probability if no new triggers occur.
-- **Per-Type Probabilities**: Calculates and exposes occupancy probabilities for each input type (motion, media, appliance, door, window, illuminance, humidity, temperature).
+- **Adaptive Historical Analysis**: Learns sensor reliability and priors over time, improving accuracy as it gathers data.
+- **Probability Decay**: Gradually reduces occupancy probability when no new activity occurs, with purpose-based defaults.
+- **Wasp in Box**: Virtual sensor for rooms with a single entry/exit point — maintains occupancy when the door closes after motion.
+- **All Areas Aggregation**: Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration.
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability.
-- **Purpose-Based Defaults**: Selecting a room purpose automatically sets a sensible decay half-life.
+- **Purpose-Based Defaults**: Selecting a room purpose (12 options from Passageway to Bedroom) automatically sets sensible decay timing.
 
 ## Planned Features
 
-- **Activity Detection**: Based on history and current state, predict the current activity like Cooking, Working, Sleeping etc.
-- **Machine Learning Model**: Train a true neural network based on history to predict occupancy, may be needed for the activity detection.
-- **Auto-Adjusting Threshold**: Based on the history of itself and predictions, automatically adjust the threshold for occupancy status so the user doesn't need to.
-- **Location Aware**: Leveraging BLE, WiFi, GPS
-- **Weather-Aware**: If it’s cold and rainy, you might be more likely to be indoors — integrate weather data into priors to influence probabilities.
+- **Machine Learning Model**: Train a neural network based on history to complement the existing Bayesian approach for improved predictions.
+- **Auto-Adjusting Threshold**: Based on history and predictions, automatically adjust the threshold so the user doesn't need to.
+- **Location Aware**: Leveraging BLE, WiFi, GPS.
+- **Weather-Aware**: Integrate weather data into priors (cold and rainy → more likely to be indoors).
 - **Occupancy Zone Hierarchies**:
-  - **Parent-Child Area Relationships**: If the kitchen is occupied and the dining room is adjacent, allow probabilities to influence each other (shared likelihood factors).
-  - **Multi-Room Tracking**: Track movement across rooms for more continuous occupancy detection — useful for corridor lighting.
-  - **Adjacent Area Detection**: If motion is detected in a hallway before the living room, begin pre-heating or turning on devices as the probability rises.
+  - **Parent-Child Area Relationships**: If the kitchen is occupied and the dining room is adjacent, allow probabilities to influence each other.
+  - **Multi-Room Tracking**: Track movement across rooms for more continuous occupancy detection.
+  - **Adjacent Area Detection**: Pre-heat or turn on devices as the probability rises based on motion in adjacent areas.
 
 ## Installation
 
@@ -124,53 +131,34 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 ## Entities Created
 
-The integration creates several entities, all prefixed with your configured area name.
+The integration creates the following entities for each configured area. An "All Areas" aggregation device is also created automatically. See the [Entities documentation](https://hankanman.github.io/Area-Occupancy-Detection/features/entities/) for full details.
 
-### Binary Sensor
+### Primary Entities
 
-- `binary_sensor.[name]_occupancy_status`: Indicates if area is occupied based on probability threshold.
+| Entity | Type | Description |
+| --- | --- | --- |
+| `binary_sensor.[area]_occupancy_status` | Binary Sensor | `on` when probability meets threshold, `off` otherwise |
+| `sensor.[area]_occupancy_probability` | Sensor (%) | Current occupancy probability (1-99%) |
+| `number.[area]_occupancy_threshold` | Number (%) | Adjustable threshold for occupancy status (1-99%) |
+| `sensor.[area]_detected_activity` | Sensor (enum) | Current activity: showering, cooking, watching_tv, working, sleeping, idle, etc. |
 
-  - State: `on` (occupied) / `off` (not occupied).
-  - Device Class: `occupancy`.
+### Diagnostic Entities
 
-### Sensors
+| Entity | Type | Description |
+| --- | --- | --- |
+| `sensor.[area]_presence_confidence` | Sensor (%) | Probability from presence indicators only (motion, media, covers, etc.) |
+| `sensor.[area]_environmental_confidence` | Sensor (%) | Environmental support (50% = neutral, >50% supports occupancy) |
+| `sensor.[area]_prior_probability` | Sensor (%) | Learned baseline probability from historical patterns |
+| `sensor.[area]_evidence` | Sensor | Lists active/inactive sensors with detailed per-entity information |
+| `sensor.[area]_decay_status` | Sensor (%) | Decay progress when probability is decreasing |
+| `sensor.[area]_activity_confidence` | Sensor (%) | Confidence in the detected activity |
 
-- `sensor.[name]_occupancy_probability`: Current calculated occupancy probability.
+### Optional Entities
 
-  - Value: 1-99%.
-  - Attributes:
-
-    - `active_triggers`: List of sensors currently indicating activity.
-    - `sensor_probabilities`: Individual probability details for each sensor.
-    - `time_prior`: Prior probability for the current day/time slot.
-    - `threshold`: Current threshold setting.
-    - `decay_active`: Whether decay is currently active.
-    - `last_trigger_time`: Timestamp of last sensor trigger.
-
-- `sensor.[name]_prior_probability`: Learned prior probabilities from historical analysis.
-
-  - Value: 1-99% (average of all priors).
-  - Attributes:
-
-    - `motion_prior`, `media_prior`, `appliance_prior`, `door_prior`, `window_prior`, `environmental_prior`.
-    - `time_priors`: Learned priors for each day/time slot.
-    - `last_update`: Timestamp of last prior update.
-    - `analysis_period`: Days of history analyzed.
-
-- `sensor.[name]_decay_status`: Current decay influence on probability.
-
-  - Value: 0-100% (amount of decay applied).
-  - Attributes:
-
-    - `decay_start_time`: When decay began.
-    - `decay_half_life`: Current decay half-life setting.
-
-### Number
-
-- `number.[name]_occupancy_threshold`: Adjustable threshold for occupancy determination.
-
-  - Range: 1-99%.
-  - Default: 50%.
+| Entity | Type | Description |
+| --- | --- | --- |
+| `binary_sensor.[area]_sleeping` | Binary Sensor | Sleep presence — `on` when people are sleeping (requires People configuration) |
+| `binary_sensor.[area]_wasp_in_box` | Binary Sensor | Wasp in Box — maintains occupancy when door closes after motion (requires enabling) |
 
 ## Debugging
 

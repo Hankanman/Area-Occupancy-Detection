@@ -33,7 +33,7 @@ There is detailed documentation on the configuration options here: [Configuratio
 
 ### Main Menu
 
-The main menu allows you to modify global settings, add a new area, or manage existing areas.
+The main menu allows you to modify global settings, add a new area, manage existing areas, or manage people for sleep presence detection.
 
 ![Main Menu](../images/config_main_menu.png)
 

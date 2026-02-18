@@ -23,6 +23,47 @@ This integration creates several entities in Home Assistant to expose the calcul
     *   **Description:** Allows you to adjust the probability threshold required for the **Occupancy Status** binary sensor to turn `on`. Changes made here are reflected immediately in the binary sensor's state.
     *   **Mode:** `slider` or `box` (depends on HA frontend)
 
+*   **`sensor.area_presence_confidence_<area_name>` (Presence Confidence)**
+    *   **State:** Numeric value (0.0 to 100.0)
+    *   **Unit:** `%`
+    *   **Description:** Shows the probability calculated from strong presence indicators only (motion, media, appliances, doors, windows, covers, power, sleep). This isolates the "hard evidence" of occupancy from environmental support.
+    *   **Device Class:** `power_factor`
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+
+*   **`sensor.area_environmental_confidence_<area_name>` (Environmental Confidence)**
+    *   **State:** Numeric value (0.0 to 100.0)
+    *   **Unit:** `%`
+    *   **Description:** Shows the confidence from environmental sensors. **50% is neutral** (no environmental influence), values above 50% mean environmental data supports occupancy, and values below 50% mean environmental data opposes occupancy.
+    *   **Device Class:** `power_factor`
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+
+*   **`sensor.area_detected_activity_<area_name>` (Detected Activity)**
+    *   **State:** One of: `showering`, `bathing`, `cooking`, `eating`, `watching_tv`, `listening_to_music`, `working`, `sleeping`, `idle`, `unoccupied`
+    *   **Description:** Reports the currently detected activity in the area. Activities are constrained by the area's purpose (e.g., "showering" only appears in bathrooms). See [Activity Detection](activity-detection.md) for details.
+    *   **Device Class:** `enum`
+    *   **Attributes:**
+        *   `confidence`: Confidence score as a percentage (0-100%).
+        *   `matching_indicators`: List of entity IDs that matched the activity definition.
+
+*   **`sensor.area_activity_confidence_<area_name>` (Activity Confidence)**
+    *   **State:** Numeric value (0.0 to 100.0)
+    *   **Unit:** `%`
+    *   **Description:** Shows the confidence score of the detected activity as a percentage.
+    *   **Device Class:** `power_factor`
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+
+*   **`binary_sensor.<area_name>_sleeping` (Sleeping)**
+    *   **State:** `on` / `off`
+    *   **Description:** Turns `on` when one or more people assigned to this area are detected as sleeping. Only created for areas that have people configured via the **Manage People** option. See [Sleep Presence](sleep-presence.md) for details.
+    *   **Device Class:** `occupancy`
+    *   **Icon:** `mdi:sleep`
+    *   **Attributes:**
+        *   `people_sleeping`: List of friendly names of people currently sleeping.
+        *   `people`: Detailed list with person name, state, sleep confidence, threshold, and sleeping status per person.
+
 ## Diagnostic Entities
 
 These entities provide insight into the internal calculations and are useful for tuning and debugging.
@@ -106,6 +147,25 @@ The "All Areas" device creates the following entities (using `all_areas` instead
     *   **Entity Category:** `diagnostic`
     *   **Use Case:** Helps understand when overall occupancy is decreasing across multiple areas.
 
+*   **`sensor.area_presence_confidence_all_areas` (All Areas Presence Confidence)**
+    *   **State:** Numeric value (0.0 to 100.0)
+    *   **Unit:** `%`
+    *   **Description:** Average presence confidence across all configured areas.
+    *   **Device Class:** `power_factor`
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+
+*   **`sensor.area_environmental_confidence_all_areas` (All Areas Environmental Confidence)**
+    *   **State:** Numeric value (0.0 to 100.0)
+    *   **Unit:** `%`
+    *   **Description:** Average environmental confidence across all configured areas.
+    *   **Device Class:** `power_factor`
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+
+!!! note
+    **Detected Activity** and **Activity Confidence** are **not** aggregated across areas, as activities are specific to individual rooms.
+
 ### How Aggregation Works
 
 The "All Areas" device uses different aggregation strategies depending on the metric:
@@ -114,6 +174,8 @@ The "All Areas" device uses different aggregation strategies depending on the me
 *   **Probability:** Uses **average** - calculates the mean probability across all areas.
 *   **Prior Probability:** Uses **average** - calculates the mean prior probability across all areas.
 *   **Decay Status:** Uses **average** - calculates the mean decay status across all areas.
+*   **Presence Confidence:** Uses **average** - calculates the mean presence confidence across all areas.
+*   **Environmental Confidence:** Uses **average** - calculates the mean environmental confidence across all areas.
 
 ### Example Use Cases
 
@@ -148,5 +210,6 @@ The "All Areas" device uses different aggregation strategies depending on the me
 
 *   The "All Areas" device is created automatically when you configure your first area.
 *   The Evidence sensor is **not** created for "All Areas" as it would be too complex to aggregate evidence details across multiple areas.
+*   The Detected Activity and Activity Confidence sensors are **not** created for "All Areas" as activities are specific to individual rooms.
 *   All aggregation calculations are performed in real-time based on the current state of individual areas.
 *   The device appears in Home Assistant's device registry under the name "All Areas".

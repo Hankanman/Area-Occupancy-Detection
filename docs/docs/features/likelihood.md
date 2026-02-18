@@ -11,7 +11,7 @@ See **[Sensor Correlation & Continuous Likelihood](sensor-correlation.md)** for 
 **Motion sensors do not have learned likelihoods.** Instead, they use **user-configurable likelihoods** that you can set per area during configuration:
 
 - `P(Active | Occupied)`: Configurable (default: 0.95 or 95%)
-- `P(Active | Not Occupied)`: Configurable (default: 0.02 or 2%)
+- `P(Active | Not Occupied)`: Configurable (default: 0.005 or 0.5%)
 
 Motion sensors are used as **ground truth** to determine when the area is occupied. Learning motion sensor likelihoods would create a circular dependency where motion sensors determine occupied intervals and then calculate their own likelihoods from those same intervals. Instead, you can configure these values based on your specific motion sensor setup and reliability.
 

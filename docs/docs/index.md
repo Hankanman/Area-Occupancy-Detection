@@ -9,14 +9,17 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 ### Core Features
 
 - **[Bayesian Probability Calculation](features/calculation.md)**: Uses learned sensor reliability to calculate occupancy probability
+- **[Dual-Model Approach](features/calculation.md#dual-model-approach-presence-environmental)**: Separates presence indicators (80% weight) from environmental support (20% weight) for more accurate results
 - **[Historical Learning](features/prior-learning.md)**: Automatically learns from your sensor history to improve accuracy
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
-- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
+- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, cover, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 - **[Wasp in Box](features/wasp-in-box.md)**: Special logic for rooms with single entry/exit points
 - **[All Areas Aggregation](features/entities.md#all-areas-aggregation-device)**: Automatically aggregates occupancy data across all configured areas for whole-home detection
 
 ### Advanced Features
 
+- **[Activity Detection](features/activity-detection.md)**: Identifies what activity is happening in a room (showering, cooking, watching TV, sleeping, etc.)
+- **[Sleep Presence Detection](features/sleep-presence.md)**: Detects when people are sleeping using HA Person entities and phone sleep confidence
 - **[Sensor Likelihoods](features/likelihood.md)**: Learns how reliable each sensor is for occupancy detection
 - **[Purpose-Based Configuration](features/purpose.md)**: Automatic configuration based on room purpose
 
@@ -51,8 +54,11 @@ The integration uses Bayes' theorem to update occupancy probability based on sen
 
 The integration supports multiple sensor types with different default weights:
 
-- **Motion Sensors** (1.00): High reliability for occupancy detection
-- **Media Devices** (0.70): Good indicator of active use
+- **Motion Sensors** (1.00): Highest reliability, ground truth for occupancy detection
+- **Sleep** (0.90): Very high reliability for overnight occupancy
+- **Media Devices** (0.85): High reliability indicator of active use
+- **Wasp in Box** (0.80): High reliability virtual sensor for single-entry rooms
+- **Cover Sensors** (0.50): Moderate reliability for blinds, shades, shutters, garage doors
 - **Appliances** (0.40): Moderate reliability
 - **Door Sensors** (0.30): Lower reliability, but useful for entry/exit
 - **Power Sensors** (0.30): Power consumption indicating active device usage
@@ -96,7 +102,7 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 
 ## Key Features
 
-- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, appliances, power sensors, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
+- **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, covers, appliances, power sensors, sleep presence, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
 - **Bayesian Inference:** Calculates the probability of occupancy based on the current state of configured sensors and their individual learned likelihoods.
 - **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using motion sensors as ground truth) over a configurable history period.
 - **Configurable Weights:** Assign weights to different sensor _types_ to influence their impact on the overall probability.
@@ -106,9 +112,14 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 - **Exposed Entities:**
   - Occupancy Probability Sensor (%) - per area and aggregated "All Areas"
   - Occupancy Status Binary Sensor (on/off) - per area and aggregated "All Areas"
+  - Presence Confidence Sensor (%) - per area and aggregated "All Areas"
+  - Environmental Confidence Sensor (%) - per area and aggregated "All Areas"
   - Prior Probability Sensor (%) - per area and aggregated "All Areas"
   - Evidence Sensor - per area only
   - Decay Status Sensor (%) - per area and aggregated "All Areas"
+  - Detected Activity Sensor (enum) - per area only
+  - Activity Confidence Sensor (%) - per area only
+  - Sleeping Binary Sensor (on/off) - per area only (when people configured)
   - Occupancy Threshold Number Input - per area only
 - **All Areas Aggregation:** Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **UI Configuration:** Easy setup and management through the Home Assistant UI.
