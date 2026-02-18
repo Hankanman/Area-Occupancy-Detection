@@ -114,6 +114,18 @@ automation:
           message: "Living Room occupancy probability is {{ states('sensor.living_room_occupancy_probability') }}%"
 ```
 
+## Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| **Probability stuck low** | Verify sensors are reporting correctly in Developer Tools > States. Check the Evidence sensor to see which entities are active. |
+| **Sensors missing from evidence** | Ensure the sensor is added in the area's configuration and its state matches the expected active states (e.g., `on` for motion, `playing` for media). |
+| **Activity not detected** | Activity detection is purpose-aware — check the area's purpose matches the expected activity (e.g., "showering" requires Bathroom purpose). |
+| **Too many false positives** | Raise the Occupancy Threshold or reduce weights for unreliable sensors. |
+| **Too many false negatives** | Lower the threshold, add more sensors, or increase weights for reliable sensors. |
+
+For detailed debugging, see the [Debugging guide](../technical/debug.md).
+
 ## Tips and Tricks
 
 1. **Optimal Threshold**:
@@ -135,6 +147,6 @@ automation:
    - Shorter windows for high traffic
 
 4. **Historical Learning**:
-   - Enable for better accuracy
-   - Use longer periods when stable
-   - Update regularly
+   - Allow time to accumulate data
+   - Accuracy improves over the first few weeks
+   - Use the `area_occupancy.run_analysis` service to trigger a manual refresh

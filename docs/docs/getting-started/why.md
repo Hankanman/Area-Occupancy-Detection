@@ -55,7 +55,7 @@ AOD creates sensors that your automations can use:
 - **Occupancy Status**: Binary sensor (`on` = occupied, `off` = clear) - use this in most automations
 - **Occupancy Probability**: Percentage (0-100%) - use this for conditional or gradual actions
 - **Detected Activity**: What's happening in the room (showering, cooking, watching TV, sleeping, etc.) - use this for context-aware automations
-- **Sleeping**: Whether people are sleeping in the area - use for overnight occupancy
+- **Sleeping**: Whether people are sleeping in the area - use for overnight occupancy (all data processed locally, no cloud services)
 - **Presence Confidence / Environmental Confidence**: Split view of what's driving the probability
 - **Prior Probability**: Baseline from learned patterns - useful for monitoring and debugging
 - **Threshold**: Adjustable setting - fine-tune without reconfiguration

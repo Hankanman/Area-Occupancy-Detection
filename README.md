@@ -109,7 +109,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 ## Planned Features
 
-- **Machine Learning Model**: Train a neural network based on history to predict occupancy.
+- **Machine Learning Model**: Train a neural network based on history to complement the existing Bayesian approach for improved predictions.
 - **Auto-Adjusting Threshold**: Based on history and predictions, automatically adjust the threshold so the user doesn't need to.
 - **Location Aware**: Leveraging BLE, WiFi, GPS.
 - **Weather-Aware**: Integrate weather data into priors (cold and rainy → more likely to be indoors).
