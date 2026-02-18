@@ -43,7 +43,7 @@ Here's how AOD fits into your automation workflow:
 ### The Workflow
 
 1. **AOD analyzes your sensors** → Motion, TV, doors, appliances, learned patterns
-2. **AOD calculates probability** → Combines all inputs using Bayesian inference
+2. **AOD calculates probability** → Combines all inputs using [Bayesian inference](../features/calculation.md)
 3. **AOD creates occupancy sensors** → Binary occupancy status and probability sensors
 4. **Your automations use these sensors** → Trigger actions based on occupancy state or probability
 5. **AOD learns and adapts** → Gets smarter over time, improving your automations automatically

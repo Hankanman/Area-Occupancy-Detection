@@ -33,7 +33,7 @@ These are the entities you'll use day to day:
 
 **Threshold** — Adjustable number entity (1-99%) controlling when the Occupancy Status turns on. Change this to tune sensitivity without reconfiguring the integration.
 
-**Detected Activity** — An enum sensor showing what activity is happening: `showering`, `cooking`, `watching_tv`, `listening_to_music`, `working`, `eating`, `sleeping`, `idle`, or `unoccupied`. Activities are constrained by the area's [purpose](../features/purpose.md) — for example, "showering" only appears in bathrooms. See [Activity Detection](../features/activity-detection.md) for details.
+**Detected Activity** — An enum sensor showing what activity is happening: `showering`, `cooking`, `watching_tv`, `listening_to_music`, `working`, `eating`, `sleeping`, `idle`, or `unoccupied`. Activities are constrained by the area's [purpose](../features/purpose.md) — for example, "showering" only appears in bathrooms. Note: the `sleeping` activity value here is inferred from sensor indicators and is separate from the **Sleeping** binary sensor (under Optional Entities), which uses the Companion App's sleep confidence. See [Activity Detection](../features/activity-detection.md) for details.
 
 ### Diagnostic Entities (For Tuning and Understanding)
 

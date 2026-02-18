@@ -59,7 +59,7 @@ Here's how AOD fits into your automation workflow:
 AOD creates sensors that your automations can use:
 
 - **Occupancy Status**: Binary sensor (`on` = occupied, `off` = clear) - use this in most automations
-- **Occupancy Probability**: Percentage (0-100%) - use this for conditional or gradual actions
+- **Occupancy Probability**: Percentage (1-99%) - use this for conditional or gradual actions
 - **Detected Activity**: What's happening in the room (showering, cooking, watching TV, sleeping, etc.) - use for context-aware automations
 - **Sleeping**: Whether people are sleeping in the area - use for overnight occupancy
 - **Presence Confidence / Environmental Confidence**: Split view of what's driving the probability
@@ -138,7 +138,7 @@ The integration creates the following entities for each configured area. An "All
 | Entity | Type | Description |
 | --- | --- | --- |
 | `binary_sensor.[area]_occupancy_status` | Binary Sensor | `on` when probability meets threshold, `off` otherwise |
-| `sensor.[area]_occupancy_probability` | Sensor (%) | Current occupancy probability (0-100%) |
+| `sensor.[area]_occupancy_probability` | Sensor (%) | Current occupancy probability (1-99%) |
 | `number.[area]_occupancy_threshold` | Number (%) | Adjustable threshold for occupancy status (1-99%) |
 | `sensor.[area]_detected_activity` | Sensor (enum) | Current activity: showering, cooking, watching_tv, working, sleeping, idle, etc. |
 
