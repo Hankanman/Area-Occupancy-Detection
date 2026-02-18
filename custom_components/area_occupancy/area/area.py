@@ -19,9 +19,10 @@ from ..const import (
     DOMAIN,
     MIN_PROBABILITY,
 )
-from ..data.activity import DetectedActivity, detect_activity
+from ..data.activity import ActivityId, DetectedActivity, detect_activity
 from ..data.analysis import start_prior_analysis
 from ..utils import (
+    apply_activity_boost,
     combined_probability as calc_combined,
     environmental_confidence as calc_env,
     presence_probability as calc_presence,
@@ -191,12 +192,15 @@ class Area:
             sw_version=DEVICE_SW_VERSION,
         )
 
-    def probability(self) -> float:
-        """Calculate combined occupancy probability using sigmoid model.
+    def _base_probability(self) -> float:
+        """Calculate sensor-only occupancy probability (no activity boost).
 
         Combines presence probability (from strong binary indicators) with
         environmental confidence (from environmental sensors) using weighted
         averaging in logit space.
+
+        This is the first phase of the two-phase probability calculation.
+        Activity detection receives this value to avoid circular dependency.
 
         Returns:
             Probability value (0.0-1.0)
@@ -209,6 +213,27 @@ class Area:
         env = self.environmental_confidence()
 
         return calc_combined(presence, env)
+
+    def probability(self) -> float:
+        """Calculate occupancy probability with activity-based boost.
+
+        Two-phase calculation:
+        1. _base_probability() computes sensor-only probability.
+        2. Activity detection runs against the base probability.
+        3. If a strong activity is detected, boost probability in logit space.
+
+        Returns:
+            Probability value (0.0-1.0)
+        """
+        base = self._base_probability()
+        is_occupied = base >= self.config.threshold
+
+        activity = detect_activity(self, base_probability=base, is_occupied=is_occupied)
+
+        if activity.activity_id in (ActivityId.UNOCCUPIED, ActivityId.IDLE):
+            return base
+
+        return apply_activity_boost(base, activity.occupancy_boost, activity.confidence)
 
     def presence_probability(self) -> float:
         """Calculate presence probability from strong binary indicators.
@@ -301,19 +326,22 @@ class Area:
         """Detect the current activity in this area.
 
         Results are cached and recomputed only when the set of active
-        entity IDs or the occupancy probability changes.
+        entity IDs or the base probability changes.
 
         Returns:
             DetectedActivity with activity_id, confidence, and matching indicators.
         """
         active_ids = frozenset(e.entity_id for e in self.entities.active_entities)
-        prob = round(self.probability(), 4)
+        base = self._base_probability()
+        prob = round(base, 4)
         cache_key = (active_ids, prob)
 
         if self._activity_cache_key == cache_key and self._activity_cache is not None:
             return self._activity_cache
 
-        result = detect_activity(self)
+        result = detect_activity(
+            self, base_probability=base, is_occupied=base >= self.config.threshold
+        )
         self._activity_cache = result
         self._activity_cache_key = cache_key
         return result

@@ -155,6 +155,12 @@ DEFAULT_WEIGHT_COVER: Final = (
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 DEFAULT_WEIGHT_POWER: Final = 0.3
 
+# Activity occupancy boost constants (logit-space magnitudes)
+ACTIVITY_BOOST_HIGH: Final[float] = 1.5  # Showering, bathing, sleeping
+ACTIVITY_BOOST_STRONG: Final[float] = 1.2  # Watching TV
+ACTIVITY_BOOST_MODERATE: Final[float] = 1.0  # Cooking, working
+ACTIVITY_BOOST_MILD: Final[float] = 0.8  # Listening to music, eating
+
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01
 MAX_PROBABILITY: Final = 0.99

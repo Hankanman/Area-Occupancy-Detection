@@ -8,6 +8,7 @@ import pytest
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.utils import (
+    apply_activity_boost,
     bayesian_probability,
     clamp_probability,
     combine_priors,
@@ -1131,3 +1132,55 @@ class TestSigmoidVsBayesian:
 
         # With 3 strong active sensors, should achieve high probability
         assert result > 0.9  # Should approach upper range
+
+
+class TestApplyActivityBoost:
+    """Test apply_activity_boost function."""
+
+    def test_zero_boost_returns_base(self) -> None:
+        """Zero boost should return base probability unchanged."""
+        base = 0.5
+        result = apply_activity_boost(base, activity_boost=0.0, activity_confidence=1.0)
+        assert result == base
+
+    def test_zero_confidence_returns_base(self) -> None:
+        """Zero confidence should return base probability unchanged."""
+        base = 0.5
+        result = apply_activity_boost(base, activity_boost=1.5, activity_confidence=0.0)
+        assert result == base
+
+    def test_showering_boost_from_half(self) -> None:
+        """Showering boost (1.5) at full confidence from base=0.5 should increase significantly."""
+        result = apply_activity_boost(0.5, activity_boost=1.5, activity_confidence=1.0)
+        # logit(0.5)=0, 0+1.5=1.5, sigmoid(1.5)≈0.82
+        assert result == pytest.approx(0.82, abs=0.02)
+
+    def test_watching_tv_boost(self) -> None:
+        """Watching TV boost (1.2) at full confidence from base=0.5."""
+        result = apply_activity_boost(0.5, activity_boost=1.2, activity_confidence=1.0)
+        # logit(0.5)=0, 0+1.2=1.2, sigmoid(1.2)≈0.77
+        assert result == pytest.approx(0.77, abs=0.02)
+
+    def test_partial_confidence_scales_boost(self) -> None:
+        """Partial confidence should scale the boost proportionally."""
+        full = apply_activity_boost(0.5, activity_boost=1.5, activity_confidence=1.0)
+        half = apply_activity_boost(0.5, activity_boost=1.5, activity_confidence=0.5)
+        # Half confidence → half effective boost → smaller increase
+        assert half < full
+        assert half > 0.5  # Still a boost
+
+    def test_boost_from_high_base(self) -> None:
+        """Boost from a high base probability should still increase but clamped."""
+        result = apply_activity_boost(0.9, activity_boost=1.5, activity_confidence=1.0)
+        assert result > 0.9
+        assert result <= MAX_PROBABILITY
+
+    def test_boost_from_low_base(self) -> None:
+        """Boost from a low base should still increase probability."""
+        result = apply_activity_boost(0.3, activity_boost=1.0, activity_confidence=1.0)
+        assert result > 0.3
+
+    def test_result_always_clamped(self) -> None:
+        """Result should always be within MIN_PROBABILITY to MAX_PROBABILITY."""
+        result = apply_activity_boost(0.99, activity_boost=5.0, activity_confidence=1.0)
+        assert MIN_PROBABILITY <= result <= MAX_PROBABILITY

@@ -288,6 +288,33 @@ def combined_probability(
     return clamp_probability(sigmoid(z_combined))
 
 
+def apply_activity_boost(
+    base_probability: float,
+    activity_boost: float,
+    activity_confidence: float,
+) -> float:
+    """Apply an activity-based occupancy boost in logit space.
+
+    When a strong activity is detected (e.g. watching TV, showering), the
+    combination of signals is a stronger occupancy indicator than any single
+    sensor. This function boosts the base probability proportionally to the
+    activity's strength and confidence.
+
+    Args:
+        base_probability: Sensor-only probability (0.0-1.0).
+        activity_boost: Logit-space boost magnitude from the activity definition.
+        activity_confidence: Activity detection confidence (0.0-1.0).
+
+    Returns:
+        Boosted probability in range MIN_PROBABILITY to MAX_PROBABILITY.
+    """
+    effective_boost = activity_boost * activity_confidence
+    if effective_boost <= 0:
+        return clamp_probability(base_probability)
+    z = logit(base_probability) + effective_boost
+    return clamp_probability(sigmoid(z))
+
+
 # ────────────────────────────────────── Core Bayes ───────────────────────────
 def _filter_invalid_entity_likelihoods(
     active_entities: dict[str, Entity],
