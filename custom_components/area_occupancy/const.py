@@ -96,6 +96,7 @@ CONF_PERSON_ENTITY: Final = "person_entity"
 CONF_PERSON_SLEEP_SENSOR: Final = "sleep_confidence_sensor"
 CONF_PERSON_SLEEP_AREA: Final = "sleep_area_id"
 CONF_PERSON_CONFIDENCE_THRESHOLD: Final = "confidence_threshold"
+CONF_PERSON_DEVICE_TRACKER: Final = "device_tracker"
 
 
 # Configured Weights
@@ -130,7 +131,7 @@ DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
 DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
-DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 50
+DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
 DEFAULT_SLEEP_WEIGHT: Final = 0.9
 SLEEP_PRESENCE_HALF_LIFE: Final = (
     7200  # 2 hour half-life for sleep (persistent presence)

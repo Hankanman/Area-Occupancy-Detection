@@ -825,6 +825,8 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         tracked_entities: list[str] = []
         for person in self._people:
             tracked_entities.append(person.person_entity)
+            if person.device_tracker:
+                tracked_entities.append(person.device_tracker)
             tracked_entities.append(person.sleep_confidence_sensor)
 
         if not tracked_entities:
@@ -849,11 +851,15 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
     def _evaluate_sleep_state(self) -> bool:
         """Evaluate whether any person is home and sleeping."""
         for person in self._people:
-            person_state = self.hass.states.get(person.person_entity)
+            # Use device_tracker if configured, otherwise fall back to person entity
+            if person.device_tracker:
+                home_state = self.hass.states.get(person.device_tracker)
+            else:
+                home_state = self.hass.states.get(person.person_entity)
             confidence_state = self.hass.states.get(person.sleep_confidence_sensor)
             if (
-                person_state
-                and person_state.state == STATE_HOME
+                home_state
+                and home_state.state == STATE_HOME
                 and confidence_state
                 and confidence_state.state not in ("unknown", "unavailable", None, "")
             ):
@@ -906,7 +912,12 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                 with suppress(ValueError, TypeError):
                     confidence_val = float(confidence_state.state)
 
-            is_home = person_state and person_state.state == STATE_HOME
+            # Use device_tracker if configured, otherwise fall back to person entity
+            if person.device_tracker:
+                home_entity_state = self.hass.states.get(person.device_tracker)
+            else:
+                home_entity_state = person_state
+            is_home = home_entity_state and home_entity_state.state == STATE_HOME
             is_sleeping = (
                 is_home
                 and confidence_val is not None
@@ -919,8 +930,8 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
             person_details.append(
                 {
                     ATTR_PERSON_NAME: friendly_name,
-                    ATTR_PERSON_STATE: person_state.state
-                    if person_state
+                    ATTR_PERSON_STATE: home_entity_state.state
+                    if home_entity_state
                     else "unknown",
                     ATTR_SLEEP_CONFIDENCE: confidence_val,
                     ATTR_SLEEP_THRESHOLD: person.confidence_threshold,

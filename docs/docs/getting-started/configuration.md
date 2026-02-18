@@ -58,7 +58,7 @@ For each person, you configure:
 - **Person Entity**: The `person.<name>` entity to track
 - **Sleep Confidence Sensor**: The Companion App sleep confidence sensor
 - **Sleep Area**: Which area this person sleeps in
-- **Confidence Threshold**: Minimum confidence to consider the person sleeping (default: 50)
+- **Confidence Threshold**: Minimum confidence to consider the person sleeping (default: 75)
 
 When configured, a **Sleeping** binary sensor is created for each assigned area. See [Sleep Presence](../features/sleep-presence.md) for details.
 
