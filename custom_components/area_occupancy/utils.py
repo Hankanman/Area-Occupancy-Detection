@@ -310,7 +310,7 @@ def apply_activity_boost(
     """
     effective_boost = activity_boost * activity_confidence
     if effective_boost <= 0:
-        return base_probability
+        return clamp_probability(base_probability)
     z = logit(base_probability) + effective_boost
     return clamp_probability(sigmoid(z))
 

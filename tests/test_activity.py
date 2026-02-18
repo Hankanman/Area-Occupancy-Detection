@@ -7,6 +7,10 @@ from unittest.mock import Mock
 import pytest
 
 from custom_components.area_occupancy.area.area import Area
+from custom_components.area_occupancy.const import (
+    ACTIVITY_BOOST_HIGH,
+    ACTIVITY_BOOST_STRONG,
+)
 from custom_components.area_occupancy.data.activity import (
     ACTIVITY_DEFINITIONS,
     ActivityId,
@@ -1074,14 +1078,14 @@ class TestOccupancyBoost:
         showering = [
             d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.SHOWERING
         ]
-        assert showering[0].occupancy_boost == 1.5
+        assert showering[0].occupancy_boost == ACTIVITY_BOOST_HIGH
 
     def test_watching_tv_has_moderate_boost(self) -> None:
         """Watching TV should have a moderate occupancy boost."""
         watching = [
             d for d in ACTIVITY_DEFINITIONS if d.activity_id == ActivityId.WATCHING_TV
         ]
-        assert watching[0].occupancy_boost == 1.2
+        assert watching[0].occupancy_boost == ACTIVITY_BOOST_STRONG
 
     def test_detected_activity_carries_boost(self) -> None:
         """DetectedActivity should carry the boost from the matched definition."""
@@ -1099,7 +1103,7 @@ class TestOccupancyBoost:
         )
         result = detect_activity(area)
         assert result.activity_id == ActivityId.WATCHING_TV
-        assert result.occupancy_boost == 1.2
+        assert result.occupancy_boost == ACTIVITY_BOOST_STRONG
 
     def test_idle_has_zero_boost(self) -> None:
         """IDLE activity should have zero boost."""

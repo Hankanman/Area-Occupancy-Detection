@@ -12,6 +12,12 @@ from enum import StrEnum
 import logging
 from typing import TYPE_CHECKING
 
+from ..const import (
+    ACTIVITY_BOOST_HIGH,
+    ACTIVITY_BOOST_MILD,
+    ACTIVITY_BOOST_MODERATE,
+    ACTIVITY_BOOST_STRONG,
+)
 from .entity_type import InputType
 from .purpose import AreaPurpose
 
@@ -91,7 +97,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.DOOR, 0.15),
         ),
         purposes=frozenset({AreaPurpose.BATHROOM}),
-        occupancy_boost=1.5,
+        occupancy_boost=ACTIVITY_BOOST_HIGH,
     ),
     ActivityDefinition(
         activity_id=ActivityId.BATHING,
@@ -113,7 +119,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
         ),
         min_match_weight=0.3,
         purposes=frozenset({AreaPurpose.BATHROOM}),
-        occupancy_boost=1.5,
+        occupancy_boost=ACTIVITY_BOOST_HIGH,
     ),
     ActivityDefinition(
         activity_id=ActivityId.COOKING,
@@ -146,7 +152,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.MOTION, 0.1),
         ),
         purposes=frozenset({AreaPurpose.FOOD_PREP}),
-        occupancy_boost=1.0,
+        occupancy_boost=ACTIVITY_BOOST_MODERATE,
     ),
     ActivityDefinition(
         activity_id=ActivityId.WATCHING_TV,
@@ -173,7 +179,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
         purposes=frozenset(
             {AreaPurpose.SOCIAL, AreaPurpose.RELAXING, AreaPurpose.SLEEPING}
         ),
-        occupancy_boost=1.2,
+        occupancy_boost=ACTIVITY_BOOST_STRONG,
     ),
     ActivityDefinition(
         activity_id=ActivityId.LISTENING_TO_MUSIC,
@@ -194,7 +200,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
         purposes=frozenset(
             {AreaPurpose.SOCIAL, AreaPurpose.RELAXING, AreaPurpose.WORKING}
         ),
-        occupancy_boost=0.8,
+        occupancy_boost=ACTIVITY_BOOST_MILD,
     ),
     ActivityDefinition(
         activity_id=ActivityId.WORKING,
@@ -216,7 +222,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             ),
         ),
         purposes=frozenset({AreaPurpose.WORKING}),
-        occupancy_boost=1.0,
+        occupancy_boost=ACTIVITY_BOOST_MODERATE,
     ),
     ActivityDefinition(
         activity_id=ActivityId.SLEEPING,
@@ -242,7 +248,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             ),
         ),
         purposes=frozenset({AreaPurpose.SLEEPING}),
-        occupancy_boost=1.5,
+        occupancy_boost=ACTIVITY_BOOST_HIGH,
     ),
     ActivityDefinition(
         activity_id=ActivityId.EATING,
@@ -269,7 +275,7 @@ ACTIVITY_DEFINITIONS: tuple[ActivityDefinition, ...] = (
             Indicator(InputType.MEDIA, 0.1),
         ),
         purposes=frozenset({AreaPurpose.EATING}),
-        occupancy_boost=0.8,
+        occupancy_boost=ACTIVITY_BOOST_MILD,
     ),
 )
 
@@ -434,8 +440,16 @@ def detect_activity(
        then by matched_weight (more actual evidence). If none match,
        return Idle.
     """
-    occupied = is_occupied if is_occupied is not None else area.occupied()
     prob = base_probability if base_probability is not None else area.probability()
+    occupied = (
+        is_occupied
+        if is_occupied is not None
+        else (
+            prob >= area.config.threshold
+            if base_probability is not None
+            else area.occupied()
+        )
+    )
 
     if not occupied:
         return DetectedActivity(
