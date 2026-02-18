@@ -450,7 +450,7 @@
                     "person_entity": "Select the Home Assistant person entity. This provides home/not_home state.",
                     "sleep_confidence_sensor": "Select the sleep confidence sensor from the HA Companion App (e.g., sensor.phone_sleep_confidence). Reports 0-100%.",
                     "sleep_area_id": "Select the area where this person sleeps (e.g., bedroom).",
-                    "confidence_threshold": "Minimum sleep confidence percentage to consider the person as sleeping. Default: 50%.",
+                    "confidence_threshold": "Minimum sleep confidence percentage to consider the person as sleeping. Default: 75%.",
                     "device_tracker": "Override the home/away detection with a specific device tracker entity. When set, this is used instead of the person entity's state. Leave empty to use the person entity."
                 }
             }

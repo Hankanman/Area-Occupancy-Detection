@@ -24,7 +24,7 @@ Sleep presence is configured through the **Manage People** option in the integra
 | **Person Entity** | The `person.<name>` entity to track |
 | **Sleep Confidence Sensor** | The Companion App sleep confidence sensor (`sensor.<name>_sleep_confidence`) |
 | **Sleep Area** | Which area this person sleeps in |
-| **Confidence Threshold** | Minimum sleep confidence (0-100) required to consider the person sleeping. Default: **50** |
+| **Confidence Threshold** | Minimum sleep confidence (0-100) required to consider the person sleeping. Default: **75** |
 
 You can add multiple people, each assigned to a different (or the same) sleep area.
 
@@ -63,6 +63,6 @@ This means that when sleep is detected, the area will be held at a high occupanc
 
 ## Tips
 
-- **Threshold tuning:** Start with the default threshold of 50. If the sensor triggers too easily (e.g., while watching TV in bed), increase it. If it doesn't trigger reliably, decrease it.
+- **Threshold tuning:** Start with the default threshold of 75. If the sensor doesn't trigger reliably, decrease it. If it triggers too easily (e.g., while watching TV in bed), increase it.
 - **Multiple bedrooms:** Each person can be assigned to a different sleep area, making this work well for households with multiple bedrooms.
 - **Interaction with Bedroom purpose:** Sleep presence works alongside the [Bedroom purpose](purpose.md) decay settings. During sleep, the combination of long bedroom decay and the sleep sensor's own 2-hour decay half-life provides very stable occupancy.
