@@ -1565,7 +1565,7 @@ class TestAreaOccupancyOptionsFlow:
             patch_create_schema_context(),
             patch.object(
                 flow.hass.config_entries, "async_reload", new_callable=AsyncMock
-            ),
+            ) as mock_reload,
         ):
             result = await flow.async_step_area_config(user_input)
             assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -1573,6 +1573,8 @@ class TestAreaOccupancyOptionsFlow:
             areas = result["data"][CONF_AREAS]
             assert len(areas) == 2  # Original + new
             assert any(area[CONF_AREA_ID] == "kitchen" for area in areas)
+            # Verify reload was triggered to register new entities
+            mock_reload.assert_awaited_once_with(flow.config_entry.entry_id)
 
     async def test_options_flow_area_config_duplicate_area_id(
         self,
@@ -1632,7 +1634,9 @@ class TestAreaOccupancyOptionsFlow:
 
         with (
             patch_create_schema_context(),
-            patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock),
+            patch.object(
+                hass.config_entries, "async_reload", new_callable=AsyncMock
+            ) as mock_reload,
         ):
             result = await flow.async_step_area_config(user_input)
             # Should succeed - changing area ID means selecting a different area
@@ -1640,6 +1644,8 @@ class TestAreaOccupancyOptionsFlow:
             areas = result["data"][CONF_AREAS]
             # Should have updated the area with new ID
             assert any(area[CONF_AREA_ID] == kitchen_area_id for area in areas)
+            # Verify reload was triggered to register updated entities
+            mock_reload.assert_awaited_once_with(flow.config_entry.entry_id)
 
     async def test_options_flow_area_config_no_old_area(
         self,
@@ -1664,11 +1670,15 @@ class TestAreaOccupancyOptionsFlow:
 
         with (
             patch_create_schema_context(),
-            patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock),
+            patch.object(
+                hass.config_entries, "async_reload", new_callable=AsyncMock
+            ) as mock_reload,
         ):
             result = await flow.async_step_area_config(user_input)
             # Should succeed without migration since old area not found
             assert result["type"] == FlowResultType.CREATE_ENTRY
+            # Verify reload was triggered to register new entities
+            mock_reload.assert_awaited_once_with(flow.config_entry.entry_id)
 
     async def test_options_flow_area_config_error_handling(
         self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
