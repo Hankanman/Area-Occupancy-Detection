@@ -8,7 +8,7 @@ import logging
 from homeassistant.util import dt as dt_util
 
 from ..time_utils import to_local, to_utc
-from .purpose import PURPOSE_DEFINITIONS, AreaPurpose
+from .purpose import Purpose
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,15 +43,20 @@ class Decay:
 
         self._base_half_life = half_life
         self.is_decaying = is_decaying
-        self.purpose = purpose
+        self._purpose = Purpose(purpose) if purpose is not None else None
         self.sleep_start = sleep_start
         self.sleep_end = sleep_end
 
     @property
+    def purpose(self) -> Purpose | None:
+        """Return the resolved Purpose instance, or None."""
+        return self._purpose
+
+    @property
     def half_life(self) -> float:
         """Return the effective half-life based on purpose and time of day."""
-        # If purpose is not sleeping, use base half-life
-        if self.purpose != AreaPurpose.SLEEPING.value:
+        # If no purpose or purpose has no awake_half_life, use base half-life
+        if self._purpose is None or self._purpose.awake_half_life is None:
             return self._base_half_life
 
         # If sleep times are not configured, use base half-life
@@ -78,20 +83,12 @@ class Decay:
             if is_sleeping:
                 # Use the configured half-life (should be high for sleeping)
                 return self._base_half_life
-
-            # Outside sleep window, behave like RELAXING
-            # Fallback to base half-life if RELAXING purpose is not defined
-            relaxing_purpose = PURPOSE_DEFINITIONS.get(AreaPurpose.RELAXING)
-        except (ValueError, TypeError) as _:
-            # Log error with stack trace before falling back
+        except (ValueError, TypeError):
             _LOGGER.exception("Error calculating half-life for sleeping purpose")
             return self._base_half_life
-        else:
-            return (
-                relaxing_purpose.half_life
-                if relaxing_purpose is not None
-                else self._base_half_life
-            )
+
+        # Outside sleep window, use the purpose's awake half-life
+        return self._purpose.awake_half_life
 
     @property
     def decay_factor(self) -> float:

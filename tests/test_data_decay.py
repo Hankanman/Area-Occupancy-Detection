@@ -6,15 +6,13 @@ from unittest.mock import patch
 import pytest
 
 from custom_components.area_occupancy.data.decay import Decay
-from custom_components.area_occupancy.data.purpose import (
-    PURPOSE_DEFINITIONS,
-    AreaPurpose,
-)
+from custom_components.area_occupancy.data.purpose import AreaPurpose, Purpose
 from homeassistant.util import dt as dt_util
 
 # Get decay values from purpose definitions for use in tests
-SLEEPING_HALF_LIFE = PURPOSE_DEFINITIONS[AreaPurpose.SLEEPING].half_life
-RELAXING_HALF_LIFE = PURPOSE_DEFINITIONS[AreaPurpose.RELAXING].half_life
+SLEEPING_PURPOSE = Purpose(AreaPurpose.SLEEPING)
+SLEEPING_HALF_LIFE = SLEEPING_PURPOSE.half_life
+RELAXING_HALF_LIFE = SLEEPING_PURPOSE.awake_half_life
 
 
 class TestDecay:
@@ -73,7 +71,11 @@ class TestDecay:
         assert decay.is_decaying == expected_is_decaying
         assert decay.half_life == expected_half_life
         assert isinstance(decay.decay_start, datetime)
-        assert decay.purpose == expected_purpose
+        if expected_purpose is not None:
+            assert decay.purpose is not None
+            assert decay.purpose.purpose.value == expected_purpose
+        else:
+            assert decay.purpose is None
         assert decay.sleep_start == expected_sleep_start
         assert decay.sleep_end == expected_sleep_end
 
@@ -559,7 +561,7 @@ class TestDecayHalfLife:
             assert decay.half_life == self.SLEEPING_HALF_LIFE
 
     def test_sleeping_relaxing_fallback(self) -> None:
-        """Test SLEEPING purpose outside sleep window uses RELAXING half_life."""
+        """Test SLEEPING purpose outside sleep window uses awake_half_life."""
         # Test with datetime outside sleep window (12:00:00)
         TestDecayHalfLife.check_sleep_window_half_life(
             "12:00:00",
@@ -569,40 +571,19 @@ class TestDecayHalfLife:
             self.SLEEPING_HALF_LIFE,
         )
 
-        # Verify it's using RELAXING purpose's half_life
-        expected_relaxing_half_life = PURPOSE_DEFINITIONS[
-            AreaPurpose.RELAXING
-        ].half_life
-        assert expected_relaxing_half_life == self.RELAXING_HALF_LIFE
+        # Verify it's using the sleeping purpose's awake_half_life
+        assert SLEEPING_PURPOSE.awake_half_life == self.RELAXING_HALF_LIFE
 
-    def test_sleeping_relaxing_fallback_when_missing(self) -> None:
-        """Test SLEEPING purpose falls back to base_half_life when RELAXING is missing."""
-        # Create a datetime outside sleep window
-        base_date = datetime(2023, 1, 15, 12, 0, 0)
-        current_datetime = base_date.replace(hour=12, minute=0, second=0)
-
+    def test_sleeping_fallback_when_no_awake_half_life(self) -> None:
+        """Test purpose with no awake_half_life falls back to base_half_life."""
+        # Create a decay with a purpose that has no awake_half_life (e.g. social)
         decay = Decay(
-            half_life=1200.0,
-            purpose=AreaPurpose.SLEEPING.value,
+            half_life=520.0,
+            purpose=AreaPurpose.SOCIAL.value,
             sleep_start="23:00:00",
             sleep_end="07:00:00",
         )
 
-        # Create a mock dictionary that returns None for RELAXING
-        mock_purpose_definitions = {
-            k: v for k, v in PURPOSE_DEFINITIONS.items() if k != AreaPurpose.RELAXING
-        }
-
-        with (
-            patch("homeassistant.util.dt.utcnow") as mock_utcnow,
-            patch("homeassistant.util.dt.as_local") as mock_as_local,
-            patch(
-                "custom_components.area_occupancy.data.decay.PURPOSE_DEFINITIONS",
-                mock_purpose_definitions,
-            ),
-        ):
-            mock_utcnow.return_value = current_datetime.replace(tzinfo=dt_util.UTC)
-            mock_as_local.return_value = current_datetime.replace(tzinfo=dt_util.UTC)
-
-            # Should fall back to base_half_life when RELAXING is missing
-            assert decay.half_life == 1200.0
+        # Social purpose has no awake_half_life, so should always use base
+        assert decay.purpose.awake_half_life is None
+        assert decay.half_life == 520.0

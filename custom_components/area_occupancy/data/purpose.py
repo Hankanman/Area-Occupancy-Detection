@@ -34,6 +34,8 @@ class Purpose:
         _name: str | None = None,
         _description: str | None = None,
         _half_life: float | None = None,
+        _min_prior: float = 0.0,
+        _awake_half_life: float | None = None,
     ) -> None:
         """Initialize the purpose.
 
@@ -42,6 +44,13 @@ class Purpose:
             _name: Internal parameter for direct creation (used by PURPOSE_DEFINITIONS).
             _description: Internal parameter for direct creation (used by PURPOSE_DEFINITIONS).
             _half_life: Internal parameter for direct creation (used by PURPOSE_DEFINITIONS).
+            _min_prior: Internal parameter for minimum prior floor (used by PURPOSE_DEFINITIONS).
+                Transit spaces have duration-biased learned priors that are unrealistically
+                low because people don't linger; this floor prevents that.
+            _awake_half_life: Internal parameter for alternative half-life used outside
+                sleep windows (used by PURPOSE_DEFINITIONS). Only relevant for SLEEPING;
+                when set, decay uses this shorter half-life during waking hours so the
+                room clears faster after everyone gets up.
 
         Note:
             If _name, _description, and _half_life are provided, creates instance directly.
@@ -55,6 +64,8 @@ class Purpose:
             self.name = _name
             self.description = _description
             self.half_life = _half_life
+            self.min_prior = _min_prior
+            self.awake_half_life = _awake_half_life
             return
 
         # Lookup from PURPOSE_DEFINITIONS
@@ -70,6 +81,8 @@ class Purpose:
         self.name = definition.name
         self.description = definition.description
         self.half_life = definition.half_life
+        self.min_prior = definition.min_prior
+        self.awake_half_life = definition.awake_half_life
 
     @classmethod
     def get_purpose(cls, purpose: AreaPurpose) -> Purpose:
@@ -92,6 +105,36 @@ class Purpose:
         """
         return PURPOSE_DEFINITIONS.copy()
 
+    @staticmethod
+    def display_name(purpose: str) -> str:
+        """Get the human-readable display name for a purpose value.
+
+        Args:
+            purpose: Purpose enum value string.
+
+        Returns:
+            Human-readable name (e.g. "Living Room"), or a title-cased
+            fallback for unrecognised values.
+        """
+        try:
+            return PURPOSE_DEFINITIONS[AreaPurpose(purpose)].name
+        except (ValueError, KeyError):
+            return purpose.replace("_", " ").title()
+
+    @staticmethod
+    def is_purpose_half_life(value: float) -> bool:
+        """Check whether a half-life value matches any purpose default.
+
+        Args:
+            value: Half-life value to check.
+
+        Returns:
+            True if the value is a built-in purpose half-life or 0 (auto).
+        """
+        if value == 0:
+            return True
+        return any(p.half_life == value for p in PURPOSE_DEFINITIONS.values())
+
     def cleanup(self) -> None:
         """Clean up the purpose (no-op for compatibility)."""
 
@@ -103,12 +146,14 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         _name="Passageway",
         _description="Quick walk-through: halls, stair landings, entry vestibules. Motion evidence should disappear almost immediately after the last footstep.",
         _half_life=45.0,
+        _min_prior=0.1,
     ),
     AreaPurpose.DRIVEWAY: Purpose(
         purpose=AreaPurpose.DRIVEWAY,
         _name="Driveway",
         _description="Parking and vehicle access area. Brief transit for entering/exiting vehicles with occasional short pauses for loading or unloading.",
         _half_life=60.0,
+        _min_prior=0.05,
     ),
     AreaPurpose.UTILITY: Purpose(
         purpose=AreaPurpose.UTILITY,
@@ -169,6 +214,7 @@ PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
         _name="Bedroom",
         _description='Bedrooms, nap pods. Motion is scarce; a long half-life prevents false vacancy during deep sleep yet lets the house revert to "empty" within a couple of hours after everyone gets up.',
         _half_life=1200.0,
+        _awake_half_life=620.0,
     ),
 }
 

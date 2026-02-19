@@ -21,7 +21,6 @@ from ..const import (
 )
 from ..time_utils import to_local
 from ..utils import clamp_probability, combine_priors
-from .purpose import AreaPurpose
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -32,12 +31,6 @@ _LOGGER = logging.getLogger(__name__)
 PRIOR_FACTOR = 1.0
 DEFAULT_PRIOR = 0.5
 SIGNIFICANT_CHANGE_THRESHOLD = 0.1
-
-# Purpose-based minimum priors — transit spaces have duration-biased learned
-# priors that are unrealistically low because people don't linger.
-PURPOSE_MIN_PRIORS: dict[AreaPurpose, float] = {
-    AreaPurpose.PASSAGEWAY: 0.1,
-}
 
 # Time slot constants
 DEFAULT_SLOT_MINUTES = 60
@@ -96,12 +89,11 @@ class Prior:
             adjusted_prior = prior * PRIOR_FACTOR
             result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
-        # Apply purpose-based minimum prior for transit spaces
+        # Apply purpose-based minimum prior (e.g. transit spaces have
+        # duration-biased learned priors that are unrealistically low)
         area = self.coordinator.areas.get(self.area_name)
-        if area is not None:
-            purpose_min = PURPOSE_MIN_PRIORS.get(area.purpose.purpose)
-            if purpose_min is not None:
-                result = max(result, purpose_min)
+        if area is not None and area.purpose.min_prior > 0.0:
+            result = max(result, area.purpose.min_prior)
 
         # Apply minimum prior override if configured (user override takes precedence)
         # This check must run for all code paths, including when global_prior is None
