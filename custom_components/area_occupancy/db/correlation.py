@@ -10,6 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
+import warnings
 
 import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
@@ -71,7 +72,12 @@ def calculate_pearson_correlation(
         y = np.array(y_values)
 
         # Calculate correlation coefficient
-        correlation = np.corrcoef(x, y)[0, 1]
+        # Suppress numpy RuntimeWarning for zero-variance arrays (constant values
+        # produce stddev=0, causing divide-by-zero in corrcoef). The resulting
+        # NaN is handled below.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            correlation = np.corrcoef(x, y)[0, 1]
 
         # Handle NaN or invalid values
         if np.isnan(correlation) or not np.isfinite(correlation):
