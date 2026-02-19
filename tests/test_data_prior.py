@@ -15,11 +15,7 @@ from custom_components.area_occupancy.const import (
     TIME_PRIOR_MIN_BOUND,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.prior import (
-    PRIOR_FACTOR,
-    PURPOSE_MIN_PRIORS,
-    Prior,
-)
+from custom_components.area_occupancy.data.prior import PRIOR_FACTOR, Prior
 from custom_components.area_occupancy.data.purpose import AreaPurpose, Purpose
 from custom_components.area_occupancy.utils import combine_priors
 from homeassistant.util import dt as dt_util
@@ -607,7 +603,7 @@ def test_passageway_purpose_min_prior(coordinator: AreaOccupancyCoordinator):
     ):
         result_passageway = prior.value
 
-    assert result_passageway == PURPOSE_MIN_PRIORS[AreaPurpose.PASSAGEWAY]
+    assert result_passageway == Purpose(purpose=AreaPurpose.PASSAGEWAY).min_prior
     assert result_passageway == 0.1
 
 

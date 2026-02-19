@@ -143,7 +143,7 @@ from .const import (
     get_default_state,
     get_state_options,
 )
-from .data.purpose import PURPOSE_DEFINITIONS, AreaPurpose, get_purpose_options
+from .data.purpose import Purpose, get_purpose_options
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1078,11 +1078,7 @@ def _get_purpose_display_name(purpose: str) -> str:
     Returns:
         Human-readable purpose name
     """
-    try:
-        purpose_enum = AreaPurpose(purpose)
-        return PURPOSE_DEFINITIONS[purpose_enum].name
-    except (ValueError, KeyError):
-        return purpose.replace("_", " ").title()
+    return Purpose.display_name(purpose)
 
 
 def _find_area_by_sanitized_id(
@@ -1188,15 +1184,7 @@ def _apply_purpose_based_decay_default(
         return
 
     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
-    purpose_half_lives = {
-        purpose_def.half_life for purpose_def in PURPOSE_DEFINITIONS.values()
-    }
-    purpose_half_lives.add(DEFAULT_DECAY_HALF_LIFE)
-    if (
-        user_set_decay is None
-        or user_set_decay == DEFAULT_DECAY_HALF_LIFE
-        or user_set_decay in purpose_half_lives
-    ):
+    if user_set_decay is None or Purpose.is_purpose_half_life(user_set_decay):
         # Set to 0 to indicate "use purpose value"
         flattened_input[CONF_DECAY_HALF_LIFE] = 0
 
