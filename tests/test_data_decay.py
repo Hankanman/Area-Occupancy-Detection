@@ -562,7 +562,7 @@ class TestDecayHalfLife:
 
     def test_sleeping_relaxing_fallback(self) -> None:
         """Test SLEEPING purpose outside sleep window uses awake_half_life."""
-        # Test with datetime outside sleep window (12:00:00)
+        # Test with datetime outside sleep window (12:00:00).
         TestDecayHalfLife.check_sleep_window_half_life(
             "12:00:00",
             "23:00:00",
@@ -576,7 +576,7 @@ class TestDecayHalfLife:
 
     def test_sleeping_fallback_when_no_awake_half_life(self) -> None:
         """Test purpose with no awake_half_life falls back to base_half_life."""
-        # Create a decay with a purpose that has no awake_half_life (e.g. social)
+        # Create a decay with a purpose that has no awake_half_life (e.g. social).
         decay = Decay(
             half_life=520.0,
             purpose=AreaPurpose.SOCIAL.value,

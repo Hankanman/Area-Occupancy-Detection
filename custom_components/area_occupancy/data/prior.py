@@ -89,8 +89,8 @@ class Prior:
             adjusted_prior = prior * PRIOR_FACTOR
             result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
-        # Apply purpose-based minimum prior (e.g. transit spaces have
-        # duration-biased learned priors that are unrealistically low)
+        # Apply purpose-based minimum prior. Transit spaces have duration-biased
+        # learned priors that are unrealistically low because people don't linger.
         area = self.coordinator.areas.get(self.area_name)
         if area is not None and area.purpose.min_prior > 0.0:
             result = max(result, area.purpose.min_prior)
