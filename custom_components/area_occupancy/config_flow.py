@@ -2159,7 +2159,14 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                     updated_people = [p for i, p in enumerate(people) if i != idx]
                     config_data = dict(self.config_entry.options)
                     config_data[CONF_PEOPLE] = updated_people
-                    return self.async_create_entry(title="", data=config_data)
+                    result = self.async_create_entry(title="", data=config_data)
+                    # Trigger integration reload to update sleep presence sensors
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(
+                            self.config_entry.entry_id
+                        )
+                    )
+                    return result
                 errors["base"] = "invalid_selection"
 
         # Build options list
@@ -2244,10 +2251,16 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
 
                 config_data = dict(self.config_entry.options)
                 config_data[CONF_PEOPLE] = updated_people
-                return self.async_create_entry(title="", data=config_data)
+                result = self.async_create_entry(title="", data=config_data)
+                # Trigger integration reload to update sleep presence sensors
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
 
             except (vol.Invalid, ValueError, TypeError) as err:
                 errors["base"] = _handle_step_error(err)
+            else:
+                return result
 
         schema = vol.Schema(
             {
@@ -2341,7 +2354,11 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 # Preserve existing global options (e.g., sleep schedule)
                 config_data = dict(self.config_entry.options)
                 config_data[CONF_AREAS] = updated_areas
-                return self.async_create_entry(title="", data=config_data)
+                result = self.async_create_entry(title="", data=config_data)
+                # Trigger integration reload to register new entities and devices
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
 
             except (
                 HomeAssistantError,
@@ -2351,6 +2368,8 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 TypeError,
             ) as err:
                 errors["base"] = _handle_step_error(err)
+            else:
+                return result
 
         # Ensure purpose field has a default
         if CONF_PURPOSE not in defaults:
