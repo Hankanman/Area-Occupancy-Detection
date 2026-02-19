@@ -212,6 +212,13 @@ class Area:
         presence = self.presence_probability()
         env = self.environmental_confidence()
 
+        # Skip the 80/20 blend when no environmental sensors are configured.
+        # environmental_confidence() returns exactly 0.5 only when there are no
+        # environmental entities, and blending with neutral would compress
+        # presence toward 0.5 unnecessarily.
+        if env == 0.5:
+            return presence
+
         return calc_combined(presence, env)
 
     def probability(self) -> float:

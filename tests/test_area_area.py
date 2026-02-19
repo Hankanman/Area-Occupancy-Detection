@@ -14,7 +14,7 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.activity import ActivityId
-from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.data.entity_type import DEFAULT_TYPES, InputType
 from custom_components.area_occupancy.data.purpose import AreaPurpose
 
 
@@ -112,6 +112,7 @@ class TestAreaMethods:
         # Add type.input_type for sigmoid model filtering
         mock_active_entity.type = Mock()
         mock_active_entity.type.input_type = InputType.MOTION
+        mock_active_entity.type.strength_multiplier = 3.0
 
         default_area.entities._entities = {"binary_sensor.motion": mock_active_entity}
         prob_with_active = default_area.probability()
@@ -132,6 +133,7 @@ class TestAreaMethods:
         mock_inactive_entity.effective_weight = 0.7
         mock_inactive_entity.type = Mock()
         mock_inactive_entity.type.input_type = InputType.MEDIA
+        mock_inactive_entity.type.strength_multiplier = 2.0
 
         default_area.entities._entities = {"media_player.tv": mock_inactive_entity}
         prob_with_inactive = default_area.probability()
@@ -393,6 +395,9 @@ class TestAreaMethods:
         # Add type.input_type for sigmoid model filtering
         mock_entity.type = Mock()
         mock_entity.type.input_type = entity_config["input_type"]
+        mock_entity.type.strength_multiplier = DEFAULT_TYPES.get(
+            entity_config["input_type"], {}
+        ).get("strength_multiplier", 2.0)
 
         default_area.entities._entities = {entity_config["entity_id"]: mock_entity}
         default_area.prior.global_prior = prior_value
@@ -441,6 +446,7 @@ class TestTwoPhaseActivityBoost:
         mock_entity.effective_weight = 0.85
         mock_entity.type = Mock()
         mock_entity.type.input_type = InputType.MOTION
+        mock_entity.type.strength_multiplier = 3.0
 
         default_area.entities._entities = {"binary_sensor.motion": mock_entity}
 
@@ -471,6 +477,7 @@ class TestTwoPhaseActivityBoost:
         mock_tv.effective_weight = 0.85
         mock_tv.type = Mock()
         mock_tv.type.input_type = InputType.MEDIA
+        mock_tv.type.strength_multiplier = 2.0
         mock_tv.ha_device_class = "tv"
         mock_tv.active = True
         mock_tv.learned_gaussian_params = None
@@ -487,6 +494,7 @@ class TestTwoPhaseActivityBoost:
         mock_motion.effective_weight = 0.85
         mock_motion.type = Mock()
         mock_motion.type.input_type = InputType.MOTION
+        mock_motion.type.strength_multiplier = 3.0
         mock_motion.ha_device_class = None
         mock_motion.active = True
         mock_motion.learned_gaussian_params = None
@@ -509,6 +517,75 @@ class TestTwoPhaseActivityBoost:
         # Should return without stack overflow
         result = default_area.probability()
         assert result == MIN_PROBABILITY
+
+    def test_base_probability_no_env_sensors_returns_presence_directly(
+        self, default_area: Area
+    ) -> None:
+        """With only presence entities, _base_probability() returns presence directly."""
+        default_area.prior.global_prior = 0.3
+        default_area.prior._cached_time_prior = None
+
+        mock_motion = Mock()
+        mock_motion.evidence = True
+        mock_motion.prob_given_true = 0.95
+        mock_motion.prob_given_false = 0.02
+        mock_motion.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_motion.decay_factor = 1.0
+        type(mock_motion).weight = PropertyMock(return_value=1.0)
+        mock_motion.effective_weight = 1.0
+        mock_motion.type = Mock()
+        mock_motion.type.input_type = InputType.MOTION
+        mock_motion.type.strength_multiplier = 3.0
+
+        default_area.entities._entities = {"binary_sensor.motion": mock_motion}
+
+        base = default_area._base_probability()
+        presence = default_area.presence_probability()
+
+        # With no env sensors, base should equal presence directly (no 0.8 scaling)
+        assert abs(base - presence) < 1e-6
+
+    def test_base_probability_with_env_sensors_uses_combined(
+        self, default_area: Area
+    ) -> None:
+        """With both presence and env entities, _base_probability() uses calc_combined."""
+        default_area.prior.global_prior = 0.3
+        default_area.prior._cached_time_prior = None
+
+        mock_motion = Mock()
+        mock_motion.evidence = True
+        mock_motion.prob_given_true = 0.95
+        mock_motion.prob_given_false = 0.02
+        mock_motion.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_motion.decay_factor = 1.0
+        type(mock_motion).weight = PropertyMock(return_value=1.0)
+        mock_motion.effective_weight = 1.0
+        mock_motion.type = Mock()
+        mock_motion.type.input_type = InputType.MOTION
+        mock_motion.type.strength_multiplier = 3.0
+
+        mock_temp = Mock()
+        mock_temp.evidence = True
+        mock_temp.prob_given_true = 0.09
+        mock_temp.prob_given_false = 0.01
+        mock_temp.decay = Mock(decay_factor=1.0, is_decaying=False)
+        mock_temp.decay_factor = 1.0
+        type(mock_temp).weight = PropertyMock(return_value=0.1)
+        mock_temp.effective_weight = 0.1
+        mock_temp.type = Mock()
+        mock_temp.type.input_type = InputType.TEMPERATURE
+        mock_temp.type.strength_multiplier = 2.0
+
+        default_area.entities._entities = {
+            "binary_sensor.motion": mock_motion,
+            "sensor.temperature": mock_temp,
+        }
+
+        base = default_area._base_probability()
+        presence = default_area.presence_probability()
+
+        # With env sensors, base should differ from raw presence (combined blend applied)
+        assert base != presence
 
     def test_detected_activity_uses_base_probability(self, default_area: Area) -> None:
         """detected_activity() should use _base_probability() for cache key."""
