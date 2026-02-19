@@ -1561,7 +1561,12 @@ class TestAreaOccupancyOptionsFlow:
 
         user_input = create_user_input(name="Kitchen")
 
-        with patch_create_schema_context():
+        with (
+            patch_create_schema_context(),
+            patch.object(
+                flow.hass.config_entries, "async_reload", new_callable=AsyncMock
+            ),
+        ):
             result = await flow.async_step_area_config(user_input)
             assert result["type"] == FlowResultType.CREATE_ENTRY
             # Verify area_id field was added to schema
@@ -1625,7 +1630,10 @@ class TestAreaOccupancyOptionsFlow:
         user_input = create_user_input(name="Kitchen")
         user_input[CONF_AREA_ID] = kitchen_area_id
 
-        with patch_create_schema_context():
+        with (
+            patch_create_schema_context(),
+            patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock),
+        ):
             result = await flow.async_step_area_config(user_input)
             # Should succeed - changing area ID means selecting a different area
             assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -1654,7 +1662,10 @@ class TestAreaOccupancyOptionsFlow:
         # Update user_input to use the actual area ID from registry
         user_input[CONF_AREA_ID] = new_area_id
 
-        with patch_create_schema_context():
+        with (
+            patch_create_schema_context(),
+            patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock),
+        ):
             result = await flow.async_step_area_config(user_input)
             # Should succeed without migration since old area not found
             assert result["type"] == FlowResultType.CREATE_ENTRY
