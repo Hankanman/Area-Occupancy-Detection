@@ -69,6 +69,7 @@ class TestEntityType:
         assert entity_type.prob_given_false == expected_config["prob_given_false"]
         assert entity_type.active_states == expected_config["active_states"]
         assert entity_type.active_range == expected_config["active_range"]
+        assert entity_type.strength_multiplier == expected_config["strength_multiplier"]
 
     @pytest.mark.parametrize(
         (
@@ -329,6 +330,12 @@ class TestEntityType:
             # Restore original DEFAULT_TYPES
             if original_value is not None:
                 DEFAULT_TYPES[test_type] = original_value
+
+    def test_strength_multiplier_override(self) -> None:
+        """Test that strength_multiplier can be overridden from default."""
+        entity_type = EntityType(InputType.MOTION, strength_multiplier=4.0)
+        # Default for MOTION is 3.0, but override should take precedence
+        assert entity_type.strength_multiplier == 4.0
 
     def test_missing_unknown_fallback(self, caplog) -> None:
         """Test ultimate fallback when UNKNOWN is also missing from DEFAULT_TYPES."""

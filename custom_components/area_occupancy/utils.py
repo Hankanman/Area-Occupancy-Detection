@@ -190,8 +190,10 @@ def sigmoid_probability(
         ew = getattr(entity, "effective_weight", entity.weight)
 
         # Add to z: effective_weight × evidence × correlation × strength_factor.
-        # strength_factor (×2) converts prob_given_true to appropriate logit-space contribution.
-        contribution = ew * evidence * correlation * (strength * 2)
+        # strength_multiplier is per-type (e.g., 3.0 for motion, 2.0 for others)
+        # to give ground-truth sensors a stronger logit-space contribution.
+        strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
+        contribution = ew * evidence * correlation * (strength * strength_multiplier)
         z += contribution
 
     return clamp_probability(sigmoid(z))

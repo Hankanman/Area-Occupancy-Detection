@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
-from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.data.entity_type import DEFAULT_TYPES, InputType
 from custom_components.area_occupancy.utils import (
     apply_activity_boost,
     bayesian_probability,
@@ -67,6 +67,9 @@ def _create_mock_entity(
     entity.is_continuous_likelihood = is_continuous
     entity.type = Mock()
     entity.type.input_type = input_type
+    entity.type.strength_multiplier = DEFAULT_TYPES.get(input_type, {}).get(
+        "strength_multiplier", 2.0
+    )
     return entity
 
 
@@ -849,10 +852,10 @@ class TestSigmoidFunctions:
             {"m1": motion1, "m2": motion2, "m3": motion3}, prior=prior
         )
 
-        # Each additional sensor should increase probability
+        # Each additional sensor should increase probability (or hit ceiling)
         assert result_1 > prior
-        assert result_2 > result_1
-        assert result_3 > result_2
+        assert result_2 >= result_1
+        assert result_3 >= result_2
 
     def test_sigmoid_probability_with_decay(self) -> None:
         """Test that decaying sensors contribute proportionally to decay factor."""
@@ -955,6 +958,37 @@ class TestSigmoidFunctions:
         assert abs(result_zero - clamp_probability(prior)) < 1e-6
         # Normal weight should be different
         assert result_normal > result_zero
+
+    def test_sigmoid_probability_motion_strength_multiplier(self) -> None:
+        """Test that motion sensors (multiplier 3.0) produce higher results than 2.0."""
+        # Motion sensor with default multiplier (3.0)
+        motion_high = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+
+        # Same sensor but with multiplier overridden to 2.0
+        motion_low = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.95,
+            prob_given_false=0.02,
+            weight=1.0,
+            input_type=InputType.MOTION,
+        )
+        motion_low.type.strength_multiplier = 2.0
+
+        prior = 0.15
+        result_high = sigmoid_probability({"m": motion_high}, prior=prior)
+        result_low = sigmoid_probability({"m": motion_low}, prior=prior)
+
+        # 3.0 multiplier should produce higher probability than 2.0
+        assert result_high > result_low
+        # Both should be above prior
+        assert result_high > prior
+        assert result_low > prior
 
 
 class TestPresenceEnvironmentalSplit:
