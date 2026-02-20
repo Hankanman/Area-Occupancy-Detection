@@ -19,21 +19,21 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentryFlow,
     OptionsFlow,
+    SubentryFlowResult,
 )
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import AbortFlow, section
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import (
-    area_registry as ar,
-    device_registry as dr,
-    entity_registry as er,
-)
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.selector import (
     AreaSelector,
     AreaSelectorConfig,
     BooleanSelector,
+    DurationSelector,
+    DurationSelectorConfig,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -57,7 +57,6 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -155,6 +154,51 @@ WEIGHT_MAX = 1
 THRESHOLD_STEP = 1
 THRESHOLD_MIN = 1
 THRESHOLD_MAX = 100
+
+
+def _seconds_to_duration(seconds: float) -> dict[str, int]:
+    """Convert seconds to duration dict for DurationSelector.
+
+    Args:
+        seconds: Duration in seconds
+
+    Returns:
+        Dictionary with hours, minutes, seconds keys
+    """
+    total = int(seconds)
+    return {
+        "hours": total // 3600,
+        "minutes": (total % 3600) // 60,
+        "seconds": total % 60,
+    }
+
+
+def _duration_to_seconds(duration: dict[str, int] | float) -> int:
+    """Convert duration dict or raw number to seconds.
+
+    Args:
+        duration: Duration dict with hours/minutes/seconds keys, or raw seconds
+
+    Returns:
+        Total seconds as integer
+    """
+    if isinstance(duration, (int, float)):
+        return int(duration)
+    return (
+        duration.get("hours", 0) * 3600
+        + duration.get("minutes", 0) * 60
+        + duration.get("seconds", 0)
+    )
+
+
+# Fields that use DurationSelector and need conversion
+_DURATION_FIELDS: set[str] = {
+    CONF_MOTION_TIMEOUT,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_VERIFICATION_DELAY,
+    CONF_DECAY_HALF_LIFE,
+}
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -424,70 +468,73 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
 
 
 def _create_motion_section_schema(
-    defaults: dict[str, Any], motion_entities: list[str]
+    defaults: dict[str, Any],
+    motion_entities: list[str],
+    *,
+    show_advanced: bool = False,
 ) -> vol.Schema:
     """Create schema for the motion section."""
-    return vol.Schema(
-        {
-            vol.Required(
-                CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    include_entities=motion_entities,
-                    multiple=True,
-                )
+    fields: dict[vol.Marker, Any] = {
+        vol.Required(
+            CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
+        ): EntitySelector(
+            EntitySelectorConfig(
+                include_entities=motion_entities,
+                multiple=True,
+            )
+        ),
+        vol.Optional(
+            CONF_WEIGHT_MOTION,
+            default=defaults.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=WEIGHT_MIN,
+                max=WEIGHT_MAX,
+                step=WEIGHT_STEP,
+                mode=NumberSelectorMode.SLIDER,
+            )
+        ),
+        vol.Optional(
+            CONF_MOTION_TIMEOUT,
+            default=_seconds_to_duration(
+                defaults.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)
             ),
-            vol.Optional(
-                CONF_WEIGHT_MOTION,
-                default=defaults.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=WEIGHT_MIN,
-                    max=WEIGHT_MAX,
-                    step=WEIGHT_STEP,
-                    mode=NumberSelectorMode.SLIDER,
-                )
-            ),
-            vol.Optional(
-                CONF_MOTION_TIMEOUT,
-                default=defaults.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=3600,
-                    step=5,
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="seconds",
-                )
-            ),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+    }
+
+    if show_advanced:
+        fields[
             vol.Optional(
                 CONF_MOTION_PROB_GIVEN_TRUE,
                 default=defaults.get(
                     CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
                 ),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=MIN_PROBABILITY,
-                    max=MAX_PROBABILITY,
-                    step=0.01,
-                    mode=NumberSelectorMode.BOX,
-                )
-            ),
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_PROBABILITY,
+                max=MAX_PROBABILITY,
+                step=0.01,
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+        fields[
             vol.Optional(
                 CONF_MOTION_PROB_GIVEN_FALSE,
                 default=defaults.get(
                     CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
                 ),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0.001,
-                    max=MAX_PROBABILITY,
-                    step=0.001,
-                    mode=NumberSelectorMode.BOX,
-                )
-            ),
-        }
-    )
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=0.001,
+                max=MAX_PROBABILITY,
+                step=0.001,
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+
+    return vol.Schema(fields)
 
 
 def _create_windows_and_doors_section_schema(
@@ -829,56 +876,59 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _create_parameters_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _create_parameters_section_schema(
+    defaults: dict[str, Any],
+    *,
+    show_advanced: bool = False,
+) -> vol.Schema:
     """Create schema for the parameters section."""
     # Default decay half-life to 0 (use purpose value)
     decay_half_life_default = defaults.get(
         CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE
     )
 
-    return vol.Schema(
-        {
+    fields: dict[vol.Marker, Any] = {
+        vol.Optional(
+            CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=THRESHOLD_MIN,
+                max=THRESHOLD_MAX,
+                step=THRESHOLD_STEP,
+                mode=NumberSelectorMode.SLIDER,
+            )
+        ),
+        vol.Optional(
+            CONF_DECAY_ENABLED,
+            default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
+        ): BooleanSelector(),
+    }
+
+    if show_advanced:
+        fields[
             vol.Optional(
-                CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=THRESHOLD_MIN,
-                    max=THRESHOLD_MAX,
-                    step=THRESHOLD_STEP,
-                    mode=NumberSelectorMode.SLIDER,
-                )
-            ),
-            vol.Optional(
-                CONF_DECAY_ENABLED,
-                default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
-            ): BooleanSelector(),
-            vol.Optional(
-                CONF_DECAY_HALF_LIFE, default=decay_half_life_default
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=3600,
-                    step=1,
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="seconds",
-                )
-            ),
+                CONF_DECAY_HALF_LIFE,
+                default=_seconds_to_duration(decay_half_life_default),
+            )
+        ] = DurationSelector(DurationSelectorConfig(enable_day=False))
+        fields[
             vol.Optional(
                 CONF_MIN_PRIOR_OVERRIDE,
                 default=defaults.get(
                     CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE
                 ),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0.0,
-                    max=1.0,
-                    step=0.01,
-                    mode=NumberSelectorMode.SLIDER,
-                    unit_of_measurement="probability",
-                )
-            ),
-        }
-    )
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=0.0,
+                max=1.0,
+                step=0.01,
+                mode=NumberSelectorMode.SLIDER,
+                unit_of_measurement="probability",
+            )
+        )
+
+    return vol.Schema(fields)
 
 
 def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -890,18 +940,10 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): BooleanSelector(),
             vol.Optional(
                 CONF_WASP_MOTION_TIMEOUT,
-                default=defaults.get(
-                    CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT
+                default=_seconds_to_duration(
+                    defaults.get(CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT)
                 ),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=3600,
-                    step=60,
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="seconds",
-                )
-            ),
+            ): DurationSelector(DurationSelectorConfig(enable_day=False)),
             vol.Optional(
                 CONF_WASP_WEIGHT,
                 default=defaults.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
@@ -912,30 +954,18 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ),
             vol.Optional(
                 CONF_WASP_MAX_DURATION,
-                default=defaults.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=86400,  # 24 hours in seconds
-                    step=300,  # 5-minute increments
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="seconds",
-                )
-            ),
+                default=_seconds_to_duration(
+                    defaults.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION)
+                ),
+            ): DurationSelector(DurationSelectorConfig(enable_day=True)),
             vol.Optional(
                 CONF_WASP_VERIFICATION_DELAY,
-                default=defaults.get(
-                    CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY
+                default=_seconds_to_duration(
+                    defaults.get(
+                        CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY
+                    )
                 ),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=120,  # 2 minutes max
-                    step=5,  # 5-second increments
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="seconds",
-                )
-            ),
+            ): DurationSelector(DurationSelectorConfig(enable_day=False)),
         }
     )
 
@@ -945,6 +975,8 @@ def create_schema(
     defaults: dict[str, Any] | None = None,
     is_options: bool = False,
     include_entities: dict[str, list[str]] | None = None,
+    *,
+    show_advanced: bool = False,
 ) -> dict:
     """Create a schema with optional default values, using helper functions.
 
@@ -954,6 +986,7 @@ def create_schema(
         is_options: Whether this is for options flow (vs initial config flow)
         include_entities: Optional pre-computed entity lists. If not provided,
             will be computed from hass.
+        show_advanced: Whether to show advanced options (motion probs, decay half-life, min prior)
 
     Returns:
         Schema dictionary for form
@@ -992,7 +1025,9 @@ def create_schema(
 
     # Add sections by assigning keys directly to the dictionary
     schema_dict[vol.Required("motion")] = section(
-        _create_motion_section_schema(defaults, include_entities["motion"]),
+        _create_motion_section_schema(
+            defaults, include_entities["motion"], show_advanced=show_advanced
+        ),
         {"collapsed": True},
     )
     schema_dict[vol.Required("windows_and_doors")] = section(
@@ -1040,11 +1075,376 @@ def create_schema(
         _create_wasp_in_box_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("parameters")] = section(
-        _create_parameters_section_schema(defaults), {"collapsed": True}
+        _create_parameters_section_schema(defaults, show_advanced=show_advanced),
+        {"collapsed": True},
     )
 
     # Pass the correctly structured dictionary to vol.Schema
     return schema_dict
+
+
+# ── Wizard step schemas ──────────────────────────────────────────────
+
+
+def _create_basics_step_schema() -> dict[vol.Marker, Any]:
+    """Create schema for wizard step 1: area selection and purpose."""
+    return {
+        vol.Required(CONF_AREA_ID): AreaSelector(AreaSelectorConfig()),
+        vol.Optional(CONF_PURPOSE, default=DEFAULT_PURPOSE): SelectSelector(
+            SelectSelectorConfig(
+                options=cast("list[SelectOptionDict]", get_purpose_options()),
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    }
+
+
+def _create_motion_step_schema(
+    hass: HomeAssistant,
+    include_entities: dict[str, list[str]] | None = None,
+    *,
+    show_advanced: bool = False,
+) -> dict[vol.Marker, Any]:
+    """Create schema for wizard step 2: motion sensor configuration."""
+    if include_entities is None:
+        include_entities = _get_include_entities(hass)
+
+    fields: dict[vol.Marker, Any] = {
+        vol.Required(CONF_MOTION_SENSORS, default=[]): EntitySelector(
+            EntitySelectorConfig(
+                include_entities=include_entities["motion"],
+                multiple=True,
+            )
+        ),
+        vol.Optional(CONF_WEIGHT_MOTION, default=DEFAULT_WEIGHT_MOTION): NumberSelector(
+            NumberSelectorConfig(
+                min=WEIGHT_MIN,
+                max=WEIGHT_MAX,
+                step=WEIGHT_STEP,
+                mode=NumberSelectorMode.SLIDER,
+            )
+        ),
+        vol.Optional(
+            CONF_MOTION_TIMEOUT,
+            default=_seconds_to_duration(DEFAULT_MOTION_TIMEOUT),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+    }
+
+    if show_advanced:
+        fields[
+            vol.Optional(
+                CONF_MOTION_PROB_GIVEN_TRUE,
+                default=DEFAULT_MOTION_PROB_GIVEN_TRUE,
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_PROBABILITY,
+                max=MAX_PROBABILITY,
+                step=0.01,
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+        fields[
+            vol.Optional(
+                CONF_MOTION_PROB_GIVEN_FALSE,
+                default=DEFAULT_MOTION_PROB_GIVEN_FALSE,
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=0.001,
+                max=MAX_PROBABILITY,
+                step=0.001,
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+
+    return fields
+
+
+def _create_sensors_step_schema(
+    hass: HomeAssistant,
+    include_entities: dict[str, list[str]] | None = None,
+) -> dict[vol.Marker, Any]:
+    """Create schema for wizard step 3: additional sensors with sections."""
+    if include_entities is None:
+        include_entities = _get_include_entities(hass)
+
+    defaults: dict[str, Any] = {}
+    door_state_options = _get_state_select_options("door")
+    media_state_options = _get_state_select_options("media")
+    window_state_options = _get_state_select_options("window")
+    cover_state_options = _get_state_select_options("cover")
+    appliance_state_options = _get_state_select_options("appliance")
+
+    return {
+        vol.Required("windows_and_doors"): section(
+            _create_windows_and_doors_section_schema(
+                defaults,
+                include_entities["door"],
+                include_entities["window"],
+                include_entities["cover"],
+                cast("list[SelectOptionDict]", door_state_options),
+                cast("list[SelectOptionDict]", window_state_options),
+                cast("list[SelectOptionDict]", cover_state_options),
+            ),
+            {"collapsed": True},
+        ),
+        vol.Required("media"): section(
+            _create_media_section_schema(
+                defaults, cast("list[SelectOptionDict]", media_state_options)
+            ),
+            {"collapsed": True},
+        ),
+        vol.Required("appliances"): section(
+            _create_appliances_section_schema(
+                defaults,
+                include_entities["appliance"],
+                cast("list[SelectOptionDict]", appliance_state_options),
+            ),
+            {"collapsed": True},
+        ),
+        vol.Required("environmental"): section(
+            _create_environmental_section_schema(
+                defaults,
+                include_entities["temperature"],
+                include_entities["humidity"],
+                include_entities["pressure"],
+                include_entities["air_quality"],
+                include_entities["pm25"],
+                include_entities["pm10"],
+            ),
+            {"collapsed": True},
+        ),
+        vol.Required("power"): section(
+            _create_power_section_schema(defaults), {"collapsed": True}
+        ),
+    }
+
+
+def _create_behavior_step_schema(
+    *,
+    show_advanced: bool = False,
+) -> dict[vol.Marker, Any]:
+    """Create schema for wizard step 4: thresholds, decay, and wasp-in-box."""
+    fields: dict[vol.Marker, Any] = {
+        vol.Optional(CONF_THRESHOLD, default=DEFAULT_THRESHOLD): NumberSelector(
+            NumberSelectorConfig(
+                min=THRESHOLD_MIN,
+                max=THRESHOLD_MAX,
+                step=THRESHOLD_STEP,
+                mode=NumberSelectorMode.SLIDER,
+            )
+        ),
+        vol.Optional(
+            CONF_DECAY_ENABLED, default=DEFAULT_DECAY_ENABLED
+        ): BooleanSelector(),
+    }
+
+    if show_advanced:
+        fields[
+            vol.Optional(
+                CONF_DECAY_HALF_LIFE,
+                default=_seconds_to_duration(DEFAULT_DECAY_HALF_LIFE),
+            )
+        ] = DurationSelector(DurationSelectorConfig(enable_day=False))
+        fields[
+            vol.Optional(
+                CONF_MIN_PRIOR_OVERRIDE,
+                default=DEFAULT_MIN_PRIOR_OVERRIDE,
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=0.0,
+                max=1.0,
+                step=0.01,
+                mode=NumberSelectorMode.SLIDER,
+                unit_of_measurement="probability",
+            )
+        )
+
+    # Wasp-in-box fields at top level
+    fields[vol.Optional(CONF_WASP_ENABLED, default=False)] = BooleanSelector()
+    fields[
+        vol.Optional(
+            CONF_WASP_MOTION_TIMEOUT,
+            default=_seconds_to_duration(DEFAULT_WASP_MOTION_TIMEOUT),
+        )
+    ] = DurationSelector(DurationSelectorConfig(enable_day=False))
+    fields[vol.Optional(CONF_WASP_WEIGHT, default=DEFAULT_WASP_WEIGHT)] = (
+        NumberSelector(
+            NumberSelectorConfig(
+                min=0.0, max=1.0, step=0.05, mode=NumberSelectorMode.SLIDER
+            )
+        )
+    )
+    fields[
+        vol.Optional(
+            CONF_WASP_MAX_DURATION,
+            default=_seconds_to_duration(DEFAULT_WASP_MAX_DURATION),
+        )
+    ] = DurationSelector(DurationSelectorConfig(enable_day=True))
+    fields[
+        vol.Optional(
+            CONF_WASP_VERIFICATION_DELAY,
+            default=_seconds_to_duration(DEFAULT_WASP_VERIFICATION_DELAY),
+        )
+    ] = DurationSelector(DurationSelectorConfig(enable_day=False))
+
+    return fields
+
+
+def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
+    """Restructure flat area config into section-nested format for suggested values.
+
+    Args:
+        flat_config: Flat area configuration dictionary
+
+    Returns:
+        Nested dictionary matching the sectioned schema structure
+    """
+    nested: dict[str, Any] = {}
+
+    # Root-level fields
+    if CONF_AREA_ID in flat_config:
+        nested[CONF_AREA_ID] = flat_config[CONF_AREA_ID]
+    if CONF_PURPOSE in flat_config:
+        nested[CONF_PURPOSE] = flat_config[CONF_PURPOSE]
+
+    # Motion section
+    motion: dict[str, Any] = {}
+    for key in (
+        CONF_MOTION_SENSORS,
+        CONF_WEIGHT_MOTION,
+        CONF_MOTION_TIMEOUT,
+        CONF_MOTION_PROB_GIVEN_TRUE,
+        CONF_MOTION_PROB_GIVEN_FALSE,
+    ):
+        if key in flat_config:
+            val = flat_config[key]
+            # Convert seconds to duration for DurationSelector fields
+            if key in _DURATION_FIELDS:
+                val = _seconds_to_duration(val)
+            motion[key] = val
+    if motion:
+        nested["motion"] = motion
+
+    # Windows and doors section
+    windows_and_doors: dict[str, Any] = {}
+    for key in (
+        CONF_DOOR_SENSORS,
+        CONF_DOOR_ACTIVE_STATE,
+        CONF_WEIGHT_DOOR,
+        CONF_WINDOW_SENSORS,
+        CONF_WINDOW_ACTIVE_STATE,
+        CONF_WEIGHT_WINDOW,
+        CONF_COVER_SENSORS,
+        CONF_COVER_ACTIVE_STATES,
+        CONF_WEIGHT_COVER,
+    ):
+        if key in flat_config:
+            windows_and_doors[key] = flat_config[key]
+    if windows_and_doors:
+        nested["windows_and_doors"] = windows_and_doors
+
+    # Media section
+    media: dict[str, Any] = {}
+    for key in (CONF_MEDIA_DEVICES, CONF_MEDIA_ACTIVE_STATES, CONF_WEIGHT_MEDIA):
+        if key in flat_config:
+            media[key] = flat_config[key]
+    if media:
+        nested["media"] = media
+
+    # Appliances section
+    appliances: dict[str, Any] = {}
+    for key in (CONF_APPLIANCES, CONF_APPLIANCE_ACTIVE_STATES, CONF_WEIGHT_APPLIANCE):
+        if key in flat_config:
+            appliances[key] = flat_config[key]
+    if appliances:
+        nested["appliances"] = appliances
+
+    # Environmental section
+    environmental: dict[str, Any] = {}
+    for key in (
+        CONF_ILLUMINANCE_SENSORS,
+        CONF_HUMIDITY_SENSORS,
+        CONF_TEMPERATURE_SENSORS,
+        CONF_CO2_SENSORS,
+        CONF_CO_SENSORS,
+        CONF_SOUND_PRESSURE_SENSORS,
+        CONF_PRESSURE_SENSORS,
+        CONF_AIR_QUALITY_SENSORS,
+        CONF_VOC_SENSORS,
+        CONF_PM25_SENSORS,
+        CONF_PM10_SENSORS,
+        CONF_WEIGHT_ENVIRONMENTAL,
+    ):
+        if key in flat_config:
+            environmental[key] = flat_config[key]
+    if environmental:
+        nested["environmental"] = environmental
+
+    # Power section
+    power: dict[str, Any] = {}
+    for key in (CONF_POWER_SENSORS, CONF_WEIGHT_POWER):
+        if key in flat_config:
+            power[key] = flat_config[key]
+    if power:
+        nested["power"] = power
+
+    # Wasp in box section
+    wasp: dict[str, Any] = {}
+    for key in (
+        CONF_WASP_ENABLED,
+        CONF_WASP_MOTION_TIMEOUT,
+        CONF_WASP_WEIGHT,
+        CONF_WASP_MAX_DURATION,
+        CONF_WASP_VERIFICATION_DELAY,
+    ):
+        if key in flat_config:
+            val = flat_config[key]
+            if key in _DURATION_FIELDS:
+                val = _seconds_to_duration(val)
+            wasp[key] = val
+    if wasp:
+        nested["wasp_in_box"] = wasp
+
+    # Parameters section
+    parameters: dict[str, Any] = {}
+    for key in (
+        CONF_THRESHOLD,
+        CONF_DECAY_ENABLED,
+        CONF_DECAY_HALF_LIFE,
+        CONF_MIN_PRIOR_OVERRIDE,
+    ):
+        if key in flat_config:
+            val = flat_config[key]
+            if key in _DURATION_FIELDS:
+                val = _seconds_to_duration(val)
+            parameters[key] = val
+    if parameters:
+        nested["parameters"] = parameters
+
+    return nested
+
+
+def _draft_to_suggested(draft: dict[str, Any], keys: set[str]) -> dict[str, Any]:
+    """Extract suggested values from draft, converting duration fields.
+
+    Args:
+        draft: Flat area configuration draft
+        keys: Set of field keys to extract
+
+    Returns:
+        Dictionary of suggested values with durations converted for display
+    """
+    suggested: dict[str, Any] = {}
+    for key in keys:
+        if key in draft:
+            val = draft[key]
+            if key in _DURATION_FIELDS:
+                val = _seconds_to_duration(val)
+            suggested[key] = val
+    return suggested
 
 
 def _resolve_area_id_to_name(hass: HomeAssistant, area_id: str) -> str:
@@ -1139,6 +1539,38 @@ def _build_area_description_placeholders(
     }
 
 
+def _count_area_sensors(area: dict[str, Any]) -> int:
+    """Count total configured input sensors for an area.
+
+    Args:
+        area: Area configuration dictionary
+
+    Returns:
+        Total number of configured input sensors
+    """
+    sensor_keys = [
+        CONF_MOTION_SENSORS,
+        CONF_MEDIA_DEVICES,
+        CONF_DOOR_SENSORS,
+        CONF_WINDOW_SENSORS,
+        CONF_APPLIANCES,
+        CONF_COVER_SENSORS,
+        CONF_ILLUMINANCE_SENSORS,
+        CONF_HUMIDITY_SENSORS,
+        CONF_TEMPERATURE_SENSORS,
+        CONF_CO2_SENSORS,
+        CONF_CO_SENSORS,
+        CONF_SOUND_PRESSURE_SENSORS,
+        CONF_PRESSURE_SENSORS,
+        CONF_AIR_QUALITY_SENSORS,
+        CONF_VOC_SENSORS,
+        CONF_PM25_SENSORS,
+        CONF_PM10_SENSORS,
+        CONF_POWER_SENSORS,
+    ]
+    return sum(len(area.get(key, [])) for key in sensor_keys)
+
+
 def _get_area_summary_info(area: dict[str, Any]) -> str:
     """Get formatted summary information for an area.
 
@@ -1203,11 +1635,17 @@ def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
     """
     flattened_input = {}
     for key, value in user_input.items():
-        if isinstance(value, dict):
+        if isinstance(value, dict) and key not in _DURATION_FIELDS:
             # All sections (motion, doors, windows, wasp_in_box, etc.) are flattened the same way
             flattened_input.update(value)
         else:
             flattened_input[key] = value
+
+    # Convert duration fields from DurationSelector format back to seconds
+    for field in _DURATION_FIELDS:
+        if field in flattened_input:
+            flattened_input[field] = _duration_to_seconds(flattened_input[field])
+
     return flattened_input
 
 
@@ -1465,7 +1903,7 @@ class BaseOccupancyFlow:
         areas: list[dict[str, Any]],
         area_id_being_edited: str | None = None,
         hass: HomeAssistant | None = None,
-    ) -> None:
+    ) -> dict[str, str]:
         """Validate that area ID is not a duplicate.
 
         Args:
@@ -1474,9 +1912,10 @@ class BaseOccupancyFlow:
             area_id_being_edited: Optional area ID being edited (to exclude from duplicate check)
             hass: Home Assistant instance (for resolving area names in error messages)
 
-        Raises:
-            vol.Invalid: If area ID is a duplicate
+        Returns:
+            Dictionary mapping field keys to error translation keys
         """
+        errors: dict[str, str] = {}
         area_id = flattened_input.get(CONF_AREA_ID, "")
         if area_id:
             for area in areas:
@@ -1484,18 +1923,14 @@ class BaseOccupancyFlow:
                 if existing_area_id == area_id and (
                     not area_id_being_edited or existing_area_id != area_id_being_edited
                 ):
-                    # Resolve area name for better error message
-                    area_name = area_id
-                    if hass:
-                        with contextlib.suppress(ValueError):
-                            area_name = _resolve_area_id_to_name(hass, area_id)
-                    msg = f"Area '{area_name}' is already configured"
-                    raise vol.Invalid(msg)
+                    errors[CONF_AREA_ID] = "area_already_configured"
+                    break
+        return errors
 
     def _validate_config(
         self, data: dict[str, Any], hass: HomeAssistant | None = None
-    ) -> None:
-        """Validate the configuration.
+    ) -> dict[str, str]:
+        """Validate the configuration and return per-field errors.
 
         Performs comprehensive validation of all configuration fields including:
         - Required area ID and validation against Home Assistant registry
@@ -1507,31 +1942,31 @@ class BaseOccupancyFlow:
             data: Dictionary containing the configuration to validate
             hass: Home Assistant instance (for validating area ID)
 
-        Raises:
-            ValueError: If any validation check fails
-
+        Returns:
+            Dictionary mapping field keys to error translation keys.
+            Empty dict means validation passed.
         """
+        errors: dict[str, str] = {}
+
         # Validate area ID
         area_id = data.get(CONF_AREA_ID, "")
         if not area_id:
-            raise vol.Invalid("Area selection is required")
-
-        # Validate that area ID exists in Home Assistant registry
-        if hass:
+            errors[CONF_AREA_ID] = "area_required"
+        elif hass:
             try:
                 _resolve_area_id_to_name(hass, area_id)
-            except ValueError as err:
-                raise vol.Invalid(f"Selected area no longer exists: {err!s}") from err
+            except ValueError:
+                errors[CONF_AREA_ID] = "area_not_found"
 
         # Validate purpose
         purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
         if not purpose:
-            raise vol.Invalid("Purpose is required")
+            errors[CONF_PURPOSE] = "purpose_required"
 
-        # Validate motion sensors
+        # Validate motion sensors (section field → base fallback)
         motion_sensors = data.get(CONF_MOTION_SENSORS, [])
         if not motion_sensors:
-            raise vol.Invalid("At least one motion sensor is required")
+            errors["base"] = "motion_required"
 
         # Validate motion sensor likelihoods
         motion_prob_given_true = data.get(
@@ -1541,29 +1976,20 @@ class BaseOccupancyFlow:
             CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
         )
         if motion_prob_given_true <= motion_prob_given_false:
-            raise vol.Invalid(
-                "Motion sensor P(Active | Occupied) must be greater than "
-                "P(Active | Not Occupied). Motion sensors should be more reliable "
-                "when the area is actually occupied."
-            )
+            errors["base"] = "prob_true_must_exceed_false"
 
         # Validate threshold
         threshold = data.get(CONF_THRESHOLD)
-        if threshold is not None:
-            if (
-                not isinstance(threshold, (int, float))
-                or threshold < 1
-                or threshold > 100
-            ):
-                raise vol.Invalid("Threshold must be between 1 and 100")
+        if threshold is not None and (
+            not isinstance(threshold, (int, float)) or threshold < 1 or threshold > 100
+        ):
+            errors["base"] = "invalid_threshold"
 
         # Validate media devices
         media_devices = data.get(CONF_MEDIA_DEVICES, [])
         media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
         if media_devices and not media_states:
-            raise vol.Invalid(
-                "Media active states are required when media devices are configured"
-            )
+            errors["base"] = "media_states_required"
 
         # Validate appliances
         appliances = data.get(CONF_APPLIANCES, [])
@@ -1571,33 +1997,25 @@ class BaseOccupancyFlow:
             CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
         )
         if appliances and not appliance_states:
-            raise vol.Invalid(
-                "Appliance active states are required when appliances are configured"
-            )
+            errors["base"] = "appliance_states_required"
 
         # Validate doors
         door_sensors = data.get(CONF_DOOR_SENSORS, [])
         door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
         if door_sensors and not door_state:
-            raise vol.Invalid(
-                "Door active state is required when door sensors are configured"
-            )
+            errors["base"] = "door_state_required"
 
         # Validate windows
         window_sensors = data.get(CONF_WINDOW_SENSORS, [])
         window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
         if window_sensors and not window_state:
-            raise vol.Invalid(
-                "Window active state is required when window sensors are configured"
-            )
+            errors["base"] = "window_state_required"
 
         # Validate covers
         cover_sensors = data.get(CONF_COVER_SENSORS, [])
         cover_states = data.get(CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES)
         if cover_sensors and not cover_states:
-            raise vol.Invalid(
-                "Cover active states are required when cover sensors are configured"
-            )
+            errors["base"] = "cover_states_required"
 
         # Validate weights
         weights = [
@@ -1619,11 +2037,10 @@ class BaseOccupancyFlow:
                 data.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
             ),
         ]
-        for name, weight in weights:
+        for _name, weight in weights:
             if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
-                raise vol.Invalid(
-                    f"{name} must be between {WEIGHT_MIN} and {WEIGHT_MAX}"
-                )
+                errors["base"] = "invalid_weight"
+                break
 
         # Validate decay settings
         decay_enabled = data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
@@ -1633,9 +2050,9 @@ class BaseOccupancyFlow:
             if not isinstance(decay_window, (int, float)) or (
                 decay_window != 0 and (decay_window < 10 or decay_window > 3600)
             ):
-                raise vol.Invalid(
-                    "Decay half life must be 0 (use purpose value) or between 10 and 3600 seconds"
-                )
+                errors["base"] = "invalid_decay_half_life"
+
+        return errors
 
     def _route_area_action(self, action: str, area_id: str) -> None:
         """Route area action to appropriate step.
@@ -1656,6 +2073,344 @@ class BaseOccupancyFlow:
             self._area_to_remove = None
             self._area_being_edited = None
 
+    # ── Multi-step area config wizard ────────────────────────────────
+
+    def _get_wizard_areas(self) -> list[dict[str, Any]]:
+        """Get the list of areas for duplicate checking. Overridden by subclasses."""
+        raise NotImplementedError
+
+    async def _on_area_config_complete(
+        self, config: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle completion of the area config wizard. Overridden by subclasses."""
+        raise NotImplementedError
+
+    def _init_area_wizard(self) -> None:
+        """Initialize the area config wizard draft."""
+        if self._area_being_edited:
+            areas = self._get_wizard_areas()
+            area = _find_area_by_id(areas, self._area_being_edited)
+            self._area_config_draft = area.copy() if area else {}
+        else:
+            self._area_config_draft = {}
+
+    async def async_step_area_basics(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Wizard step 1: Area selection and purpose."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            area_id = user_input.get(CONF_AREA_ID, "")
+            if not area_id:
+                errors[CONF_AREA_ID] = "area_required"
+            elif self.hass:
+                try:
+                    _resolve_area_id_to_name(self.hass, area_id)
+                except ValueError:
+                    errors[CONF_AREA_ID] = "area_not_found"
+
+            if not errors:
+                areas = self._get_wizard_areas()
+                errors.update(
+                    self._validate_duplicate_area_id(
+                        user_input, areas, self._area_being_edited, self.hass
+                    )
+                )
+
+            if not errors:
+                self._area_config_draft.update(user_input)
+                return await self.async_step_area_motion()
+
+        schema_dict = _create_basics_step_schema()
+        base_schema = vol.Schema(schema_dict)
+
+        # Apply suggested values from draft or user_input (for error re-display)
+        suggested = (
+            user_input
+            if user_input is not None
+            else _draft_to_suggested(
+                self._area_config_draft, {CONF_AREA_ID, CONF_PURPOSE}
+            )
+        )
+        if suggested:
+            data_schema = self.add_suggested_values_to_schema(base_schema, suggested)
+        else:
+            data_schema = base_schema
+
+        # Build description placeholders
+        if self._area_being_edited and self._area_config_draft.get(CONF_AREA_ID):
+            area_name = self._area_config_draft.get(CONF_AREA_ID, "")
+            with contextlib.suppress(ValueError):
+                area_name = _resolve_area_id_to_name(
+                    self.hass, self._area_config_draft[CONF_AREA_ID]
+                )
+            placeholders = {"mode": "Editing", "area_name": area_name}
+        else:
+            placeholders = {"mode": "Adding", "area_name": "New Area"}
+
+        return self.async_show_form(
+            step_id="area_basics",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders=placeholders,
+            last_step=False,
+        )
+
+    async def async_step_area_motion(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Wizard step 2: Motion sensor configuration."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            flattened = _flatten_sectioned_input(user_input)
+
+            if not flattened.get(CONF_MOTION_SENSORS):
+                errors["base"] = "motion_required"
+
+            prob_true = flattened.get(
+                CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
+            )
+            prob_false = flattened.get(
+                CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
+            )
+            if prob_true <= prob_false:
+                errors["base"] = "prob_true_must_exceed_false"
+
+            if not errors:
+                self._area_config_draft.update(flattened)
+                return await self.async_step_area_sensors()
+
+        schema_dict = _create_motion_step_schema(
+            self.hass, show_advanced=self.show_advanced_options
+        )
+        base_schema = vol.Schema(schema_dict)
+
+        # Suggested values
+        motion_keys = {
+            CONF_MOTION_SENSORS,
+            CONF_WEIGHT_MOTION,
+            CONF_MOTION_TIMEOUT,
+            CONF_MOTION_PROB_GIVEN_TRUE,
+            CONF_MOTION_PROB_GIVEN_FALSE,
+        }
+        if user_input is not None:
+            data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
+        else:
+            suggested = _draft_to_suggested(self._area_config_draft, motion_keys)
+            if suggested:
+                data_schema = self.add_suggested_values_to_schema(
+                    base_schema, suggested
+                )
+            else:
+                data_schema = base_schema
+
+        return self.async_show_form(
+            step_id="area_motion",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    async def async_step_area_sensors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Wizard step 3: Additional sensor configuration (sections)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            flattened = _flatten_sectioned_input(user_input)
+
+            # Validate sensor-state combinations
+            if flattened.get(CONF_MEDIA_DEVICES, []) and not flattened.get(
+                CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
+            ):
+                errors["base"] = "media_states_required"
+            if flattened.get(CONF_APPLIANCES, []) and not flattened.get(
+                CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
+            ):
+                errors["base"] = "appliance_states_required"
+            if flattened.get(CONF_DOOR_SENSORS, []) and not flattened.get(
+                CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
+            ):
+                errors["base"] = "door_state_required"
+            if flattened.get(CONF_WINDOW_SENSORS, []) and not flattened.get(
+                CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
+            ):
+                errors["base"] = "window_state_required"
+            if flattened.get(CONF_COVER_SENSORS, []) and not flattened.get(
+                CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES
+            ):
+                errors["base"] = "cover_states_required"
+
+            if not errors:
+                self._area_config_draft.update(flattened)
+                return await self.async_step_area_behavior()
+
+        schema_dict = _create_sensors_step_schema(self.hass)
+        base_schema = vol.Schema(schema_dict)
+
+        # For edit mode with sections, need nested suggested values
+        if user_input is not None:
+            data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
+        elif self._area_config_draft:
+            nested = _nest_config_for_sections(self._area_config_draft)
+            sensor_sections = {
+                "windows_and_doors",
+                "media",
+                "appliances",
+                "environmental",
+                "power",
+            }
+            suggested = {k: v for k, v in nested.items() if k in sensor_sections}
+            if suggested:
+                data_schema = self.add_suggested_values_to_schema(
+                    base_schema, suggested
+                )
+            else:
+                data_schema = base_schema
+        else:
+            data_schema = base_schema
+
+        return self.async_show_form(
+            step_id="area_sensors",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    async def async_step_area_behavior(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Wizard step 4: Behavior parameters (threshold, decay, wasp)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            flattened = _flatten_sectioned_input(user_input)
+            self._area_config_draft.update(flattened)
+
+            # Auto-set decay half-life based on purpose
+            selected_purpose = self._area_config_draft.get(CONF_PURPOSE)
+            _apply_purpose_based_decay_default(
+                self._area_config_draft, selected_purpose
+            )
+
+            # Run full validation on the complete draft
+            validation_errors = self._validate_config(
+                self._area_config_draft, self.hass
+            )
+
+            if not validation_errors:
+                return await self._on_area_config_complete(self._area_config_draft)
+
+            errors.update(validation_errors)
+
+        schema_dict = _create_behavior_step_schema(
+            show_advanced=self.show_advanced_options
+        )
+        base_schema = vol.Schema(schema_dict)
+
+        # Suggested values
+        behavior_keys = {
+            CONF_THRESHOLD,
+            CONF_DECAY_ENABLED,
+            CONF_DECAY_HALF_LIFE,
+            CONF_MIN_PRIOR_OVERRIDE,
+            CONF_WASP_ENABLED,
+            CONF_WASP_MOTION_TIMEOUT,
+            CONF_WASP_WEIGHT,
+            CONF_WASP_MAX_DURATION,
+            CONF_WASP_VERIFICATION_DELAY,
+        }
+        if user_input is not None:
+            data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
+        else:
+            suggested = _draft_to_suggested(self._area_config_draft, behavior_keys)
+            if suggested:
+                data_schema = self.add_suggested_values_to_schema(
+                    base_schema, suggested
+                )
+            else:
+                data_schema = base_schema
+
+        return self.async_show_form(
+            step_id="area_behavior",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=True,
+        )
+
+
+class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
+    """Handle subentry flow for adding/editing areas.
+
+    HA provides built-in add/edit/delete UI for subentries. This handler
+    implements the multi-step wizard for area configuration.
+    """
+
+    def __init__(self) -> None:
+        """Initialize subentry flow."""
+        super().__init__()
+        self._area_being_edited: str | None = None
+        self._area_to_remove: str | None = None
+        self._area_config_draft: dict[str, Any] = {}
+        self._is_reconfigure: bool = False
+
+    def _get_wizard_areas(self) -> list[dict[str, Any]]:
+        """Get areas list for duplicate checking from existing subentries."""
+        entry = self._get_entry()
+        return [
+            dict(sub.data)
+            for sub in entry.subentries.values()
+            if sub.subentry_type == "area"
+        ]
+
+    async def _on_area_config_complete(
+        self, config: dict[str, Any]
+    ) -> SubentryFlowResult:
+        """Handle wizard completion: create or update area subentry."""
+        area_id = config.get(CONF_AREA_ID, "")
+        area_reg = ar.async_get(self.hass)
+        area_entry = area_reg.async_get_area(area_id)
+        title = area_entry.name if area_entry else area_id
+
+        if self._is_reconfigure:
+            subentry = self._get_reconfigure_subentry()
+            entry = self._get_entry()
+            return self.async_update_reload_and_abort(
+                entry,
+                subentry,
+                data=config,
+                title=title,
+                unique_id=area_id,
+            )
+
+        return self.async_create_entry(
+            title=title,
+            data=config,
+            unique_id=area_id,
+        )
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Add a new area — start the multi-step wizard."""
+        self._is_reconfigure = False
+        self._area_being_edited = None
+        self._area_config_draft = {}
+        return await self.async_step_area_basics(user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Reconfigure an existing area — pre-populate draft from subentry data."""
+        self._is_reconfigure = True
+        subentry = self._get_reconfigure_subentry()
+        self._area_being_edited = subentry.data.get(CONF_AREA_ID)
+        self._area_config_draft = dict(subentry.data)
+        return await self.async_step_area_basics(user_input)
+
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection.
@@ -1663,6 +2418,16 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     This class handles the initial configuration flow when the integration is first set up.
     It provides a multi-step configuration process with comprehensive validation.
     """
+
+    VERSION = CONF_VERSION
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return subentry types supported by this integration."""
+        return {"area": AreaSubentryFlowHandler}
 
     def __init__(self) -> None:
         """Initialize config flow.
@@ -1676,6 +2441,20 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         ] = []  # Store areas being configured during initial setup
         self._area_being_edited: str | None = None  # Store area ID (not name)
         self._area_to_remove: str | None = None  # Store area ID (not name)
+        self._area_config_draft: dict[str, Any] = {}
+
+    def _get_wizard_areas(self) -> list[dict[str, Any]]:
+        """Get areas list for duplicate checking."""
+        return self._areas
+
+    async def _on_area_config_complete(
+        self, config: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle wizard completion: update areas list and return to menu."""
+        self._areas = _update_area_in_list(self._areas, config, self._area_being_edited)
+        self._area_being_edited = None
+        self._area_config_draft = {}
+        return await self.async_step_user()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -1764,7 +2543,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         try:
             # Validate all areas before creating entry
             for area in self._areas:
-                self._validate_config(area, self.hass)
+                area_errors = self._validate_config(area, self.hass)
+                if area_errors:
+                    # Surface the first error found
+                    errors.update(area_errors)
+                    return await self.async_step_user()
 
             # Store in new multi-area format
             # Use a fixed title for the integration entry
@@ -1783,35 +2566,29 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                     ) from err
                 raise
 
-            config_data = {CONF_AREAS: self._areas}
-            result = self.async_create_entry(
-                title="Area Occupancy Detection", data=config_data
-            )
-
-            # Set version immediately after creation to prevent migration trigger
-            # Home Assistant defaults new entries to version 1, but fresh entries should have current version
-            entries = self.hass.config_entries.async_entries(DOMAIN)
-            entry = next((e for e in entries if e.unique_id == DOMAIN), None)
-            if entry:
-                try:
-                    self.hass.config_entries.async_update_entry(
-                        entry, version=CONF_VERSION
-                    )
-                except (ValueError, RuntimeError, HomeAssistantError) as err:
-                    _LOGGER.warning(
-                        "Failed to set version for entry %s: %s. "
-                        "Version will be set during async_setup_entry instead.",
-                        entry.entry_id,
-                        err,
-                    )
-            else:
-                # Entry not found - this should not happen, but safety net in __init__.py will handle it
-                _LOGGER.warning(
-                    "Could not find newly created entry to set version. "
-                    "Version will be set during async_setup_entry instead."
+            # Build subentries from collected areas
+            area_reg = ar.async_get(self.hass)
+            subentries = []
+            for area_config in self._areas:
+                area_id = area_config.get(CONF_AREA_ID, "")
+                area_entry = area_reg.async_get_area(area_id)
+                title = area_entry.name if area_entry else area_id
+                subentries.append(
+                    {
+                        "subentry_type": "area",
+                        "data": area_config,
+                        "title": title,
+                        "unique_id": area_id,
+                    }
                 )
 
-            return result  # noqa: TRY300
+            # Global config (no CONF_AREAS — areas live in subentries)
+            config_data: dict[str, Any] = {}
+            return self.async_create_entry(
+                title="Area Occupancy Detection",
+                data=config_data,
+                subentries=subentries,
+            )
         except AbortFlow:
             raise
         except HomeAssistantError as err:
@@ -1829,71 +2606,9 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     async def async_step_area_config(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Configure a single area (add or edit) during initial setup."""
-        errors: dict[str, str] = {}
-
-        # Get defaults for editing
-        defaults: dict[str, Any] = {}
-        if self._area_being_edited:
-            # Find the area being edited by ID
-            area = _find_area_by_id(self._areas, self._area_being_edited)
-            if area:
-                defaults = area.copy()
-
-        if user_input is not None:
-            try:
-                # Flatten sectioned data
-                flattened_input = _flatten_sectioned_input(user_input)
-
-                # Ensure area ID is preserved when editing (if not provided or empty, use original)
-                if self._area_being_edited and not flattened_input.get(CONF_AREA_ID):
-                    flattened_input[CONF_AREA_ID] = defaults.get(CONF_AREA_ID, "")
-
-                # Auto-set decay half-life based on purpose
-                selected_purpose = flattened_input.get(CONF_PURPOSE)
-                _apply_purpose_based_decay_default(flattened_input, selected_purpose)
-
-                # Validate the area configuration
-                self._validate_config(flattened_input, self.hass)
-
-                # Check for duplicate area IDs (if adding or changing)
-                self._validate_duplicate_area_id(
-                    flattened_input, self._areas, self._area_being_edited, self.hass
-                )
-
-                # Update or add area
-                self._areas = _update_area_in_list(
-                    self._areas, flattened_input, self._area_being_edited
-                )
-                self._area_being_edited = None
-
-                # Return to user step to show updated menu
-                return await self.async_step_user()
-
-            except (
-                HomeAssistantError,
-                vol.Invalid,
-                ValueError,
-                KeyError,
-                TypeError,
-            ) as err:
-                errors["base"] = _handle_step_error(err)
-
-        # Ensure purpose field has a default
-        if CONF_PURPOSE not in defaults:
-            defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
-
-        # Create schema with area selector for new areas
-        # Note: Duplicate area prevention is handled in validation, not in selector
-        schema_dict = create_schema(
-            self.hass, defaults, False
-        )  # False = initial config flow
-
-        return self.async_show_form(
-            step_id="area_config",
-            data_schema=vol.Schema(schema_dict),
-            errors=errors,
-        )
+        """Initialize the area config wizard."""
+        self._init_area_wizard()
+        return await self.async_step_area_basics()
 
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None
@@ -1949,6 +2664,15 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         with contextlib.suppress(ValueError):
             area_name = _resolve_area_id_to_name(self.hass, area_id)
 
+        # Find area config for sensor counts
+        area_config = _find_area_by_id(self._areas, area_id) or {}
+        sensor_count = _count_area_sensors(area_config)
+        # Entity count: binary_sensor (occupancy) + sensor (probability, prior, decay, activity, confidence) + number (threshold) = 7 base
+        # Plus optional: wasp binary_sensor = +1
+        entity_count = 7
+        if area_config.get(CONF_WASP_ENABLED):
+            entity_count += 1
+
         if user_input is not None:
             if user_input.get("confirm"):
                 # Remove the area
@@ -1981,7 +2705,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="remove_area",
             data_schema=schema,
-            description_placeholders={"area_name": area_name},
+            description_placeholders={
+                "area_name": area_name,
+                "sensor_count": str(sensor_count),
+                "entity_count": str(entity_count),
+            },
         )
 
     @staticmethod
@@ -1992,114 +2720,35 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         """Get the options flow."""
         return AreaOccupancyOptionsFlow()
 
-    @staticmethod
-    @callback
-    def async_get_device_options_flow(
-        config_entry: ConfigEntry, device_id: str
-    ) -> AreaOccupancyOptionsFlow:
-        """Get device-specific options flow for individual device reconfiguration.
-
-        Args:
-            config_entry: The config entry
-            device_id: The device ID from the device registry
-
-        Returns:
-            AreaOccupancyOptionsFlow configured for the specific device
-        """
-        flow = AreaOccupancyOptionsFlow()
-        # Store device_id to resolve in async_step_init when we have access to hass
-        flow._device_id = device_id  # noqa: SLF001
-        return flow
-
 
 class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
-    """Handle options flow with multi-area management."""
+    """Handle options flow for global settings and people management.
+
+    Area management is handled via AreaSubentryFlowHandler — HA provides
+    built-in add/edit/delete UI for subentries on the integration page.
+    """
 
     def __init__(self) -> None:
         """Initialize options flow."""
         super().__init__()
-        self._area_being_edited: str | None = None  # Store area ID (not name)
-        self._area_to_remove: str | None = None  # Store area ID (not name)
-        self._device_id: str | None = (
-            None  # Store device_id for device-specific configuration
-        )
         self._person_being_edited: int | None = None  # Index into people list
-
-    def _get_areas_from_config(self) -> list[dict[str, Any]]:
-        """Get areas list from config entry."""
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-
-        # Get areas from CONF_AREAS
-        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-            return merged[CONF_AREAS]
-
-        # If CONF_AREAS is not present, return empty list
-        return []
+        self._person_to_remove: int | None = None  # Index into people list for removal
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show area management menu."""
-        # If called from device registry, resolve device_id and set area being edited
-        if self._device_id:
-            device_registry = dr.async_get(self.hass)
-            if device := device_registry.async_get(self._device_id):
-                # Find the device identifier that matches our domain
-                for identifier in device.identifiers:
-                    if identifier[0] == DOMAIN:
-                        self._area_being_edited = identifier[1]
-                        break
-            # Clear device_id after resolving
-            self._device_id = None
+        """Show options menu (global settings and people management).
 
-        # If called from device registry, skip to area config
-        if self._area_being_edited:
-            return await self.async_step_area_config()
-
-        # Hybrid approach: Static menu for main actions, dedicated step for dynamic area selection
+        Area management is handled via subentry flows — HA provides built-in
+        add/edit/delete UI for subentries on the integration page.
+        """
         return self.async_show_menu(
             step_id="init",
             menu_options=[
                 CONF_ACTION_GLOBAL_SETTINGS,
-                CONF_ACTION_ADD_AREA,
-                "manage_areas",
                 CONF_ACTION_MANAGE_PEOPLE,
             ],
         )
-
-    async def async_step_manage_areas(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Show list of areas to manage."""
-        errors: dict[str, str] = {}
-        areas = self._get_areas_from_config()
-
-        if user_input is not None:
-            selected_option = user_input.get("selected_option", "")
-            if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
-                # User selected an area - extract area ID and go to action step
-                sanitized_id = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
-                # Find the actual area by matching sanitized IDs
-                area = _find_area_by_sanitized_id(areas, sanitized_id)
-                if area:
-                    self._area_being_edited = area.get(CONF_AREA_ID)
-                    return await self.async_step_area_action()
-                # If we couldn't find the area, show error
-                errors["base"] = "Selected area could not be found"
-
-        return self.async_show_form(
-            step_id="manage_areas",
-            data_schema=_create_area_selector_schema(areas, hass=self.hass),
-            errors=errors,
-        )
-
-    async def async_step_add_area(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Add a new area."""
-        self._area_being_edited = None
-        return await self.async_step_area_config(user_input)
 
     async def async_step_global_settings(
         self, user_input: dict[str, Any] | None = None
@@ -2156,17 +2805,8 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 except (ValueError, TypeError):
                     idx = -1
                 if 0 <= idx < len(people):
-                    updated_people = [p for i, p in enumerate(people) if i != idx]
-                    config_data = dict(self.config_entry.options)
-                    config_data[CONF_PEOPLE] = updated_people
-                    result = self.async_create_entry(title="", data=config_data)
-                    # Trigger integration reload to update sleep presence sensors
-                    self.hass.async_create_task(
-                        self.hass.config_entries.async_reload(
-                            self.config_entry.entry_id
-                        )
-                    )
-                    return result
+                    self._person_to_remove = idx
+                    return await self.async_step_remove_person()
                 errors["base"] = "invalid_selection"
 
         # Build options list
@@ -2221,6 +2861,56 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             step_id="manage_people",
             data_schema=schema,
             errors=errors,
+        )
+
+    async def async_step_remove_person(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm removal of a person."""
+        idx = self._person_to_remove
+        people: list[dict[str, Any]] = list(
+            self.config_entry.options.get(CONF_PEOPLE, [])
+        )
+        if idx is None or not (0 <= idx < len(people)):
+            return await self.async_step_init()
+
+        person = people[idx]
+        person_entity = person.get(CONF_PERSON_ENTITY, "unknown")
+
+        # Get person friendly name from state
+        person_state = self.hass.states.get(person_entity)
+        person_name = (
+            person_state.attributes.get("friendly_name", person_entity)
+            if person_state
+            else person_entity
+        )
+
+        if user_input is not None:
+            if user_input.get("confirm"):
+                updated_people = [p for i, p in enumerate(people) if i != idx]
+                config_data = dict(self.config_entry.options)
+                config_data[CONF_PEOPLE] = updated_people
+                result = self.async_create_entry(title="", data=config_data)
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
+                self._person_to_remove = None
+                return result
+
+            # User cancelled
+            self._person_to_remove = None
+            return await self.async_step_init()
+
+        schema = vol.Schema(
+            {
+                vol.Required("confirm", default=False): BooleanSelector(),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="remove_person",
+            data_schema=schema,
+            description_placeholders={"person_name": person_name},
         )
 
     async def async_step_person_config(
@@ -2303,181 +2993,4 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             step_id="person_config",
             data_schema=schema,
             errors=errors,
-        )
-
-    async def async_step_area_config(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ) -> ConfigFlowResult:
-        """Configure a single area (add or edit)."""
-        errors: dict[str, str] = {}
-        areas = self._get_areas_from_config()
-
-        # Get defaults for editing
-        defaults: dict[str, Any] = {}
-        if self._area_being_edited:
-            # Find the area being edited by ID
-            area = _find_area_by_id(areas, self._area_being_edited)
-            if area:
-                defaults = area.copy()
-
-        if user_input is not None:
-            try:
-                # Flatten sectioned data
-                flattened_input = _flatten_sectioned_input(user_input)
-
-                # Ensure area ID is preserved when editing (if not provided or empty, use original)
-                if self._area_being_edited and not flattened_input.get(CONF_AREA_ID):
-                    flattened_input[CONF_AREA_ID] = defaults.get(CONF_AREA_ID, "")
-
-                # Auto-set decay half-life based on purpose
-                selected_purpose = flattened_input.get(CONF_PURPOSE)
-                _apply_purpose_based_decay_default(flattened_input, selected_purpose)
-
-                # Validate the area configuration
-                self._validate_config(flattened_input, self.hass)
-
-                # Check for duplicate area IDs (if adding or changing)
-                self._validate_duplicate_area_id(
-                    flattened_input, areas, self._area_being_edited, self.hass
-                )
-
-                # Note: Area names are locked to Home Assistant, so no migration needed
-                # If area ID changes, it's a different area selection
-
-                # Update or add area
-                updated_areas = _update_area_in_list(
-                    areas, flattened_input, self._area_being_edited
-                )
-
-                # Save updated configuration
-                # Preserve existing global options (e.g., sleep schedule)
-                config_data = dict(self.config_entry.options)
-                config_data[CONF_AREAS] = updated_areas
-                result = self.async_create_entry(title="", data=config_data)
-                # Trigger integration reload to register new entities and devices
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
-                )
-
-            except (
-                HomeAssistantError,
-                vol.Invalid,
-                ValueError,
-                KeyError,
-                TypeError,
-            ) as err:
-                errors["base"] = _handle_step_error(err)
-            else:
-                return result
-
-        # Ensure purpose field has a default
-        if CONF_PURPOSE not in defaults:
-            defaults[CONF_PURPOSE] = DEFAULT_PURPOSE
-
-        # Create schema for options flow
-        # Note: Duplicate area prevention is handled in validation, not in selector
-        schema_dict = create_schema(self.hass, defaults, True)
-
-        return self.async_show_form(
-            step_id="area_config",
-            data_schema=vol.Schema(schema_dict),
-            errors=errors,
-        )
-
-    async def async_step_area_action(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle action selection for a specific area."""
-        # Get area_id from instance variable
-        area_id = self._area_being_edited
-        if not area_id:
-            return await self.async_step_init()
-
-        # Get current areas
-        areas = self._get_areas_from_config()
-
-        # Find the area being managed
-        area_config = _find_area_by_id(areas, area_id)
-
-        if not area_config:
-            return await self.async_step_init()
-
-        if user_input is not None:
-            action = user_input.get("action", "")
-            self._route_area_action(action, area_id)
-            if action == CONF_ACTION_EDIT:
-                # User wants to edit the area
-                return await self.async_step_area_config()
-            if action == CONF_ACTION_REMOVE:
-                # User wants to remove the area
-                return await self.async_step_remove_area()
-            if action == CONF_ACTION_CANCEL:
-                # User cancelled
-                return await self.async_step_init()
-
-        # Show action selection form with area details
-        schema = _create_action_selection_schema()
-        description_placeholders = _build_area_description_placeholders(
-            area_config, area_id, self.hass
-        )
-
-        return self.async_show_form(
-            step_id="area_action",
-            data_schema=schema,
-            description_placeholders=description_placeholders,
-        )
-
-    async def async_step_remove_area(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Confirm removal of an area."""
-        # Get area_id from instance variable
-        area_id = self._area_to_remove
-        if not area_id:
-            return await self.async_step_init()
-
-        # Resolve area name for display
-        area_name = area_id
-        with contextlib.suppress(ValueError):
-            area_name = _resolve_area_id_to_name(self.hass, area_id)
-
-        areas = self._get_areas_from_config()
-
-        if user_input is not None:
-            if user_input.get("confirm"):
-                # Remove the area
-                updated_areas = _remove_area_from_list(areas, area_id)
-
-                if not updated_areas:
-                    return self.async_show_form(
-                        step_id="remove_area",
-                        data_schema=vol.Schema({}),
-                        errors={"base": "Cannot remove the last area"},
-                    )
-
-                # Preserve existing global options (e.g., sleep schedule)
-                config_data = dict(self.config_entry.options)
-                config_data[CONF_AREAS] = updated_areas
-                result = self.async_create_entry(title="", data=config_data)
-                # Trigger integration reload to properly clean up all entities and devices
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
-                )
-                return result
-
-            # User cancelled
-            return await self.async_step_init()
-
-        # Show confirmation
-        schema = vol.Schema(
-            {
-                vol.Required("confirm", default=False): BooleanSelector(),
-            }
-        )
-
-        return self.async_show_form(
-            step_id="remove_area",
-            data_schema=schema,
-            description_placeholders={"area_name": area_name},
         )
