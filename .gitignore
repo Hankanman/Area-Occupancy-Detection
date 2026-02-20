@@ -15,10 +15,22 @@ coverage.xml
 # Home Assistant configuration
 config/*
 !config/configuration.yaml
+!config/.storage/
+config/.storage/*auth*
+config/.storage/*frontend*
+config/.storage/*trace*
+config/.storage/*lovelace*
+config/.storage/*person*
+config/.storage/*onboarding*
+config/.storage/*http*
+config/.storage/*restore_state*
+config/.storage/*repairs*
+config/.storage/*analytics*
+config/.storage/*core.config
 
 # Explicitly ignore backup files
 *.tar
-config/backups/
+*.db*
 
 # Python Environment
 .venv
