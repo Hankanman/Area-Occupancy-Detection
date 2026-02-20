@@ -1,12 +1,12 @@
 [project]
 name = "area-occupancy-simulator"
 version = "0.1.0"
-requires-python = ">=3.13.2"
+requires-python = ">=3.13"
 description = "Flask-based simulator for Area Occupancy Detection"
 dependencies = [
     "Flask>=3.0.0",
     "Flask-Cors>=4.0",
-    "homeassistant>=2025.12.4",
+    "homeassistant>=2025.2.2",
     "numpy>=2.3.2",
 ]
 

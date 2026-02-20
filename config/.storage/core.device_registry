@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "minor_version": 12,
+  "key": "core.device_registry",
+  "data": {
+    "devices": [
+      {"area_id":null,"config_entries":["01KHXJ78FKGJJTWS7NGR1357GN"],"config_entries_subentries":{"01KHXJ78FKGJJTWS7NGR1357GN":[null]},"configuration_url":"homeassistant://config/backup","connections":[],"created_at":"2026-02-20T12:03:14.642656+00:00","disabled_by":null,"entry_type":"service","hw_version":null,"id":"0676ce7203debb4b36a523aaec1a69f9","identifiers":[["backup","backup_manager"]],"labels":[],"manufacturer":"Home Assistant","model":"Home Assistant Backup","model_id":null,"modified_at":"2026-02-20T13:01:08.739978+00:00","name_by_user":null,"name":"Backup","primary_config_entry":"01KHXJ78FKGJJTWS7NGR1357GN","serial_number":null,"sw_version":"2026.2.2","via_device_id":null},
+      {"area_id":null,"config_entries":["01KHXMXZMQB4EJHZA5EPKZFFHC"],"config_entries_subentries":{"01KHXMXZMQB4EJHZA5EPKZFFHC":[null]},"configuration_url":"https://www.met.no/en","connections":[],"created_at":"2026-02-20T13:48:20.714817+00:00","disabled_by":null,"entry_type":"service","hw_version":null,"id":"9e3c6a1e737ebd79608e18e16b0298f8","identifiers":[["met","01KHXMXZMQB4EJHZA5EPKZFFHC"]],"labels":[],"manufacturer":"Met.no","model":"Forecast","model_id":null,"modified_at":"2026-02-20T13:48:20.714892+00:00","name_by_user":null,"name":"Forecast","primary_config_entry":"01KHXMXZMQB4EJHZA5EPKZFFHC","serial_number":null,"sw_version":null,"via_device_id":null}
+    ],
+    "deleted_devices": [
+      {"area_id":null,"config_entries":["01KHXHRGFNMFEXHC9CTYBVFR2F"],"config_entries_subentries":{"01KHXHRGFNMFEXHC9CTYBVFR2F":[null]},"connections":[],"created_at":"2026-02-20T12:52:55.571707+00:00","disabled_by":null,"disabled_by_undefined":false,"identifiers":[["met","01KHXHRGFNMFEXHC9CTYBVFR2F"]],"id":"11f38023019262926d6517dd359c5ed4","labels":[],"modified_at":"2026-02-20T13:01:08.739352+00:00","name_by_user":null,"orphaned_timestamp":null},
+      {"area_id":null,"config_entries":["01KHXEYP59B9SBFYG1VPKPKASC"],"config_entries_subentries":{"01KHXEYP59B9SBFYG1VPKPKASC":[null]},"connections":[],"created_at":"2026-02-20T12:03:52.411821+00:00","disabled_by":null,"disabled_by_undefined":false,"identifiers":[["met","01KHXEYP59B9SBFYG1VPKPKASC"]],"id":"19659bd62ff4a2c4f65334825d1f4eea","labels":[],"modified_at":"2026-02-20T13:01:08.739770+00:00","name_by_user":null,"orphaned_timestamp":null},
+      {"area_id":null,"config_entries":["01KHXJ4X3VP0D8AZ5Z5YW6273Y"],"config_entries_subentries":{"01KHXJ4X3VP0D8AZ5Z5YW6273Y":[null]},"connections":[],"created_at":"2026-02-20T12:59:41.737177+00:00","disabled_by":null,"disabled_by_undefined":false,"identifiers":[["met","01KHXJ4X3VP0D8AZ5Z5YW6273Y"]],"id":"84b994660938d201f3d27453c0c924cc","labels":[],"modified_at":"2026-02-20T13:01:08.740299+00:00","name_by_user":null,"orphaned_timestamp":null}
+    ]
+  }
+}

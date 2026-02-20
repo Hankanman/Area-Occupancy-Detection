@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==80.10.1"]
+requires = ["setuptools==78.1.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,7 +11,7 @@ readme = "README.md"  # Assuming you'll have a README.md
 authors = [
   { name = "Hankanman", email = "sebburrell@outlook.com" }, # Add your details
 ]
-keywords = ["home", "automation", "occupancy", "bayesian"]
+keywords = ["home", "automation", "occupancy", "bayesian", "machine-learning"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: End Users/Desktop",
@@ -24,13 +24,20 @@ classifiers = [
 requires-python = ">=3.13.2"
 dependencies = [
   "homeassistant==2026.2.2",
-  "numpy>=2.3.2",
+  "hassil==3.5.0",
+  "unicode-rbnf==2.4.0",
+  "home-assistant-intents==2026.2.13",
+  "mutagen==1.47.0",
+  "ha-ffmpeg==3.2.2",
+  "pymicro-vad==2.0.1",
+  "pyspeex-noise==2.0.0",
+  "PyTurboJPEG"
 ]
 
 [project.optional-dependencies]
 dev = [
   "ruff",
-  "pre-commit==4.5.1",
+  "pre-commit",
 ]
 test = [
   "pytest-homeassistant-custom-component==0.13.315",

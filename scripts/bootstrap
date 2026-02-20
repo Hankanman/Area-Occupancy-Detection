@@ -30,9 +30,23 @@ if ! command -v uv >/dev/null 2>&1; then
   fi
 fi
 
+echo "==> Checking for system dependencies..."
+# libturbojpeg is needed by HA's camera component (PyTurboJPEG)
+if ldconfig -p 2>/dev/null | grep -q libturbojpeg; then
+  echo "    libturbojpeg found"
+elif [ -f /etc/debian_version ]; then
+  echo "    Installing libturbojpeg (Debian/Ubuntu)..."
+  sudo apt-get install -y libturbojpeg0
+elif [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ]; then
+  echo "    Installing libturbojpeg (Fedora/RHEL)..."
+  sudo dnf install -y turbojpeg
+else
+  echo "    WARNING: libturbojpeg not found. Install it manually for camera snapshot support."
+fi
+
 echo "==> Creating virtual environment if needed..."
 if [ ! -d ".venv" ]; then
-    uv venv
+    uv venv --python 3.13
 fi
 
 echo "==> Installing root project dependencies..."
