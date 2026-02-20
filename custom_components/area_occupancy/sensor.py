@@ -511,38 +511,45 @@ async def async_setup_entry(
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
-    entities: list[SensorEntity] = []
-
-    # Create sensors for each area
+    # Create per-area sensors, grouped by subentry
     for area_name in coordinator.get_area_names():
         area_handle = coordinator.get_area_handle(area_name)
+        area = coordinator.get_area(area_name)
         _LOGGER.debug("Creating sensors for area: %s", area_name)
-        entities.extend(
-            [
-                ProbabilitySensor(area_handle=area_handle),
-                DecaySensor(area_handle=area_handle),
-                PriorsSensor(area_handle=area_handle),
-                EvidenceSensor(area_handle=area_handle),
-                PresenceProbabilitySensor(area_handle=area_handle),
-                EnvironmentalConfidenceSensor(area_handle=area_handle),
-                DetectedActivitySensor(area_handle=area_handle),
-                ActivityConfidenceSensor(area_handle=area_handle),
-            ]
+
+        area_entities: list[SensorEntity] = [
+            ProbabilitySensor(area_handle=area_handle),
+            DecaySensor(area_handle=area_handle),
+            PriorsSensor(area_handle=area_handle),
+            EvidenceSensor(area_handle=area_handle),
+            PresenceProbabilitySensor(area_handle=area_handle),
+            EnvironmentalConfidenceSensor(area_handle=area_handle),
+            DetectedActivitySensor(area_handle=area_handle),
+            ActivityConfidenceSensor(area_handle=area_handle),
+        ]
+
+        subentry_id = (
+            coordinator.get_subentry_id_for_area(area.config.area_id)
+            if area and area.config.area_id
+            else None
+        )
+        async_add_entities(
+            area_entities,
+            update_before_add=False,
+            config_subentry_id=subentry_id,
         )
 
-    # Create "All Areas" aggregation sensors when areas exist
-    # Note: EvidenceSensor is NOT created for "All Areas"
+    # Create "All Areas" aggregation sensors (not tied to a subentry)
     if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation sensors")
         all_areas = coordinator.get_all_areas()
-        entities.extend(
+        async_add_entities(
             [
                 ProbabilitySensor(all_areas=all_areas),
                 DecaySensor(all_areas=all_areas),
                 PriorsSensor(all_areas=all_areas),
                 PresenceProbabilitySensor(all_areas=all_areas),
                 EnvironmentalConfidenceSensor(all_areas=all_areas),
-            ]
+            ],
+            update_before_add=False,
         )
-
-    async_add_entities(entities, update_before_add=False)

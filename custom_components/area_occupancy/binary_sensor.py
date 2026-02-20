@@ -969,29 +969,22 @@ async def async_setup_entry(
     """Set up the Area Occupancy Detection binary sensors."""
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
-    entities: list[BinarySensorEntity] = []
-
-    # Create occupancy sensors for each area
+    # Create per-area entities, grouped by subentry
     for area_name in coordinator.get_area_names():
         handle = coordinator.get_area_handle(area_name)
+        area = coordinator.get_area(area_name)
+        area_entities: list[BinarySensorEntity] = []
+
         _LOGGER.debug("Creating occupancy sensor for area: %s", area_name)
-        entities.append(Occupancy(area_handle=handle))
+        area_entities.append(Occupancy(area_handle=handle))
 
         # Create Wasp in Box sensor if enabled for this area
-        area = coordinator.get_area(area_name)
         if area and area.config.wasp_in_box.enabled:
             _LOGGER.debug(
                 "Wasp in Box sensor enabled for area %s, creating sensor", area_name
             )
-            wasp_sensor = WaspInBoxSensor(
-                area_handle=handle,
-                config_entry=config_entry,
-            )
-            entities.append(wasp_sensor)
-            _LOGGER.debug(
-                "Created Wasp in Box sensor for area %s: %s",
-                area_name,
-                wasp_sensor.unique_id,
+            area_entities.append(
+                WaspInBoxSensor(area_handle=handle, config_entry=config_entry)
             )
 
         # Create Sleep Presence sensor if any people assigned to this area
@@ -1005,20 +998,30 @@ async def async_setup_entry(
                     len(people_for_area),
                     area_name,
                 )
-                sleep_sensor = SleepPresenceSensor(
-                    area_handle=handle,
-                    config_entry=config_entry,
-                    people=people_for_area,
+                area_entities.append(
+                    SleepPresenceSensor(
+                        area_handle=handle,
+                        config_entry=config_entry,
+                        people=people_for_area,
+                    )
                 )
-                entities.append(sleep_sensor)
 
-    # Create "All Areas" aggregation occupancy sensor when areas exist
-    if len(coordinator.get_area_names()) >= 1:
-        _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
-        entities.append(
-            Occupancy(
-                all_areas=coordinator.get_all_areas(),
-            )
+        # Determine subentry_id for this area
+        subentry_id = (
+            coordinator.get_subentry_id_for_area(area.config.area_id)
+            if area and area.config.area_id
+            else None
+        )
+        async_add_entities(
+            area_entities,
+            update_before_add=False,
+            config_subentry_id=subentry_id,
         )
 
-    async_add_entities(entities, update_before_add=False)
+    # Create "All Areas" aggregation occupancy sensor (not tied to a subentry)
+    if len(coordinator.get_area_names()) >= 1:
+        _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
+        async_add_entities(
+            [Occupancy(all_areas=coordinator.get_all_areas())],
+            update_before_add=False,
+        )

@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
+from .const import CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
@@ -52,26 +52,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     # Migration check - only migrate if version is explicitly set and less than current
-    # Fresh entries (version=None or 0) should just get the current version set
-    # Safety check: entries with version 1 but CONF_AREAS format are fresh entries
-    # that should not be migrated (version should have been set in config flow)
     if entry.version is not None and entry.version != CONF_VERSION:
-        # Check if this is a fresh entry with new format that somehow got version 1
-        merged = dict(entry.data)
-        if entry.options:
-            merged.update(entry.options)
-
-        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-            # This is a fresh entry with new format, just set version without migration
-            _LOGGER.debug(
-                "Entry %s has version %d but uses new format (CONF_AREAS). "
-                "Setting version to %d without migration.",
-                entry.entry_id,
-                entry.version,
-                CONF_VERSION,
-            )
-            hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
-        else:
+        if entry.version < CONF_VERSION:
             # This is a real old entry that needs migration
             _LOGGER.info(
                 "Migrating Area Occupancy entry from version %s to %s",

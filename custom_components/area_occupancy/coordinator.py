@@ -26,7 +26,7 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
-from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .const import CONF_AREA_ID, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
@@ -139,36 +139,29 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
     ) -> None:
-        """Load areas from config entry.
+        """Load areas from config entry subentries.
 
-        Loads areas from CONF_AREAS list format.
+        Reads area configurations from ConfigSubentry objects on the config entry.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.
         """
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-
         # Use target_dict if provided, otherwise use self.areas
         areas_dict = target_dict if target_dict is not None else self.areas
 
         area_reg = ar.async_get(self.hass)
-        areas_to_remove: list[str] = []  # Track areas to remove (deleted or invalid)
 
-        # Load areas from CONF_AREAS list
-        if CONF_AREAS not in merged or not isinstance(merged[CONF_AREAS], list):
-            _LOGGER.error(
-                "Configuration must contain CONF_AREAS list. "
-                "Please reconfigure the integration."
-            )
-            return
+        for subentry in self.config_entry.subentries.values():
+            if subentry.subentry_type != "area":
+                continue
 
-        areas_list = merged[CONF_AREAS]
-        for area_data in areas_list:
+            area_data = dict(subentry.data)
             area_id = area_data.get(CONF_AREA_ID)
 
             if not area_id:
-                _LOGGER.warning("Skipping area without area ID: %s", area_data)
+                _LOGGER.warning(
+                    "Skipping subentry without area ID: %s", subentry.subentry_id
+                )
                 continue
 
             # Validate that area ID exists in Home Assistant
@@ -176,16 +169,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not area_entry:
                 _LOGGER.warning(
                     "Area ID '%s' not found in Home Assistant registry. "
-                    "Area may have been deleted. Removing from configuration.",
+                    "Area may have been deleted. Skipping subentry %s.",
                     area_id,
+                    subentry.subentry_id,
                 )
-                areas_to_remove.append(area_id)
                 continue
 
             # Resolve area name from ID
             area_name = area_entry.name
 
-            # Check for duplicate area IDs
+            # Check for duplicate area names
             if area_name in areas_dict:
                 _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                 continue
@@ -199,13 +192,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
 
-        # Log warnings for deleted/invalid areas
-        if areas_to_remove:
-            _LOGGER.warning(
-                "Found %d deleted or invalid area(s) in configuration. "
-                "These areas will be skipped. Please reconfigure via options flow if needed.",
-                len(areas_to_remove),
-            )
+    def get_subentry_id_for_area(self, area_id: str) -> str | None:
+        """Get the subentry ID for a given area ID.
+
+        Args:
+            area_id: The HA area registry ID.
+
+        Returns:
+            The subentry_id, or None if not found.
+        """
+        for subentry in self.config_entry.subentries.values():
+            if (
+                subentry.subentry_type == "area"
+                and subentry.data.get(CONF_AREA_ID) == area_id
+            ):
+                return subentry.subentry_id
+        return None
 
     def get_area_handle(self, area_name: str) -> AreaDeviceHandle:
         """Return a stable handle for the requested area."""

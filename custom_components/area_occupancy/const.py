@@ -30,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.2.4"
-CONF_VERSION: Final = 16  # Incremented for timezone normalization + local bucketing
+CONF_VERSION: Final = 17  # Incremented for subentry-based area configuration
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
