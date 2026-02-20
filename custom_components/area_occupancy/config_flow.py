@@ -2667,9 +2667,8 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         # Find area config for sensor counts
         area_config = _find_area_by_id(self._areas, area_id) or {}
         sensor_count = _count_area_sensors(area_config)
-        # Entity count: binary_sensor (occupancy) + sensor (probability, prior, decay, activity, confidence) + number (threshold) = 7 base
-        # Plus optional: wasp binary_sensor = +1
-        entity_count = 7
+        # Base: 1 binary_sensor (occupancy) + 8 sensors + 1 number (threshold) = 10
+        entity_count = 10
         if area_config.get(CONF_WASP_ENABLED):
             entity_count += 1
 

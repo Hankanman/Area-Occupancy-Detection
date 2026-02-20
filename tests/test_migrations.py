@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -64,6 +65,20 @@ def mock_remove_entry():
     return mock_remove
 
 
+@pytest.fixture
+def mock_subentry_support(hass: HomeAssistant) -> list[Any]:
+    """Fixture that mocks async_add_subentry to populate entry.subentries."""
+    added_subentries: list[Any] = []
+
+    def add_subentry(entry: Any, subentry: Any) -> None:
+        added_subentries.append(subentry)
+        if hasattr(entry, "subentries") and isinstance(entry.subentries, dict):
+            entry.subentries[subentry.subentry_id] = subentry
+
+    hass.config_entries.async_add_subentry = Mock(side_effect=add_subentry)
+    return added_subentries
+
+
 def create_mock_entry_v12(
     entry_id: str = "test_entry",
     area_id: str = "test_area",
@@ -84,6 +99,7 @@ def create_mock_entry_v12(
     entry.options = options or {}
     entry.title = title or area_id.title()
     entry.unique_id = unique_id or area_id
+    entry.subentries = {}
     return entry
 
 
@@ -134,6 +150,9 @@ class TestAsyncMigrateEntry:
         # Mock hass.config_entries.async_entries to return the entry
         hass.config_entries.async_entries = Mock(return_value=[mock_config_entry_v1_0])
 
+        # Set up subentries support on the mock entry
+        mock_config_entry_v1_0.subentries = {}
+
         # Mock async_update_entry
         update_calls = []
 
@@ -146,6 +165,15 @@ class TestAsyncMigrateEntry:
 
         hass.config_entries.async_update_entry = Mock(side_effect=mock_update)
 
+        # Track subentry additions
+        added_subentries = []
+
+        def mock_add_subentry(entry, subentry):
+            added_subentries.append(subentry)
+            entry.subentries[subentry.subentry_id] = subentry
+
+        hass.config_entries.async_add_subentry = Mock(side_effect=mock_add_subentry)
+
         # Mock registry cleanup
         with patch(
             "custom_components.area_occupancy.migrations._cleanup_registry_devices_and_entities",
@@ -154,16 +182,21 @@ class TestAsyncMigrateEntry:
             result = await async_migrate_entry(hass, mock_config_entry_v1_0)
             assert result is True
 
-        # Should have updated entry with new format
-        assert len(update_calls) == 1
-        assert update_calls[0][1]["version"] == CONF_VERSION
+        # Consolidation sets version=16, then v17 migration runs and bumps to CONF_VERSION
+        # First call: consolidation (v16 with CONF_AREAS)
+        assert update_calls[0][1]["version"] == 16
         assert CONF_AREAS in update_calls[0][1]["data"]
 
+        # Second call: v17 migration removes CONF_AREAS and bumps version
+        assert update_calls[1][1]["version"] == CONF_VERSION
+        assert CONF_AREAS not in update_calls[1][1].get("data", {})
+
+        # Verify subentry was created
+        assert len(added_subentries) == 1
+        assert added_subentries[0].subentry_type == "area"
+
         # Verify area was created/found in registry
-        areas = update_calls[0][1]["data"][CONF_AREAS]
-        assert len(areas) == 1
-        area_id = areas[0][CONF_AREA_ID]
-        created_area = area_reg.async_get_area(area_id)
+        created_area = area_reg.async_get_area(added_subentries[0].unique_id)
         assert created_area is not None
         assert created_area.name == area_name
 
@@ -246,7 +279,10 @@ class TestAsyncMigrateEntryAdditional:
     """Additional tests for async_migrate_entry function."""
 
     async def test_async_migrate_entry_database_reset(
-        self, hass: HomeAssistant, tmp_path: Path
+        self,
+        hass: HomeAssistant,
+        tmp_path: Path,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test migration resets database for old versions."""
         hass.config.config_dir = str(tmp_path)
@@ -267,6 +303,7 @@ class TestAsyncMigrateEntryAdditional:
         entry.options = {}
         entry.title = "Test Area"
         entry.unique_id = "test_area"
+        entry.subentries = {}
 
         # Mock hass.config_entries.async_entries
         hass.config_entries.async_entries = Mock(return_value=[entry])
@@ -305,6 +342,7 @@ class TestMultipleEntriesMigration:
         entry.options = {}
         entry.title = "Living Room"
         entry.unique_id = "living_room"
+        entry.subentries = {}
         return entry
 
     @pytest.fixture
@@ -323,10 +361,15 @@ class TestMultipleEntriesMigration:
         entry.options = {}
         entry.title = "Kitchen"
         entry.unique_id = "kitchen"
+        entry.subentries = {}
         return entry
 
     async def test_migrate_multiple_entries(
-        self, hass: HomeAssistant, mock_entry_1: Mock, mock_entry_2: Mock
+        self,
+        hass: HomeAssistant,
+        mock_entry_1: Mock,
+        mock_entry_2: Mock,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test migrating multiple old entries into one entry."""
         # Mock hass.config_entries.async_entries to return both entries
@@ -352,8 +395,6 @@ class TestMultipleEntriesMigration:
 
         async def mock_remove(entry_id):
             remove_calls.append(entry_id)
-            # Simulate UnknownEntry if entry doesn't exist (as real code would)
-            # But in tests, we just track the call
             return True
 
         hass.config_entries.async_remove = Mock(side_effect=mock_remove)
@@ -369,29 +410,38 @@ class TestMultipleEntriesMigration:
             # Migration should succeed
             assert result is True
 
-        # Should update both entries:
-        # 1. Target entry with new areas
-        # 2. Old entry marked as deleted
-        assert len(update_calls) == 2
+        # Updates: v16 consolidation, v17 subentry migration, loser marked deleted
+        assert len(update_calls) == 3
 
-        # Check target entry update
-        target_update = next(call for call in update_calls if call[0] == mock_entry_1)
-        _, target_kwargs = target_update
-        assert target_kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in target_kwargs["data"]
-        assert len(target_kwargs["data"][CONF_AREAS]) == 2
+        # Get all calls for target entry (mock_entry_1)
+        target_calls = [call for call in update_calls if call[0] == mock_entry_1]
+        assert len(target_calls) == 2
+
+        # First target call: v16 consolidation with CONF_AREAS
+        _, v16_kwargs = target_calls[0]
+        assert v16_kwargs["version"] == 16
+        assert CONF_AREAS in v16_kwargs["data"]
+        assert len(v16_kwargs["data"][CONF_AREAS]) == 2
+
+        # Verify area configs were preserved
+        areas = v16_kwargs["data"][CONF_AREAS]
+        area_ids = [area[CONF_AREA_ID] for area in areas]
+        assert "living_room" in area_ids
+        assert "kitchen" in area_ids
+
+        # Second target call: v17 migration removes CONF_AREAS
+        _, v17_kwargs = target_calls[1]
+        assert v17_kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS not in v17_kwargs.get("data", {})
+
+        # Verify subentries were created
+        assert len(mock_subentry_support) == 2
 
         # Check loser entry update
         loser_update = next(call for call in update_calls if call[0] == mock_entry_2)
         _, loser_kwargs = loser_update
         assert loser_kwargs["version"] == CONF_VERSION
         assert loser_kwargs["data"].get("deleted") is True
-
-        # Verify area configs were preserved
-        areas = target_kwargs["data"][CONF_AREAS]
-        area_ids = [area[CONF_AREA_ID] for area in areas]
-        assert "living_room" in area_ids
-        assert "kitchen" in area_ids
 
         # Should remove the second entry
         assert len(remove_calls) == 1
@@ -403,6 +453,7 @@ class TestMultipleEntriesMigration:
         mock_entry_1: Mock,
         setup_area_registry: dict[str, str],
         mock_update_entry,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test migrating a single old entry to new format."""
         area_reg = ar.async_get(hass)
@@ -425,32 +476,41 @@ class TestMultipleEntriesMigration:
             # Migration should succeed
             assert result is True
 
-        # Should update entry with new format
-        assert len(update_calls) == 1
-        updated_entry, update_kwargs = update_calls[0]
+        # Two updates: v16 consolidation with CONF_AREAS, v17 subentry migration
+        assert len(update_calls) == 2
+
+        # First call: v16 consolidation with CONF_AREAS
+        updated_entry, v16_kwargs = update_calls[0]
         assert updated_entry == mock_entry_1
-        assert update_kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in update_kwargs["data"]
-        assert len(update_kwargs["data"][CONF_AREAS]) == 1
+        assert v16_kwargs["version"] == 16
+        assert CONF_AREAS in v16_kwargs["data"]
+        assert len(v16_kwargs["data"][CONF_AREAS]) == 1
 
         # Verify area config was preserved and area was created/found
-        area = update_kwargs["data"][CONF_AREAS][0]
+        area = v16_kwargs["data"][CONF_AREAS][0]
         area_id = area[CONF_AREA_ID]
-        # Verify area exists in registry (was created or matched)
         created_area = area_reg.async_get_area(area_id)
         assert created_area is not None
-        # Verify area name matches (normalized matching should find "Living Room")
         normalized_name = (
             created_area.name.lower().replace(" ", "").replace("_", "").replace("-", "")
         )
         assert normalized_name == "livingroom" or created_area.name == "Living Room"
         assert area[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
 
+        # Second call: v17 migration removes CONF_AREAS
+        _, v17_kwargs = update_calls[1]
+        assert v17_kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS not in v17_kwargs.get("data", {})
+
+        # Verify subentry was created
+        assert len(mock_subentry_support) == 1
+
     async def test_migrate_entry_with_options(
         self,
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
         mock_update_entry,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test that options are merged into data during migration."""
         area_reg = ar.async_get(hass)
@@ -475,7 +535,7 @@ class TestMultipleEntriesMigration:
             result = await async_migrate_entry(hass, entry)
             assert result is True
 
-        # Verify options were merged and area was created/found
+        # First call is v16 consolidation with CONF_AREAS
         area = update_calls[0][1]["data"][CONF_AREAS][0]
         area_id = area[CONF_AREA_ID]
         # Verify area exists in registry
@@ -484,11 +544,15 @@ class TestMultipleEntriesMigration:
         assert area[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
         assert area[CONF_THRESHOLD] == 70.0  # From options
 
+        # Second call is v17 migration
+        assert update_calls[1][1]["version"] == CONF_VERSION
+
     async def test_migrate_entry_missing_area_id_uses_title(
         self,
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
         mock_update_entry,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test migration when CONF_AREA_ID is missing but title exists."""
         area_reg = ar.async_get(hass)
@@ -504,6 +568,7 @@ class TestMultipleEntriesMigration:
         entry.options = {}
         entry.title = "My Area"
         entry.unique_id = "my_area"
+        entry.subentries = {}
 
         hass.config_entries.async_entries = Mock(return_value=[entry])
         hass.config_entries.async_update_entry = Mock(side_effect=mock_update_entry)
@@ -517,14 +582,16 @@ class TestMultipleEntriesMigration:
             result = await async_migrate_entry(hass, entry)
             assert result is True
 
-        # Should use title as fallback and create/find area
+        # First call is v16 consolidation with CONF_AREAS
         area = update_calls[0][1]["data"][CONF_AREAS][0]
         area_id = area[CONF_AREA_ID]
         # Verify area was created/found in registry
         created_area = area_reg.async_get_area(area_id)
         assert created_area is not None
-        # Area ID should be the actual area ID from registry (not just "my_area")
         assert area_id is not None
+
+        # Second call is v17 migration
+        assert update_calls[1][1]["version"] == CONF_VERSION
 
     async def test_migrate_entry_missing_area_id_no_fallback(
         self, hass: HomeAssistant
@@ -548,7 +615,10 @@ class TestMultipleEntriesMigration:
         assert result is False  # Should fail
 
     async def test_migrate_multiple_entries_with_unconvertible_entry(
-        self, hass: HomeAssistant, mock_entry_1: Mock
+        self,
+        hass: HomeAssistant,
+        mock_entry_1: Mock,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test that an unconvertible entry prevents migration and leaves entries intact."""
         # Create an unconvertible entry (missing CONF_AREA_ID and no fallback)
@@ -563,6 +633,7 @@ class TestMultipleEntriesMigration:
         unconvertible_entry.options = {}
         unconvertible_entry.title = None
         unconvertible_entry.unique_id = None
+        unconvertible_entry.subentries = {}
 
         # Mock hass.config_entries.async_entries to return both entries
         hass.config_entries.async_entries = Mock(
@@ -586,8 +657,6 @@ class TestMultipleEntriesMigration:
 
         async def mock_remove(entry_id):
             remove_calls.append(entry_id)
-            # Simulate UnknownEntry if entry doesn't exist (as real code would)
-            # But in tests, we just track the call
             return True
 
         hass.config_entries.async_remove = Mock(side_effect=mock_remove)
@@ -603,19 +672,23 @@ class TestMultipleEntriesMigration:
             # Migration should succeed (valid entry migrated, invalid removed)
             assert result is True
 
-        # Verify updates:
-        # 1. Valid entry updated with areas
-        # 2. Invalid entry marked as deleted
-        assert len(update_calls) == 2
+        # Updates: v16 consolidation, v17 subentry migration, invalid marked deleted
+        assert len(update_calls) == 3
 
-        # Check valid entry update
-        valid_update = next(call for call in update_calls if call[0] == mock_entry_1)
-        entry, kwargs = valid_update
-        assert entry == mock_entry_1
-        assert kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in kwargs["data"]
-        assert len(kwargs["data"][CONF_AREAS]) == 1
-        assert kwargs["data"][CONF_AREAS][0][CONF_AREA_ID] == "living_room"
+        # Get target entry calls (mock_entry_1)
+        target_calls = [call for call in update_calls if call[0] == mock_entry_1]
+        assert len(target_calls) == 2
+
+        # First target call: v16 consolidation
+        _, v16_kwargs = target_calls[0]
+        assert v16_kwargs["version"] == 16
+        assert CONF_AREAS in v16_kwargs["data"]
+        assert len(v16_kwargs["data"][CONF_AREAS]) == 1
+        assert v16_kwargs["data"][CONF_AREAS][0][CONF_AREA_ID] == "living_room"
+
+        # Second target call: v17 migration
+        _, v17_kwargs = target_calls[1]
+        assert v17_kwargs["version"] == CONF_VERSION
 
         # Check invalid entry update (marked as deleted)
         invalid_update = next(
@@ -729,7 +802,11 @@ class TestRegistryCleanup:
         assert devices_removed == 0
         assert entities_removed == 0
 
-    async def test_migrate_calls_registry_cleanup(self, hass: HomeAssistant) -> None:
+    async def test_migrate_calls_registry_cleanup(
+        self,
+        hass: HomeAssistant,
+        mock_subentry_support: list[Any],
+    ) -> None:
         """Test that migration calls registry cleanup."""
         entry = Mock(spec=ConfigEntry)
         entry.version = 12
@@ -743,6 +820,7 @@ class TestRegistryCleanup:
         entry.options = {}
         entry.title = "Area 1"
         entry.unique_id = "area_1"
+        entry.subentries = {}
 
         hass.config_entries.async_entries = Mock(return_value=[entry])
 
@@ -993,7 +1071,10 @@ class TestMigrationEdgeCases:
             assert result is False
 
     async def test_migrate_filters_invalid_areas(
-        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+        self,
+        hass: HomeAssistant,
+        setup_area_registry: dict[str, str],
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test that invalid area IDs are filtered out during migration."""
         # Use existing area from setup_area_registry for valid area
@@ -1011,6 +1092,7 @@ class TestMigrationEdgeCases:
         entry1.options = {}
         entry1.title = "Living Room"
         entry1.unique_id = "living_room"
+        entry1.subentries = {}
 
         entry2 = Mock(spec=ConfigEntry)
         entry2.version = 12
@@ -1024,6 +1106,7 @@ class TestMigrationEdgeCases:
         entry2.options = {}
         entry2.title = "Invalid Area"
         entry2.unique_id = "invalid_area"
+        entry2.subentries = {}
 
         hass.config_entries.async_entries = Mock(return_value=[entry1, entry2])
 
@@ -1225,7 +1308,9 @@ class TestConcurrentMigration:
         assert len(update_calls) == 0
 
     async def test_concurrent_migration_lock_prevents_duplicate_migrations(
-        self, hass: HomeAssistant
+        self,
+        hass: HomeAssistant,
+        mock_subentry_support: list[Any],
     ) -> None:
         """Test that lock prevents concurrent migrations from running simultaneously."""
         entry1 = Mock(spec=ConfigEntry)
@@ -1240,6 +1325,7 @@ class TestConcurrentMigration:
         entry1.options = {}
         entry1.title = "Area 1"
         entry1.unique_id = "area_1"
+        entry1.subentries = {}
 
         entry2 = Mock(spec=ConfigEntry)
         entry2.version = 12
@@ -1253,6 +1339,7 @@ class TestConcurrentMigration:
         entry2.options = {}
         entry2.title = "Area 2"
         entry2.unique_id = "area_2"
+        entry2.subentries = {}
 
         # Mock entries to return both old entries
         hass.config_entries.async_entries = Mock(return_value=[entry1, entry2])

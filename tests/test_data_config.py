@@ -6,6 +6,7 @@ not Python dataclass behavior or trivial operations.
 
 from datetime import datetime, timedelta
 from types import MappingProxyType
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -66,7 +67,7 @@ from homeassistant.util import dt as dt_util
 def _setup_area_subentry(
     coordinator: AreaOccupancyCoordinator,
     area_id: str,
-    area_config: dict,
+    area_config: dict[str, Any],
     subentry_id: str = "test_subentry_001",
 ) -> None:
     """Helper to set up area configuration as a subentry for tests.
@@ -781,7 +782,7 @@ class TestAreaConfigUpdate:
         with patch.object(
             coordinator.hass.config_entries, "async_update_subentry"
         ) as mock_update_subentry:
-            mock_update_subentry.side_effect = Exception("Update failed")
+            mock_update_subentry.side_effect = ValueError("Update failed")
 
             with pytest.raises(
                 HomeAssistantError, match="Failed to update configuration"

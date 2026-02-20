@@ -784,7 +784,8 @@ class AreaConfig:
                 target_subentry,
                 data=MappingProxyType(updated_data),
             )
-        except Exception as err:
+        except (ValueError, KeyError, AttributeError) as err:
+            _LOGGER.exception("Failed to update subentry for area %s", self.area_id)
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err
 
         # Reload internal config from updated data

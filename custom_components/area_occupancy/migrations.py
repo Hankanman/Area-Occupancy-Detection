@@ -493,10 +493,26 @@ def _migrate_areas_to_subentries(
     device_registry = dr.async_get(hass)
     entity_registry = er.async_get(hass)
 
+    failed_areas: set[str] = set()
+
     for area_config in areas_list:
         area_id = area_config.get(CONF_AREA_ID)
         if not area_id:
             _LOGGER.warning("Skipping area without area_id during migration")
+            continue
+
+        # Check if subentry already exists (idempotent re-run)
+        existing_subentries = (
+            config_entry.subentries.values()
+            if hasattr(config_entry, "subentries") and config_entry.subentries
+            else []
+        )
+        already_exists = any(
+            sub.subentry_type == "area" and sub.unique_id == area_id
+            for sub in existing_subentries
+        )
+        if already_exists:
+            _LOGGER.debug("Subentry for area %s already exists, skipping", area_id)
             continue
 
         # Resolve area name for subentry title
@@ -512,10 +528,13 @@ def _migrate_areas_to_subentries(
         )
         try:
             hass.config_entries.async_add_subentry(config_entry, subentry)
-        except Exception:
-            _LOGGER.exception(
-                "Failed to create subentry for area %s during migration", area_id
+        except (ValueError, KeyError) as err:
+            _LOGGER.error(
+                "Failed to create subentry for area %s during migration: %s",
+                area_id,
+                err,
             )
+            failed_areas.add(area_id)
             continue
 
         _LOGGER.debug(
@@ -549,7 +568,16 @@ def _migrate_areas_to_subentries(
                     config_subentry_id=subentry.subentry_id,
                 )
 
-    # Remove CONF_AREAS from data and options
+    if failed_areas:
+        _LOGGER.error(
+            "Migration incomplete: %d area(s) failed (%s). "
+            "CONF_AREAS retained for retry on next startup",
+            len(failed_areas),
+            ", ".join(sorted(failed_areas)),
+        )
+        return
+
+    # All areas migrated successfully — remove CONF_AREAS and bump version
     new_data = {k: v for k, v in config_entry.data.items() if k != CONF_AREAS}
     new_options = {k: v for k, v in config_entry.options.items() if k != CONF_AREAS}
     hass.config_entries.async_update_entry(
@@ -733,13 +761,17 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     _LOGGER.error("No valid areas found after migration. Aborting.")
                     return False
 
-                # Update TARGET entry with consolidated areas
+                # Update TARGET entry with consolidated areas at v16
+                # so the v17 migration converts CONF_AREAS to subentries
                 new_data = {CONF_AREAS: valid_areas}
                 hass.config_entries.async_update_entry(
                     target_entry,
                     data=new_data,
-                    version=CONF_VERSION,
+                    version=16,
                 )
+
+                # Run v17 migration to convert CONF_AREAS to subentries
+                _migrate_areas_to_subentries(hass, target_entry)
 
                 _LOGGER.info(
                     "Successfully updated target entry %s with %d areas",
