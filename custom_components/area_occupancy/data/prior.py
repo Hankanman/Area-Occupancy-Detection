@@ -59,10 +59,10 @@ class Prior:
         if config is not None:
             self.config = config
         else:
-            area = coordinator.areas.get(area_name)
+            area = coordinator.get_area(area_name)
             if area is None:
                 raise ValueError(
-                    f"Area '{area_name}' not found in coordinator and no config provided"
+                    f"Area '{self.area_name}' not found in coordinator and no config provided"
                 )
             self.config = area.config
         self.sensor_ids = self.config.sensors.motion
