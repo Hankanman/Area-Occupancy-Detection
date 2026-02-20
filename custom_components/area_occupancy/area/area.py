@@ -141,7 +141,9 @@ class Area:
     def prior(self) -> Prior:
         """Get or create the Prior instance for this area."""
         if self._prior is None:
-            self._prior = Prior(self.coordinator, area_name=self.area_name)
+            self._prior = Prior(
+                self.coordinator, area_name=self.area_name, config=self.config
+            )
         return self._prior
 
     @property

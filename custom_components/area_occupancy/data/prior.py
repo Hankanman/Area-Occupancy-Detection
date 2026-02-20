@@ -24,6 +24,7 @@ from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
+    from .config import AreaConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,18 +41,30 @@ class Prior:
     """Compute the baseline probability for an Area entity."""
 
     def __init__(
-        self, coordinator: AreaOccupancyCoordinator, area_name: str | None = None
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str | None = None,
+        config: AreaConfig | None = None,
     ) -> None:
         """Initialize the Prior class.
 
         Args:
             coordinator: The coordinator instance
             area_name: Optional area name for multi-area support
+            config: Area configuration (preferred). Falls back to coordinator lookup.
         """
         self.coordinator = coordinator
         self.db = coordinator.db
         self.area_name = area_name
-        self.config = coordinator.areas[area_name].config
+        if config is not None:
+            self.config = config
+        else:
+            area = coordinator.areas.get(area_name)
+            if area is None:
+                raise ValueError(
+                    f"Area '{area_name}' not found in coordinator and no config provided"
+                )
+            self.config = area.config
         self.sensor_ids = self.config.sensors.motion
         self.media_sensor_ids = self.config.sensors.media
         self.appliance_sensor_ids = self.config.sensors.appliance

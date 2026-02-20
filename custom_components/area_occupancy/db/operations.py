@@ -238,6 +238,11 @@ async def load_data(db: AreaOccupancyDB) -> None:
         # Load data for each configured area
         for area_name in db.coordinator.get_area_names():
             area_data = db.coordinator.get_area(area_name)
+            if area_data is None:
+                _LOGGER.warning(
+                    "Area '%s' disappeared during load_data — skipping", area_name
+                )
+                continue
 
             # Phase 1: Read without lock (all instances in parallel)
             (
