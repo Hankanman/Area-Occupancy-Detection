@@ -1627,16 +1627,9 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Update config_entry.data to remove the area
-        original_data = coordinator.config_entry.data.copy()
-        coordinator.config_entry.data = {
-            "areas": {
-                "New Area": {
-                    "motion": ["binary_sensor.new_motion"],
-                    "threshold": 50,
-                }
-            }
-        }
+        # Remove all subentries to simulate area removal
+        original_subentries = coordinator.config_entry.subentries
+        coordinator.config_entry.subentries = {}
 
         try:
             with (
@@ -1654,7 +1647,7 @@ class TestCoordinatorAreaRemoval:
                     return_value=entity_registry,
                 ):
                     await coordinator.async_update_options(
-                        coordinator.config_entry.data
+                        coordinator.config_entry.options
                     )
 
                 # Verify cleanup was called
@@ -1662,8 +1655,8 @@ class TestCoordinatorAreaRemoval:
                 # Verify database deletion was attempted
                 mock_delete.assert_called_once_with(area_name)
         finally:
-            # Restore original data
-            coordinator.config_entry.data = original_data
+            # Restore original subentries
+            coordinator.config_entry.subentries = original_subentries
 
     async def test_async_update_options_remove_area_db_error(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
@@ -1672,16 +1665,9 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Update config_entry.data to remove the area
-        original_data = coordinator.config_entry.data.copy()
-        coordinator.config_entry.data = {
-            "areas": {
-                "New Area": {
-                    "motion": ["binary_sensor.new_motion"],
-                    "threshold": 50,
-                }
-            }
-        }
+        # Remove all subentries to simulate area removal
+        original_subentries = coordinator.config_entry.subentries
+        coordinator.config_entry.subentries = {}
 
         try:
             with (
@@ -1704,11 +1690,11 @@ class TestCoordinatorAreaRemoval:
                 ):
                     # Should handle error gracefully
                     await coordinator.async_update_options(
-                        coordinator.config_entry.data
+                        coordinator.config_entry.options
                     )
         finally:
-            # Restore original data
-            coordinator.config_entry.data = original_data
+            # Restore original subentries
+            coordinator.config_entry.subentries = original_subentries
 
 
 class TestCoordinatorFindAreaForEntity:

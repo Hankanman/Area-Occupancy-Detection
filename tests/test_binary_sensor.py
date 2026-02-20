@@ -1097,9 +1097,12 @@ class TestAsyncSetupEntry:
 
         await async_setup_entry(hass, setup_config_entry, mock_async_add_entities)
 
-        # Should add expected entities
-        mock_async_add_entities.assert_called_once()
-        entities = mock_async_add_entities.call_args[0][0]
+        # Called once per area (with subentry_id) + once for All Areas (without)
+        assert mock_async_add_entities.call_count == 2
+        # Gather all entities from all calls
+        entities = []
+        for call_args in mock_async_add_entities.call_args_list:
+            entities.extend(call_args[0][0])
         assert len(entities) == expected_entity_count
 
         # Check that we have the expected types (order may vary)
