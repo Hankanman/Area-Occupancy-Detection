@@ -60,14 +60,14 @@
         "aliases": [],
         "floor_id": null,
         "humidity_entity_id": null,
-        "icon": null,
+        "icon": "mdi:door",
         "id": "hallway",
         "labels": [],
         "name": "Hallway",
         "picture": null,
         "temperature_entity_id": null,
         "created_at": "2026-02-20T12:34:58.140654+00:00",
-        "modified_at": "2026-02-20T12:34:58.140655+00:00"
+        "modified_at": "2026-02-20T14:00:51.098181+00:00"
       }
     ]
   }

@@ -27,7 +27,6 @@ config/.storage/*restore_state*
 config/.storage/*repairs*
 config/.storage/*analytics*
 config/.storage/*core.config
-config/.storage/*core.config_entries
 
 # Explicitly ignore backup files
 *.tar
