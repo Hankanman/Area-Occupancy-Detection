@@ -30,6 +30,7 @@ config/.storage/*core.config
 
 # Explicitly ignore backup files
 *.tar
+*.db*
 
 # Python Environment
 .venv
