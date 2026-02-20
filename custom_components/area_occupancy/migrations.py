@@ -528,11 +528,10 @@ def _migrate_areas_to_subentries(
         )
         try:
             hass.config_entries.async_add_subentry(config_entry, subentry)
-        except (ValueError, KeyError) as err:
-            _LOGGER.error(
-                "Failed to create subentry for area %s during migration: %s",
+        except (ValueError, KeyError):
+            _LOGGER.exception(
+                "Failed to create subentry for area %s during migration",
                 area_id,
-                err,
             )
             failed_areas.add(area_id)
             continue

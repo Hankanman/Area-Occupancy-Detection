@@ -188,13 +188,13 @@
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_half_life": "Decay Half Life",
+                            "decay_half_life": "Decay Half-Life",
                             "min_prior_override": "Minimum Prior Override"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10-3600 seconds to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
                             "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
                     }
@@ -333,7 +333,7 @@
                 "data": {
                     "threshold": "Occupancy Threshold (%)",
                     "decay_enabled": "Enable Time Decay",
-                    "decay_half_life": "Decay Half Life",
+                    "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
                     "wasp_enabled": "Enable Wasp in Box",
                     "wasp_motion_timeout": "Wasp Motion Timeout",
@@ -344,7 +344,7 @@
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                    "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10-3600 seconds to override.",
+                    "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
                     "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
                     "wasp_enabled": "Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
                     "wasp_motion_timeout": "How long motion remains valid after detection.",
@@ -372,7 +372,7 @@
             "prob_true_must_exceed_false": "P(Active | Occupied) must be greater than P(Active | Not Occupied).",
             "invalid_threshold": "Threshold must be between 1 and 100.",
             "invalid_weight": "Weight must be between 0 and 1.",
-            "invalid_decay_half_life": "Decay half life must be 0 (use purpose default) or between 10 and 3600 seconds.",
+            "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
@@ -646,13 +646,13 @@
                         "data": {
                             "threshold": "Occupancy Threshold (%)",
                             "decay_enabled": "Enable Time Decay",
-                            "decay_half_life": "Decay Half Life",
+                            "decay_half_life": "Decay Half-Life",
                             "min_prior_override": "Minimum Prior Override"
                         },
                         "data_description": {
                             "threshold": "The probability threshold above which the area is considered occupied.",
                             "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                            "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10-3600 seconds to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
+                            "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
                             "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
                     }
@@ -791,7 +791,7 @@
                 "data": {
                     "threshold": "Occupancy Threshold (%)",
                     "decay_enabled": "Enable Time Decay",
-                    "decay_half_life": "Decay Half Life",
+                    "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
                     "wasp_enabled": "Enable Wasp in Box",
                     "wasp_motion_timeout": "Wasp Motion Timeout",
@@ -802,7 +802,7 @@
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
-                    "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10-3600 seconds to override.",
+                    "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
                     "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
                     "wasp_enabled": "Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
                     "wasp_motion_timeout": "How long motion remains valid after detection.",
@@ -877,7 +877,7 @@
             "prob_true_must_exceed_false": "P(Active | Occupied) must be greater than P(Active | Not Occupied).",
             "invalid_threshold": "Threshold must be between 1 and 100.",
             "invalid_weight": "Weight must be between 0 and 1.",
-            "invalid_decay_half_life": "Decay half life must be 0 (use purpose default) or between 10 and 3600 seconds.",
+            "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",

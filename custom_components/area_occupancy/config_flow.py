@@ -137,6 +137,7 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
+    DURATION_FIELDS,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
     get_default_state,
@@ -163,11 +164,12 @@ def _seconds_to_duration(seconds: float) -> dict[str, int]:
         seconds: Duration in seconds
 
     Returns:
-        Dictionary with hours, minutes, seconds keys
+        Dictionary with days, hours, minutes, seconds keys.
     """
     total = int(seconds)
     return {
-        "hours": total // 3600,
+        "days": total // 86400,
+        "hours": (total % 86400) // 3600,
         "minutes": (total % 3600) // 60,
         "seconds": total % 60,
     }
@@ -177,7 +179,7 @@ def _duration_to_seconds(duration: dict[str, int] | float) -> int:
     """Convert duration dict or raw number to seconds.
 
     Args:
-        duration: Duration dict with hours/minutes/seconds keys, or raw seconds
+        duration: Duration dict with days/hours/minutes/seconds keys, or raw seconds.
 
     Returns:
         Total seconds as integer
@@ -185,20 +187,11 @@ def _duration_to_seconds(duration: dict[str, int] | float) -> int:
     if isinstance(duration, (int, float)):
         return int(duration)
     return (
-        duration.get("hours", 0) * 3600
+        duration.get("days", 0) * 86400
+        + duration.get("hours", 0) * 3600
         + duration.get("minutes", 0) * 60
         + duration.get("seconds", 0)
     )
-
-
-# Fields that use DurationSelector and need conversion
-_DURATION_FIELDS: set[str] = {
-    CONF_MOTION_TIMEOUT,
-    CONF_WASP_MOTION_TIMEOUT,
-    CONF_WASP_MAX_DURATION,
-    CONF_WASP_VERIFICATION_DELAY,
-    CONF_DECAY_HALF_LIFE,
-}
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -1322,7 +1315,7 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         if key in flat_config:
             val = flat_config[key]
             # Convert seconds to duration for DurationSelector fields
-            if key in _DURATION_FIELDS:
+            if key in DURATION_FIELDS:
                 val = _seconds_to_duration(val)
             motion[key] = val
     if motion:
@@ -1402,7 +1395,7 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
     ):
         if key in flat_config:
             val = flat_config[key]
-            if key in _DURATION_FIELDS:
+            if key in DURATION_FIELDS:
                 val = _seconds_to_duration(val)
             wasp[key] = val
     if wasp:
@@ -1418,7 +1411,7 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
     ):
         if key in flat_config:
             val = flat_config[key]
-            if key in _DURATION_FIELDS:
+            if key in DURATION_FIELDS:
                 val = _seconds_to_duration(val)
             parameters[key] = val
     if parameters:
@@ -1441,7 +1434,7 @@ def _draft_to_suggested(draft: dict[str, Any], keys: set[str]) -> dict[str, Any]
     for key in keys:
         if key in draft:
             val = draft[key]
-            if key in _DURATION_FIELDS:
+            if key in DURATION_FIELDS:
                 val = _seconds_to_duration(val)
             suggested[key] = val
     return suggested
@@ -1549,24 +1542,24 @@ def _count_area_sensors(area: dict[str, Any]) -> int:
         Total number of configured input sensors
     """
     sensor_keys = [
-        CONF_MOTION_SENSORS,
-        CONF_MEDIA_DEVICES,
-        CONF_DOOR_SENSORS,
-        CONF_WINDOW_SENSORS,
+        CONF_AIR_QUALITY_SENSORS,
         CONF_APPLIANCES,
-        CONF_COVER_SENSORS,
-        CONF_ILLUMINANCE_SENSORS,
-        CONF_HUMIDITY_SENSORS,
-        CONF_TEMPERATURE_SENSORS,
         CONF_CO2_SENSORS,
         CONF_CO_SENSORS,
-        CONF_SOUND_PRESSURE_SENSORS,
-        CONF_PRESSURE_SENSORS,
-        CONF_AIR_QUALITY_SENSORS,
-        CONF_VOC_SENSORS,
-        CONF_PM25_SENSORS,
+        CONF_COVER_SENSORS,
+        CONF_DOOR_SENSORS,
+        CONF_HUMIDITY_SENSORS,
+        CONF_ILLUMINANCE_SENSORS,
+        CONF_MEDIA_DEVICES,
+        CONF_MOTION_SENSORS,
         CONF_PM10_SENSORS,
+        CONF_PM25_SENSORS,
         CONF_POWER_SENSORS,
+        CONF_PRESSURE_SENSORS,
+        CONF_SOUND_PRESSURE_SENSORS,
+        CONF_TEMPERATURE_SENSORS,
+        CONF_VOC_SENSORS,
+        CONF_WINDOW_SENSORS,
     ]
     return sum(len(area.get(key, [])) for key in sensor_keys)
 
@@ -1635,14 +1628,14 @@ def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
     """
     flattened_input = {}
     for key, value in user_input.items():
-        if isinstance(value, dict) and key not in _DURATION_FIELDS:
+        if isinstance(value, dict) and key not in DURATION_FIELDS:
             # All sections (motion, doors, windows, wasp_in_box, etc.) are flattened the same way
             flattened_input.update(value)
         else:
             flattened_input[key] = value
 
     # Convert duration fields from DurationSelector format back to seconds
-    for field in _DURATION_FIELDS:
+    for field in DURATION_FIELDS:
         if field in flattened_input:
             flattened_input[field] = _duration_to_seconds(flattened_input[field])
 
@@ -1966,7 +1959,7 @@ class BaseOccupancyFlow:
         # Validate motion sensors (section field → base fallback)
         motion_sensors = data.get(CONF_MOTION_SENSORS, [])
         if not motion_sensors:
-            errors["base"] = "motion_required"
+            errors.setdefault("base", "motion_required")
 
         # Validate motion sensor likelihoods
         motion_prob_given_true = data.get(
@@ -1976,20 +1969,20 @@ class BaseOccupancyFlow:
             CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
         )
         if motion_prob_given_true <= motion_prob_given_false:
-            errors["base"] = "prob_true_must_exceed_false"
+            errors.setdefault("base", "prob_true_must_exceed_false")
 
         # Validate threshold
         threshold = data.get(CONF_THRESHOLD)
         if threshold is not None and (
             not isinstance(threshold, (int, float)) or threshold < 1 or threshold > 100
         ):
-            errors["base"] = "invalid_threshold"
+            errors[CONF_THRESHOLD] = "invalid_threshold"
 
         # Validate media devices
         media_devices = data.get(CONF_MEDIA_DEVICES, [])
         media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
         if media_devices and not media_states:
-            errors["base"] = "media_states_required"
+            errors[CONF_MEDIA_DEVICES] = "media_states_required"
 
         # Validate appliances
         appliances = data.get(CONF_APPLIANCES, [])
@@ -1997,25 +1990,25 @@ class BaseOccupancyFlow:
             CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
         )
         if appliances and not appliance_states:
-            errors["base"] = "appliance_states_required"
+            errors[CONF_APPLIANCES] = "appliance_states_required"
 
         # Validate doors
         door_sensors = data.get(CONF_DOOR_SENSORS, [])
         door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
         if door_sensors and not door_state:
-            errors["base"] = "door_state_required"
+            errors[CONF_DOOR_SENSORS] = "door_state_required"
 
         # Validate windows
         window_sensors = data.get(CONF_WINDOW_SENSORS, [])
         window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
         if window_sensors and not window_state:
-            errors["base"] = "window_state_required"
+            errors[CONF_WINDOW_SENSORS] = "window_state_required"
 
         # Validate covers
         cover_sensors = data.get(CONF_COVER_SENSORS, [])
         cover_states = data.get(CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES)
         if cover_sensors and not cover_states:
-            errors["base"] = "cover_states_required"
+            errors[CONF_COVER_SENSORS] = "cover_states_required"
 
         # Validate weights
         weights = [
@@ -2037,9 +2030,9 @@ class BaseOccupancyFlow:
                 data.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
             ),
         ]
-        for _name, weight in weights:
+        for name, weight in weights:
             if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
-                errors["base"] = "invalid_weight"
+                errors[name] = "invalid_weight"
                 break
 
         # Validate decay settings
@@ -2050,7 +2043,7 @@ class BaseOccupancyFlow:
             if not isinstance(decay_window, (int, float)) or (
                 decay_window != 0 and (decay_window < 10 or decay_window > 3600)
             ):
-                errors["base"] = "invalid_decay_half_life"
+                errors[CONF_DECAY_HALF_LIFE] = "invalid_decay_half_life"
 
         return errors
 

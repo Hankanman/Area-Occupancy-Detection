@@ -498,3 +498,13 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "window": InputType.WINDOW,
         }
     return _SENSOR_TYPE_MAPPING
+
+
+# Fields that use DurationSelector and need conversion.
+DURATION_FIELDS: Final[set[str]] = {
+    CONF_DECAY_HALF_LIFE,
+    CONF_MOTION_TIMEOUT,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_VERIFICATION_DELAY,
+}
