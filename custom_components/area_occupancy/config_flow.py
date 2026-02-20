@@ -2369,11 +2369,7 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         title = area_entry.name if area_entry else area_id
 
         if self._is_reconfigure:
-            subentry = self._get_reconfigure_subentry()
-            entry = self._get_entry()
-            return self.async_update_reload_and_abort(
-                entry,
-                subentry,
+            return self.async_update_and_abort(
                 data=config,
                 title=title,
                 unique_id=area_id,

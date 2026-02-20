@@ -479,7 +479,7 @@ def _migrate_areas_to_subentries(
 
     Reads the CONF_AREAS list from the config entry data/options, creates
     a subentry for each area, then removes CONF_AREAS from the entry.
-    Also updates device and entity registry entries to reference the subentry.
+    Device and entity registry cleanup is handled separately after migration.
     """
     merged = dict(config_entry.data)
     merged.update(config_entry.options)
@@ -490,8 +490,6 @@ def _migrate_areas_to_subentries(
         return
 
     area_reg = ar.async_get(hass)
-    device_registry = dr.async_get(hass)
-    entity_registry = er.async_get(hass)
 
     failed_areas: set[str] = set()
 
@@ -542,30 +540,6 @@ def _migrate_areas_to_subentries(
             area_id,
             title,
         )
-
-        # Migrate device registry: associate device with the new subentry
-        device = device_registry.async_get_device(identifiers={(DOMAIN, area_id)})
-        if device:
-            device_registry.async_update_device(
-                device.id,
-                add_config_subentry_id=subentry.subentry_id,
-                add_config_entry_id=config_entry.entry_id,
-            )
-            _LOGGER.debug(
-                "Updated device %s to reference subentry %s",
-                device.id,
-                subentry.subentry_id,
-            )
-
-            # Migrate entity registry: associate entities with the subentry
-            entity_entries = er.async_entries_for_device(
-                entity_registry, device.id, include_disabled_entities=True
-            )
-            for ent in entity_entries:
-                entity_registry.async_update_entity(
-                    ent.entity_id,
-                    config_subentry_id=subentry.subentry_id,
-                )
 
     if failed_areas:
         _LOGGER.error(
@@ -635,6 +609,22 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 config_entry.version,
             )
             _migrate_areas_to_subentries(hass, config_entry)
+            # Clean up old devices/entities so setup recreates them
+            # with correct subentry associations
+            (
+                devices_removed,
+                entities_removed,
+            ) = await _cleanup_registry_devices_and_entities(
+                hass, [config_entry.entry_id]
+            )
+            if devices_removed > 0 or entities_removed > 0:
+                _LOGGER.info(
+                    "Subentry migration cleanup: removed %d device(s) and %d "
+                    "entity(ies) for entry %s. They will be recreated during setup.",
+                    devices_removed,
+                    entities_removed,
+                    config_entry.entry_id,
+                )
 
         # If entry is already at current version or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
