@@ -5,7 +5,6 @@ not Python dataclass behavior or trivial operations.
 """
 
 from datetime import datetime, timedelta
-from types import MappingProxyType
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -56,7 +55,6 @@ from custom_components.area_occupancy.data.config import (
     Sensors,
 )
 from custom_components.area_occupancy.data.purpose import get_default_decay_half_life
-from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -64,33 +62,20 @@ from homeassistant.util import dt as dt_util
 # ruff: noqa: SLF001
 
 
-def _setup_area_subentry(
+def _setup_area_config(
     coordinator: AreaOccupancyCoordinator,
     area_id: str,
     area_config: dict[str, Any],
-    subentry_id: str = "test_subentry_001",
 ) -> None:
-    """Helper to set up area configuration as a subentry for tests.
-
-    Creates a ConfigSubentry with the given area config and installs it on the
-    coordinator's config_entry.subentries dict.
+    """Helper to set up area configuration as CONF_AREAS list entry for tests.
 
     Args:
         coordinator: The coordinator instance
         area_id: The area ID to use
         area_config: Dictionary of area configuration values
-        subentry_id: Subentry ID (defaults to test value)
     """
     area_data = {CONF_AREA_ID: area_id, **area_config}
-    subentry = ConfigSubentry(
-        data=MappingProxyType(area_data),
-        subentry_type="area",
-        subentry_id=subentry_id,
-        title=area_id,
-        unique_id=area_id,
-    )
-    coordinator.config_entry.subentries = {subentry_id: subentry}
-    coordinator.config_entry.data = {}
+    coordinator.config_entry.data = {CONF_AREAS: [area_data]}
     coordinator.config_entry.options = {}
     coordinator._load_areas_from_config()
 
@@ -185,7 +170,7 @@ class TestAreaConfigInitialization:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {CONF_THRESHOLD: 50},  # Explicit value
@@ -206,7 +191,7 @@ class TestAreaConfigInitialization:
         """Test AreaConfig initialization with specific configuration values."""
         living_room_area_id = setup_area_registry.get("Living Room", "living_room")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             living_room_area_id,
             {
@@ -238,7 +223,7 @@ class TestAreaConfigInitialization:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(coordinator, area_id, {CONF_THRESHOLD: 50})
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
 
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.weights.motion == DEFAULT_WEIGHT_MOTION
@@ -251,7 +236,7 @@ class TestAreaConfigInitialization:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -309,7 +294,7 @@ class TestAreaConfigInitialization:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -344,7 +329,7 @@ class TestAreaConfigInitialization:
         area_id = setup_area_registry.get(area_name, "test_area")
 
         # Set up config_entry with different values to verify area_data takes precedence
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -414,7 +399,7 @@ class TestAreaConfigProperties:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -484,7 +469,7 @@ class TestAreaConfigProperties:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -511,7 +496,7 @@ class TestAreaConfigProperties:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -544,7 +529,7 @@ class TestAreaConfigValidation:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -571,7 +556,7 @@ class TestAreaConfigValidation:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -601,7 +586,7 @@ class TestAreaConfigValidation:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -685,7 +670,7 @@ class TestAreaConfigValidation:
             # For other sensor types, add valid motion sensor
             test_data_dict[CONF_MOTION_SENSORS] = ["binary_sensor.motion1"]
 
-        _setup_area_subentry(coordinator, area_id, test_data_dict)
+        _setup_area_config(coordinator, area_id, test_data_dict)
 
         config = AreaConfig(coordinator, area_name=area_name)
         errors = config.validate_entity_configuration()
@@ -702,7 +687,7 @@ class TestAreaConfigValidation:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             area_id,
             {
@@ -734,34 +719,35 @@ class TestAreaConfigUpdate:
         coordinator: AreaOccupancyCoordinator,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_config successfully updates subentry and reloads config."""
+        """Test update_config successfully updates CONF_AREAS and reloads config."""
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        # Set up subentry so _find_area_subentry can locate it
-        _setup_area_subentry(coordinator, area_id, {CONF_THRESHOLD: 50})
+        # Set up area config in CONF_AREAS
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
 
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.area_id == area_id
 
-        # Mock async_update_subentry and internal reload to verify behavior
+        # Mock async_update_entry and internal reload to verify behavior
         with (
             patch.object(
-                coordinator.hass.config_entries, "async_update_subentry"
-            ) as mock_update_subentry,
+                coordinator.hass.config_entries, "async_update_entry"
+            ) as mock_update_entry,
             patch.object(config, "_load_config") as mock_load_config,
             patch.object(coordinator, "_setup_complete", True),
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
-            # Verify async_update_subentry was called
-            mock_update_subentry.assert_called_once()
-            call_args = mock_update_subentry.call_args
+            # Verify async_update_entry was called
+            mock_update_entry.assert_called_once()
+            call_args = mock_update_entry.call_args
             assert call_args is not None
-            # The data kwarg should contain merged data with the new threshold
+            # The data kwarg should contain CONF_AREAS with updated threshold
             updated_data = call_args[1]["data"]
-            assert updated_data[CONF_THRESHOLD] == 70
-            assert updated_data[CONF_AREA_ID] == area_id
+            areas_list = updated_data[CONF_AREAS]
+            area_data = next(a for a in areas_list if a[CONF_AREA_ID] == area_id)
+            assert area_data[CONF_THRESHOLD] == 70
 
             # Verify config was reloaded after update
             mock_load_config.assert_called_once()
@@ -775,14 +761,14 @@ class TestAreaConfigUpdate:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        _setup_area_subentry(coordinator, area_id, {CONF_THRESHOLD: 50})
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
 
         config = AreaConfig(coordinator, area_name=area_name)
 
         with patch.object(
-            coordinator.hass.config_entries, "async_update_subentry"
-        ) as mock_update_subentry:
-            mock_update_subentry.side_effect = ValueError("Update failed")
+            coordinator.hass.config_entries, "async_update_entry"
+        ) as mock_update_entry:
+            mock_update_entry.side_effect = ValueError("Update failed")
 
             with pytest.raises(
                 HomeAssistantError, match="Failed to update configuration"
@@ -807,41 +793,32 @@ class TestAreaConfigUpdate:
     async def test_update_config_with_area_not_found_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises HomeAssistantError when area not found in subentries."""
+        """Test update_config raises HomeAssistantError when area not found in CONF_AREAS."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Set up subentry with different area_id so _find_area_subentry won't match
-        different_subentry = ConfigSubentry(
-            data=MappingProxyType(
-                {CONF_AREA_ID: "different_area_id", CONF_THRESHOLD: 50}
-            ),
-            subentry_type="area",
-            subentry_id="different_subentry",
-            title="Different",
-            unique_id="different_area_id",
-        )
-        coordinator.config_entry.subentries = {
-            "different_subentry": different_subentry,
+        # Set up CONF_AREAS with a different area_id so it won't match
+        coordinator.config_entry.data = {
+            CONF_AREAS: [{CONF_AREA_ID: "different_area_id", CONF_THRESHOLD: 50}]
         }
 
         with pytest.raises(
-            HomeAssistantError, match=".*Subentry for area ID.*not found.*"
+            HomeAssistantError, match=".*Area ID.*not found in CONF_AREAS.*"
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
-    async def test_update_config_with_no_subentries_raises_error(
+    async def test_update_config_with_no_areas_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises HomeAssistantError when no subentries exist."""
+        """Test update_config raises HomeAssistantError when no areas exist."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Empty subentries
-        coordinator.config_entry.subentries = {}
+        # Empty CONF_AREAS
+        coordinator.config_entry.data = {CONF_AREAS: []}
 
         with pytest.raises(
-            HomeAssistantError, match=".*Subentry for area ID.*not found.*"
+            HomeAssistantError, match=".*Area ID.*not found in CONF_AREAS.*"
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
@@ -851,15 +828,16 @@ class TestAreaConfigUpdate:
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_from_entry successfully updates config from new entry with subentries."""
+        """Test update_from_entry successfully updates config from new entry with CONF_AREAS."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
         testing_area_id = setup_area_registry.get("Testing", "testing")
 
-        # Create a mock config entry with subentries
-        area_subentry = ConfigSubentry(
-            data=MappingProxyType(
+        # Create a mock config entry with CONF_AREAS
+        new_config_entry = Mock()
+        new_config_entry.data = {
+            CONF_AREAS: [
                 {
                     CONF_AREA_ID: testing_area_id,
                     CONF_THRESHOLD: 80,
@@ -871,14 +849,9 @@ class TestAreaConfigUpdate:
                     CONF_WEIGHT_ENVIRONMENTAL: 0.3,
                     CONF_WASP_WEIGHT: 0.8,
                 }
-            ),
-            subentry_type="area",
-            subentry_id="testing_subentry",
-            title="Testing",
-            unique_id=testing_area_id,
-        )
-        new_config_entry = Mock()
-        new_config_entry.subentries = {"testing_subentry": area_subentry}
+            ]
+        }
+        new_config_entry.options = {}
 
         config.update_from_entry(new_config_entry)
 
@@ -892,25 +865,21 @@ class TestAreaConfigUpdate:
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_from_entry loads default config when area not found in subentries."""
+        """Test update_from_entry loads default config when area not found in CONF_AREAS."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Create a mock config entry with subentry for different area
-        different_subentry = ConfigSubentry(
-            data=MappingProxyType(
+        # Create a mock config entry with CONF_AREAS for a different area
+        new_config_entry = Mock()
+        new_config_entry.data = {
+            CONF_AREAS: [
                 {
                     CONF_AREA_ID: "nonexistent_area_id",
                     CONF_THRESHOLD: 80,
                 }
-            ),
-            subentry_type="area",
-            subentry_id="nonexistent_subentry",
-            title="Nonexistent",
-            unique_id="nonexistent_area_id",
-        )
-        new_config_entry = Mock()
-        new_config_entry.subentries = {"nonexistent_subentry": different_subentry}
+            ]
+        }
+        new_config_entry.options = {}
 
         # Should not raise, but load default config
         config.update_from_entry(new_config_entry)
@@ -1030,19 +999,19 @@ class TestAreaConfigMergeEntry:
         assert merged == expected
 
 
-class TestAreaConfigSubentryReload:
-    """Test AreaConfig subentry reload behavior."""
+class TestAreaConfigReload:
+    """Test AreaConfig reload behavior."""
 
-    def test_config_loads_from_subentry(
+    def test_config_loads_from_areas_list(
         self,
         coordinator: AreaOccupancyCoordinator,
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test config loads data from subentry."""
+        """Test config loads data from CONF_AREAS list."""
         testing_area_id = setup_area_registry.get("Testing", "testing")
 
-        _setup_area_subentry(
+        _setup_area_config(
             coordinator,
             testing_area_id,
             {

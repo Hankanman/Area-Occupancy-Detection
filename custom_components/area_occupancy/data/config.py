@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -398,62 +397,25 @@ class AreaConfig:
             if coordinator.config_entry is None:
                 raise ValueError("Coordinator config_entry cannot be None")
 
-            # Try subentries first (new architecture)
-            loaded = self._load_from_subentries(coordinator.config_entry, area_name)
-            if not loaded:
-                # Fallback: try legacy CONF_AREAS format
-                merged = self._merge_entry(coordinator.config_entry)
-                if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-                    if area_name is None:
-                        raise ValueError(
-                            "area_name is required when using multi-area configuration format"
-                        )
-                    area_data = self._extract_area_data_from_areas_list(
-                        merged[CONF_AREAS], area_name, coordinator.hass
+            merged = self._merge_entry(coordinator.config_entry)
+            if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
+                if area_name is None:
+                    raise ValueError(
+                        "area_name is required when using multi-area configuration format"
                     )
-                    if area_data:
-                        self._load_config(area_data)
-                    else:
-                        _LOGGER.warning(
-                            "Area '%s' not found in configuration. Loading default config.",
-                            area_name,
-                        )
-                        self._load_config({})
+                area_data = self._extract_area_data_from_areas_list(
+                    merged[CONF_AREAS], area_name, coordinator.hass
+                )
+                if area_data:
+                    self._load_config(area_data)
                 else:
+                    _LOGGER.warning(
+                        "Area '%s' not found in configuration. Loading default config.",
+                        area_name,
+                    )
                     self._load_config({})
-
-    def _load_from_subentries(
-        self, config_entry: ConfigEntry, area_name: str | None
-    ) -> bool:
-        """Try to load area config from config entry subentries.
-
-        Args:
-            config_entry: The config entry to read subentries from
-            area_name: The area name to match
-
-        Returns:
-            True if config was loaded from a subentry, False otherwise
-        """
-        if not hasattr(config_entry, "subentries") or not config_entry.subentries:
-            return False
-
-        area_reg = ar.async_get(self.hass)
-
-        for subentry in config_entry.subentries.values():
-            if subentry.subentry_type != "area":
-                continue
-
-            area_id = subentry.data.get(CONF_AREA_ID)
-            if not area_id:
-                continue
-
-            # Resolve area name from area_id and match
-            area_entry = area_reg.async_get_area(area_id)
-            if area_entry and area_entry.name == area_name:
-                self._load_config(dict(subentry.data))
-                return True
-
-        return False
+            else:
+                self._load_config({})
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -704,27 +666,26 @@ class AreaConfig:
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry.
 
-        Finds the subentry for this area and reloads config from its data.
+        Finds the area in CONF_AREAS list and reloads config from its data.
         """
         # Update the config entry reference
         self.config_entry = config_entry
 
-        # Find area data from subentry
-        area_id = self.area_id
-        if area_id:
-            for subentry in config_entry.subentries.values():
-                if (
-                    subentry.subentry_type == "area"
-                    and subentry.data.get(CONF_AREA_ID) == area_id
-                ):
-                    self._load_config(dict(subentry.data))
-                    return
+        # Find area data from CONF_AREAS list
+        merged = self._merge_entry(config_entry)
+        areas_list = merged.get(CONF_AREAS, [])
+        area_data = self._extract_area_data_from_areas_list(
+            areas_list, self.area_name, self.hass
+        )
+        if area_data:
+            self._load_config(area_data)
+            return
 
-        # Fallback: area not found in subentries
+        # Fallback: area not found
         _LOGGER.warning(
-            "Area '%s' (ID: %s) not found in subentries. Loading default config.",
+            "Area '%s' (ID: %s) not found in CONF_AREAS. Loading default config.",
             self.area_name,
-            area_id,
+            self.area_id,
         )
         self._load_config({})
 
@@ -732,14 +693,16 @@ class AreaConfig:
         """Get a config value by key."""
         return getattr(self, key, default)
 
-    def _find_area_subentry(self) -> Any:
-        """Find the config subentry for this area.
+    async def update_config(self, options: dict[str, Any]) -> None:
+        """Update configuration and persist to Home Assistant config entry.
 
-        Returns:
-            The matching ConfigSubentry.
+        Finds the area in CONF_AREAS list and updates its data with the new options.
+
+        Args:
+            options: Dictionary of configuration options to update
 
         Raises:
-            HomeAssistantError: If config entry, area ID, or subentry is missing.
+            HomeAssistantError: If updating the config entry fails
         """
         if self.config_entry is None:
             msg = "Config entry is None"
@@ -750,46 +713,38 @@ class AreaConfig:
             msg = "Area ID not available for config update"
             raise HomeAssistantError(msg)
 
-        for subentry in self.config_entry.subentries.values():
-            if (
-                subentry.subentry_type == "area"
-                and subentry.data.get(CONF_AREA_ID) == area_id
-            ):
-                return subentry
+        # Get current CONF_AREAS from merged data+options
+        merged = self._merge_entry(self.config_entry)
+        areas_list = list(merged.get(CONF_AREAS, []))
 
-        msg = f"Subentry for area ID '{area_id}' not found"
-        raise HomeAssistantError(msg)
+        # Find and update the area in the list
+        updated = False
+        for i, area_data in enumerate(areas_list):
+            if area_data.get(CONF_AREA_ID) == area_id:
+                updated_data = dict(area_data)
+                updated_data.update(options)
+                areas_list[i] = updated_data
+                updated = True
+                break
 
-    async def update_config(self, options: dict[str, Any]) -> None:
-        """Update configuration and persist to Home Assistant config entry subentry.
+        if not updated:
+            msg = f"Area ID '{area_id}' not found in CONF_AREAS"
+            raise HomeAssistantError(msg)
 
-        Finds the subentry for this area and updates its data with the new options.
-
-        Args:
-            options: Dictionary of configuration options to update
-
-        Raises:
-            HomeAssistantError: If updating the config entry fails
-        """
-        target_subentry = self._find_area_subentry()
-
-        # Merge new options into existing subentry data
-        updated_data = dict(target_subentry.data)
-        updated_data.update(options)
-
-        # Update the subentry in Home Assistant
+        # Persist updated CONF_AREAS to config entry data
         try:
-            self.hass.config_entries.async_update_subentry(
+            new_data = dict(self.config_entry.data)
+            new_data[CONF_AREAS] = areas_list
+            self.hass.config_entries.async_update_entry(
                 self.config_entry,
-                target_subentry,
-                data=MappingProxyType(updated_data),
+                data=new_data,
             )
         except (ValueError, KeyError, AttributeError) as err:
-            _LOGGER.exception("Failed to update subentry for area %s", self.area_id)
+            _LOGGER.exception("Failed to update config entry for area %s", area_id)
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err
 
         # Reload internal config from updated data
-        self._load_config(updated_data)
+        self._load_config(areas_list[i])
 
         # Request update since threshold affects occupied calculation
         if self.coordinator.setup_complete:

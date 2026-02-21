@@ -511,10 +511,9 @@ async def async_setup_entry(
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
-    # Create per-area sensors, grouped by subentry
+    # Create per-area sensors
     for area_name in coordinator.get_area_names():
         area_handle = coordinator.get_area_handle(area_name)
-        area = coordinator.get_area(area_name)
         _LOGGER.debug("Creating sensors for area: %s", area_name)
 
         area_entities: list[SensorEntity] = [
@@ -528,18 +527,12 @@ async def async_setup_entry(
             ActivityConfidenceSensor(area_handle=area_handle),
         ]
 
-        subentry_id = (
-            coordinator.get_subentry_id_for_area(area.config.area_id)
-            if area and area.config.area_id
-            else None
-        )
         async_add_entities(
             area_entities,
             update_before_add=False,
-            config_subentry_id=subentry_id,
         )
 
-    # Create "All Areas" aggregation sensors (not tied to a subentry)
+    # Create "All Areas" aggregation sensors
     if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation sensors")
         all_areas = coordinator.get_all_areas()

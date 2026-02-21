@@ -1627,9 +1627,9 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Remove all subentries to simulate area removal
-        original_subentries = coordinator.config_entry.subentries
-        coordinator.config_entry.subentries = {}
+        # Remove all areas from CONF_AREAS to simulate area removal
+        original_data = coordinator.config_entry.data
+        coordinator.config_entry.data = {CONF_AREAS: []}
 
         try:
             with (
@@ -1655,8 +1655,8 @@ class TestCoordinatorAreaRemoval:
                 # Verify database deletion was attempted
                 mock_delete.assert_called_once_with(area_name)
         finally:
-            # Restore original subentries
-            coordinator.config_entry.subentries = original_subentries
+            # Restore original data
+            coordinator.config_entry.data = original_data
 
     async def test_async_update_options_remove_area_db_error(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
@@ -1665,9 +1665,9 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Remove all subentries to simulate area removal
-        original_subentries = coordinator.config_entry.subentries
-        coordinator.config_entry.subentries = {}
+        # Remove all areas from CONF_AREAS to simulate area removal
+        original_data = coordinator.config_entry.data
+        coordinator.config_entry.data = {CONF_AREAS: []}
 
         try:
             with (
@@ -1693,8 +1693,8 @@ class TestCoordinatorAreaRemoval:
                         coordinator.config_entry.options
                     )
         finally:
-            # Restore original subentries
-            coordinator.config_entry.subentries = original_subentries
+            # Restore original data
+            coordinator.config_entry.data = original_data
 
 
 class TestCoordinatorFindAreaForEntity:

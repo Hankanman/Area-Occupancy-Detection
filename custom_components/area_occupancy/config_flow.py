@@ -19,9 +19,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    ConfigSubentryFlow,
     OptionsFlow,
-    SubentryFlowResult,
 )
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -57,6 +55,7 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -2335,72 +2334,6 @@ class BaseOccupancyFlow:
         )
 
 
-class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
-    """Handle subentry flow for adding/editing areas.
-
-    HA provides built-in add/edit/delete UI for subentries. This handler
-    implements the multi-step wizard for area configuration.
-    """
-
-    def __init__(self) -> None:
-        """Initialize subentry flow."""
-        super().__init__()
-        self._area_being_edited: str | None = None
-        self._area_to_remove: str | None = None
-        self._area_config_draft: dict[str, Any] = {}
-        self._is_reconfigure: bool = False
-
-    def _get_wizard_areas(self) -> list[dict[str, Any]]:
-        """Get areas list for duplicate checking from existing subentries."""
-        entry = self._get_entry()
-        return [
-            dict(sub.data)
-            for sub in entry.subentries.values()
-            if sub.subentry_type == "area"
-        ]
-
-    async def _on_area_config_complete(
-        self, config: dict[str, Any]
-    ) -> SubentryFlowResult:
-        """Handle wizard completion: create or update area subentry."""
-        area_id = config.get(CONF_AREA_ID, "")
-        area_reg = ar.async_get(self.hass)
-        area_entry = area_reg.async_get_area(area_id)
-        title = area_entry.name if area_entry else area_id
-
-        if self._is_reconfigure:
-            return self.async_update_and_abort(
-                data=config,
-                title=title,
-                unique_id=area_id,
-            )
-
-        return self.async_create_entry(
-            title=title,
-            data=config,
-            unique_id=area_id,
-        )
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Add a new area — start the multi-step wizard."""
-        self._is_reconfigure = False
-        self._area_being_edited = None
-        self._area_config_draft = {}
-        return await self.async_step_area_basics(user_input)
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Reconfigure an existing area — pre-populate draft from subentry data."""
-        self._is_reconfigure = True
-        subentry = self._get_reconfigure_subentry()
-        self._area_being_edited = subentry.data.get(CONF_AREA_ID)
-        self._area_config_draft = dict(subentry.data)
-        return await self.async_step_area_basics(user_input)
-
-
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection.
 
@@ -2409,14 +2342,6 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """
 
     VERSION = CONF_VERSION
-
-    @classmethod
-    @callback
-    def async_get_supported_subentry_types(
-        cls, config_entry: ConfigEntry
-    ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Return subentry types supported by this integration."""
-        return {"area": AreaSubentryFlowHandler}
 
     def __init__(self) -> None:
         """Initialize config flow.
@@ -2555,28 +2480,11 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                     ) from err
                 raise
 
-            # Build subentries from collected areas
-            area_reg = ar.async_get(self.hass)
-            subentries = []
-            for area_config in self._areas:
-                area_id = area_config.get(CONF_AREA_ID, "")
-                area_entry = area_reg.async_get_area(area_id)
-                title = area_entry.name if area_entry else area_id
-                subentries.append(
-                    {
-                        "subentry_type": "area",
-                        "data": area_config,
-                        "title": title,
-                        "unique_id": area_id,
-                    }
-                )
-
-            # Global config (no CONF_AREAS — areas live in subentries)
-            config_data: dict[str, Any] = {}
+            # Store areas in CONF_AREAS list
+            config_data: dict[str, Any] = {CONF_AREAS: self._areas}
             return self.async_create_entry(
                 title="Area Occupancy Detection",
                 data=config_data,
-                subentries=subentries,
             )
         except AbortFlow:
             raise
@@ -2710,32 +2618,193 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
 
 
 class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
-    """Handle options flow for global settings and people management.
-
-    Area management is handled via AreaSubentryFlowHandler — HA provides
-    built-in add/edit/delete UI for subentries on the integration page.
-    """
+    """Handle options flow for global settings, area management, and people management."""
 
     def __init__(self) -> None:
         """Initialize options flow."""
         super().__init__()
+        self._area_being_edited: str | None = None
+        self._area_to_remove: str | None = None
+        self._area_config_draft: dict[str, Any] = {}
         self._person_being_edited: int | None = None  # Index into people list
         self._person_to_remove: int | None = None  # Index into people list for removal
+
+    def _get_areas_from_config(self) -> list[dict[str, Any]]:
+        """Get areas list from merged config entry data+options."""
+        merged = dict(self.config_entry.data)
+        merged.update(self.config_entry.options)
+        return list(merged.get(CONF_AREAS, []))
+
+    def _get_wizard_areas(self) -> list[dict[str, Any]]:
+        """Get areas list for duplicate checking."""
+        return self._get_areas_from_config()
+
+    async def _on_area_config_complete(
+        self, config: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle wizard completion: update CONF_AREAS list in config entry."""
+        areas = self._get_areas_from_config()
+        areas = _update_area_in_list(areas, config, self._area_being_edited)
+
+        # Persist to config entry data
+        new_data = dict(self.config_entry.data)
+        new_data[CONF_AREAS] = areas
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+
+        self._area_being_edited = None
+        self._area_config_draft = {}
+
+        # Reload the integration to pick up the new area
+        result = self.async_create_entry(title="", data=dict(self.config_entry.options))
+        self.hass.async_create_task(
+            self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        )
+        return result
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show options menu (global settings and people management).
-
-        Area management is handled via subentry flows — HA provides built-in
-        add/edit/delete UI for subentries on the integration page.
-        """
+        """Show options menu."""
         return self.async_show_menu(
             step_id="init",
             menu_options=[
+                CONF_ACTION_ADD_AREA,
+                "manage_areas",
                 CONF_ACTION_GLOBAL_SETTINGS,
                 CONF_ACTION_MANAGE_PEOPLE,
             ],
+        )
+
+    async def async_step_add_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add a new area via the wizard."""
+        self._area_being_edited = None
+        self._area_config_draft = {}
+        self._init_area_wizard()
+        return await self.async_step_area_basics()
+
+    async def async_step_manage_areas(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show list of areas to manage."""
+        errors: dict[str, str] = {}
+        areas = self._get_areas_from_config()
+
+        if user_input is not None:
+            selected_option = user_input.get("selected_option", "")
+            if selected_option.startswith(CONF_OPTION_PREFIX_AREA):
+                sanitized_id = selected_option.replace(CONF_OPTION_PREFIX_AREA, "", 1)
+                area = _find_area_by_sanitized_id(areas, sanitized_id)
+                if area:
+                    self._area_being_edited = area.get(CONF_AREA_ID)
+                    return await self.async_step_area_action()
+                errors["base"] = "Selected area could not be found"
+
+        return self.async_show_form(
+            step_id="manage_areas",
+            data_schema=_create_area_selector_schema(areas, hass=self.hass),
+            errors=errors,
+        )
+
+    async def async_step_area_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle action selection for a specific area."""
+        area_id = self._area_being_edited
+        if not area_id:
+            return await self.async_step_init()
+
+        areas = self._get_areas_from_config()
+        area_config = _find_area_by_id(areas, area_id)
+        if not area_config:
+            return await self.async_step_init()
+
+        if user_input is not None:
+            action = user_input.get("action", "")
+            self._route_area_action(action, area_id)
+            if action == CONF_ACTION_EDIT:
+                self._init_area_wizard()
+                return await self.async_step_area_basics()
+            if action == CONF_ACTION_REMOVE:
+                return await self.async_step_remove_area()
+            if action == CONF_ACTION_CANCEL:
+                return await self.async_step_init()
+
+        schema = _create_action_selection_schema()
+        description_placeholders = _build_area_description_placeholders(
+            area_config, area_id, self.hass
+        )
+
+        return self.async_show_form(
+            step_id="area_action",
+            data_schema=schema,
+            description_placeholders=description_placeholders,
+        )
+
+    async def async_step_remove_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm removal of an area."""
+        area_id = self._area_to_remove
+        if not area_id:
+            return await self.async_step_init()
+
+        area_name = area_id
+        with contextlib.suppress(ValueError):
+            area_name = _resolve_area_id_to_name(self.hass, area_id)
+
+        areas = self._get_areas_from_config()
+        area_config = _find_area_by_id(areas, area_id) or {}
+        sensor_count = _count_area_sensors(area_config)
+        entity_count = 10
+        if area_config.get(CONF_WASP_ENABLED):
+            entity_count += 1
+
+        if user_input is not None:
+            if user_input.get("confirm"):
+                updated_areas = _remove_area_from_list(areas, area_id)
+
+                if not updated_areas:
+                    return self.async_show_form(
+                        step_id="remove_area",
+                        data_schema=vol.Schema({}),
+                        errors={"base": "Cannot remove the last area"},
+                    )
+
+                # Persist updated areas to config entry data
+                new_data = dict(self.config_entry.data)
+                new_data[CONF_AREAS] = updated_areas
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=new_data
+                )
+                self._area_to_remove = None
+
+                result = self.async_create_entry(
+                    title="", data=dict(self.config_entry.options)
+                )
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
+                return result
+
+            self._area_to_remove = None
+            return await self.async_step_init()
+
+        schema = vol.Schema(
+            {
+                vol.Required("confirm", default=False): BooleanSelector(),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="remove_area",
+            data_schema=schema,
+            description_placeholders={
+                "area_name": area_name,
+                "sensor_count": str(sensor_count),
+                "entity_count": str(entity_count),
+            },
         )
 
     async def async_step_global_settings(

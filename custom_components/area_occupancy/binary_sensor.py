@@ -969,7 +969,7 @@ async def async_setup_entry(
     """Set up the Area Occupancy Detection binary sensors."""
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
-    # Create per-area entities, grouped by subentry
+    # Create per-area entities
     for area_name in coordinator.get_area_names():
         handle = coordinator.get_area_handle(area_name)
         area = coordinator.get_area(area_name)
@@ -1006,19 +1006,12 @@ async def async_setup_entry(
                     )
                 )
 
-        # Determine subentry_id for this area
-        subentry_id = (
-            coordinator.get_subentry_id_for_area(area.config.area_id)
-            if area and area.config.area_id
-            else None
-        )
         async_add_entities(
             area_entities,
             update_before_add=False,
-            config_subentry_id=subentry_id,
         )
 
-    # Create "All Areas" aggregation occupancy sensor (not tied to a subentry)
+    # Create "All Areas" aggregation occupancy sensor
     if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
         async_add_entities(

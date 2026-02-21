@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 import types
-from types import MappingProxyType
 from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
@@ -23,7 +22,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers import area_registry as ar
 
 # Set environment variable for auto database initialization in tests
@@ -39,6 +37,7 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AREAS,
     # Import all config constants for comprehensive config entry
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
@@ -1305,7 +1304,7 @@ def mock_realistic_config_entry(
     entry.modified_at = "2025-06-19T07:10:40.167187+00:00"
     # Get actual area ID from registry
     testing_area_id = setup_area_registry.get("Testing", "test_area_1")
-    # Area config stored as subentries (Phase 4 architecture)
+    # Area config stored in CONF_AREAS list
     area_data = {
         CONF_AREA_ID: testing_area_id,
         "appliance_active_states": ["on", "standby"],
@@ -1349,16 +1348,7 @@ def mock_realistic_config_entry(
         "window_active_state": "open",
         "window_sensors": ["binary_sensor.window_sensor"],
     }
-    testing_subentry = ConfigSubentry(
-        data=MappingProxyType(area_data),
-        subentry_type="area",
-        subentry_id="01TESTING_SUBENTRY_ID_001",
-        title="Testing",
-        unique_id=testing_area_id,
-    )
-    entry.subentries = {testing_subentry.subentry_id: testing_subentry}
-    # Global config data (no CONF_AREAS — areas live in subentries)
-    entry.data = {}
+    entry.data = {CONF_AREAS: [area_data]}
     entry.options = {}
     entry.add_update_listener = Mock()
     entry.async_on_unload = Mock()
@@ -1793,22 +1783,13 @@ def config_flow_mock_config_entry_with_areas(
     entry.setup_lock = Lock()
     # Use actual area ID from registry
     living_room_area_id = setup_area_registry.get("Living Room", "living_room")
-    # Area config stored as subentries
     area_data = {
         CONF_AREA_ID: living_room_area_id,
         CONF_PURPOSE: "social",
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_THRESHOLD: 60.0,
     }
-    lr_subentry = ConfigSubentry(
-        data=MappingProxyType(area_data),
-        subentry_type="area",
-        subentry_id="01LR_SUBENTRY_ID_001",
-        title="Living Room",
-        unique_id=living_room_area_id,
-    )
-    entry.subentries = {lr_subentry.subentry_id: lr_subentry}
-    entry.data = {}
+    entry.data = {CONF_AREAS: [area_data]}
     entry.options = {}
     return entry
 

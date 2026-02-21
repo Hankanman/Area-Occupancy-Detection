@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from custom_components.area_occupancy.const import DB_SCHEMA_VERSION
+from custom_components.area_occupancy.const import CONF_VERSION
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import Base
 from custom_components.area_occupancy.db.maintenance import (
@@ -100,7 +100,7 @@ class TestEnsureDbExists:
         # Create database with old version
         init_db(db)
         with db.get_session() as session:
-            session.add(db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1)))
+            session.add(db.Metadata(key="db_version", value=str(CONF_VERSION - 1)))
             session.commit()
 
         # Add some test data to verify it's cleared
@@ -113,7 +113,7 @@ class TestEnsureDbExists:
 
         # Verify database was recreated with correct version
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
         # Verify old data was cleared
         with db.get_session() as session:
@@ -298,14 +298,14 @@ class TestSetDbVersion:
 
         # Verify the version was set correctly
         version = get_db_version(db)
-        assert version == DB_SCHEMA_VERSION
+        assert version == CONF_VERSION
 
         # Call _set_db_version again - should update existing
         _set_db_version(db)
 
         # Verify version is still correct
         version_after = get_db_version(db)
-        assert version_after == DB_SCHEMA_VERSION
+        assert version_after == CONF_VERSION
 
     def test_set_db_version_insert_new(self, coordinator: AreaOccupancyCoordinator):
         """Test _set_db_version when version doesn't exist."""
@@ -322,7 +322,7 @@ class TestSetDbVersion:
 
         # Verify version was set
         version = get_db_version(db)
-        assert version == DB_SCHEMA_VERSION
+        assert version == CONF_VERSION
 
     def test_set_db_version_error(
         self, coordinator: AreaOccupancyCoordinator, monkeypatch
@@ -348,7 +348,7 @@ class TestGetDbVersion:
         _set_db_version(db)
 
         version = get_db_version(db)
-        assert version == DB_SCHEMA_VERSION
+        assert version == CONF_VERSION
 
     def test_get_db_version_no_metadata(self, coordinator: AreaOccupancyCoordinator):
         """Test get_db_version when no metadata exists."""
@@ -610,7 +610,7 @@ class TestHandleDatabaseCorruption:
         # Verify database is healthy after restore
         assert verify_all_tables_exist(db) is True
         assert _check_database_integrity(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
         # Verify test data was restored from backup
         # Note: If tables were missing and reinitialized, data might be lost
@@ -647,7 +647,7 @@ class TestHandleDatabaseCorruption:
         assert result is True
         assert verify_all_tables_exist(db) is True
         assert _check_database_integrity(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
         # Verify database is empty (recreated, not restored)
         with db.get_session() as session:
@@ -679,7 +679,7 @@ class TestPeriodicHealthCheck:
         # Verify database is still healthy after health check
         assert _check_database_integrity(db) is True
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
     def test_periodic_health_check_error(self, coordinator: AreaOccupancyCoordinator):
         """Test periodic health check with error."""
@@ -1139,7 +1139,7 @@ class TestEnsureSchemaUpToDate:
 
         # Verify database was not recreated (data still exists)
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
         with db.get_session() as session:
             result = session.query(db.Metadata).filter_by(key="test_key").first()
             assert result is not None
@@ -1155,7 +1155,7 @@ class TestEnsureSchemaUpToDate:
         # Create database with old version
         init_db(db)
         with db.get_session() as session:
-            session.add(db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1)))
+            session.add(db.Metadata(key="db_version", value=str(CONF_VERSION - 1)))
             session.commit()
 
         # Add some test data to verify it's cleared
@@ -1168,7 +1168,7 @@ class TestEnsureSchemaUpToDate:
 
         # Verify database was deleted and recreated with correct version
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
         # Verify old data was cleared
         with db.get_session() as session:
@@ -1200,7 +1200,7 @@ class TestEnsureSchemaUpToDate:
 
         # Verify database was recreated
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
     def test_ensure_schema_up_to_date_recreation_failure(
         self, coordinator: AreaOccupancyCoordinator, tmp_path, monkeypatch
@@ -1212,7 +1212,7 @@ class TestEnsureSchemaUpToDate:
         # Create database with old version
         init_db(db)
         with db.get_session() as session:
-            session.add(db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1)))
+            session.add(db.Metadata(key="db_version", value=str(CONF_VERSION - 1)))
             session.commit()
 
         # Mock delete_db to raise error
@@ -1357,7 +1357,7 @@ class TestPeriodicHealthCheckEdgeCases:
         # Verify database is still healthy and accessible
         assert _check_database_integrity(db) is True
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == DB_SCHEMA_VERSION
+        assert get_db_version(db) == CONF_VERSION
 
     def test_periodic_health_check_error(self, coordinator: AreaOccupancyCoordinator):
         """Test health check with error."""

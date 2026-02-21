@@ -26,7 +26,7 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle
-from .const import CONF_AREA_ID, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .db import AreaOccupancyDB
@@ -139,9 +139,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
     ) -> None:
-        """Load areas from config entry subentries.
+        """Load areas from config entry CONF_AREAS list.
 
-        Reads area configurations from ConfigSubentry objects on the config entry.
+        Reads area configurations from the merged data+options CONF_AREAS list.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.
@@ -151,17 +151,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         area_reg = ar.async_get(self.hass)
 
-        for subentry in self.config_entry.subentries.values():
-            if subentry.subentry_type != "area":
-                continue
+        # Merge data and options to find CONF_AREAS
+        merged = dict(self.config_entry.data)
+        merged.update(self.config_entry.options)
+        areas_list = merged.get(CONF_AREAS, [])
 
-            area_data = dict(subentry.data)
+        for area_data in areas_list:
             area_id = area_data.get(CONF_AREA_ID)
 
             if not area_id:
-                _LOGGER.warning(
-                    "Skipping subentry without area ID: %s", subentry.subentry_id
-                )
+                _LOGGER.warning("Skipping area config without area ID")
                 continue
 
             # Validate that area ID exists in Home Assistant
@@ -169,9 +168,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not area_entry:
                 _LOGGER.warning(
                     "Area ID '%s' not found in Home Assistant registry. "
-                    "Area may have been deleted. Skipping subentry %s.",
+                    "Area may have been deleted. Skipping.",
                     area_id,
-                    subentry.subentry_id,
                 )
                 continue
 
@@ -191,23 +189,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
-
-    def get_subentry_id_for_area(self, area_id: str) -> str | None:
-        """Get the subentry ID for a given area ID.
-
-        Args:
-            area_id: The HA area registry ID.
-
-        Returns:
-            The subentry_id, or None if not found.
-        """
-        for subentry in self.config_entry.subentries.values():
-            if (
-                subentry.subentry_type == "area"
-                and subentry.data.get(CONF_AREA_ID) == area_id
-            ):
-                return subentry.subentry_id
-        return None
 
     def get_area_handle(self, area_name: str) -> AreaDeviceHandle:
         """Return a stable handle for the requested area."""

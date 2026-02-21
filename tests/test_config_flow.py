@@ -1169,14 +1169,12 @@ class TestConfigFlowIntegration:
             assert result6.get("type") == FlowResultType.CREATE_ENTRY
             assert result6.get("title") == "Area Occupancy Detection"
 
-            # Areas stored as subentries, not in data
+            # Areas stored in CONF_AREAS list in data
             result_data = result6.get("data", {})
-            assert CONF_AREAS not in result_data
-            subentries = result6.get("subentries", [])
-            assert len(subentries) == 1
-            subentry = subentries[0]
-            assert subentry["subentry_type"] == "area"
-            area_data = subentry["data"]
+            assert CONF_AREAS in result_data
+            areas_list = result_data[CONF_AREAS]
+            assert len(areas_list) == 1
+            area_data = areas_list[0]
             assert area_data.get(CONF_AREA_ID) == expected_area_id
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert area_data.get(CONF_THRESHOLD) == 60
@@ -1295,7 +1293,7 @@ class TestConfigFlowIntegration:
                 {"area_name": "Living Room"},
             ),
             # Note: options flow no longer has area_action/remove_area steps
-            # (area management moved to subentry flow)
+            # (area management is in options flow)
         ],
     )
     async def test_flow_show_form(
@@ -1412,10 +1410,6 @@ class TestConfigFlowIntegration:
 class TestAreaOccupancyOptionsFlow:
     """Test AreaOccupancyOptionsFlow class."""
 
-    # Note: test_get_areas_from_config, test_options_flow_init_with_device_id,
-    # and test_options_flow_init_device_not_found removed — area management
-    # moved to subentry flow in Phase 4.
-
     async def test_options_flow_init_menu(
         self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
     ):
@@ -1427,8 +1421,8 @@ class TestAreaOccupancyOptionsFlow:
         assert result["type"] == FlowResultType.MENU
         assert result["step_id"] == "init"
         assert "menu_options" in result
-        # Options flow only has global_settings and manage_people
-        # (area management moved to subentry flow)
+        assert "add_area" in result["menu_options"]
+        assert "manage_areas" in result["menu_options"]
         assert "global_settings" in result["menu_options"]
         assert "manage_people" in result["menu_options"]
 
@@ -1463,10 +1457,6 @@ class TestAreaOccupancyOptionsFlow:
         result_data = result["data"]
         assert result_data[CONF_SLEEP_START] == "23:00:00"
         assert result_data[CONF_SLEEP_END] == "08:00:00"
-
-    # Note: test_options_flow_manage_areas_selection_error and all area management
-    # options flow tests (area_config, area_action, remove_area) removed —
-    # area management moved to subentry flow in Phase 4.
 
 
 class TestHelperFunctionEdgeCases:
@@ -1535,12 +1525,6 @@ class TestStaticMethods:
         mock_entry = Mock(spec=ConfigEntry)
         result = AreaOccupancyConfigFlow.async_get_options_flow(mock_entry)
         assert isinstance(result, AreaOccupancyOptionsFlow)
-
-    def test_async_get_supported_subentry_types(self):
-        """Test subentry types registration."""
-        mock_entry = Mock(spec=ConfigEntry)
-        result = AreaOccupancyConfigFlow.async_get_supported_subentry_types(mock_entry)
-        assert "area" in result
 
 
 class TestNewHelperFunctions:

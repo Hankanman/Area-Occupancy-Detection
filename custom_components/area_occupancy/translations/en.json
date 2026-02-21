@@ -386,98 +386,20 @@
             "unknown": "An unexpected error occurred."
         }
     },
-    "config_subentries": {
-        "area": {
-            "entry_type": "Area",
-            "initiate_flow": {
-                "user": "Add area",
-                "reconfigure": "Reconfigure area"
-            },
-            "step": {
-                "area_basics": {
-                    "title": "Area Selection",
-                    "description": "Select the Home Assistant area and its primary purpose.",
-                    "data": {
-                        "area_id": "Home Assistant Area",
-                        "purpose": "Area Purpose"
-                    },
-                    "data_description": {
-                        "area_id": "Select the Home Assistant area this occupancy detector will monitor.",
-                        "purpose": "Determines how quickly the area decays to unoccupied. Short-visit spaces (halls) decay fast; long-stay spaces (offices) decay slowly."
-                    }
-                },
-                "area_motion": {
-                    "title": "Motion Sensors",
-                    "description": "Configure motion sensors and their parameters.",
-                    "data": {
-                        "motion_sensors": "Motion Sensors",
-                        "weight_motion": "Motion Weight",
-                        "motion_timeout": "Motion Timeout",
-                        "motion_prob_given_true": "P(motion | occupied)",
-                        "motion_prob_given_false": "P(motion | unoccupied)"
-                    },
-                    "data_description": {
-                        "motion_sensors": "Binary sensors that detect motion in this area. At least one is required.",
-                        "weight_motion": "How much motion sensors contribute to the occupancy probability.",
-                        "motion_timeout": "How long motion is considered active after the last detection.",
-                        "motion_prob_given_true": "Probability of motion when the area IS occupied.",
-                        "motion_prob_given_false": "Probability of motion when the area is NOT occupied."
-                    }
-                },
-                "area_sensors": {
-                    "title": "Additional Sensors",
-                    "description": "Configure optional sensors for improved accuracy. Expand each section to add sensors."
-                },
-                "area_behavior": {
-                    "title": "Detection Behavior",
-                    "description": "Fine-tune occupancy detection thresholds and decay settings.",
-                    "data": {
-                        "threshold": "Occupancy Threshold (%)",
-                        "decay_enabled": "Enable Decay",
-                        "decay_half_life": "Decay Half-Life",
-                        "min_prior_override": "Minimum Prior Override",
-                        "wasp_enabled": "Enable Wasp-in-Box",
-                        "wasp_motion_timeout": "Wasp Motion Timeout",
-                        "wasp_weight": "Wasp Weight",
-                        "wasp_max_duration": "Wasp Max Duration",
-                        "wasp_verification_delay": "Wasp Verification Delay"
-                    },
-                    "data_description": {
-                        "threshold": "Probability above which the area is considered occupied.",
-                        "decay_enabled": "Gradually reduce occupancy probability when no new evidence arrives.",
-                        "decay_half_life": "Time for occupancy probability to halve. Set to 0 to use the area purpose default.",
-                        "min_prior_override": "Force a minimum learned prior value (0 = auto).",
-                        "wasp_enabled": "Detect occupancy when someone enters but motion sensor cannot see them (e.g. bathroom with door closed).",
-                        "wasp_motion_timeout": "How long to wait without motion before activating wasp-in-box.",
-                        "wasp_weight": "How strongly the wasp-in-box signal contributes to occupancy.",
-                        "wasp_max_duration": "Maximum time wasp-in-box can remain active.",
-                        "wasp_verification_delay": "Delay before wasp-in-box activates to filter false triggers."
-                    }
-                }
-            },
-            "error": {
-                "area_required": "An area must be selected.",
-                "area_not_found": "The selected area was not found in Home Assistant.",
-                "area_already_configured": "This area is already configured.",
-                "motion_required": "At least one motion sensor is required.",
-                "prob_true_must_exceed_false": "P(motion|occupied) must exceed P(motion|unoccupied).",
-                "unknown": "An unexpected error occurred."
-            },
-            "abort": {
-                "reconfigure_successful": "Area updated successfully."
-            }
-        }
-    },
     "options": {
         "step": {
             "init": {
                 "title": "Area Occupancy Detection Options",
-                "description": "Configure global settings or manage people. To add, edit, or remove areas, use the Areas section on the integration page.",
+                "description": "Configure areas, global settings, or manage people for occupancy detection.",
                 "menu_options": {
+                    "add_area": "Add New Area",
+                    "manage_areas": "Manage Areas",
                     "global_settings": "Global Settings",
                     "manage_people": "Manage People"
                 },
                 "menu_option_descriptions": {
+                    "add_area": "Configure a new room or zone for occupancy detection",
+                    "manage_areas": "Edit or remove previously configured areas",
                     "global_settings": "Configure sleep schedule and other integration-wide settings",
                     "manage_people": "Add, edit, or remove people for sleep presence detection"
                 }

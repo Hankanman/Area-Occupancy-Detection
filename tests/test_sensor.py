@@ -745,7 +745,7 @@ class TestAsyncSetupEntry:
 
         await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
-        # Called once per area (with subentry_id) + once for All Areas (without)
+        # Called once per area + once for All Areas
         assert mock_async_add_entities.call_count == 2
         entities = []
         for call_args in mock_async_add_entities.call_args_list:

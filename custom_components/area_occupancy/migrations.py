@@ -6,10 +6,9 @@ import asyncio
 from difflib import SequenceMatcher
 import logging
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     area_registry as ar,
@@ -472,101 +471,6 @@ def _combine_config_entries(
     return area_configs
 
 
-def _migrate_areas_to_subentries(
-    hass: HomeAssistant, config_entry: ConfigEntry
-) -> None:
-    """Migrate CONF_AREAS list to ConfigSubentry objects (v16 → v17).
-
-    Reads the CONF_AREAS list from the config entry data/options, creates
-    a subentry for each area, then removes CONF_AREAS from the entry.
-    Device and entity registry cleanup is handled separately after migration.
-    """
-    merged = dict(config_entry.data)
-    merged.update(config_entry.options)
-
-    areas_list = merged.get(CONF_AREAS)
-    if not isinstance(areas_list, list):
-        _LOGGER.debug("No CONF_AREAS list found, nothing to migrate to subentries")
-        return
-
-    area_reg = ar.async_get(hass)
-
-    failed_areas: set[str] = set()
-
-    for area_config in areas_list:
-        area_id = area_config.get(CONF_AREA_ID)
-        if not area_id:
-            _LOGGER.warning("Skipping area without area_id during migration")
-            continue
-
-        # Check if subentry already exists (idempotent re-run)
-        existing_subentries = (
-            config_entry.subentries.values()
-            if hasattr(config_entry, "subentries") and config_entry.subentries
-            else []
-        )
-        already_exists = any(
-            sub.subentry_type == "area" and sub.unique_id == area_id
-            for sub in existing_subentries
-        )
-        if already_exists:
-            _LOGGER.debug("Subentry for area %s already exists, skipping", area_id)
-            continue
-
-        # Resolve area name for subentry title
-        area_entry = area_reg.async_get_area(area_id)
-        title = area_entry.name if area_entry else area_id
-
-        # Create subentry
-        subentry = ConfigSubentry(
-            data=MappingProxyType(dict(area_config)),
-            subentry_type="area",
-            title=title,
-            unique_id=area_id,
-        )
-        try:
-            hass.config_entries.async_add_subentry(config_entry, subentry)
-        except (ValueError, KeyError):
-            _LOGGER.exception(
-                "Failed to create subentry for area %s during migration",
-                area_id,
-            )
-            failed_areas.add(area_id)
-            continue
-
-        _LOGGER.debug(
-            "Created subentry %s for area %s (%s)",
-            subentry.subentry_id,
-            area_id,
-            title,
-        )
-
-    if failed_areas:
-        _LOGGER.error(
-            "Migration incomplete: %d area(s) failed (%s). "
-            "CONF_AREAS retained for retry on next startup",
-            len(failed_areas),
-            ", ".join(sorted(failed_areas)),
-        )
-        return
-
-    # All areas migrated successfully — remove CONF_AREAS and bump version
-    new_data = {k: v for k, v in config_entry.data.items() if k != CONF_AREAS}
-    new_options = {k: v for k, v in config_entry.options.items() if k != CONF_AREAS}
-    hass.config_entries.async_update_entry(
-        config_entry,
-        data=new_data,
-        options=new_options,
-        version=CONF_VERSION,
-    )
-
-    _LOGGER.info(
-        "Migrated %d area(s) from CONF_AREAS to subentries for entry %s",
-        len(areas_list),
-        config_entry.entry_id,
-    )
-
-
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:  # noqa: C901
     """Migrate old entry to the new version.
 
@@ -599,32 +503,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 data=entry_data,
                 version=16,
             )
-
-        # Handle v17 migration: CONF_AREAS list -> ConfigSubentry objects
-        if config_entry.version >= 15 and config_entry.version < 17:
-            _LOGGER.info(
-                "Migrating entry %s from v%d to v17: "
-                "converting CONF_AREAS to subentries",
-                config_entry.entry_id,
-                config_entry.version,
-            )
-            _migrate_areas_to_subentries(hass, config_entry)
-            # Clean up old devices/entities so setup recreates them
-            # with correct subentry associations
-            (
-                devices_removed,
-                entities_removed,
-            ) = await _cleanup_registry_devices_and_entities(
-                hass, [config_entry.entry_id]
-            )
-            if devices_removed > 0 or entities_removed > 0:
-                _LOGGER.info(
-                    "Subentry migration cleanup: removed %d device(s) and %d "
-                    "entity(ies) for entry %s. They will be recreated during setup.",
-                    devices_removed,
-                    entities_removed,
-                    config_entry.entry_id,
-                )
 
         # If entry is already at current version or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
@@ -750,17 +628,13 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                     _LOGGER.error("No valid areas found after migration. Aborting.")
                     return False
 
-                # Update TARGET entry with consolidated areas at v16
-                # so the v17 migration converts CONF_AREAS to subentries
+                # Update TARGET entry with consolidated areas
                 new_data = {CONF_AREAS: valid_areas}
                 hass.config_entries.async_update_entry(
                     target_entry,
                     data=new_data,
-                    version=16,
+                    version=CONF_VERSION,
                 )
-
-                # Run v17 migration to convert CONF_AREAS to subentries
-                _migrate_areas_to_subentries(hass, target_entry)
 
                 _LOGGER.info(
                     "Successfully updated target entry %s with %d areas",
