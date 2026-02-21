@@ -731,14 +731,23 @@ class AreaConfig:
             msg = f"Area ID '{area_id}' not found in CONF_AREAS"
             raise HomeAssistantError(msg)
 
-        # Persist updated CONF_AREAS to config entry data
+        # Persist updated CONF_AREAS — write to options if it exists there
+        # (options takes precedence in the merge), otherwise write to data
         try:
-            new_data = dict(self.config_entry.data)
-            new_data[CONF_AREAS] = areas_list
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data=new_data,
-            )
+            if CONF_AREAS in self.config_entry.options:
+                new_options = dict(self.config_entry.options)
+                new_options[CONF_AREAS] = areas_list
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=new_options,
+                )
+            else:
+                new_data = dict(self.config_entry.data)
+                new_data[CONF_AREAS] = areas_list
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data=new_data,
+                )
         except (ValueError, KeyError, AttributeError) as err:
             _LOGGER.exception("Failed to update config entry for area %s", area_id)
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err

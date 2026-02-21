@@ -2642,24 +2642,20 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     async def _on_area_config_complete(
         self, config: dict[str, Any]
     ) -> ConfigFlowResult:
-        """Handle wizard completion: update CONF_AREAS list in config entry."""
+        """Handle wizard completion: update CONF_AREAS list in config entry.
+
+        Stores the updated area list in entry.options via async_create_entry.
+        The _async_entry_updated listener detects the structural change and
+        triggers a full reload to create/destroy entity platform entries.
+        """
         areas = self._get_areas_from_config()
         areas = _update_area_in_list(areas, config, self._area_being_edited)
-
-        # Persist to config entry data
-        new_data = dict(self.config_entry.data)
-        new_data[CONF_AREAS] = areas
-        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
 
         self._area_being_edited = None
         self._area_config_draft = {}
 
-        # Reload the integration to pick up the new area
-        result = self.async_create_entry(title="", data=dict(self.config_entry.options))
-        self.hass.async_create_task(
-            self.hass.config_entries.async_reload(self.config_entry.entry_id)
-        )
-        return result
+        # Store updated areas in options; the update listener handles the reload
+        return self.async_create_entry(title="", data={CONF_AREAS: areas})
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -2772,21 +2768,13 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                         errors={"base": "Cannot remove the last area"},
                     )
 
-                # Persist updated areas to config entry data
-                new_data = dict(self.config_entry.data)
-                new_data[CONF_AREAS] = updated_areas
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data
-                )
                 self._area_to_remove = None
 
-                result = self.async_create_entry(
-                    title="", data=dict(self.config_entry.options)
+                # Store updated areas in options; the update listener
+                # detects the structural change and triggers a reload
+                return self.async_create_entry(
+                    title="", data={CONF_AREAS: updated_areas}
                 )
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
-                )
-                return result
 
             self._area_to_remove = None
             return await self.async_step_init()

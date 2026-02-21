@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_VERSION, DOMAIN, PLATFORMS
+from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
@@ -218,14 +218,37 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle config entry update."""
-    _LOGGER.debug("Config entry updated, updating coordinator")
+    """Handle config entry update.
 
-    # Get coordinator from global storage or entry runtime_data
+    Detects whether the area structure changed (add/remove) or just settings
+    changed (threshold, weights).  Structural changes require a full reload
+    to create/destroy entity platform entries; setting changes are handled
+    with a lightweight in-place update.
+    """
     coordinator = hass.data.get(DOMAIN) or entry.runtime_data
     if coordinator is None:
         _LOGGER.warning("Coordinator not found when updating entry %s", entry.entry_id)
         return
 
-    await coordinator.async_update_options(entry.options)
-    await coordinator.async_refresh()
+    # Determine configured area IDs from merged data+options
+    merged = dict(entry.data)
+    merged.update(entry.options)
+    config_area_ids = {a.get(CONF_AREA_ID) for a in merged.get(CONF_AREAS, [])}
+
+    # Determine currently loaded area IDs
+    current_area_ids = {area.config.area_id for area in coordinator.areas.values()}
+
+    if config_area_ids != current_area_ids:
+        # Area structure changed — full reload needed for entity platform setup
+        _LOGGER.info(
+            "Area structure changed (configured=%s, loaded=%s), reloading integration",
+            config_area_ids,
+            current_area_ids,
+        )
+        await hass.config_entries.async_reload(entry.entry_id)
+    else:
+        # Settings-only change (threshold, weights, etc.) — lightweight update
+        _LOGGER.debug("Config entry settings updated, refreshing area configs")
+        for area in coordinator.areas.values():
+            area.config.update_from_entry()
+        await coordinator.async_request_refresh()
