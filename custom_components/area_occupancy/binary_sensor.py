@@ -969,7 +969,7 @@ async def async_setup_entry(
     """Set up the Area Occupancy Detection binary sensors."""
     coordinator: AreaOccupancyCoordinator = config_entry.runtime_data
 
-    # Create per-area entities
+    # Create per-area entities.
     for area_name in coordinator.get_area_names():
         handle = coordinator.get_area_handle(area_name)
         area = coordinator.get_area(area_name)
@@ -978,7 +978,7 @@ async def async_setup_entry(
         _LOGGER.debug("Creating occupancy sensor for area: %s", area_name)
         area_entities.append(Occupancy(area_handle=handle))
 
-        # Create Wasp in Box sensor if enabled for this area
+        # Create Wasp in Box sensor if enabled for this area.
         if area and area.config.wasp_in_box.enabled:
             _LOGGER.debug(
                 "Wasp in Box sensor enabled for area %s, creating sensor", area_name
@@ -987,7 +987,7 @@ async def async_setup_entry(
                 WaspInBoxSensor(area_handle=handle, config_entry=config_entry)
             )
 
-        # Create Sleep Presence sensor if any people assigned to this area
+        # Create Sleep Presence sensor if any people assigned to this area.
         if area and area.config.area_id:
             people_for_area = coordinator.integration_config.get_people_for_area(
                 area.config.area_id
@@ -1011,7 +1011,7 @@ async def async_setup_entry(
             update_before_add=False,
         )
 
-    # Create "All Areas" aggregation occupancy sensor
+    # Create "All Areas" aggregation occupancy sensor.
     if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
         async_add_entities(

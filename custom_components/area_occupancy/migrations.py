@@ -492,9 +492,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         # Moved inside lock to serialize DB deletion across concurrent setup attempts
         await async_reset_database_if_needed(hass, config_entry.version)
 
-        # Handle v15 migration: energy_sensors -> power_sensors
-        # This runs for entries that are v13+ but < v15
-        # Always bump version to 15 to prevent re-consolidation, even if no fields were removed
+        # Handle v15 migration: energy_sensors -> power_sensors.
+        # This runs for entries that are v13+ but < v15.
+        # Always bump version to 16 to prevent re-consolidation, even if no fields were removed.
         if config_entry.version < 15 and config_entry.version >= 13:
             entry_data = dict(config_entry.data)
             _migrate_energy_to_power(entry_data)  # Clean up any misconfigured fields

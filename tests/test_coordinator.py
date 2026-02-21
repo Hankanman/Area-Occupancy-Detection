@@ -1627,7 +1627,7 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Remove all areas from CONF_AREAS to simulate area removal
+        # Remove all areas from CONF_AREAS to simulate area removal.
         original_data = coordinator.config_entry.data
         coordinator.config_entry.data = {CONF_AREAS: []}
 
@@ -1665,7 +1665,7 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Remove all areas from CONF_AREAS to simulate area removal
+        # Remove all areas from CONF_AREAS to simulate area removal.
         original_data = coordinator.config_entry.data
         coordinator.config_entry.data = {CONF_AREAS: []}
 

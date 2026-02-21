@@ -511,7 +511,7 @@ async def async_setup_entry(
     """Set up the Area Occupancy sensors based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
-    # Create per-area sensors
+    # Create per-area sensors.
     for area_name in coordinator.get_area_names():
         area_handle = coordinator.get_area_handle(area_name)
         _LOGGER.debug("Creating sensors for area: %s", area_name)
@@ -532,7 +532,7 @@ async def async_setup_entry(
             update_before_add=False,
         )
 
-    # Create "All Areas" aggregation sensors
+    # Create "All Areas" aggregation sensors.
     if len(coordinator.get_area_names()) >= 1:
         _LOGGER.debug("Creating All Areas aggregation sensors")
         all_areas = coordinator.get_all_areas()

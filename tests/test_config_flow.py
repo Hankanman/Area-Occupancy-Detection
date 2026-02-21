@@ -1309,7 +1309,7 @@ class TestConfigFlowIntegration:
         area_being_edited,
         area_to_remove,
         expected_placeholders,
-    ):
+    ) -> None:
         """Test that flows show forms correctly when no user input."""
         if flow_type == "config":
             flow = config_flow_flow
@@ -1412,7 +1412,7 @@ class TestAreaOccupancyOptionsFlow:
 
     async def test_options_flow_init_menu(
         self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
-    ):
+    ) -> None:
         """Test options flow init returns menu."""
         flow = config_flow_options_flow
         flow.config_entry = config_flow_mock_config_entry_with_areas

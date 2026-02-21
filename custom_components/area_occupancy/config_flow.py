@@ -1543,8 +1543,8 @@ def _count_area_sensors(area: dict[str, Any]) -> int:
     sensor_keys = [
         CONF_AIR_QUALITY_SENSORS,
         CONF_APPLIANCES,
-        CONF_CO2_SENSORS,
         CONF_CO_SENSORS,
+        CONF_CO2_SENSORS,
         CONF_COVER_SENSORS,
         CONF_DOOR_SENSORS,
         CONF_HUMIDITY_SENSORS,

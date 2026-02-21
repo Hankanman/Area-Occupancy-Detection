@@ -328,7 +328,7 @@ class TestAreaConfigInitialization:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        # Set up config_entry with different values to verify area_data takes precedence
+        # Set up config_entry with different values to verify area_data takes precedence.
         _setup_area_config(
             coordinator,
             area_id,
@@ -723,13 +723,13 @@ class TestAreaConfigUpdate:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        # Set up area config in CONF_AREAS
+        # Set up area config in CONF_AREAS.
         _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
 
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.area_id == area_id
 
-        # Mock async_update_entry and internal reload to verify behavior
+        # Mock async_update_entry and internal reload to verify behavior.
         with (
             patch.object(
                 coordinator.hass.config_entries, "async_update_entry"
@@ -739,17 +739,17 @@ class TestAreaConfigUpdate:
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
-            # Verify async_update_entry was called
+            # Verify async_update_entry was called.
             mock_update_entry.assert_called_once()
             call_args = mock_update_entry.call_args
             assert call_args is not None
-            # The data kwarg should contain CONF_AREAS with updated threshold
+            # The data kwarg should contain CONF_AREAS with updated threshold.
             updated_data = call_args[1]["data"]
             areas_list = updated_data[CONF_AREAS]
             area_data = next(a for a in areas_list if a[CONF_AREA_ID] == area_id)
             assert area_data[CONF_THRESHOLD] == 70
 
-            # Verify config was reloaded after update
+            # Verify config was reloaded after update.
             mock_load_config.assert_called_once()
 
     async def test_update_config_with_exception_raises_homeassistant_error(
@@ -797,7 +797,7 @@ class TestAreaConfigUpdate:
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Set up CONF_AREAS with a different area_id so it won't match
+        # Set up CONF_AREAS with a different area_id so it won't match.
         coordinator.config_entry.data = {
             CONF_AREAS: [{CONF_AREA_ID: "different_area_id", CONF_THRESHOLD: 50}]
         }
@@ -814,7 +814,7 @@ class TestAreaConfigUpdate:
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Empty CONF_AREAS
+        # Empty CONF_AREAS.
         coordinator.config_entry.data = {CONF_AREAS: []}
 
         with pytest.raises(
@@ -834,7 +834,7 @@ class TestAreaConfigUpdate:
 
         testing_area_id = setup_area_registry.get("Testing", "testing")
 
-        # Create a mock config entry with CONF_AREAS
+        # Create a mock config entry with CONF_AREAS.
         new_config_entry = Mock()
         new_config_entry.data = {
             CONF_AREAS: [
@@ -869,7 +869,7 @@ class TestAreaConfigUpdate:
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Create a mock config entry with CONF_AREAS for a different area
+        # Create a mock config entry with CONF_AREAS for a different area.
         new_config_entry = Mock()
         new_config_entry.data = {
             CONF_AREAS: [
