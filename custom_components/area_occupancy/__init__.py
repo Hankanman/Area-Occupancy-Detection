@@ -247,8 +247,8 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
         await hass.config_entries.async_reload(entry.entry_id)
     else:
-        # Settings-only change (threshold, weights, etc.) — lightweight update
+        # Settings-only change (threshold, weights, etc.) — lightweight update.
         _LOGGER.debug("Config entry settings updated, refreshing area configs")
         for area in coordinator.areas.values():
-            area.config.update_from_entry()
+            area.config.update_from_entry(entry)
         await coordinator.async_request_refresh()

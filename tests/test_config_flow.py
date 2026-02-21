@@ -1292,8 +1292,8 @@ class TestConfigFlowIntegration:
                 "Living Room",
                 {"area_name": "Living Room"},
             ),
-            # Note: options flow no longer has area_action/remove_area steps
-            # (area management is in options flow)
+            # Note: options flow no longer has area_action/remove_area steps.
+            # Area management is in the options flow.
         ],
     )
     async def test_flow_show_form(

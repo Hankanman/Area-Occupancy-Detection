@@ -151,7 +151,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         area_reg = ar.async_get(self.hass)
 
-        # Merge data and options to find CONF_AREAS
+        # Merge data and options to find CONF_AREAS.
         merged = dict(self.config_entry.data)
         merged.update(self.config_entry.options)
         areas_list = merged.get(CONF_AREAS, [])
@@ -163,7 +163,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning("Skipping area config without area ID")
                 continue
 
-            # Validate that area ID exists in Home Assistant
+            # Validate that area ID exists in Home Assistant.
             area_entry = area_reg.async_get_area(area_id)
             if not area_entry:
                 _LOGGER.warning(
@@ -173,15 +173,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 continue
 
-            # Resolve area name from ID
+            # Resolve area name from ID.
             area_name = area_entry.name
 
-            # Check for duplicate area names
+            # Check for duplicate area names.
             if area_name in areas_dict:
                 _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                 continue
 
-            # Create Area for this area
+            # Create Area for this area.
             areas_dict[area_name] = Area(
                 coordinator=self,
                 area_name=area_name,

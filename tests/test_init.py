@@ -530,9 +530,9 @@ class TestEntryUpdated:
 
         # Should NOT reload
         mock_reload.assert_not_called()
-        # Should call update_from_entry on each area config
+        # Should call update_from_entry with the config entry on each area config.
         for area in mock_coordinator.areas.values():
-            area.config.update_from_entry.assert_called_once()
+            area.config.update_from_entry.assert_called_once_with(mock_config_entry)
         mock_coordinator.async_request_refresh.assert_called_once()
 
     async def test_area_added_triggers_reload(
