@@ -396,31 +396,25 @@ class AreaConfig:
         else:
             if coordinator.config_entry is None:
                 raise ValueError("Coordinator config_entry cannot be None")
-            merged = self._merge_entry(coordinator.config_entry)
 
-            # Check if we have CONF_AREAS format (multi-area)
+            merged = self._merge_entry(coordinator.config_entry)
             if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-                # Validate area_name is provided for multi-area config
                 if area_name is None:
                     raise ValueError(
                         "area_name is required when using multi-area configuration format"
                     )
-                # Extract area data for this specific area
                 area_data = self._extract_area_data_from_areas_list(
                     merged[CONF_AREAS], area_name, coordinator.hass
                 )
                 if area_data:
                     self._load_config(area_data)
                 else:
-                    # Area not found in config - log warning and load empty/default config
-                    # to avoid silently ingesting top-level CONF_AREAS structure
                     _LOGGER.warning(
                         "Area '%s' not found in configuration. Loading default config.",
                         area_name,
                     )
                     self._load_config({})
             else:
-                # No areas found in config
                 self._load_config({})
 
     def _load_config(self, data: dict[str, Any]) -> None:
@@ -670,40 +664,30 @@ class AreaConfig:
         return None
 
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
-        """Update the config from a new config entry."""
+        """Update the config from a new config entry.
+
+        Finds the area in CONF_AREAS list and reloads config from its data.
+        """
         # Update the config entry reference
         self.config_entry = config_entry
 
-        # Reload configuration from the merged entry data
+        # Find area data from CONF_AREAS list
         merged = self._merge_entry(config_entry)
+        areas_list = merged.get(CONF_AREAS, [])
+        area_data = self._extract_area_data_from_areas_list(
+            areas_list, self.area_name, self.hass
+        )
+        if area_data:
+            self._load_config(area_data)
+            return
 
-        # Check if we have CONF_AREAS format (multi-area)
-        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-            # Validate area_name is provided for multi-area config
-            if self.area_name is None:
-                raise ValueError(
-                    "area_name is required when using multi-area configuration format"
-                )
-            # Extract area data for this specific area
-            area_data = self._extract_area_data_from_areas_list(
-                merged[CONF_AREAS], self.area_name, self.hass
-            )
-            if area_data:
-                self._load_config(area_data)
-            else:
-                # Area not found in config - log warning and load empty/default config
-                # to avoid silently ingesting top-level CONF_AREAS structure
-                _LOGGER.warning(
-                    "Area '%s' not found in configuration. Loading default config.",
-                    self.area_name,
-                )
-                self._load_config({})
-        else:
-            # No CONF_AREAS format found - load empty/default config
-            _LOGGER.warning(
-                "Configuration must contain CONF_AREAS list. Loading default config."
-            )
-            self._load_config({})
+        # Fallback: area not found
+        _LOGGER.warning(
+            "Area '%s' (ID: %s) not found in CONF_AREAS. Loading default config.",
+            self.area_name,
+            self.area_id,
+        )
+        self._load_config({})
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value by key."""
@@ -712,127 +696,65 @@ class AreaConfig:
     async def update_config(self, options: dict[str, Any]) -> None:
         """Update configuration and persist to Home Assistant config entry.
 
+        Finds the area in CONF_AREAS list and updates its data with the new options.
+
         Args:
             options: Dictionary of configuration options to update
 
         Raises:
-            ValueError: If any option values are invalid
             HomeAssistantError: If updating the config entry fails
-
         """
+        if self.config_entry is None:
+            msg = "Config entry is None"
+            raise HomeAssistantError(msg)
 
-        def _validate_config_entry() -> None:
-            if self.config_entry is None:
-                raise ValueError("Config entry is None")
+        area_id = self.area_id
+        if not area_id:
+            msg = "Area ID not available for config update"
+            raise HomeAssistantError(msg)
 
-        def _validate_area_name_for_multi_area(data: dict[str, Any]) -> None:
-            """Validate area_name is provided when using multi-area configuration format."""
-            if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
-                if self.area_name is None:
-                    raise ValueError(
-                        "area_name is required when using multi-area configuration format"
-                    )
+        # Get current CONF_AREAS from merged data+options
+        merged = self._merge_entry(self.config_entry)
+        areas_list = list(merged.get(CONF_AREAS, []))
 
-        def _validate_area_found_in_list(area_id: str, area_updated: bool) -> None:
-            """Validate that area was found in CONF_AREAS list."""
-            if not area_updated:
-                _LOGGER.warning(
-                    "Area with ID '%s' not found in CONF_AREAS list when updating config",
-                    area_id,
-                )
-                raise ValueError(
-                    f"Area with ID '{area_id}' not found in CONF_AREAS list"
-                )
+        # Find and update the area in the list
+        updated = False
+        for i, area_data in enumerate(areas_list):
+            if area_data.get(CONF_AREA_ID) == area_id:
+                updated_data = dict(area_data)
+                updated_data.update(options)
+                areas_list[i] = updated_data
+                updated = True
+                break
 
-        def _validate_area_id_available(area_id: str | None) -> None:
-            """Validate that area_id is available for config update."""
-            if not area_id:
-                _LOGGER.warning(
-                    "Area ID not available, cannot update area in CONF_AREAS list"
-                )
-                raise ValueError("Area ID not available for config update")
+        if not updated:
+            msg = f"Area ID '{area_id}' not found in CONF_AREAS"
+            raise HomeAssistantError(msg)
 
-        def _validate_multi_area_format(
-            new_options: dict[str, Any],
-        ) -> None:
-            """Validate that configuration is in multi-area format."""
-            if CONF_AREAS not in new_options or not isinstance(
-                new_options.get(CONF_AREAS), list
-            ):
-                raise ValueError(
-                    "Configuration must be in multi-area format (CONF_AREAS list)"
-                )
-
+        # Persist updated CONF_AREAS — write to options if it exists there
+        # (options takes precedence in the merge), otherwise write to data
         try:
-            _validate_config_entry()
-            # Create new options dict by merging existing with new options
-            new_options = dict(self.config_entry.options)  # type: ignore[union-attr]
-
-            # Check if we're in multi-area format and need to update area within CONF_AREAS list
-            _validate_multi_area_format(new_options)
-
-            # Multi-area format: update the specific area within CONF_AREAS list
-            areas_list = new_options[CONF_AREAS].copy()
-            area_updated = False
-
-            # Find the area to update by matching area_id
-            area_id = self.area_id
-            _validate_area_id_available(area_id)
-
-            for i, area_data in enumerate(areas_list):
-                if area_data.get(CONF_AREA_ID) == area_id:
-                    # Merge new options into existing area config
-                    updated_area = dict(area_data)
-                    updated_area.update(options)
-                    areas_list[i] = updated_area
-                    area_updated = True
-                    break
-
-            _validate_area_found_in_list(area_id, area_updated)
-            # Update CONF_AREAS list with modified area
-            new_options[CONF_AREAS] = areas_list
-
-            # Update the config entry in Home Assistant
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,  # type: ignore[arg-type]
-                options=new_options,  # type: ignore[arg-type]
-            )
-
-            # Merge existing config entry with new options for internal state
-            data = self._merge_entry(self.config_entry)  # type: ignore[arg-type]
-            # For multi-area format, data already has updated area from new_options
-
-            # Validate area_name for multi-area config before processing
-            _validate_area_name_for_multi_area(data)
-
-            # Check if we have CONF_AREAS format (multi-area)
-            if CONF_AREAS in data and isinstance(data[CONF_AREAS], list):
-                # Extract area data for this specific area
-                area_data = self._extract_area_data_from_areas_list(
-                    data[CONF_AREAS], self.area_name, self.hass
+            if CONF_AREAS in self.config_entry.options:
+                new_options = dict(self.config_entry.options)
+                new_options[CONF_AREAS] = areas_list
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=new_options,
                 )
-                if area_data:
-                    # Reload configuration with extracted area data
-                    self._load_config(area_data)
-                else:
-                    # Area not found in config - log warning and load empty/default config
-                    # to avoid silently ingesting top-level CONF_AREAS structure
-                    _LOGGER.warning(
-                        "Area '%s' not found in configuration. Loading default config.",
-                        self.area_name,
-                    )
-                    self._load_config({})
             else:
-                # No CONF_AREAS format found - log warning and load empty/default config
-                _LOGGER.warning(
-                    "Configuration must contain CONF_AREAS list. Loading default config."
+                new_data = dict(self.config_entry.data)
+                new_data[CONF_AREAS] = areas_list
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data=new_data,
                 )
-                self._load_config({})
-
-            # Request update since threshold affects occupied calculation
-            # Only request refresh if setup is complete to avoid debouncer conflicts
-            if self.coordinator.setup_complete:
-                await self.coordinator.async_request_refresh()
-
-        except Exception as err:
+        except (ValueError, KeyError, AttributeError) as err:
+            _LOGGER.exception("Failed to update config entry for area %s", area_id)
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err
+
+        # Reload internal config from updated data
+        self._load_config(areas_list[i])
+
+        # Request update since threshold affects occupied calculation
+        if self.coordinator.setup_complete:
+            await self.coordinator.async_request_refresh()

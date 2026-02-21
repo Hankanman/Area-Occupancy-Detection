@@ -186,7 +186,7 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
             init_db(db)
             _set_db_version(db)
             _LOGGER.info(
-                "Database recreated with CONF_VERSION %d schema. All previous data has been cleared.",
+                "Database recreated with schema version %d. All previous data has been cleared.",
                 CONF_VERSION,
             )
 

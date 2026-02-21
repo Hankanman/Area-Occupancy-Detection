@@ -139,58 +139,49 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
     ) -> None:
-        """Load areas from config entry.
+        """Load areas from config entry CONF_AREAS list.
 
-        Loads areas from CONF_AREAS list format.
+        Reads area configurations from the merged data+options CONF_AREAS list.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.
         """
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-
         # Use target_dict if provided, otherwise use self.areas
         areas_dict = target_dict if target_dict is not None else self.areas
 
         area_reg = ar.async_get(self.hass)
-        areas_to_remove: list[str] = []  # Track areas to remove (deleted or invalid)
 
-        # Load areas from CONF_AREAS list
-        if CONF_AREAS not in merged or not isinstance(merged[CONF_AREAS], list):
-            _LOGGER.error(
-                "Configuration must contain CONF_AREAS list. "
-                "Please reconfigure the integration."
-            )
-            return
+        # Merge data and options to find CONF_AREAS.
+        merged = dict(self.config_entry.data)
+        merged.update(self.config_entry.options)
+        areas_list = merged.get(CONF_AREAS, [])
 
-        areas_list = merged[CONF_AREAS]
         for area_data in areas_list:
             area_id = area_data.get(CONF_AREA_ID)
 
             if not area_id:
-                _LOGGER.warning("Skipping area without area ID: %s", area_data)
+                _LOGGER.warning("Skipping area config without area ID")
                 continue
 
-            # Validate that area ID exists in Home Assistant
+            # Validate that area ID exists in Home Assistant.
             area_entry = area_reg.async_get_area(area_id)
             if not area_entry:
                 _LOGGER.warning(
                     "Area ID '%s' not found in Home Assistant registry. "
-                    "Area may have been deleted. Removing from configuration.",
+                    "Area may have been deleted. Skipping.",
                     area_id,
                 )
-                areas_to_remove.append(area_id)
                 continue
 
-            # Resolve area name from ID
+            # Resolve area name from ID.
             area_name = area_entry.name
 
-            # Check for duplicate area IDs
+            # Check for duplicate area names.
             if area_name in areas_dict:
                 _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                 continue
 
-            # Create Area for this area
+            # Create Area for this area.
             areas_dict[area_name] = Area(
                 coordinator=self,
                 area_name=area_name,
@@ -198,14 +189,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
-
-        # Log warnings for deleted/invalid areas
-        if areas_to_remove:
-            _LOGGER.warning(
-                "Found %d deleted or invalid area(s) in configuration. "
-                "These areas will be skipped. Please reconfigure via options flow if needed.",
-                len(areas_to_remove),
-            )
 
     def get_area_handle(self, area_name: str) -> AreaDeviceHandle:
         """Return a stable handle for the requested area."""

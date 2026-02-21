@@ -77,10 +77,13 @@ class TestAsyncSetupEntry:
         # Act: Set up entry
         await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
-        # Assert: Verify entities were created for each area
-        mock_async_add_entities.assert_called_once()
-        entities = mock_async_add_entities.call_args[0][0]
-        assert len(entities) == len(coordinator.get_area_names())
+        # Assert: Verify entities were created for each area (one call per area)
+        area_count = len(coordinator.get_area_names())
+        assert mock_async_add_entities.call_count == area_count
+        entities = []
+        for call_args in mock_async_add_entities.call_args_list:
+            entities.extend(call_args[0][0])
+        assert len(entities) == area_count
 
         # Verify all entities are Threshold instances
         for entity in entities:

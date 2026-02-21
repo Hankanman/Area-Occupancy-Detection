@@ -1298,72 +1298,29 @@ def mock_realistic_config_entry(
     entry.runtime_data = None
     entry.pref_disable_new_entities = False
     entry.pref_disable_polling = False
-    entry.subentries = []
     entry.disabled_by = None
     entry.discovery_keys = {}
     entry.created_at = "2025-04-01T10:14:38.590998+00:00"
     entry.modified_at = "2025-06-19T07:10:40.167187+00:00"
-    # Use new multi-area format with CONF_AREAS
     # Get actual area ID from registry
     testing_area_id = setup_area_registry.get("Testing", "test_area_1")
-    entry.data = {
-        CONF_AREAS: [
-            {
-                CONF_AREA_ID: testing_area_id,  # Use actual area ID from registry
-                "appliance_active_states": ["on", "standby"],
-                "appliances": [
-                    "binary_sensor.computer_power_sensor",
-                    "binary_sensor.game_console_power_sensor",
-                    "binary_sensor.tv_power_sensor",
-                ],
-                "decay_enabled": True,
-                "decay_half_life": 600.0,
-                "door_active_state": "open",
-                "door_sensors": ["binary_sensor.door_sensor"],
-                "humidity_sensors": [
-                    "sensor.humidity_sensor_1",
-                    "sensor.humidity_sensor_2",
-                ],
-                "illuminance_sensors": [
-                    "sensor.illuminance_sensor_1",
-                    "sensor.illuminance_sensor_2",
-                ],
-                "media_active_states": ["playing", "paused"],
-                "media_devices": ["media_player.mock_tv_player"],
-                "motion_sensors": [
-                    "binary_sensor.motion_sensor_1",
-                    "binary_sensor.motion_sensor_2",
-                    "binary_sensor.motion_sensor_3",
-                ],
-                "purpose": "social",
-                "temperature_sensors": [
-                    "sensor.temperature_sensor_1",
-                    "sensor.temperature_sensor_2",
-                ],
-                "threshold": 50.0,
-                "weight_appliance": 0.3,
-                "weight_door": 0.3,
-                "weight_environmental": 0.1,
-                "weight_media": 0.7,
-                "weight_motion": 0.85,
-                "weight_wasp": 0.8,
-                "weight_window": 0.2,
-                "window_active_state": "open",
-                "window_sensors": ["binary_sensor.window_sensor"],
-            }
-        ]
-    }
-    entry.options = {
+    # Area config stored in CONF_AREAS list
+    area_data = {
+        CONF_AREA_ID: testing_area_id,
         "appliance_active_states": ["on", "standby"],
         "appliances": [
             "binary_sensor.computer_power_sensor",
             "binary_sensor.game_console_power_sensor",
+            "binary_sensor.tv_power_sensor",
         ],
         "decay_enabled": True,
-        "decay_half_life": 300.0,
-        "door_active_state": "closed",
+        "decay_half_life": 600.0,
+        "door_active_state": "open",
         "door_sensors": ["binary_sensor.door_sensor"],
-        "humidity_sensors": ["sensor.humidity_sensor_1", "sensor.humidity_sensor_2"],
+        "humidity_sensors": [
+            "sensor.humidity_sensor_1",
+            "sensor.humidity_sensor_2",
+        ],
         "illuminance_sensors": [
             "sensor.illuminance_sensor_1",
             "sensor.illuminance_sensor_2",
@@ -1380,10 +1337,7 @@ def mock_realistic_config_entry(
             "sensor.temperature_sensor_1",
             "sensor.temperature_sensor_2",
         ],
-        "threshold": 52.0,
-        "wasp_enabled": True,
-        "wasp_motion_timeout": 60.0,
-        "wasp_weight": 0.8,
+        "threshold": 50.0,
         "weight_appliance": 0.3,
         "weight_door": 0.3,
         "weight_environmental": 0.1,
@@ -1394,6 +1348,8 @@ def mock_realistic_config_entry(
         "window_active_state": "open",
         "window_sensors": ["binary_sensor.window_sensor"],
     }
+    entry.data = {CONF_AREAS: [area_data]}
+    entry.options = {}
     entry.add_update_listener = Mock()
     entry.async_on_unload = Mock()
     entry.async_setup = AsyncMock()
@@ -1827,16 +1783,13 @@ def config_flow_mock_config_entry_with_areas(
     entry.setup_lock = Lock()
     # Use actual area ID from registry
     living_room_area_id = setup_area_registry.get("Living Room", "living_room")
-    entry.data = {
-        CONF_AREAS: [
-            {
-                CONF_AREA_ID: living_room_area_id,
-                CONF_PURPOSE: "social",
-                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                CONF_THRESHOLD: 60.0,
-            }
-        ]
+    area_data = {
+        CONF_AREA_ID: living_room_area_id,
+        CONF_PURPOSE: "social",
+        CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+        CONF_THRESHOLD: 60.0,
     }
+    entry.data = {CONF_AREAS: [area_data]}
     entry.options = {}
     return entry
 

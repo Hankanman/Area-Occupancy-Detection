@@ -1627,16 +1627,9 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Update config_entry.data to remove the area
-        original_data = coordinator.config_entry.data.copy()
-        coordinator.config_entry.data = {
-            "areas": {
-                "New Area": {
-                    "motion": ["binary_sensor.new_motion"],
-                    "threshold": 50,
-                }
-            }
-        }
+        # Remove all areas from CONF_AREAS to simulate area removal.
+        original_data = coordinator.config_entry.data
+        coordinator.config_entry.data = {CONF_AREAS: []}
 
         try:
             with (
@@ -1654,7 +1647,7 @@ class TestCoordinatorAreaRemoval:
                     return_value=entity_registry,
                 ):
                     await coordinator.async_update_options(
-                        coordinator.config_entry.data
+                        coordinator.config_entry.options
                     )
 
                 # Verify cleanup was called
@@ -1672,16 +1665,9 @@ class TestCoordinatorAreaRemoval:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        # Update config_entry.data to remove the area
-        original_data = coordinator.config_entry.data.copy()
-        coordinator.config_entry.data = {
-            "areas": {
-                "New Area": {
-                    "motion": ["binary_sensor.new_motion"],
-                    "threshold": 50,
-                }
-            }
-        }
+        # Remove all areas from CONF_AREAS to simulate area removal.
+        original_data = coordinator.config_entry.data
+        coordinator.config_entry.data = {CONF_AREAS: []}
 
         try:
             with (
@@ -1704,7 +1690,7 @@ class TestCoordinatorAreaRemoval:
                 ):
                     # Should handle error gracefully
                     await coordinator.async_update_options(
-                        coordinator.config_entry.data
+                        coordinator.config_entry.options
                     )
         finally:
             # Restore original data

@@ -13,6 +13,8 @@ from custom_components.area_occupancy import (
     async_unload_entry,
 )
 from custom_components.area_occupancy.const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
     CONF_VERSION,
     DOMAIN as DOMAIN_CONST,
     PLATFORMS,
@@ -479,55 +481,105 @@ class TestEntryUpdated:
             del hass.data[DOMAIN_CONST]
 
     def _setup_coordinator_mock(
-        self, hass: HomeAssistant, mock_config_entry: Mock
+        self, hass: HomeAssistant, mock_config_entry: Mock, area_ids: list[str]
     ) -> Mock:
-        """Set up coordinator mock with common configuration."""
+        """Set up coordinator mock with areas matching the given area IDs."""
         mock_coordinator = Mock()
-        mock_coordinator.async_update_options = AsyncMock()
-        mock_coordinator.async_refresh = AsyncMock()
+        mock_coordinator.async_request_refresh = AsyncMock()
         mock_config_entry.runtime_data = mock_coordinator
-        object.__setattr__(mock_config_entry, "options", {})
+
+        # Build areas dict with mock Area objects
+        areas = {}
+        for aid in area_ids:
+            mock_area = Mock()
+            mock_area.config.area_id = aid
+            mock_area.config.update_from_entry = Mock()
+            areas[f"Area {aid}"] = mock_area
+        mock_coordinator.areas = areas
+
         return mock_coordinator
 
-    @pytest.mark.parametrize(
-        ("has_coordinator", "expect_methods_called"),
-        [
-            # Coordinator exists - methods should be called
-            (True, True),
-            # Coordinator doesn't exist - methods should NOT be called (early return)
-            (False, False),
-        ],
-    )
-    async def test_async_entry_updated(
-        self,
-        hass: HomeAssistant,
-        mock_config_entry: Mock,
-        has_coordinator: bool,
-        expect_methods_called: bool,
+    async def test_no_coordinator_returns_early(
+        self, hass: HomeAssistant, mock_config_entry: Mock
     ) -> None:
-        """Test entry update with and without coordinator."""
-        if has_coordinator:
-            mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
-            hass.data[DOMAIN_CONST] = mock_coordinator
-        else:
-            self._ensure_domain_not_in_hass_data(hass)
-            mock_config_entry.runtime_data = None
-            # Create a mock coordinator for assertion purposes (won't be called)
-            mock_coordinator = Mock()
-            mock_coordinator.async_update_options = AsyncMock()
-            mock_coordinator.async_refresh = AsyncMock()
+        """Test early return when coordinator doesn't exist."""
+        self._ensure_domain_not_in_hass_data(hass)
+        mock_config_entry.runtime_data = None
 
+        # Should return without error
         await _async_entry_updated(hass, mock_config_entry)
 
-        if expect_methods_called:
-            mock_coordinator.async_update_options.assert_called_once_with(
-                mock_config_entry.options
-            )
-            mock_coordinator.async_refresh.assert_called_once()
-        else:
-            # Verify that no coordinator methods were called (function returns early)
-            mock_coordinator.async_update_options.assert_not_called()
-            mock_coordinator.async_refresh.assert_not_called()
+    async def test_settings_change_lightweight_update(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """Test settings-only change triggers lightweight update, not reload."""
+        # Config entry has one area; coordinator also has one area (same IDs)
+        area_data = {CONF_AREA_ID: "test_area"}
+        object.__setattr__(mock_config_entry, "data", {CONF_AREAS: [area_data]})
+        object.__setattr__(mock_config_entry, "options", {})
+
+        mock_coordinator = self._setup_coordinator_mock(
+            hass, mock_config_entry, area_ids=["test_area"]
+        )
+        hass.data[DOMAIN_CONST] = mock_coordinator
+
+        with patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            await _async_entry_updated(hass, mock_config_entry)
+
+        # Should NOT reload
+        mock_reload.assert_not_called()
+        # Should call update_from_entry with the config entry on each area config.
+        for area in mock_coordinator.areas.values():
+            area.config.update_from_entry.assert_called_once_with(mock_config_entry)
+        mock_coordinator.async_request_refresh.assert_called_once()
+
+    async def test_area_added_triggers_reload(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """Test adding an area triggers a full reload."""
+        # Config entry has two areas; coordinator only has one (new area added)
+        area_data_1 = {CONF_AREA_ID: "area_1"}
+        area_data_2 = {CONF_AREA_ID: "area_2"}
+        object.__setattr__(
+            mock_config_entry, "data", {CONF_AREAS: [area_data_1, area_data_2]}
+        )
+        object.__setattr__(mock_config_entry, "options", {})
+
+        mock_coordinator = self._setup_coordinator_mock(
+            hass, mock_config_entry, area_ids=["area_1"]
+        )
+        hass.data[DOMAIN_CONST] = mock_coordinator
+
+        with patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            await _async_entry_updated(hass, mock_config_entry)
+
+        # Should reload because area structure changed
+        mock_reload.assert_called_once_with(mock_config_entry.entry_id)
+
+    async def test_area_removed_triggers_reload(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """Test removing an area triggers a full reload."""
+        # Config entry has one area; coordinator has two (area removed)
+        area_data = {CONF_AREA_ID: "area_1"}
+        object.__setattr__(mock_config_entry, "data", {CONF_AREAS: [area_data]})
+        object.__setattr__(mock_config_entry, "options", {})
+
+        mock_coordinator = self._setup_coordinator_mock(
+            hass, mock_config_entry, area_ids=["area_1", "area_2"]
+        )
+        hass.data[DOMAIN_CONST] = mock_coordinator
+
+        with patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            await _async_entry_updated(hass, mock_config_entry)
+
+        mock_reload.assert_called_once_with(mock_config_entry.entry_id)
 
 
 class TestAsyncRemoveEntry:
