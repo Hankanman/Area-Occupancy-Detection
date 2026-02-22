@@ -835,7 +835,7 @@ A newer feature for nested configuration under a parent config entry. Designed f
 
 ### Data Hierarchy
 
-```
+```text
 Config Entry (authentication, connection)
   -> Config Subentry (individual configuration, typed)
        -> Device Registry Entry

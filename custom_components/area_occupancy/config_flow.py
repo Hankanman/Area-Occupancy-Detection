@@ -1523,38 +1523,6 @@ def _build_area_description_placeholders(
     }
 
 
-def _count_area_sensors(area: dict[str, Any]) -> int:
-    """Count total configured input sensors for an area.
-
-    Args:
-        area: Area configuration dictionary
-
-    Returns:
-        Total number of configured input sensors
-    """
-    sensor_keys = [
-        CONF_AIR_QUALITY_SENSORS,
-        CONF_APPLIANCES,
-        CONF_CO_SENSORS,
-        CONF_CO2_SENSORS,
-        CONF_COVER_SENSORS,
-        CONF_DOOR_SENSORS,
-        CONF_HUMIDITY_SENSORS,
-        CONF_ILLUMINANCE_SENSORS,
-        CONF_MEDIA_DEVICES,
-        CONF_MOTION_SENSORS,
-        CONF_PM10_SENSORS,
-        CONF_PM25_SENSORS,
-        CONF_POWER_SENSORS,
-        CONF_PRESSURE_SENSORS,
-        CONF_SOUND_PRESSURE_SENSORS,
-        CONF_TEMPERATURE_SENSORS,
-        CONF_VOC_SENSORS,
-        CONF_WINDOW_SENSORS,
-    ]
-    return sum(len(area.get(key, [])) for key in sensor_keys)
-
-
 def _get_area_summary_info(area: dict[str, Any]) -> str:
     """Get formatted summary information for an area.
 
@@ -2546,24 +2514,9 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         if not area_id:
             return await self.async_step_user()
 
-        area_name = area_id
-        with contextlib.suppress(ValueError):
-            area_name = _resolve_area_id_to_name(self.hass, area_id)
-
-        area_config = _find_area_by_id(self._areas, area_id) or {}
-        sensor_count = _count_area_sensors(area_config)
-        entity_count = 10
-        if area_config.get(CONF_WASP_ENABLED):
-            entity_count += 1
-
         return self.async_show_menu(
             step_id="remove_area",
             menu_options=["confirm_remove_area", "cancel_remove_area"],
-            description_placeholders={
-                "area_name": area_name,
-                "sensor_count": str(sensor_count),
-                "entity_count": str(entity_count),
-            },
         )
 
     async def async_step_confirm_remove_area(
@@ -2737,25 +2690,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if not area_id:
             return await self.async_step_init()
 
-        area_name = area_id
-        with contextlib.suppress(ValueError):
-            area_name = _resolve_area_id_to_name(self.hass, area_id)
-
-        areas = self._get_areas_from_config()
-        area_config = _find_area_by_id(areas, area_id) or {}
-        sensor_count = _count_area_sensors(area_config)
-        entity_count = 10
-        if area_config.get(CONF_WASP_ENABLED):
-            entity_count += 1
-
         return self.async_show_menu(
             step_id="remove_area",
             menu_options=["confirm_remove_area", "cancel_remove_area"],
-            description_placeholders={
-                "area_name": area_name,
-                "sensor_count": str(sensor_count),
-                "entity_count": str(entity_count),
-            },
         )
 
     async def async_step_confirm_remove_area(

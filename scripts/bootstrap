@@ -36,7 +36,7 @@ if ldconfig -p 2>/dev/null | grep -q libturbojpeg; then
   echo "    libturbojpeg found"
 elif [ -f /etc/debian_version ]; then
   echo "    Installing libturbojpeg (Debian/Ubuntu)..."
-  sudo apt-get install -y libturbojpeg
+  sudo apt-get install -y libturbojpeg0 2>/dev/null || sudo apt-get install -y libturbojpeg
 elif [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ]; then
   echo "    Installing libturbojpeg (Fedora/RHEL)..."
   sudo dnf install -y turbojpeg

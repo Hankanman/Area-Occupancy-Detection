@@ -230,13 +230,19 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.warning("Coordinator not found when updating entry %s", entry.entry_id)
         return
 
-    # Determine configured area IDs from merged data+options
+    # Determine configured area IDs from merged data+options.
     merged = dict(entry.data)
     merged.update(entry.options)
-    config_area_ids = {a.get(CONF_AREA_ID) for a in merged.get(CONF_AREAS, [])}
+    config_area_ids = {
+        a.get(CONF_AREA_ID) for a in merged.get(CONF_AREAS, []) if a.get(CONF_AREA_ID)
+    }
 
-    # Determine currently loaded area IDs
-    current_area_ids = {area.config.area_id for area in coordinator.areas.values()}
+    # Determine currently loaded area IDs.
+    current_area_ids = {
+        area.config.area_id
+        for area in coordinator.areas.values()
+        if area.config.area_id
+    }
 
     if config_area_ids != current_area_ids:
         # Area structure changed — full reload needed for entity platform setup
