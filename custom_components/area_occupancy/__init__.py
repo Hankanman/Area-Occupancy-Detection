@@ -7,10 +7,10 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
+from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
 from .migrations import async_migrate_entry
 from .service import async_setup_services
@@ -52,26 +52,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     # Migration check - only migrate if version is explicitly set and less than current
-    # Fresh entries (version=None or 0) should just get the current version set
-    # Safety check: entries with version 1 but CONF_AREAS format are fresh entries
-    # that should not be migrated (version should have been set in config flow)
     if entry.version is not None and entry.version != CONF_VERSION:
-        # Check if this is a fresh entry with new format that somehow got version 1
-        merged = dict(entry.data)
-        if entry.options:
-            merged.update(entry.options)
-
-        if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-            # This is a fresh entry with new format, just set version without migration
-            _LOGGER.debug(
-                "Entry %s has version %d but uses new format (CONF_AREAS). "
-                "Setting version to %d without migration.",
-                entry.entry_id,
-                entry.version,
-                CONF_VERSION,
-            )
-            hass.config_entries.async_update_entry(entry, version=CONF_VERSION)
-        else:
+        if entry.version < CONF_VERSION:
             # This is a real old entry that needs migration
             _LOGGER.info(
                 "Migrating Area Occupancy entry from version %s to %s",
@@ -236,14 +218,54 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle config entry update."""
-    _LOGGER.debug("Config entry updated, updating coordinator")
+    """Handle config entry update.
 
-    # Get coordinator from global storage or entry runtime_data
+    Detects whether the area structure changed (add/remove) or just settings
+    changed (threshold, weights).  Structural changes require a full reload
+    to create/destroy entity platform entries; setting changes are handled
+    with a lightweight in-place update.
+    """
     coordinator = hass.data.get(DOMAIN) or entry.runtime_data
     if coordinator is None:
         _LOGGER.warning("Coordinator not found when updating entry %s", entry.entry_id)
         return
 
-    await coordinator.async_update_options(entry.options)
-    await coordinator.async_refresh()
+    # Determine configured area IDs from merged data+options.
+    merged = dict(entry.data)
+    merged.update(entry.options)
+    config_area_ids = {
+        a.get(CONF_AREA_ID) for a in merged.get(CONF_AREAS, []) if a.get(CONF_AREA_ID)
+    }
+
+    # Determine currently loaded area IDs.
+    current_area_ids = {
+        area.config.area_id
+        for area in coordinator.areas.values()
+        if area.config.area_id
+    }
+
+    if config_area_ids != current_area_ids:
+        # Area structure changed — full reload needed for entity platform setup
+        _LOGGER.info(
+            "Area structure changed (configured=%s, loaded=%s), reloading integration",
+            config_area_ids,
+            current_area_ids,
+        )
+
+        # Remove devices for deleted areas before reload
+        removed_area_ids = current_area_ids - config_area_ids
+        if removed_area_ids:
+            dev_reg = dr.async_get(hass)
+            for area_id in removed_area_ids:
+                device = dev_reg.async_get_device(identifiers={(DOMAIN, area_id)})
+                if device:
+                    _LOGGER.info("Removing device for deleted area: %s", area_id)
+                    dev_reg.async_remove_device(device.id)
+
+        await hass.config_entries.async_reload(entry.entry_id)
+    else:
+        # Settings-only change (threshold, weights, etc.) — lightweight update.
+        _LOGGER.debug("Config entry settings updated, refreshing area configs")
+        for area in coordinator.areas.values():
+            area.config.update_from_entry(entry)
+        await coordinator.async_request_refresh()

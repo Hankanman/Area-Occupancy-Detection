@@ -112,10 +112,11 @@ async def async_setup_entry(
     coordinator: AreaOccupancyCoordinator = entry.runtime_data
 
     # Create threshold number entities for each area
-    entities: list[NumberEntity] = []
     for area_name in coordinator.get_area_names():
         _LOGGER.debug("Creating threshold number entity for area: %s", area_name)
         handle = coordinator.get_area_handle(area_name)
-        entities.append(Threshold(area_handle=handle))
 
-    async_add_entities(entities, update_before_add=False)
+        async_add_entities(
+            [Threshold(area_handle=handle)],
+            update_before_add=False,
+        )

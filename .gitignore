@@ -17,6 +17,10 @@ config/*
 !config/configuration.yaml
 !config/.storage/
 config/.storage/*auth*
+config/.storage/*pipeline*
+config/.storage/*bluetooth*
+config/.storage/*uuid*
+config/.storage/*exposed_entities*
 config/.storage/*frontend*
 config/.storage/*trace*
 config/.storage/*lovelace*
