@@ -77,6 +77,7 @@ from .const import (
     CONF_PERSON_ENTITY,
     CONF_PERSON_SLEEP_AREA,
     CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
     CONF_POWER_SENSORS,
@@ -1680,12 +1681,12 @@ def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
         vol.Invalid: If required fields are missing or empty
     """
     person_entity = user_input.get(CONF_PERSON_ENTITY, "")
-    sleep_sensor = user_input.get(CONF_PERSON_SLEEP_SENSOR, "")
+    sleep_sensors = user_input.get(CONF_PERSON_SLEEP_SENSORS, [])
     sleep_area = user_input.get(CONF_PERSON_SLEEP_AREA, "")
 
     if not person_entity:
         raise vol.Invalid("person_entity_required")
-    if not sleep_sensor:
+    if not sleep_sensors:
         raise vol.Invalid("sleep_sensor_required")
     if not sleep_area:
         raise vol.Invalid("sleep_area_required")
@@ -1701,7 +1702,7 @@ def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
 
     result = {
         CONF_PERSON_ENTITY: person_entity,
-        CONF_PERSON_SLEEP_SENSOR: sleep_sensor,
+        CONF_PERSON_SLEEP_SENSORS: sleep_sensors,
         CONF_PERSON_SLEEP_AREA: sleep_area,
         CONF_PERSON_CONFIDENCE_THRESHOLD: threshold,
     }
@@ -2928,6 +2929,13 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         idx = getattr(self, "_person_being_edited", None)
         if idx is not None and 0 <= idx < len(people):
             defaults = dict(people[idx])
+            # Migrate old single-sensor key to list for form population
+            if (
+                CONF_PERSON_SLEEP_SENSORS not in defaults
+                and CONF_PERSON_SLEEP_SENSOR in defaults
+            ):
+                old_val = defaults.pop(CONF_PERSON_SLEEP_SENSOR)
+                defaults[CONF_PERSON_SLEEP_SENSORS] = [old_val] if old_val else []
 
         if user_input is not None:
             try:
@@ -2958,8 +2966,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 vol.Required(CONF_PERSON_ENTITY): EntitySelector(
                     EntitySelectorConfig(domain="person")
                 ),
-                vol.Required(CONF_PERSON_SLEEP_SENSOR): EntitySelector(
-                    EntitySelectorConfig(domain="sensor")
+                vol.Required(CONF_PERSON_SLEEP_SENSORS): EntitySelector(
+                    EntitySelectorConfig(
+                        domain=["sensor", "binary_sensor"], multiple=True
+                    )
                 ),
                 vol.Required(CONF_PERSON_SLEEP_AREA): AreaSelector(
                     AreaSelectorConfig()

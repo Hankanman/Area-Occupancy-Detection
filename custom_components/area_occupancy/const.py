@@ -30,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.2.4"
-CONF_VERSION: Final = 16
+CONF_VERSION: Final = 17
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -94,6 +94,7 @@ CONF_SLEEP_END: Final = "sleep_end"
 CONF_PEOPLE: Final = "people"
 CONF_PERSON_ENTITY: Final = "person_entity"
 CONF_PERSON_SLEEP_SENSOR: Final = "sleep_confidence_sensor"
+CONF_PERSON_SLEEP_SENSORS: Final = "sleep_sensors"
 CONF_PERSON_SLEEP_AREA: Final = "sleep_area_id"
 CONF_PERSON_CONFIDENCE_THRESHOLD: Final = "confidence_threshold"
 CONF_PERSON_DEVICE_TRACKER: Final = "device_tracker"
@@ -330,6 +331,7 @@ ATTR_VERIFICATION_PENDING: Final = "verification_pending"
 
 # Sleep Presence attributes
 ATTR_SLEEP_CONFIDENCE: Final = "sleep_confidence"
+ATTR_SLEEP_SENSORS: Final = "sleep_sensors"
 ATTR_PERSON_STATE: Final = "person_state"
 ATTR_SLEEP_THRESHOLD: Final = "sleep_threshold"
 ATTR_PEOPLE_SLEEPING: Final = "people_sleeping"
