@@ -20,7 +20,9 @@
       "Bash(uv run mkdocs:*)",
       "WebFetch(domain:*.home-assistant.io)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:developers.home-assistant.io)",
+      "WebFetch(domain:www.home-assistant.io)"
     ]
   }
 }
