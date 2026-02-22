@@ -334,13 +334,15 @@
                     "threshold": "Occupancy Threshold (%)",
                     "decay_enabled": "Enable Time Decay",
                     "decay_half_life": "Decay Half-Life",
-                    "min_prior_override": "Minimum Prior Override"
+                    "min_prior_override": "Minimum Prior Override",
+                    "exclude_from_all_areas": "Exclude from All Areas"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                     "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
-                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default)."
+                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
+                    "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas."
                 },
                 "sections": {
                     "wasp_in_box": {
@@ -725,13 +727,15 @@
                     "threshold": "Occupancy Threshold (%)",
                     "decay_enabled": "Enable Time Decay",
                     "decay_half_life": "Decay Half-Life",
-                    "min_prior_override": "Minimum Prior Override"
+                    "min_prior_override": "Minimum Prior Override",
+                    "exclude_from_all_areas": "Exclude from All Areas"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                     "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
-                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default)."
+                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
+                    "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas."
                 },
                 "sections": {
                     "wasp_in_box": {

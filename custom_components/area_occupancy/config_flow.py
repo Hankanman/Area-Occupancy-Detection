@@ -61,6 +61,7 @@ from .const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_EXCLUDE_FROM_ALL_AREAS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -110,6 +111,7 @@ from .const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -1245,6 +1247,9 @@ def _create_behavior_step_schema(
         vol.Optional(
             CONF_DECAY_ENABLED, default=DEFAULT_DECAY_ENABLED
         ): BooleanSelector(),
+        vol.Optional(
+            CONF_EXCLUDE_FROM_ALL_AREAS, default=DEFAULT_EXCLUDE_FROM_ALL_AREAS
+        ): BooleanSelector(),
     }
 
     if show_advanced:
@@ -2264,6 +2269,7 @@ class BaseOccupancyFlow:
             CONF_DECAY_ENABLED,
             CONF_DECAY_HALF_LIFE,
             CONF_MIN_PRIOR_OVERRIDE,
+            CONF_EXCLUDE_FROM_ALL_AREAS,
         }
         if user_input is not None:
             data_schema = self.add_suggested_values_to_schema(base_schema, user_input)

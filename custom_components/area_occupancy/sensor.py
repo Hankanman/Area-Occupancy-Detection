@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .area import AllAreas, AreaDeviceHandle
+from .area import AllAreas, AreaDeviceHandle, FloorAreas
 from .const import ALL_AREAS_IDENTIFIER
 from .data.activity import ActivityId
 from .utils import format_float, format_percentage, generate_entity_unique_id
@@ -43,7 +43,7 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the sensor."""
         source = area_handle or all_areas
@@ -52,7 +52,12 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
         super().__init__(source.coordinator)
         self._area_handle = area_handle
         self._all_areas = all_areas
-        self._area_name = area_handle.area_name if area_handle else ALL_AREAS_IDENTIFIER
+        if area_handle:
+            self._area_name = area_handle.area_name
+        elif isinstance(all_areas, FloorAreas):
+            self._area_name = f"floor_{all_areas.floor_id}"
+        else:
+            self._area_name = ALL_AREAS_IDENTIFIER
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         device_info = (
@@ -68,12 +73,9 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        # Assign device to Home Assistant area if area_id is configured
-        # Only for specific areas, not "All Areas"
-        if (
-            self._area_name != ALL_AREAS_IDENTIFIER
-            and (area := self._get_area()) is not None
-        ):
+        # Assign device to Home Assistant area if area_id is configured.
+        # Only for specific areas, not "All Areas" or floor aggregates.
+        if self._area_handle is not None and (area := self._get_area()) is not None:
             if area.config.area_id and self.device_info:
                 device_registry = dr.async_get(self.hass)
                 identifiers = self.device_info.get("identifiers", set())
@@ -100,7 +102,7 @@ class PriorsSensor(AreaOccupancySensorBase):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the priors sensor."""
         super().__init__(area_handle, all_areas)
@@ -119,9 +121,7 @@ class PriorsSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            if self._all_areas is None:
-                return None
+        if self._all_areas is not None:
             return format_float(self._all_areas.area_prior() * 100)
         area = self._get_area()
         if area is None:
@@ -134,17 +134,11 @@ class PriorsSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            # For "All Areas", return aggregated priors from all areas
-            if self._area_name == ALL_AREAS_IDENTIFIER:
-                if self._all_areas is None:
-                    return {}
-                area_names = self._all_areas.coordinator.get_area_names()
+            # For aggregate entities (All Areas / Floor), return aggregated priors.
+            if self._all_areas is not None:
                 area_attrs = {}
-                for area_name in area_names:
-                    area = self._all_areas.coordinator.get_area(area_name)
-                    if area is None:
-                        continue
-                    area_attrs[area_name] = {
+                for area in self._all_areas.areas():
+                    area_attrs[area.area_name] = {
                         "global_prior": area.prior.global_prior,
                         "combined_prior": area.area_prior(),
                         "time_prior": area.prior.time_prior,
@@ -173,7 +167,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the probability sensor."""
         super().__init__(area_handle, all_areas)
@@ -191,9 +185,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the current occupancy probability as a percentage."""
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            if self._all_areas is None:
-                return None
+        if self._all_areas is not None:
             return format_float(self._all_areas.probability() * 100)
         area = self._get_area()
         if area is None:
@@ -214,7 +206,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the entities sensor."""
         super().__init__(area_handle, all_areas)
@@ -286,7 +278,7 @@ class DecaySensor(AreaOccupancySensorBase):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the decay sensor."""
         super().__init__(area_handle, all_areas)
@@ -305,9 +297,7 @@ class DecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the decay status as a percentage."""
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            if self._all_areas is None:
-                return None
+        if self._all_areas is not None:
             decay_value = self._all_areas.decay()
         else:
             area = self._get_area()
@@ -320,20 +310,14 @@ class DecaySensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         try:
-            # For "All Areas", aggregate decaying entities from all areas
-            if self._area_name == ALL_AREAS_IDENTIFIER:
-                if self._all_areas is None:
-                    return {}
-                area_names = self._all_areas.coordinator.get_area_names()
+            # For aggregate entities (All Areas / Floor), aggregate decaying entities.
+            if self._all_areas is not None:
                 all_decaying = []
-                for area_name in area_names:
-                    area = self._all_areas.coordinator.get_area(area_name)
-                    if area is None:
-                        continue
+                for area in self._all_areas.areas():
                     all_decaying.extend(
                         [
                             {
-                                "area": area_name,
+                                "area": area.area_name,
                                 "id": entity.entity_id,
                                 "decay": format_percentage(entity.decay.decay_factor),
                                 "half_life": entity.decay.half_life,
@@ -365,7 +349,7 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the presence probability sensor."""
         super().__init__(area_handle, all_areas)
@@ -383,9 +367,7 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the presence probability as a percentage."""
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            if self._all_areas is None:
-                return None
+        if self._all_areas is not None:
             return format_float(self._all_areas.presence_probability() * 100)
         area = self._get_area()
         if area is None:
@@ -399,7 +381,7 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the environmental confidence sensor."""
         super().__init__(area_handle, all_areas)
@@ -422,9 +404,7 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
         >50% means environmental data supports occupancy.
         <50% means environmental data opposes occupancy.
         """
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            if self._all_areas is None:
-                return None
+        if self._all_areas is not None:
             return format_float(self._all_areas.environmental_confidence() * 100)
         area = self._get_area()
         if area is None:
@@ -543,6 +523,20 @@ async def async_setup_entry(
                 PriorsSensor(all_areas=all_areas),
                 PresenceProbabilitySensor(all_areas=all_areas),
                 EnvironmentalConfidenceSensor(all_areas=all_areas),
+            ],
+            update_before_add=False,
+        )
+
+    # Create floor-based aggregation sensors.
+    for floor_agg in coordinator.get_floor_aggregators().values():
+        _LOGGER.debug("Creating floor aggregation sensors for %s", floor_agg.floor_name)
+        async_add_entities(
+            [
+                ProbabilitySensor(all_areas=floor_agg),
+                DecaySensor(all_areas=floor_agg),
+                PriorsSensor(all_areas=floor_agg),
+                PresenceProbabilitySensor(all_areas=floor_agg),
+                EnvironmentalConfidenceSensor(all_areas=floor_agg),
             ],
             update_before_add=False,
         )

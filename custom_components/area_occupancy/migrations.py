@@ -568,6 +568,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 version=17,
             )
 
+        # Handle v17→v18 migration: add exclude_from_all_areas (defaults to False).
+        # No data changes needed — missing key handled by AreaConfig._load_config().
+        if config_entry.version == 17:
+            hass.config_entries.async_update_entry(
+                config_entry,
+                version=18,
+            )
+            _LOGGER.debug(
+                "Bumped entry %s from v17 to v18 (exclude_from_all_areas support)",
+                config_entry.entry_id,
+            )
+
         # If entry is already at current version or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
             # Check if we were deleted while waiting for lock

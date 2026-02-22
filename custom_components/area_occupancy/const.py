@@ -30,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.2.4"
-CONF_VERSION: Final = 17
+CONF_VERSION: Final = 18
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -87,6 +87,7 @@ CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
+CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 
@@ -130,6 +131,7 @@ DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
     0.005  # Matches DEFAULT_TYPES[InputType.MOTION]
 )
 DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
+DEFAULT_EXCLUDE_FROM_ALL_AREAS: Final = False
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75

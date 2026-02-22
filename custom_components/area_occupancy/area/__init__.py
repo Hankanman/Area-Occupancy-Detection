@@ -5,7 +5,7 @@ device area in the multi-area architecture, and the AllAreas class
 for aggregating data across all areas.
 """
 
-from .all_areas import AllAreas
+from .all_areas import AllAreas, FloorAreas
 from .area import Area, AreaDeviceHandle
 
-__all__ = ["AllAreas", "Area", "AreaDeviceHandle"]
+__all__ = ["AllAreas", "Area", "AreaDeviceHandle", "FloorAreas"]
