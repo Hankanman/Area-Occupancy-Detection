@@ -22,7 +22,10 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:developers.home-assistant.io)",
-      "WebFetch(domain:www.home-assistant.io)"
+      "WebFetch(domain:www.home-assistant.io)",
+      "Bash(tail:*)",
+      "Bash(uv run:*)",
+      "WebFetch(domain:community.home-assistant.io)"
     ]
   }
 }
