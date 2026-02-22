@@ -73,8 +73,8 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        # Assign device to Home Assistant area if area_id is configured
-        # Only for specific areas, not "All Areas" or floor aggregates
+        # Assign device to Home Assistant area if area_id is configured.
+        # Only for specific areas, not "All Areas" or floor aggregates.
         if self._area_handle is not None and (area := self._get_area()) is not None:
             if area.config.area_id and self.device_info:
                 device_registry = dr.async_get(self.hass)
@@ -134,15 +134,11 @@ class PriorsSensor(AreaOccupancySensorBase):
         if not self.coordinator.data:
             return {}
         try:
-            # For aggregate entities (All Areas / Floor), return aggregated priors
+            # For aggregate entities (All Areas / Floor), return aggregated priors.
             if self._all_areas is not None:
-                area_names = self._all_areas.coordinator.get_area_names()
                 area_attrs = {}
-                for area_name in area_names:
-                    area = self._all_areas.coordinator.get_area(area_name)
-                    if area is None:
-                        continue
-                    area_attrs[area_name] = {
+                for area in self._all_areas.areas():
+                    area_attrs[area.area_name] = {
                         "global_prior": area.prior.global_prior,
                         "combined_prior": area.area_prior(),
                         "time_prior": area.prior.time_prior,
@@ -314,18 +310,14 @@ class DecaySensor(AreaOccupancySensorBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         try:
-            # For aggregate entities (All Areas / Floor), aggregate decaying entities
+            # For aggregate entities (All Areas / Floor), aggregate decaying entities.
             if self._all_areas is not None:
-                area_names = self._all_areas.coordinator.get_area_names()
                 all_decaying = []
-                for area_name in area_names:
-                    area = self._all_areas.coordinator.get_area(area_name)
-                    if area is None:
-                        continue
+                for area in self._all_areas.areas():
                     all_decaying.extend(
                         [
                             {
-                                "area": area_name,
+                                "area": area.area_name,
                                 "id": entity.entity_id,
                                 "decay": format_percentage(entity.decay.decay_factor),
                                 "half_life": entity.decay.half_life,

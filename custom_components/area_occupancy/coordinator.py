@@ -63,7 +63,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # All Areas aggregator (lazy initialization)
         self._all_areas: AllAreas | None = None
 
-        # Floor-based aggregators: dict[floor_id, FloorAreas]
+        # Floor-based aggregators keyed by floor ID.
         self._floor_aggregators: dict[str, FloorAreas] = {}
 
         # Per-area state listeners (area_name -> callback)

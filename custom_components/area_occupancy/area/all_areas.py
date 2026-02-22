@@ -80,6 +80,10 @@ class AllAreas:
             if not area.config.exclude_from_all_areas
         ]
 
+    def areas(self) -> list[Area]:
+        """Return the list of areas included in this aggregation."""
+        return self._included_areas()
+
     def device_info(self) -> DeviceInfo:
         """Return device info for the "All Areas" device.
 
@@ -182,6 +186,10 @@ class FloorAreas:
                 if area_entry and area_entry.floor_id == self.floor_id:
                     result.append(area)
         return result
+
+    def areas(self) -> list[Area]:
+        """Return the list of areas on this floor."""
+        return self._floor_areas()
 
     def device_info(self) -> DeviceInfo:
         """Return device info for this floor's device."""

@@ -107,7 +107,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        # Let the coordinator know our entity_id (only for per-area entities, not aggregates)
+        # Let the coordinator know our entity_id. Only for per-area entities, not aggregates.
         if self._handle is not None and (area := self._get_area()) is not None:
             area.occupancy_entity_id = self.entity_id
 
@@ -124,7 +124,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
-        # Clear the entity_id from coordinator (only for per-area entities, not aggregates)
+        # Clear the entity_id from coordinator. Only for per-area entities, not aggregates.
         if (
             self._handle is not None
             and (area := self._get_area()) is not None
