@@ -27,6 +27,7 @@ from ..const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_EXCLUDE_FROM_ALL_AREAS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -75,6 +76,7 @@ from ..const import (
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
+    DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -555,6 +557,10 @@ class AreaConfig:
 
         self.min_prior_override = float(
             data.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE)
+        )
+
+        self.exclude_from_all_areas = bool(
+            data.get(CONF_EXCLUDE_FROM_ALL_AREAS, DEFAULT_EXCLUDE_FROM_ALL_AREAS)
         )
 
     @property

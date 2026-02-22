@@ -24,7 +24,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .area import AllAreas, AreaDeviceHandle
+from .area import AllAreas, AreaDeviceHandle, FloorAreas
 from .const import (
     ALL_AREAS_IDENTIFIER,
     ATTR_DOOR_STATE,
@@ -68,7 +68,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
     def __init__(
         self,
         area_handle: AreaDeviceHandle | None = None,
-        all_areas: AllAreas | None = None,
+        all_areas: AllAreas | FloorAreas | None = None,
     ) -> None:
         """Initialize the sensor."""
         source = area_handle or all_areas
@@ -77,7 +77,12 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         super().__init__(source.coordinator)
         self._handle = area_handle
         self._all_areas = all_areas
-        self._area_name = area_handle.area_name if area_handle else ALL_AREAS_IDENTIFIER
+        if area_handle:
+            self._area_name = area_handle.area_name
+        elif isinstance(all_areas, FloorAreas):
+            self._area_name = f"floor_{all_areas.floor_id}"
+        else:
+            self._area_name = ALL_AREAS_IDENTIFIER
         self._attr_has_entity_name = True
 
         # Unique ID: use entry_id, device_id, and entity_name
@@ -102,11 +107,8 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        # Let the coordinator know our entity_id (only for specific areas, not All Areas)
-        if (
-            self._area_name != ALL_AREAS_IDENTIFIER
-            and (area := self._get_area()) is not None
-        ):
+        # Let the coordinator know our entity_id (only for per-area entities, not aggregates)
+        if self._handle is not None and (area := self._get_area()) is not None:
             area.occupancy_entity_id = self.entity_id
 
             # Assign device to Home Assistant area if area_id is configured
@@ -122,9 +124,9 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
-        # Clear the entity_id from coordinator (only for specific areas, not All Areas)
+        # Clear the entity_id from coordinator (only for per-area entities, not aggregates)
         if (
-            self._area_name != ALL_AREAS_IDENTIFIER
+            self._handle is not None
             and (area := self._get_area()) is not None
             and area.occupancy_entity_id == self.entity_id
         ):
@@ -145,9 +147,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
                  False if no data is available or area is unoccupied.
 
         """
-        if self._area_name == ALL_AREAS_IDENTIFIER:
-            if self._all_areas is None:
-                return False
+        if self._all_areas is not None:
             return self._all_areas.occupied()
         area = self._get_area()
         if area is None:
@@ -1051,5 +1051,15 @@ async def async_setup_entry(
         _LOGGER.debug("Creating All Areas aggregation occupancy sensor")
         async_add_entities(
             [Occupancy(all_areas=coordinator.get_all_areas())],
+            update_before_add=False,
+        )
+
+    # Create floor-based aggregation occupancy sensors.
+    for floor_agg in coordinator.get_floor_aggregators().values():
+        _LOGGER.debug(
+            "Creating floor aggregation occupancy sensor for %s", floor_agg.floor_name
+        )
+        async_add_entities(
+            [Occupancy(all_areas=floor_agg)],
             update_before_add=False,
         )

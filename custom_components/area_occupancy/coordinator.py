@@ -15,6 +15,7 @@ from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
+    floor_registry as fr,
 )
 from homeassistant.helpers.event import (
     async_track_point_in_time,
@@ -25,7 +26,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
-from .area import AllAreas, Area, AreaDeviceHandle
+from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
@@ -61,6 +62,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # All Areas aggregator (lazy initialization)
         self._all_areas: AllAreas | None = None
+
+        # Floor-based aggregators: dict[floor_id, FloorAreas]
+        self._floor_aggregators: dict[str, FloorAreas] = {}
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
@@ -248,6 +252,38 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._all_areas = AllAreas(self)
         return self._all_areas
 
+    def _build_floor_aggregators(self) -> None:
+        """Discover floors from configured areas and create FloorAreas aggregators."""
+        area_reg = ar.async_get(self.hass)
+        floor_reg = fr.async_get(self.hass)
+
+        seen_floors: dict[str, str] = {}  # floor_id -> floor_name
+        for area in self.areas.values():
+            if not area.config.area_id:
+                continue
+            area_entry = area_reg.async_get_area(area.config.area_id)
+            if area_entry and area_entry.floor_id:
+                if area_entry.floor_id not in seen_floors:
+                    floor_entry = floor_reg.async_get_floor(area_entry.floor_id)
+                    if floor_entry:
+                        seen_floors[area_entry.floor_id] = floor_entry.name
+
+        self._floor_aggregators = {
+            floor_id: FloorAreas(self, floor_id, floor_name)
+            for floor_id, floor_name in seen_floors.items()
+        }
+
+        if self._floor_aggregators:
+            _LOGGER.debug(
+                "Built %d floor aggregator(s): %s",
+                len(self._floor_aggregators),
+                ", ".join(f.floor_name for f in self._floor_aggregators.values()),
+            )
+
+    def get_floor_aggregators(self) -> dict[str, FloorAreas]:
+        """Return floor-based aggregators keyed by floor_id."""
+        return self._floor_aggregators
+
     @property
     def setup_complete(self) -> bool:
         """Return whether setup is complete."""
@@ -320,6 +356,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_save_timer()
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
+
+            # Build floor-based aggregators from area floor assignments
+            self._build_floor_aggregators()
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
@@ -418,9 +457,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for area in list(self.areas.values()):
             await area.async_cleanup()
 
-        # Step 8: Reset AllAreas aggregator to release references to old areas
+        # Step 8: Reset AllAreas and floor aggregators to release references to old areas
         # This must be done after areas are cleaned up to break circular references
         self._all_areas = None
+        self._floor_aggregators.clear()
 
         # Step 9: Dispose database engine to close all connections
         # This must be done after all areas are cleaned up to ensure no active sessions
@@ -611,6 +651,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Remove duplicates
         all_entity_ids = list(set(all_entity_ids))
         await self.track_entity_state_changes(all_entity_ids)
+
+        # Rebuild floor-based aggregators for updated areas
+        self._build_floor_aggregators()
 
         # Force immediate save after configuration changes
         await self.hass.async_add_executor_job(self.db.save_data)
