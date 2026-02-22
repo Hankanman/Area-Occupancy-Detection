@@ -184,6 +184,31 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         raise HomeAssistantError(error_msg) from err
 
 
+async def _export_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Export the complete integration configuration as YAML."""
+    try:
+        coordinator = get_coordinator(hass)
+        config_entry = coordinator.config_entry
+
+        config = dict(config_entry.data) | dict(config_entry.options)
+
+        # Reorder area dicts so area_id comes first
+        if "areas" in config:
+            config["areas"] = [
+                {
+                    "area_id": area["area_id"],
+                    **{k: v for k, v in area.items() if k != "area_id"},
+                }
+                for area in config["areas"]
+            ]
+    except Exception as err:
+        error_msg = f"Failed to export config: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return config
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -191,11 +216,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
         return await _run_analysis(hass, call)
 
+    async def handle_export_config(call: ServiceCall) -> dict[str, Any]:
+        return await _export_config(hass, call)
+
     # Register service with async wrapper function
     hass.services.async_register(
         DOMAIN,
         "run_analysis",
         handle_run_analysis,
+        schema=None,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "export_config",
+        handle_export_config,
         schema=None,
         supports_response=SupportsResponse.ONLY,
     )
