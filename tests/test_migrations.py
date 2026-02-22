@@ -12,6 +12,11 @@ from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_MOTION_SENSORS,
+    CONF_PEOPLE,
+    CONF_PERSON_ENTITY,
+    CONF_PERSON_SLEEP_AREA,
+    CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
@@ -21,6 +26,7 @@ from custom_components.area_occupancy.migrations import (
     _find_area_by_normalized_name,
     _find_or_create_area,
     _fuzzy_match_area,
+    _migrate_sleep_sensor_to_list,
     _normalize_area_name,
     async_migrate_entry,
     async_reset_database_if_needed,
@@ -1417,3 +1423,90 @@ class TestErrorHandling:
             result = await async_migrate_entry(hass, entry)
             # Should return False on exception
             assert result is False
+
+
+class TestMigrateSleepSensorToList:
+    """Test _migrate_sleep_sensor_to_list function."""
+
+    def test_converts_old_single_sensor_to_list(self) -> None:
+        """Test migration converts old single sensor key to list."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.phone_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is True
+        person = data[CONF_PEOPLE][0]
+        assert person[CONF_PERSON_SLEEP_SENSORS] == ["sensor.phone_sleep"]
+        assert CONF_PERSON_SLEEP_SENSOR not in person
+
+    def test_skips_already_migrated(self) -> None:
+        """Test migration is idempotent when sleep_sensors already present."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSORS: ["sensor.phone_sleep"],
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is False
+        assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == ["sensor.phone_sleep"]
+
+    def test_handles_no_people(self) -> None:
+        """Test migration handles missing people config."""
+        data: dict = {}
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is False
+
+    def test_handles_missing_old_sensor_key(self) -> None:
+        """Test migration handles person without old sensor key."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is True
+        assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == []
+
+    def test_handles_multiple_people(self) -> None:
+        """Test migration converts all people."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.alice_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                },
+                {
+                    CONF_PERSON_ENTITY: "person.bob",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.bob_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                },
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is True
+        assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == ["sensor.alice_sleep"]
+        assert data[CONF_PEOPLE][1][CONF_PERSON_SLEEP_SENSORS] == ["sensor.bob_sleep"]

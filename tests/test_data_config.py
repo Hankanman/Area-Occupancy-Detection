@@ -21,6 +21,12 @@ from custom_components.area_occupancy.const import (
     CONF_DOOR_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
+    CONF_PEOPLE,
+    CONF_PERSON_CONFIDENCE_THRESHOLD,
+    CONF_PERSON_ENTITY,
+    CONF_PERSON_SLEEP_AREA,
+    CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
     CONF_POWER_SENSORS,
@@ -42,6 +48,7 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
+    DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
     DEFAULT_WEIGHT_MEDIA,
@@ -1095,3 +1102,76 @@ class TestIntegrationConfig:
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
 
         assert integration_config.integration_name == "Test Integration"
+
+
+class TestIntegrationConfigPeople:
+    """Test IntegrationConfig.people property parsing."""
+
+    def test_people_with_new_sleep_sensors_key(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test people parsing with new sleep_sensors list key."""
+        mock_realistic_config_entry.options = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSORS: [
+                        "sensor.phone_sleep_confidence",
+                        "binary_sensor.withings_in_bed",
+                    ],
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                    CONF_PERSON_CONFIDENCE_THRESHOLD: 80,
+                }
+            ]
+        }
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert len(config.people) == 1
+        person = config.people[0]
+        assert person.person_entity == "person.alice"
+        assert person.sleep_sensors == [
+            "sensor.phone_sleep_confidence",
+            "binary_sensor.withings_in_bed",
+        ]
+        assert person.sleep_area_id == "bedroom"
+        assert person.confidence_threshold == 80
+
+    def test_people_backward_compat_old_single_sensor_key(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test people parsing falls back to old single-sensor key."""
+        mock_realistic_config_entry.options = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.bob",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.phone_bob_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert len(config.people) == 1
+        person = config.people[0]
+        assert person.sleep_sensors == ["sensor.phone_bob_sleep"]
+        assert person.confidence_threshold == DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
+
+    def test_people_skips_incomplete_config(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that people with no sleep sensors are skipped."""
+        mock_realistic_config_entry.options = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.carol",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                    # No sleep sensor keys at all
+                }
+            ]
+        }
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert len(config.people) == 0

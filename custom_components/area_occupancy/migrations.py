@@ -16,7 +16,15 @@ from homeassistant.helpers import (
     entity_registry as er,
 )
 
-from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DOMAIN
+from .const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_PEOPLE,
+    CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
+    CONF_VERSION,
+    DOMAIN,
+)
 from .db import DB_NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -378,6 +386,39 @@ def _migrate_energy_to_power(data: dict[str, Any]) -> bool:
     return migrated
 
 
+def _migrate_sleep_sensor_to_list(data: dict[str, Any]) -> bool:
+    """Convert sleep_confidence_sensor (string) to sleep_sensors (list) for each person.
+
+    Args:
+        data: Config entry data or options dictionary
+
+    Returns:
+        True if migration was performed, False otherwise
+    """
+    migrated = False
+    people = data.get(CONF_PEOPLE, [])
+
+    for person in people:
+        if not isinstance(person, dict):
+            continue
+        if CONF_PERSON_SLEEP_SENSORS in person:
+            # Already migrated
+            continue
+        old_sensor = person.pop(CONF_PERSON_SLEEP_SENSOR, None)
+        if old_sensor:
+            person[CONF_PERSON_SLEEP_SENSORS] = [old_sensor]
+            _LOGGER.info(
+                "Migrated sleep sensor '%s' to sleep_sensors list",
+                old_sensor,
+            )
+            migrated = True
+        else:
+            person[CONF_PERSON_SLEEP_SENSORS] = []
+            migrated = True
+
+    return migrated
+
+
 # ============================================================================
 # Entry Migration (Main Entry Point)
 # ============================================================================
@@ -502,6 +543,29 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 config_entry,
                 data=entry_data,
                 version=16,
+            )
+
+        # Handle v16→v17 migration: sleep_confidence_sensor (str) → sleep_sensors (list)
+        if config_entry.version == 16:
+            migrated = False
+            entry_data = dict(config_entry.data)
+            entry_options = dict(config_entry.options)
+
+            if _migrate_sleep_sensor_to_list(entry_data):
+                migrated = True
+            if _migrate_sleep_sensor_to_list(entry_options):
+                migrated = True
+
+            if migrated:
+                _LOGGER.info(
+                    "Migrated entry %s from v16 to v17: sleep_confidence_sensor → sleep_sensors",
+                    config_entry.entry_id,
+                )
+            hass.config_entries.async_update_entry(
+                config_entry,
+                data=entry_data,
+                options=entry_options,
+                version=17,
             )
 
         # If entry is already at current version or higher, no migration needed

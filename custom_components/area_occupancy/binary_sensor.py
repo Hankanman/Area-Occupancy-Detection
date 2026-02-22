@@ -39,7 +39,7 @@ from .const import (
     ATTR_PERSON_NAME,
     ATTR_PERSON_SLEEPING,
     ATTR_PERSON_STATE,
-    ATTR_SLEEP_CONFIDENCE,
+    ATTR_SLEEP_SENSORS,
     ATTR_SLEEP_THRESHOLD,
     ATTR_VERIFICATION_DELAY,
     ATTR_VERIFICATION_PENDING,
@@ -827,7 +827,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
             tracked_entities.append(person.person_entity)
             if person.device_tracker:
                 tracked_entities.append(person.device_tracker)
-            tracked_entities.append(person.sleep_confidence_sensor)
+            tracked_entities.extend(person.sleep_sensors)
 
         if not tracked_entities:
             _LOGGER.warning(
@@ -849,26 +849,43 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         self._evaluate_and_update()
 
     def _evaluate_sleep_state(self) -> bool:
-        """Evaluate whether any person is home and sleeping."""
+        """Evaluate whether any person is home and sleeping.
+
+        Supports both binary_sensor (on/off) and numeric sensor (threshold comparison).
+        Any active sleep sensor means the person is sleeping (OR logic).
+        """
         for person in self._people:
             # Use device_tracker if configured, otherwise fall back to person entity
             if person.device_tracker:
                 home_state = self.hass.states.get(person.device_tracker)
             else:
                 home_state = self.hass.states.get(person.person_entity)
-            confidence_state = self.hass.states.get(person.sleep_confidence_sensor)
-            if (
-                home_state
-                and home_state.state == STATE_HOME
-                and confidence_state
-                and confidence_state.state not in ("unknown", "unavailable", None, "")
-            ):
-                try:
-                    confidence = float(confidence_state.state)
-                    if confidence >= person.confidence_threshold:
-                        return True
-                except (ValueError, TypeError):
+
+            if not home_state or home_state.state != STATE_HOME:
+                continue
+
+            for sensor_id in person.sleep_sensors:
+                sensor_state = self.hass.states.get(sensor_id)
+                if not sensor_state or sensor_state.state in (
+                    "unknown",
+                    "unavailable",
+                    None,
+                    "",
+                ):
                     continue
+
+                if sensor_id.startswith("binary_sensor."):
+                    # Binary sensor: "on" means sleeping
+                    if sensor_state.state == STATE_ON:
+                        return True
+                else:
+                    # Numeric sensor: compare against threshold
+                    try:
+                        confidence = float(sensor_state.state)
+                        if confidence >= person.confidence_threshold:
+                            return True
+                    except (ValueError, TypeError):
+                        continue
         return False
 
     def _evaluate_and_update(self) -> None:
@@ -894,7 +911,6 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
 
         for person in self._people:
             person_state = self.hass.states.get(person.person_entity)
-            confidence_state = self.hass.states.get(person.sleep_confidence_sensor)
 
             friendly_name = (
                 person_state.attributes.get("friendly_name", person.person_entity)
@@ -902,27 +918,46 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                 else person.person_entity
             )
 
-            confidence_val: float | None = None
-            if confidence_state and confidence_state.state not in (
-                "unknown",
-                "unavailable",
-                None,
-                "",
-            ):
-                with suppress(ValueError, TypeError):
-                    confidence_val = float(confidence_state.state)
-
             # Use device_tracker if configured, otherwise fall back to person entity
             if person.device_tracker:
                 home_entity_state = self.hass.states.get(person.device_tracker)
             else:
                 home_entity_state = person_state
             is_home = home_entity_state and home_entity_state.state == STATE_HOME
-            is_sleeping = (
-                is_home
-                and confidence_val is not None
-                and confidence_val >= person.confidence_threshold
-            )
+
+            # Build per-sensor details
+            sensor_details: list[dict[str, Any]] = []
+            any_sensor_active = False
+            for sensor_id in person.sleep_sensors:
+                sensor_state = self.hass.states.get(sensor_id)
+                is_binary = sensor_id.startswith("binary_sensor.")
+                sensor_value: str | None = sensor_state.state if sensor_state else None
+                active = False
+                if sensor_state and sensor_state.state not in (
+                    "unknown",
+                    "unavailable",
+                    None,
+                    "",
+                ):
+                    if is_binary:
+                        active = sensor_state.state == STATE_ON
+                    else:
+                        with suppress(ValueError, TypeError):
+                            active = (
+                                float(sensor_state.state) >= person.confidence_threshold
+                            )
+                if active:
+                    any_sensor_active = True
+                sensor_details.append(
+                    {
+                        "entity_id": sensor_id,
+                        "type": "binary" if is_binary else "numeric",
+                        "state": sensor_value,
+                        "active": active,
+                    }
+                )
+
+            is_sleeping = is_home and any_sensor_active
 
             if is_sleeping:
                 people_sleeping.append(friendly_name)
@@ -933,7 +968,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                     ATTR_PERSON_STATE: home_entity_state.state
                     if home_entity_state
                     else "unknown",
-                    ATTR_SLEEP_CONFIDENCE: confidence_val,
+                    ATTR_SLEEP_SENSORS: sensor_details,
                     ATTR_SLEEP_THRESHOLD: person.confidence_threshold,
                     ATTR_PERSON_SLEEPING: is_sleeping,
                 }

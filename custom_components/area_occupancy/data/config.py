@@ -42,6 +42,7 @@ from ..const import (
     CONF_PERSON_ENTITY,
     CONF_PERSON_SLEEP_AREA,
     CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
     CONF_POWER_SENSORS,
@@ -113,7 +114,9 @@ class PersonConfig:
     """Configuration for a person's sleep tracking."""
 
     person_entity: str  # e.g. "person.seb" — provides home/not_home state
-    sleep_confidence_sensor: str  # e.g. "sensor.phone_seb_sleep_confidence"
+    sleep_sensors: list[
+        str
+    ]  # e.g. ["sensor.phone_seb_sleep_confidence", "binary_sensor.withings_in_bed"]
     sleep_area_id: str  # e.g. "bedroom" — HA area ID
     confidence_threshold: int = DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
     device_tracker: str | None = None  # optional override for home/away state
@@ -184,9 +187,24 @@ class IntegrationConfig:
             if not isinstance(person_data, dict):
                 continue
             person_entity = person_data.get(CONF_PERSON_ENTITY)
-            sleep_sensor = person_data.get(CONF_PERSON_SLEEP_SENSOR)
             sleep_area = person_data.get(CONF_PERSON_SLEEP_AREA)
-            if not person_entity or not sleep_sensor or not sleep_area:
+
+            # Read new list key, fall back to old single-sensor key
+            sleep_sensors = person_data.get(CONF_PERSON_SLEEP_SENSORS)
+            if not sleep_sensors:
+                old_sensor = person_data.get(CONF_PERSON_SLEEP_SENSOR)
+                sleep_sensors = [old_sensor] if old_sensor else []
+
+            # Normalize: wrap bare string, filter out empty/non-string entries
+            if isinstance(sleep_sensors, str):
+                sleep_sensors = [sleep_sensors]
+            if not isinstance(sleep_sensors, list):
+                sleep_sensors = []
+            sleep_sensors = [
+                s for s in sleep_sensors if isinstance(s, str) and s.strip()
+            ]
+
+            if not person_entity or not sleep_sensors or not sleep_area:
                 _LOGGER.warning("Skipping incomplete person config: %s", person_data)
                 continue
             try:
@@ -206,7 +224,7 @@ class IntegrationConfig:
             result.append(
                 PersonConfig(
                     person_entity=person_entity,
-                    sleep_confidence_sensor=sleep_sensor,
+                    sleep_sensors=sleep_sensors,
                     sleep_area_id=sleep_area,
                     confidence_threshold=threshold,
                     device_tracker=device_tracker,

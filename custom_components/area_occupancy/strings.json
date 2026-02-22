@@ -388,7 +388,7 @@
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
             "person_entity_required": "A person entity is required.",
-            "sleep_sensor_required": "A sleep confidence sensor is required.",
+            "sleep_sensor_required": "At least one sleep sensor is required.",
             "sleep_area_required": "A sleep area is required.",
             "confidence_not_number": "Confidence threshold must be a number.",
             "invalid_selection": "Invalid selection. Please try again.",
@@ -800,19 +800,19 @@
             },
             "person_config": {
                 "title": "Configure Person",
-                "description": "Configure a person's sleep tracking. The person entity provides home/away state, and the sleep confidence sensor comes from the HA Companion App.",
+                "description": "Configure a person's sleep tracking. The person entity provides home/away state. Sleep sensors can be numeric (e.g., sleep confidence 0-100%) or binary (e.g., in-bed sensor).",
                 "data": {
                     "person_entity": "Person",
-                    "sleep_confidence_sensor": "Sleep Confidence Sensor",
+                    "sleep_sensors": "Sleep Sensors",
                     "sleep_area_id": "Sleep Area",
                     "confidence_threshold": "Sleep Confidence Threshold (%)",
                     "device_tracker": "Device Tracker"
                 },
                 "data_description": {
                     "person_entity": "Select the Home Assistant person entity. This provides home/not_home state.",
-                    "sleep_confidence_sensor": "Select the sleep confidence sensor from the HA Companion App (e.g., sensor.phone_sleep_confidence). Reports 0-100%.",
+                    "sleep_sensors": "Select one or more sleep detection sensors. Supports numeric sensors (e.g., sleep confidence 0-100%) and binary sensors (e.g., in-bed sensor, Sleep Focus). Any active sensor means the person is sleeping.",
                     "sleep_area_id": "Select the area where this person sleeps (e.g., bedroom).",
-                    "confidence_threshold": "Minimum sleep confidence percentage to consider the person as sleeping. Default: 75%.",
+                    "confidence_threshold": "Minimum percentage to consider the person as sleeping. Only applies to numeric sensors. Default: 75%.",
                     "device_tracker": "Home/away detection with a specific device tracker entity. When set, this is used instead of the person entity's state. Leave empty to use the person entity."
                 }
             }
@@ -833,7 +833,7 @@
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
             "person_entity_required": "A person entity is required.",
-            "sleep_sensor_required": "A sleep confidence sensor is required.",
+            "sleep_sensor_required": "At least one sleep sensor is required.",
             "sleep_area_required": "A sleep area is required.",
             "confidence_not_number": "Confidence threshold must be a number.",
             "invalid_selection": "Invalid selection. Please try again.",
