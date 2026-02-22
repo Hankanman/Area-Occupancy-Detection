@@ -13,7 +13,6 @@ from custom_components.area_occupancy.config_flow import (
     BaseOccupancyFlow,
     _apply_purpose_based_decay_default,
     _build_area_description_placeholders,
-    _create_action_selection_schema,
     _create_area_selector_schema,
     _entity_contains_keyword,
     _find_area_by_id,
@@ -30,9 +29,6 @@ from custom_components.area_occupancy.config_flow import (
     create_schema,
 )
 from custom_components.area_occupancy.const import (
-    CONF_ACTION_CANCEL,
-    CONF_ACTION_EDIT,
-    CONF_ACTION_REMOVE,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
@@ -350,26 +346,6 @@ class TestHelperFunctions:
             # Schema uses vol.Required wrapper, so we need to access the selector
             # The actual validation happens when schema is used, but we can check structure
             assert selector is not None
-
-    def test_create_action_selection_schema(self):
-        """Test _create_action_selection_schema function."""
-        schema = _create_action_selection_schema()
-        assert isinstance(schema, vol.Schema)
-
-        # Validate schema structure
-        schema_dict = schema.schema
-        assert "action" in schema_dict
-
-        # Validate that schema can be used with expected action values
-        valid_actions = [CONF_ACTION_EDIT, CONF_ACTION_REMOVE, CONF_ACTION_CANCEL]
-        for action in valid_actions:
-            # Should not raise when using valid action
-            result = schema({"action": action})
-            assert result["action"] == action
-
-        # Invalid action should raise
-        with pytest.raises(vol.Invalid):
-            schema({"action": "invalid_action"})
 
     def test_entity_contains_keyword_in_entity_id(self, hass):
         """Test _entity_contains_keyword finds keyword in entity_id."""
@@ -950,57 +926,69 @@ class TestAreaOccupancyConfigFlow:
             # _area_being_edited now stores area ID, not name
             assert config_flow_flow._area_being_edited == living_room_area_id
 
-    @pytest.mark.parametrize(
-        (
-            "action",
-            "expected_step_id",
-            "expected_area_edited",
-            "expected_area_to_remove",
-            "needs_schema_mock",
-        ),
-        [
-            (CONF_ACTION_EDIT, "area_basics", True, None, False),
-            (CONF_ACTION_REMOVE, "remove_area", None, True, False),
-            (CONF_ACTION_CANCEL, "user", None, None, False),
-        ],
-    )
-    async def test_async_step_area_action_scenarios(
+    async def test_async_step_area_action_shows_menu(
         self,
         config_flow_flow,
         config_flow_sample_area,
         setup_area_registry: dict[str, str],
-        action,
-        expected_step_id,
-        expected_area_edited,
-        expected_area_to_remove,
-        needs_schema_mock,
     ):
-        """Test async_step_area_action with different actions."""
-        # Get actual area ID from sample area
+        """Test async_step_area_action shows a menu with edit/remove/cancel options."""
         living_room_area_id = config_flow_sample_area[CONF_AREA_ID]
         config_flow_flow._areas = [config_flow_sample_area]
-        # _area_being_edited now stores area ID, not name
         config_flow_flow._area_being_edited = living_room_area_id
 
-        user_input = {"action": action}
+        result = await config_flow_flow.async_step_area_action()
 
-        if needs_schema_mock:
-            with patch_create_schema_context():
-                result = await config_flow_flow.async_step_area_action(user_input)
-        else:
-            result = await config_flow_flow.async_step_area_action(user_input)
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "area_action"
+        assert "edit_area" in result.get("menu_options", [])
+        assert "remove_area_confirm" in result.get("menu_options", [])
+        assert "cancel_area_action" in result.get("menu_options", [])
 
-        if expected_step_id == "user":
-            assert result.get("type") == FlowResultType.MENU
-        else:
-            assert result.get("type") == FlowResultType.FORM
-        assert result.get("step_id") == expected_step_id
-        if expected_area_edited:
-            assert config_flow_flow._area_being_edited == living_room_area_id
-        elif action == CONF_ACTION_CANCEL:
-            assert config_flow_flow._area_being_edited is None
-        if expected_area_to_remove:
-            assert config_flow_flow._area_to_remove == living_room_area_id
+    async def test_async_step_edit_area(
+        self,
+        config_flow_flow,
+        config_flow_sample_area,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test edit_area step prepares edit state."""
+        living_room_area_id = config_flow_sample_area[CONF_AREA_ID]
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = living_room_area_id
+
+        result = await config_flow_flow.async_step_edit_area()
+        assert result.get("step_id") == "area_basics"
+        assert config_flow_flow._area_being_edited == living_room_area_id
+
+    async def test_async_step_remove_area_confirm(
+        self,
+        config_flow_flow,
+        config_flow_sample_area,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test remove_area_confirm step sets up removal state."""
+        living_room_area_id = config_flow_sample_area[CONF_AREA_ID]
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = living_room_area_id
+
+        result = await config_flow_flow.async_step_remove_area_confirm()
+        assert result.get("step_id") == "remove_area"
+        assert config_flow_flow._area_to_remove == living_room_area_id
+
+    async def test_async_step_cancel_area_action(
+        self,
+        config_flow_flow,
+        config_flow_sample_area,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test cancel_area_action clears state and returns to menu."""
+        living_room_area_id = config_flow_sample_area[CONF_AREA_ID]
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = living_room_area_id
+
+        result = await config_flow_flow.async_step_cancel_area_action()
+        assert result.get("type") == FlowResultType.MENU
+        assert config_flow_flow._area_being_edited is None
 
     async def test_wizard_edit_mode_initializes_draft(
         self, config_flow_flow, setup_area_registry: dict[str, str]
@@ -1062,31 +1050,12 @@ class TestAreaOccupancyConfigFlow:
                 assert result.get("type") == FlowResultType.FORM
             assert result.get("step_id") == expected_step_id
 
-    @pytest.mark.parametrize(
-        (
-            "confirm",
-            "expected_type",
-            "expected_step_id",
-            "has_error",
-            "area_to_remove_cleared",
-        ),
-        [
-            (False, FlowResultType.MENU, "user", False, True),  # cancel
-            (True, FlowResultType.FORM, "remove_area", True, False),  # last_area_error
-        ],
-    )
-    async def test_config_flow_remove_area_scenarios(
+    async def test_config_flow_remove_area_shows_menu(
         self,
         config_flow_flow,
         setup_area_registry: dict[str, str],
-        confirm,
-        expected_type,
-        expected_step_id,
-        has_error,
-        area_to_remove_cleared,
     ):
-        """Test config flow remove area with various scenarios."""
-        # Get actual area ID from registry
+        """Test config flow remove area shows confirmation menu."""
         living_room_area_id = setup_area_registry.get("Living Room", "living_room")
         area_config = create_area_config(
             name="Living Room",
@@ -1094,17 +1063,49 @@ class TestAreaOccupancyConfigFlow:
         )
         area_config[CONF_AREA_ID] = living_room_area_id
         config_flow_flow._areas = [area_config]
-        # _area_to_remove now stores area ID, not name
         config_flow_flow._area_to_remove = living_room_area_id
-        user_input = {"confirm": confirm}
-        result = await config_flow_flow.async_step_remove_area(user_input)
-        assert result.get("type") == expected_type
-        assert result.get("step_id") == expected_step_id
-        if has_error:
-            assert "errors" in result
-            assert "last area" in result["errors"]["base"].lower()
-        if area_to_remove_cleared:
-            assert config_flow_flow._area_to_remove is None
+
+        result = await config_flow_flow.async_step_remove_area()
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "remove_area"
+        assert "confirm_remove_area" in result.get("menu_options", [])
+        assert "cancel_remove_area" in result.get("menu_options", [])
+
+    async def test_config_flow_confirm_remove_last_area_aborts(
+        self,
+        config_flow_flow,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test confirming removal of the last area aborts."""
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        area_config = create_area_config(
+            name="Living Room",
+            motion_sensors=["binary_sensor.motion1"],
+        )
+        area_config[CONF_AREA_ID] = living_room_area_id
+        config_flow_flow._areas = [area_config]
+        config_flow_flow._area_to_remove = living_room_area_id
+
+        result = await config_flow_flow.async_step_confirm_remove_area()
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == "cannot_remove_last_area"
+
+    async def test_config_flow_cancel_remove_area(
+        self,
+        config_flow_flow,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test cancelling area removal clears state and returns to user menu."""
+        living_room_area_id = setup_area_registry.get("Living Room", "living_room")
+        area_config = create_area_config(name="Living Room")
+        area_config[CONF_AREA_ID] = living_room_area_id
+        config_flow_flow._area_to_remove = living_room_area_id
+        config_flow_flow._areas = [area_config]
+
+        result = await config_flow_flow.async_step_cancel_remove_area()
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "user"
+        assert config_flow_flow._area_to_remove is None
 
 
 class TestConfigFlowIntegration:
@@ -1265,93 +1266,6 @@ class TestConfigFlowIntegration:
             else:
                 assert result["type"] == FlowResultType.MENU
                 assert result["step_id"] == "user"
-
-    @pytest.mark.parametrize(
-        (
-            "flow_type",
-            "step_method",
-            "step_id",
-            "area_being_edited",
-            "area_to_remove",
-            "expected_placeholders",
-        ),
-        [
-            (
-                "config",
-                "async_step_area_action",
-                "area_action",
-                "Living Room",
-                None,
-                {},
-            ),
-            (
-                "config",
-                "async_step_remove_area",
-                "remove_area",
-                None,
-                "Living Room",
-                {"area_name": "Living Room"},
-            ),
-            # Note: options flow no longer has area_action/remove_area steps.
-            # Area management is in the options flow.
-        ],
-    )
-    async def test_flow_show_form(
-        self,
-        hass: HomeAssistant,
-        config_flow_flow,
-        config_flow_options_flow,
-        config_flow_mock_config_entry_with_areas,
-        setup_area_registry: dict[str, str],
-        flow_type,
-        step_method,
-        step_id,
-        area_being_edited,
-        area_to_remove,
-        expected_placeholders,
-    ) -> None:
-        """Test that flows show forms correctly when no user input."""
-        if flow_type == "config":
-            flow = config_flow_flow
-            # Use actual area ID from registry
-            living_room_area_id = setup_area_registry.get("Living Room", "living_room")
-            area_config = create_area_config(name="Living Room")
-            area_config[CONF_AREA_ID] = living_room_area_id
-            flow._areas = [area_config]
-        else:
-            flow = config_flow_options_flow
-            flow.config_entry = config_flow_mock_config_entry_with_areas
-
-        # Convert area names to area IDs
-        if area_being_edited:
-            area_id = setup_area_registry.get(area_being_edited)
-            if area_id:
-                flow._area_being_edited = area_id
-            else:
-                flow._area_being_edited = (
-                    area_being_edited  # Fallback if not in registry
-                )
-        else:
-            flow._area_being_edited = area_being_edited
-
-        if area_to_remove:
-            area_id = setup_area_registry.get(area_to_remove)
-            if area_id:
-                flow._area_to_remove = area_id
-            else:
-                flow._area_to_remove = area_to_remove  # Fallback if not in registry
-        else:
-            flow._area_to_remove = area_to_remove
-
-        method = getattr(flow, step_method)
-        result = await method()
-
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == step_id
-        assert "data_schema" in result
-        assert "description_placeholders" in result
-        for key, value in expected_placeholders.items():
-            assert result["description_placeholders"][key] == value
 
     async def test_error_recovery_in_config_flow(
         self, config_flow_flow, hass: HomeAssistant, setup_area_registry: dict[str, str]

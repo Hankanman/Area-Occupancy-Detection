@@ -7,7 +7,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 
 from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
@@ -245,6 +245,17 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
             config_area_ids,
             current_area_ids,
         )
+
+        # Remove devices for deleted areas before reload
+        removed_area_ids = current_area_ids - config_area_ids
+        if removed_area_ids:
+            dev_reg = dr.async_get(hass)
+            for area_id in removed_area_ids:
+                device = dev_reg.async_get_device(identifiers={(DOMAIN, area_id)})
+                if device:
+                    _LOGGER.info("Removing device for deleted area: %s", area_id)
+                    dev_reg.async_remove_device(device.id)
+
         await hass.config_entries.async_reload(entry.entry_id)
     else:
         # Settings-only change (threshold, weights, etc.) — lightweight update.

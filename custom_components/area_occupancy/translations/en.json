@@ -1,7 +1,8 @@
 {
     "config": {
         "abort": {
-            "already_configured": "A configuration for {title} already exists. {hint}"
+            "already_configured": "A configuration for {title} already exists. {hint}",
+            "cannot_remove_last_area": "Cannot remove the last area. At least one area must remain configured."
         },
         "step": {
             "user": {
@@ -32,13 +33,12 @@
                 }
             },
             "area_action": {
-                "title": "Manage {area_name}",
-                "description": "Area: {area_name}\nPurpose: {purpose}\nSensors: Motion ({motion_count}), Media ({media_count}), Doors ({door_count}), Windows ({window_count}), Appliances ({appliance_count})\nThreshold: {threshold}%",
-                "data": {
-                    "action": "Action"
-                },
-                "data_description": {
-                    "action": "Choose an action: edit the area configuration, remove the area, or cancel"
+                "title": "Manage Area",
+                "description": "Choose an action for this area.",
+                "menu_options": {
+                    "edit_area": "Edit Area",
+                    "remove_area_confirm": "Remove Area",
+                    "cancel_area_action": "Cancel"
                 }
             },
             "area_config": {
@@ -213,7 +213,7 @@
                 }
             },
             "area_motion": {
-                "title": "Motion Sensors",
+                "title": "Motion Sensors — {area_name}",
                 "description": "Configure motion and presence sensors for this area. At least one motion sensor is required.",
                 "data": {
                     "motion_sensors": "Motion/Presence Sensors",
@@ -231,7 +231,7 @@
                 }
             },
             "area_sensors": {
-                "title": "Additional Sensors",
+                "title": "Additional Sensors — {area_name}",
                 "description": "Configure doors, windows, media players, appliances, environmental, and power sensors. All sections are optional.",
                 "sections": {
                     "windows_and_doors": {
@@ -328,38 +328,47 @@
                 }
             },
             "area_behavior": {
-                "title": "Detection Behavior",
+                "title": "Detection Behavior — {area_name}",
                 "description": "Configure occupancy threshold, time decay, and wasp-in-box detection.",
                 "data": {
                     "threshold": "Occupancy Threshold (%)",
                     "decay_enabled": "Enable Time Decay",
                     "decay_half_life": "Decay Half-Life",
-                    "min_prior_override": "Minimum Prior Override",
-                    "wasp_enabled": "Enable Wasp in Box",
-                    "wasp_motion_timeout": "Wasp Motion Timeout",
-                    "wasp_weight": "Wasp Sensor Weight",
-                    "wasp_max_duration": "Wasp Max Duration",
-                    "wasp_verification_delay": "Wasp Verification Delay"
+                    "min_prior_override": "Minimum Prior Override"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                     "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
-                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
-                    "wasp_enabled": "Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
-                    "wasp_motion_timeout": "How long motion remains valid after detection.",
-                    "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
-                    "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
-                    "wasp_verification_delay": "The delay after closing the last door before any detected motion is considered as actual occupancy. (0 = disabled)."
+                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default)."
+                },
+                "sections": {
+                    "wasp_in_box": {
+                        "name": "Wasp in Box",
+                        "description": "Configure wasp-in-box behavior for single-entry rooms",
+                        "data": {
+                            "wasp_enabled": "Enable Wasp in Box",
+                            "wasp_motion_timeout": "Motion Timeout",
+                            "wasp_weight": "Sensor Weight",
+                            "wasp_max_duration": "Max Duration",
+                            "wasp_verification_delay": "Verification Delay"
+                        },
+                        "data_description": {
+                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
+                            "wasp_motion_timeout": "How long motion remains valid after detection.",
+                            "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
+                            "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
+                            "wasp_verification_delay": "The delay after closing the last door before any detected motion is considered as actual occupancy. (0 = disabled)."
+                        }
+                    }
                 }
             },
             "remove_area": {
-                "title": "Remove Area",
-                "data": {
-                    "confirm": "Confirm Removal"
-                },
-                "data_description": {
-                    "confirm": "This will remove **{area_name}** and its {entity_count} entities ({sensor_count} configured input sensors). Check this box to confirm."
+                "title": "Remove Area?",
+                "description": "Are you sure you want to remove this area and all its entities?",
+                "menu_options": {
+                    "confirm_remove_area": "Yes, remove area",
+                    "cancel_remove_area": "Cancel"
                 }
             }
         },
@@ -387,6 +396,9 @@
         }
     },
     "options": {
+        "abort": {
+            "cannot_remove_last_area": "Cannot remove the last area. At least one area must remain configured."
+        },
         "step": {
             "init": {
                 "title": "Area Occupancy Detection Options",
@@ -412,13 +424,12 @@
                 }
             },
             "area_action": {
-                "title": "Manage {area_name}",
-                "description": "Area: {area_name}\nPurpose: {purpose}\nSensors: Motion ({motion_count}), Media ({media_count}), Doors ({door_count}), Windows ({window_count}), Appliances ({appliance_count})\nThreshold: {threshold}%",
-                "data": {
-                    "action": "Action"
-                },
-                "data_description": {
-                    "action": "Choose an action: edit the area configuration, remove the area, or cancel"
+                "title": "Manage Area",
+                "description": "Choose an action for this area.",
+                "menu_options": {
+                    "edit_area": "Edit Area",
+                    "remove_area_confirm": "Remove Area",
+                    "cancel_area_action": "Cancel"
                 }
             },
             "area_config": {
@@ -593,7 +604,7 @@
                 }
             },
             "area_motion": {
-                "title": "Motion Sensors",
+                "title": "Motion Sensors — {area_name}",
                 "description": "Configure motion and presence sensors for this area. At least one motion sensor is required.",
                 "data": {
                     "motion_sensors": "Motion/Presence Sensors",
@@ -611,7 +622,7 @@
                 }
             },
             "area_sensors": {
-                "title": "Additional Sensors",
+                "title": "Additional Sensors — {area_name}",
                 "description": "Configure doors, windows, media players, appliances, environmental, and power sensors. All sections are optional.",
                 "sections": {
                     "windows_and_doors": {
@@ -708,38 +719,47 @@
                 }
             },
             "area_behavior": {
-                "title": "Detection Behavior",
+                "title": "Detection Behavior — {area_name}",
                 "description": "Configure occupancy threshold, time decay, and wasp-in-box detection.",
                 "data": {
                     "threshold": "Occupancy Threshold (%)",
                     "decay_enabled": "Enable Time Decay",
                     "decay_half_life": "Decay Half-Life",
-                    "min_prior_override": "Minimum Prior Override",
-                    "wasp_enabled": "Enable Wasp in Box",
-                    "wasp_motion_timeout": "Wasp Motion Timeout",
-                    "wasp_weight": "Wasp Sensor Weight",
-                    "wasp_max_duration": "Wasp Max Duration",
-                    "wasp_verification_delay": "Wasp Verification Delay"
+                    "min_prior_override": "Minimum Prior Override"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                     "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
-                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
-                    "wasp_enabled": "Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
-                    "wasp_motion_timeout": "How long motion remains valid after detection.",
-                    "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
-                    "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
-                    "wasp_verification_delay": "The delay after closing the last door before any detected motion is considered as actual occupancy. (0 = disabled)."
+                    "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default)."
+                },
+                "sections": {
+                    "wasp_in_box": {
+                        "name": "Wasp in Box",
+                        "description": "Configure wasp-in-box behavior for single-entry rooms",
+                        "data": {
+                            "wasp_enabled": "Enable Wasp in Box",
+                            "wasp_motion_timeout": "Motion Timeout",
+                            "wasp_weight": "Sensor Weight",
+                            "wasp_max_duration": "Max Duration",
+                            "wasp_verification_delay": "Verification Delay"
+                        },
+                        "data_description": {
+                            "wasp_enabled": "Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
+                            "wasp_motion_timeout": "How long motion remains valid after detection.",
+                            "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
+                            "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
+                            "wasp_verification_delay": "The delay after closing the last door before any detected motion is considered as actual occupancy. (0 = disabled)."
+                        }
+                    }
                 }
             },
             "remove_area": {
-                "title": "Remove Area",
-                "data": {
-                    "confirm": "Confirm Removal"
-                },
-                "data_description": {
-                    "confirm": "This will remove **{area_name}** and its {entity_count} entities ({sensor_count} configured input sensors). Check this box to confirm."
+                "title": "Remove Area?",
+                "description": "Are you sure you want to remove this area and all its entities?",
+                "menu_options": {
+                    "confirm_remove_area": "Yes, remove area",
+                    "cancel_remove_area": "Cancel"
                 }
             },
             "global_settings": {
@@ -758,17 +778,24 @@
                 "title": "Manage People",
                 "description": "Configure people for sleep presence detection. Each person needs a Home Assistant person entity and a sleep confidence sensor from the Companion App.",
                 "data": {
-                    "selected_option": "Select an action"
+                    "selected_option": "Select a person"
+                }
+            },
+            "person_action": {
+                "title": "Manage Person",
+                "description": "Choose an action for this person.",
+                "menu_options": {
+                    "edit_person": "Edit Person",
+                    "remove_person_confirm": "Remove Person",
+                    "cancel_person_action": "Cancel"
                 }
             },
             "remove_person": {
-                "title": "Remove Person",
-                "description": "Are you sure you want to remove **{person_name}** from sleep tracking?",
-                "data": {
-                    "confirm": "Confirm Removal"
-                },
-                "data_description": {
-                    "confirm": "Check this box to confirm you want to remove this person from sleep tracking configuration."
+                "title": "Remove Person?",
+                "description": "Are you sure you want to remove this person from sleep tracking?",
+                "menu_options": {
+                    "confirm_remove_person": "Yes, remove person",
+                    "cancel_remove_person": "Cancel"
                 }
             },
             "person_config": {

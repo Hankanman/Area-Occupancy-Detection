@@ -46,11 +46,8 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_ACTION_ADD_AREA,
-    CONF_ACTION_CANCEL,
-    CONF_ACTION_EDIT,
     CONF_ACTION_GLOBAL_SETTINGS,
     CONF_ACTION_MANAGE_PEOPLE,
-    CONF_ACTION_REMOVE,
     CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
@@ -484,6 +481,7 @@ def _create_motion_section_schema(
                 max=WEIGHT_MAX,
                 step=WEIGHT_STEP,
                 mode=NumberSelectorMode.SLIDER,
+                unit_of_measurement="weight",
             )
         ),
         vol.Optional(
@@ -551,7 +549,9 @@ def _create_windows_and_doors_section_schema(
                 default=defaults.get(CONF_DOOR_ACTIVE_STATE, get_default_state("door")),
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=door_state_options, mode=SelectSelectorMode.DROPDOWN
+                    options=door_state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
                 )
             ),
             vol.Optional(
@@ -577,7 +577,9 @@ def _create_windows_and_doors_section_schema(
                 ),
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=window_state_options, mode=SelectSelectorMode.DROPDOWN
+                    options=window_state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
                 )
             ),
             vol.Optional(
@@ -606,6 +608,7 @@ def _create_windows_and_doors_section_schema(
                     options=cover_state_options,
                     mode=SelectSelectorMode.DROPDOWN,
                     multiple=True,
+                    custom_value=True,
                 )
             ),
             vol.Optional(
@@ -644,6 +647,7 @@ def _create_media_section_schema(
                     options=state_options,
                     multiple=True,
                     mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
                 )
             ),
             vol.Optional(
@@ -684,6 +688,7 @@ def _create_appliances_section_schema(
                     options=state_options,
                     multiple=True,
                     mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
                 )
             ),
             vol.Optional(
@@ -941,7 +946,11 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=defaults.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
             ): NumberSelector(
                 NumberSelectorConfig(
-                    min=0.0, max=1.0, step=0.05, mode=NumberSelectorMode.SLIDER
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    mode=NumberSelectorMode.SLIDER,
+                    unit_of_measurement="weight",
                 )
             ),
             vol.Optional(
@@ -1078,17 +1087,18 @@ def create_schema(
 # ── Wizard step schemas ──────────────────────────────────────────────
 
 
-def _create_basics_step_schema() -> dict[vol.Marker, Any]:
+def _create_basics_step_schema(*, is_editing: bool = False) -> dict[vol.Marker, Any]:
     """Create schema for wizard step 1: area selection and purpose."""
-    return {
-        vol.Required(CONF_AREA_ID): AreaSelector(AreaSelectorConfig()),
-        vol.Optional(CONF_PURPOSE, default=DEFAULT_PURPOSE): SelectSelector(
-            SelectSelectorConfig(
-                options=cast("list[SelectOptionDict]", get_purpose_options()),
-                mode=SelectSelectorMode.DROPDOWN,
-            )
-        ),
-    }
+    fields: dict[vol.Marker, Any] = {}
+    if not is_editing:
+        fields[vol.Required(CONF_AREA_ID)] = AreaSelector()
+    fields[vol.Optional(CONF_PURPOSE, default=DEFAULT_PURPOSE)] = SelectSelector(
+        SelectSelectorConfig(
+            options=cast("list[SelectOptionDict]", get_purpose_options()),
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+    return fields
 
 
 def _create_motion_step_schema(
@@ -1114,6 +1124,7 @@ def _create_motion_step_schema(
                 max=WEIGHT_MAX,
                 step=WEIGHT_STEP,
                 mode=NumberSelectorMode.SLIDER,
+                unit_of_measurement="weight",
             )
         ),
         vol.Optional(
@@ -1214,10 +1225,13 @@ def _create_sensors_step_schema(
 
 
 def _create_behavior_step_schema(
+    defaults: dict[str, Any] | None = None,
     *,
     show_advanced: bool = False,
 ) -> dict[vol.Marker, Any]:
     """Create schema for wizard step 4: thresholds, decay, and wasp-in-box."""
+    defaults = defaults or {}
+
     fields: dict[vol.Marker, Any] = {
         vol.Optional(CONF_THRESHOLD, default=DEFAULT_THRESHOLD): NumberSelector(
             NumberSelectorConfig(
@@ -1254,33 +1268,11 @@ def _create_behavior_step_schema(
             )
         )
 
-    # Wasp-in-box fields at top level
-    fields[vol.Optional(CONF_WASP_ENABLED, default=False)] = BooleanSelector()
-    fields[
-        vol.Optional(
-            CONF_WASP_MOTION_TIMEOUT,
-            default=_seconds_to_duration(DEFAULT_WASP_MOTION_TIMEOUT),
-        )
-    ] = DurationSelector(DurationSelectorConfig(enable_day=False))
-    fields[vol.Optional(CONF_WASP_WEIGHT, default=DEFAULT_WASP_WEIGHT)] = (
-        NumberSelector(
-            NumberSelectorConfig(
-                min=0.0, max=1.0, step=0.05, mode=NumberSelectorMode.SLIDER
-            )
-        )
+    # Wasp-in-box fields in collapsible section
+    fields[vol.Required("wasp_in_box")] = section(
+        _create_wasp_in_box_section_schema(defaults),
+        {"collapsed": True},
     )
-    fields[
-        vol.Optional(
-            CONF_WASP_MAX_DURATION,
-            default=_seconds_to_duration(DEFAULT_WASP_MAX_DURATION),
-        )
-    ] = DurationSelector(DurationSelectorConfig(enable_day=True))
-    fields[
-        vol.Optional(
-            CONF_WASP_VERIFICATION_DELAY,
-            default=_seconds_to_duration(DEFAULT_WASP_VERIFICATION_DELAY),
-        )
-    ] = DurationSelector(DurationSelectorConfig(enable_day=False))
 
     return fields
 
@@ -1844,28 +1836,6 @@ def _create_area_selector_schema(
     )
 
 
-def _create_action_selection_schema() -> vol.Schema:
-    """Create schema for action selection step.
-
-    Returns:
-        Schema with SelectSelector in LIST mode (radio buttons) for action selection
-    """
-    return vol.Schema(
-        {
-            vol.Required("action"): SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        {"value": CONF_ACTION_EDIT, "label": "Edit"},
-                        {"value": CONF_ACTION_REMOVE, "label": "Remove"},
-                        {"value": CONF_ACTION_CANCEL, "label": "Cancel"},
-                    ],
-                    mode=SelectSelectorMode.LIST,
-                )
-            )
-        }
-    )
-
-
 def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for global settings."""
     return vol.Schema(
@@ -2046,24 +2016,20 @@ class BaseOccupancyFlow:
 
         return errors
 
-    def _route_area_action(self, action: str, area_id: str) -> None:
-        """Route area action to appropriate step.
+    def _prepare_area_action_edit(self) -> None:
+        """Prepare state for editing an area."""
+        self._area_to_remove = None
 
-        Args:
-            action: Action selected by user
-            area_id: Area ID being acted upon
-        """
-        if action == CONF_ACTION_EDIT:
-            # User wants to edit the area - clear any stale removal state
-            self._area_to_remove = None
-        elif action == CONF_ACTION_REMOVE:
-            # User wants to remove the area
-            self._area_to_remove = area_id
-            self._area_being_edited = None
-        elif action == CONF_ACTION_CANCEL:
-            # User cancelled - clear any stale removal state
-            self._area_to_remove = None
-            self._area_being_edited = None
+    def _prepare_area_action_remove(self) -> None:
+        """Prepare state for removing an area."""
+        area_id = self._area_being_edited
+        self._area_to_remove = area_id
+        self._area_being_edited = None
+
+    def _prepare_area_action_cancel(self) -> None:
+        """Prepare state for cancelling area action."""
+        self._area_to_remove = None
+        self._area_being_edited = None
 
     # ── Multi-step area config wizard ────────────────────────────────
 
@@ -2086,6 +2052,15 @@ class BaseOccupancyFlow:
         else:
             self._area_config_draft = {}
 
+    def _get_wizard_placeholders(self) -> dict[str, str]:
+        """Get description placeholders showing the area being configured."""
+        area_id = self._area_config_draft.get(CONF_AREA_ID, "")
+        area_name = "New Area"
+        if area_id:
+            with contextlib.suppress(ValueError):
+                area_name = _resolve_area_id_to_name(self.hass, area_id)
+        return {"area_name": area_name}
+
     async def async_step_area_basics(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -2093,6 +2068,12 @@ class BaseOccupancyFlow:
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # Read-only area selector doesn't submit a value when editing,
+            # so fill it in from the draft
+            if self._area_being_edited and CONF_AREA_ID not in user_input:
+                user_input[CONF_AREA_ID] = self._area_config_draft.get(
+                    CONF_AREA_ID, self._area_being_edited
+                )
             area_id = user_input.get(CONF_AREA_ID, "")
             if not area_id:
                 errors[CONF_AREA_ID] = "area_required"
@@ -2114,7 +2095,9 @@ class BaseOccupancyFlow:
                 self._area_config_draft.update(user_input)
                 return await self.async_step_area_motion()
 
-        schema_dict = _create_basics_step_schema()
+        schema_dict = _create_basics_step_schema(
+            is_editing=self._area_being_edited is not None
+        )
         base_schema = vol.Schema(schema_dict)
 
         # Apply suggested values from draft or user_input (for error re-display)
@@ -2202,6 +2185,7 @@ class BaseOccupancyFlow:
             step_id="area_motion",
             data_schema=data_schema,
             errors=errors,
+            description_placeholders=self._get_wizard_placeholders(),
             last_step=False,
         )
 
@@ -2269,6 +2253,7 @@ class BaseOccupancyFlow:
             step_id="area_sensors",
             data_schema=data_schema,
             errors=errors,
+            description_placeholders=self._get_wizard_placeholders(),
             last_step=False,
         )
 
@@ -2299,37 +2284,40 @@ class BaseOccupancyFlow:
             errors.update(validation_errors)
 
         schema_dict = _create_behavior_step_schema(
-            show_advanced=self.show_advanced_options
+            self._area_config_draft,
+            show_advanced=self.show_advanced_options,
         )
         base_schema = vol.Schema(schema_dict)
 
-        # Suggested values
+        # Suggested values - top-level behavior + nested wasp section
         behavior_keys = {
             CONF_THRESHOLD,
             CONF_DECAY_ENABLED,
             CONF_DECAY_HALF_LIFE,
             CONF_MIN_PRIOR_OVERRIDE,
-            CONF_WASP_ENABLED,
-            CONF_WASP_MOTION_TIMEOUT,
-            CONF_WASP_WEIGHT,
-            CONF_WASP_MAX_DURATION,
-            CONF_WASP_VERIFICATION_DELAY,
         }
         if user_input is not None:
             data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
-        else:
+        elif self._area_config_draft:
             suggested = _draft_to_suggested(self._area_config_draft, behavior_keys)
+            # Build nested wasp section suggested values
+            nested = _nest_config_for_sections(self._area_config_draft)
+            if "wasp_in_box" in nested:
+                suggested["wasp_in_box"] = nested["wasp_in_box"]
             if suggested:
                 data_schema = self.add_suggested_values_to_schema(
                     base_schema, suggested
                 )
             else:
                 data_schema = base_schema
+        else:
+            data_schema = base_schema
 
         return self.async_show_form(
             step_id="area_behavior",
             data_schema=data_schema,
             errors=errors,
+            description_placeholders=self._get_wizard_placeholders(),
             last_step=True,
         )
 
@@ -2510,103 +2498,96 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle action selection for a specific area."""
-        # Get area_id from instance variable
+        """Handle action selection for a specific area via menu."""
         area_id = self._area_being_edited
         if not area_id:
             return await self.async_step_user()
 
-        # Find the area being managed
         area_config = _find_area_by_id(self._areas, area_id)
-
         if not area_config:
             return await self.async_step_user()
 
-        if user_input is not None:
-            action = user_input.get("action", "")
-            self._route_area_action(action, area_id)
-            if action == CONF_ACTION_EDIT:
-                # User wants to edit the area
-                return await self.async_step_area_config()
-            if action == CONF_ACTION_REMOVE:
-                # User wants to remove the area
-                return await self.async_step_remove_area()
-            if action == CONF_ACTION_CANCEL:
-                # User cancelled
-                return await self.async_step_user()
-
-        # Show action selection form with area details
-        schema = _create_action_selection_schema()
         description_placeholders = _build_area_description_placeholders(
             area_config, area_id, self.hass
         )
 
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="area_action",
-            data_schema=schema,
+            menu_options=["edit_area", "remove_area_confirm", "cancel_area_action"],
             description_placeholders=description_placeholders,
         )
+
+    async def async_step_edit_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit the selected area."""
+        self._prepare_area_action_edit()
+        return await self.async_step_area_config()
+
+    async def async_step_remove_area_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Initiate area removal."""
+        self._prepare_area_action_remove()
+        return await self.async_step_remove_area()
+
+    async def async_step_cancel_area_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel area action and return to main menu."""
+        self._prepare_area_action_cancel()
+        return await self.async_step_user()
 
     async def async_step_remove_area(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm removal of an area during initial setup."""
-        # Get area_id from instance variable
+        """Confirm removal of an area during initial setup via menu."""
         area_id = self._area_to_remove
         if not area_id:
             return await self.async_step_user()
 
-        # Resolve area name for display
         area_name = area_id
         with contextlib.suppress(ValueError):
             area_name = _resolve_area_id_to_name(self.hass, area_id)
 
-        # Find area config for sensor counts
         area_config = _find_area_by_id(self._areas, area_id) or {}
         sensor_count = _count_area_sensors(area_config)
-        # Base: 1 binary_sensor (occupancy) + 8 sensors + 1 number (threshold) = 10
         entity_count = 10
         if area_config.get(CONF_WASP_ENABLED):
             entity_count += 1
 
-        if user_input is not None:
-            if user_input.get("confirm"):
-                # Remove the area
-                updated_areas = _remove_area_from_list(self._areas, area_id)
-
-                if not updated_areas:
-                    return self.async_show_form(
-                        step_id="remove_area",
-                        data_schema=vol.Schema({}),
-                        errors={"base": "Cannot remove the last area"},
-                    )
-
-                self._areas = updated_areas
-                self._area_to_remove = None
-
-                # Return to user step to show updated menu
-                return await self.async_step_user()
-
-            # User cancelled
-            self._area_to_remove = None
-            return await self.async_step_user()
-
-        # Show confirmation
-        schema = vol.Schema(
-            {
-                vol.Required("confirm", default=False): BooleanSelector(),
-            }
-        )
-
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="remove_area",
-            data_schema=schema,
+            menu_options=["confirm_remove_area", "cancel_remove_area"],
             description_placeholders={
                 "area_name": area_name,
                 "sensor_count": str(sensor_count),
                 "entity_count": str(entity_count),
             },
         )
+
+    async def async_step_confirm_remove_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Execute area removal."""
+        area_id = self._area_to_remove
+        if not area_id:
+            return await self.async_step_user()
+
+        updated_areas = _remove_area_from_list(self._areas, area_id)
+        if not updated_areas:
+            return self.async_abort(reason="cannot_remove_last_area")
+
+        self._areas = updated_areas
+        self._area_to_remove = None
+        return await self.async_step_user()
+
+    async def async_step_cancel_remove_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel area removal."""
+        self._area_to_remove = None
+        return await self.async_step_user()
 
     @staticmethod
     @callback
@@ -2706,7 +2687,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle action selection for a specific area."""
+        """Handle action selection for a specific area via menu."""
         area_id = self._area_being_edited
         if not area_id:
             return await self.async_step_init()
@@ -2716,32 +2697,42 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if not area_config:
             return await self.async_step_init()
 
-        if user_input is not None:
-            action = user_input.get("action", "")
-            self._route_area_action(action, area_id)
-            if action == CONF_ACTION_EDIT:
-                self._init_area_wizard()
-                return await self.async_step_area_basics()
-            if action == CONF_ACTION_REMOVE:
-                return await self.async_step_remove_area()
-            if action == CONF_ACTION_CANCEL:
-                return await self.async_step_init()
-
-        schema = _create_action_selection_schema()
         description_placeholders = _build_area_description_placeholders(
             area_config, area_id, self.hass
         )
 
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="area_action",
-            data_schema=schema,
+            menu_options=["edit_area", "remove_area_confirm", "cancel_area_action"],
             description_placeholders=description_placeholders,
         )
+
+    async def async_step_edit_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit the selected area."""
+        self._prepare_area_action_edit()
+        self._init_area_wizard()
+        return await self.async_step_area_basics()
+
+    async def async_step_remove_area_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Initiate area removal."""
+        self._prepare_area_action_remove()
+        return await self.async_step_remove_area()
+
+    async def async_step_cancel_area_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel area action and return to main menu."""
+        self._prepare_area_action_cancel()
+        return await self.async_step_init()
 
     async def async_step_remove_area(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm removal of an area."""
+        """Confirm removal of an area via menu."""
         area_id = self._area_to_remove
         if not area_id:
             return await self.async_step_init()
@@ -2757,43 +2748,38 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if area_config.get(CONF_WASP_ENABLED):
             entity_count += 1
 
-        if user_input is not None:
-            if user_input.get("confirm"):
-                updated_areas = _remove_area_from_list(areas, area_id)
-
-                if not updated_areas:
-                    return self.async_show_form(
-                        step_id="remove_area",
-                        data_schema=vol.Schema({}),
-                        errors={"base": "Cannot remove the last area"},
-                    )
-
-                self._area_to_remove = None
-
-                # Store updated areas in options; the update listener
-                # detects the structural change and triggers a reload
-                return self.async_create_entry(
-                    title="", data={CONF_AREAS: updated_areas}
-                )
-
-            self._area_to_remove = None
-            return await self.async_step_init()
-
-        schema = vol.Schema(
-            {
-                vol.Required("confirm", default=False): BooleanSelector(),
-            }
-        )
-
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="remove_area",
-            data_schema=schema,
+            menu_options=["confirm_remove_area", "cancel_remove_area"],
             description_placeholders={
                 "area_name": area_name,
                 "sensor_count": str(sensor_count),
                 "entity_count": str(entity_count),
             },
         )
+
+    async def async_step_confirm_remove_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Execute area removal."""
+        area_id = self._area_to_remove
+        if not area_id:
+            return await self.async_step_init()
+
+        areas = self._get_areas_from_config()
+        updated_areas = _remove_area_from_list(areas, area_id)
+        if not updated_areas:
+            return self.async_abort(reason="cannot_remove_last_area")
+
+        self._area_to_remove = None
+        return self.async_create_entry(title="", data={CONF_AREAS: updated_areas})
+
+    async def async_step_cancel_remove_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel area removal."""
+        self._area_to_remove = None
+        return await self.async_step_init()
 
     async def async_step_global_settings(
         self, user_input: dict[str, Any] | None = None
@@ -2821,6 +2807,15 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             data_schema=_create_global_settings_schema(defaults),
         )
 
+    def _get_person_display_name(self, person_entity: str) -> str:
+        """Get friendly display name for a person entity."""
+        person_state = self.hass.states.get(person_entity)
+        return (
+            person_state.attributes.get("friendly_name", person_entity)
+            if person_state
+            else person_entity
+        )
+
     async def async_step_manage_people(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -2835,57 +2830,34 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             if selected == "add_person":
                 self._person_being_edited = None
                 return await self.async_step_person_config()
-            if selected.startswith("edit_"):
+            if selected.startswith("person_"):
                 try:
-                    idx = int(selected.replace("edit_", ""))
+                    idx = int(selected.replace("person_", ""))
                 except (ValueError, TypeError):
                     idx = -1
                 if 0 <= idx < len(people):
                     self._person_being_edited = idx
-                    return await self.async_step_person_config()
-                errors["base"] = "invalid_selection"
-            elif selected.startswith("remove_"):
-                try:
-                    idx = int(selected.replace("remove_", ""))
-                except (ValueError, TypeError):
-                    idx = -1
-                if 0 <= idx < len(people):
-                    self._person_to_remove = idx
-                    return await self.async_step_remove_person()
+                    return await self.async_step_person_action()
                 errors["base"] = "invalid_selection"
 
-        # Build options list
+        # Build options list - one entry per person
         options: list[SelectOptionDict] = []
         for i, person in enumerate(people):
             person_entity = person.get(CONF_PERSON_ENTITY, "unknown")
             sleep_area = person.get(CONF_PERSON_SLEEP_AREA, "unknown")
 
-            # Resolve names for display
             area_name = sleep_area
             with contextlib.suppress(ValueError):
                 area_name = _resolve_area_id_to_name(self.hass, sleep_area)
 
-            # Get person friendly name from state
-            person_state = self.hass.states.get(person_entity)
-            person_name = (
-                person_state.attributes.get("friendly_name", person_entity)
-                if person_state
-                else person_entity
-            )
-
+            person_name = self._get_person_display_name(person_entity)
             threshold = person.get(
                 CONF_PERSON_CONFIDENCE_THRESHOLD, DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
             )
             options.append(
                 {
-                    "value": f"edit_{i}",
+                    "value": f"person_{i}",
                     "label": f"{person_name} → {area_name} (threshold: {threshold}%)",
-                }
-            )
-            options.append(
-                {
-                    "value": f"remove_{i}",
-                    "label": f"Remove {person_name}",
                 }
             )
 
@@ -2908,10 +2880,57 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             errors=errors,
         )
 
+    async def async_step_person_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show action menu for a selected person."""
+        idx = self._person_being_edited
+        people: list[dict[str, Any]] = list(
+            self.config_entry.options.get(CONF_PEOPLE, [])
+        )
+        if idx is None or not (0 <= idx < len(people)):
+            return await self.async_step_init()
+
+        person = people[idx]
+        person_name = self._get_person_display_name(
+            person.get(CONF_PERSON_ENTITY, "unknown")
+        )
+
+        return self.async_show_menu(
+            step_id="person_action",
+            menu_options=[
+                "edit_person",
+                "remove_person_confirm",
+                "cancel_person_action",
+            ],
+            description_placeholders={"person_name": person_name},
+        )
+
+    async def async_step_edit_person(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit the selected person."""
+        return await self.async_step_person_config()
+
+    async def async_step_remove_person_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Initiate person removal."""
+        self._person_to_remove = self._person_being_edited
+        self._person_being_edited = None
+        return await self.async_step_remove_person()
+
+    async def async_step_cancel_person_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel person action and return to main menu."""
+        self._person_being_edited = None
+        return await self.async_step_init()
+
     async def async_step_remove_person(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm removal of a person."""
+        """Confirm removal of a person via menu."""
         idx = self._person_to_remove
         people: list[dict[str, Any]] = list(
             self.config_entry.options.get(CONF_PEOPLE, [])
@@ -2920,43 +2939,43 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             return await self.async_step_init()
 
         person = people[idx]
-        person_entity = person.get(CONF_PERSON_ENTITY, "unknown")
-
-        # Get person friendly name from state
-        person_state = self.hass.states.get(person_entity)
-        person_name = (
-            person_state.attributes.get("friendly_name", person_entity)
-            if person_state
-            else person_entity
+        person_name = self._get_person_display_name(
+            person.get(CONF_PERSON_ENTITY, "unknown")
         )
 
-        if user_input is not None:
-            if user_input.get("confirm"):
-                updated_people = [p for i, p in enumerate(people) if i != idx]
-                config_data = dict(self.config_entry.options)
-                config_data[CONF_PEOPLE] = updated_people
-                result = self.async_create_entry(title="", data=config_data)
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
-                )
-                self._person_to_remove = None
-                return result
-
-            # User cancelled
-            self._person_to_remove = None
-            return await self.async_step_init()
-
-        schema = vol.Schema(
-            {
-                vol.Required("confirm", default=False): BooleanSelector(),
-            }
-        )
-
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="remove_person",
-            data_schema=schema,
+            menu_options=["confirm_remove_person", "cancel_remove_person"],
             description_placeholders={"person_name": person_name},
         )
+
+    async def async_step_confirm_remove_person(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Execute person removal."""
+        idx = self._person_to_remove
+        people: list[dict[str, Any]] = list(
+            self.config_entry.options.get(CONF_PEOPLE, [])
+        )
+        if idx is None or not (0 <= idx < len(people)):
+            return await self.async_step_init()
+
+        updated_people = [p for i, p in enumerate(people) if i != idx]
+        config_data = dict(self.config_entry.options)
+        config_data[CONF_PEOPLE] = updated_people
+        result = self.async_create_entry(title="", data=config_data)
+        self.hass.async_create_task(
+            self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        )
+        self._person_to_remove = None
+        return result
+
+    async def async_step_cancel_remove_person(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel person removal."""
+        self._person_to_remove = None
+        return await self.async_step_init()
 
     async def async_step_person_config(
         self, user_input: dict[str, Any] | None = None
@@ -2997,26 +3016,20 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             else:
                 return result
 
-        schema = vol.Schema(
+        base_schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_PERSON_ENTITY,
-                    default=defaults.get(CONF_PERSON_ENTITY, ""),
-                ): EntitySelector(EntitySelectorConfig(domain="person")),
-                vol.Required(
-                    CONF_PERSON_SLEEP_SENSOR,
-                    default=defaults.get(CONF_PERSON_SLEEP_SENSOR, ""),
-                ): EntitySelector(EntitySelectorConfig(domain="sensor")),
-                vol.Required(
-                    CONF_PERSON_SLEEP_AREA,
-                    default=defaults.get(CONF_PERSON_SLEEP_AREA, ""),
-                ): AreaSelector(AreaSelectorConfig()),
+                vol.Required(CONF_PERSON_ENTITY): EntitySelector(
+                    EntitySelectorConfig(domain="person")
+                ),
+                vol.Required(CONF_PERSON_SLEEP_SENSOR): EntitySelector(
+                    EntitySelectorConfig(domain="sensor")
+                ),
+                vol.Required(CONF_PERSON_SLEEP_AREA): AreaSelector(
+                    AreaSelectorConfig()
+                ),
                 vol.Optional(
                     CONF_PERSON_CONFIDENCE_THRESHOLD,
-                    default=defaults.get(
-                        CONF_PERSON_CONFIDENCE_THRESHOLD,
-                        DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
-                    ),
+                    default=DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=1,
@@ -3025,17 +3038,21 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                         mode=NumberSelectorMode.SLIDER,
                     )
                 ),
-                vol.Optional(
-                    CONF_PERSON_DEVICE_TRACKER,
-                    description={
-                        "suggested_value": defaults.get(CONF_PERSON_DEVICE_TRACKER, "")
-                    },
-                ): EntitySelector(EntitySelectorConfig(domain="device_tracker")),
+                vol.Optional(CONF_PERSON_DEVICE_TRACKER): EntitySelector(
+                    EntitySelectorConfig(domain="device_tracker")
+                ),
             }
         )
 
+        # Use suggested values for edit mode
+        suggested = user_input if user_input is not None else defaults
+        if suggested:
+            data_schema = self.add_suggested_values_to_schema(base_schema, suggested)
+        else:
+            data_schema = base_schema
+
         return self.async_show_form(
             step_id="person_config",
-            data_schema=schema,
+            data_schema=data_schema,
             errors=errors,
         )
