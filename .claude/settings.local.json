@@ -25,7 +25,8 @@
       "WebFetch(domain:www.home-assistant.io)",
       "Bash(tail:*)",
       "Bash(uv run:*)",
-      "WebFetch(domain:community.home-assistant.io)"
+      "WebFetch(domain:community.home-assistant.io)",
+      "Bash(git log:*)"
     ]
   }
 }

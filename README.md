@@ -124,10 +124,16 @@ When adding new areas you will need to navigate to **Integrations** -> **Area Oc
 
 There is detailed documentation on the configuration options here: [Configuration](https://hankanman.github.io/Area-Occupancy-Detection/getting-started/configuration/).
 
+For an ideal setup you will need to perform these steps in Home Assistant before setting up the integration:
+
+- Set up Home Assistant Areas, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
+- Set up Home Assistant Floors, [see here to set up floors](https://www.home-assistant.io/docs/organizing/floors/)
+- Set up Home Assistant People, [see here to set up people](https://www.home-assistant.io/integrations/person/)
+
 Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
 
 - A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
-- A Purpose. What the room is used for, [see more about purposes here](https://hankanman.github.io/Area-Occupancy-Detection/features/purpose/)
+- A Purpose. What the room is used for, [see more about purposes here](../features/purpose.md)
 - 1 Motion sensor. A physical device in the area like PIR, mmWave
 
 The integration will work with just these configured. Everything else can be added as you get new devices. However the more you add in, the more accurate the predictions will be.

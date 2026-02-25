@@ -51,3 +51,24 @@ The `analysis_error` field in each entity's likelihood data indicates why correl
 - This service always runs analysis for all configured areas.
 - Services that query historical data can be resource-intensive.
 - Analysis results (including `analysis_error` values) are persisted to the database and will be restored when entities are reloaded. This ensures that `analysis_error` values are preserved across Home Assistant restarts and entity reloads.
+
+## `area_occupancy.export_config`
+
+Exports the complete integration configuration as YAML. This is useful for debugging, sharing your setup when reporting issues, or backing up your configuration.
+
+**Example:**
+
+```yaml
+service: area_occupancy.export_config
+```
+
+**Returns:**
+
+The full merged configuration (config entry data + options) as a dictionary. Each area configuration is reordered so that `area_id` appears first for readability. The response includes:
+
+- All area configurations (sensors, weights, thresholds, decay settings, purpose, etc.)
+- People configurations (person entities, sleep sensors, sleep areas)
+- Global settings (sleep schedule)
+
+!!! tip "Viewing the output"
+    Call this service from **Developer Tools > Services** in Home Assistant. The response is rendered as YAML directly in the UI, making it easy to review or copy your full configuration.
