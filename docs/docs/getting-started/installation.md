@@ -33,6 +33,12 @@ There is detailed documentation on the configuration options here: [Configuratio
 
 ### Before You Start
 
+For an ideal setup you will need to perform these steps in Home Assistant before setting up the integration:
+
+- Set up Home Assistant Areas, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
+- Set up Home Assistant Floors, [see here to set up floors](https://www.home-assistant.io/docs/organizing/floors/)
+- Set up Home Assistant People, [see here to set up people](https://www.home-assistant.io/integrations/person/)
+
 Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
 
 - A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
@@ -58,6 +64,14 @@ The global settings menu allows you to modify the global settings for the integr
 The add new area menu allows you to add a new area to the integration.
 
 ![Add New Area](../images/config_new_area.png)
+
+The next steps asks you for the motion sensors you have in that area. just add any sensors you have, leave the rest as default for initial config.
+
+![Add Motion Sensors](../images/config_edit_area.png)
+
+You can then choose any other sensors you have in the area to contribute, again on first config, just add any sensors you have, leave the weights and states as default. Everything here is optional.
+
+![Add Other Sensors](../images/config_edit_sensors_area.png)
 
 ### Manage Areas
 

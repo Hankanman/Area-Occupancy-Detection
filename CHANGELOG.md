@@ -8,29 +8,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [2026.2.4] - 2026-02-20
+
+## What's Changed
+* Fix KeyError in Prior.__init__ when area missing from coordinator by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/370. Fixes https://github.com/Hankanman/Area-Occupancy-Detection/issues/369, Thank you @oohhddaanngg for highlighting!
+
+And a big thank you to those who have chosen to sponsor my work!
+[You can sponsor me here](https://github.com/sponsors/Hankanman)
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.3...2026.2.4
+
+
+## [2026.2.3] - 2026-02-19
+
+## What's Changed
+* Fix entities not appearing after config changes without reload by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/367
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.2...2026.2.3
+
+
+## [2026.2.2] - 2026-02-19
+
+A minor release to increase the sensitivity further of single motion sensor setups.
+
+And a big thank you to those who have chosen to sponsor my work!
+[You can sponsor me here](https://github.com/sponsors/Hankanman)
+
+## What's Changed
+* Increase motion sensor probability spikes by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/365
+* Centralise purpose-specific config into Purpose class by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/366
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.1...2026.2.2
+
+
+## [2026.2.2-pre2] - 2026-02-19
+
+## What's Changed
+* Increase motion sensor probability spikes by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/365
+* Centralise purpose-specific config into Purpose class by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/366
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.1...2026.2.2-pre2
+
+
+## [2026.2.2-pre1] - 2026-02-19
+
+## What's Changed
+* Increase motion sensor probability spikes by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/365
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.1...2026.2.2-pre1
+
+
 ## [2026.2.1] - 2026-02-18
 
-This is a major release that fundamentally improves how occupancy probability is calculated and adds two new detection systems. The probability engine now uses a dual-model approach that separates presence evidence from environmental signals, and the integration can now detect what activity is happening in a room and whether someone is sleeping.
+## Major Intelligence Upgrade
 
-- **Dual-model probability engine** replaces the single Bayesian calculation with a split presence/environmental approach. Presence indicators (motion, media, appliances, doors, windows, covers, power, sleep) are calculated independently from environmental sensors (temperature, humidity, CO2, etc.) and combined with an 80/20 weighting in logit space. This produces more accurate results by preventing noisy environmental readings from overwhelming strong presence signals. New **Presence Confidence** and **Environmental Confidence** diagnostic sensors expose the individual model outputs. ([#353](https://github.com/Hankanman/Area-Occupancy-Detection/pull/353))
-- **Activity detection** identifies what is happening in a room, not just whether it's occupied. The system recognises 10 activities — showering, bathing, cooking, eating, watching TV, listening to music, working, sleeping, idle, and unoccupied — and constrains them by the area's configured purpose (e.g., "showering" only appears in bathrooms). Scoring uses weighted indicator matching with learned Gaussian parameters for environmental sensors. New **Detected Activity** (enum) and **Activity Confidence** (%) sensors are created per area. ([#357](https://github.com/Hankanman/Area-Occupancy-Detection/pull/357), [#358](https://github.com/Hankanman/Area-Occupancy-Detection/pull/358))
-- **Sleep presence detection** uses Home Assistant Person entities combined with phone sleep confidence sensors (from the Companion App) to determine when someone is sleeping in an area. A new **Sleeping** binary sensor is created for areas with configured people, and sleep evidence feeds into the occupancy calculation with a weight of 0.90 and 2-hour decay half-life. Configure via the new **Manage People** option in the integration menu. ([#355](https://github.com/Hankanman/Area-Occupancy-Detection/pull/355))
-- **Improved prior calculation** broadens the ground truth window used for learning, lowers safety bounds (time prior minimum from 10% to 3%), and applies effective weights during prior computation for more accurate baseline probabilities. Passageway areas now use a minimum prior of 10% to better reflect transient occupancy patterns. ([#356](https://github.com/Hankanman/Area-Occupancy-Detection/pull/356))
-- **Tuned motion sensor defaults** — `P(Active | Not Occupied)` reduced from 0.02 to 0.005, making motion detection significantly more decisive as evidence of occupancy.
-- **Entity renaming** standardises sensor names across the integration: "Presence Probability" is now "Presence Confidence", "Sleep Presence" is now "Sleeping", and several other entities have been refined for clarity. ([#360](https://github.com/Hankanman/Area-Occupancy-Detection/pull/360))
-- **Simulator fixes** for Docker builds, CSS scoping, JavaScript cleanup, and Gaussian parameter support in the web-based simulator. ([#359](https://github.com/Hankanman/Area-Occupancy-Detection/pull/359))
-- **Bug fixes and type safety** addressing 5 critical, 19 high, and 6 medium issues including silent failures in the calculation pipeline, missing type annotations, and edge cases in evidence collection. ([#354](https://github.com/Hankanman/Area-Occupancy-Detection/pull/354))
-- **Documentation overhaul** covering all new features, updated entity references, revised getting-started guides, and new pages for sleep presence and activity detection. ([#361](https://github.com/Hankanman/Area-Occupancy-Detection/pull/361))
+This release fundamentally improves how occupancy probability is calculated and adds several new detection systems. The probability engine now uses a dual-model approach that separates presence evidence from environmental signals, and the integration can now detect what activity is happening in a room and whether someone is sleeping. It seriously levels up the accuracy, expecially in areas where you have minimal sensors. This major update is a result of several discussion threads and thoughts noted in [#332](https://github.com/Hankanman/Area-Occupancy-Detection/issues/332). There is more to do, like adding more detection scenarios, but witout actually training a deep neural network (watch this space), this is as close as you can get to realtime machine learning in Home Assistant.
+
+A special thank you to @ericblade for not giving up 😄.
+
+Sponsoring now available! If you think my work deserves it, [sponsoring](https://github.com/sponsors/Hankanman) would be immensely appreciated, you can do so [here](https://github.com/sponsors/Hankanman).
 
 ## Breaking Changes
 
-> [!CAUTION]
-> **Entity IDs have changed.** Several sensors have been renamed for consistency. Home Assistant should handle the migration automatically, but any automations or dashboards referencing the old entity IDs will need to be updated. Key renames include:
-> - `sensor.area_presence_probability_*` → `sensor.area_presence_confidence_*`
-> - `binary_sensor.*_sleep_presence` → `binary_sensor.*_sleeping`
+> [!WARNING]
+> **Probability behaviour will change.** The new dual-model engine produces different probability values than the previous single-model approach. You may need to adjust your occupancy thresholds after upgrading. Environmental sensors now have a much smaller influence (20%) compared to presence indicators (80%). Most areas will be fine, though it is likely you will need to lower your threshold for passageways (halls, entrances etc.) as these typically have minimal history (motion only detected for seconds or a couple minutes at a time as you walk through)
 
-> [!NOTE]
-> **Probability behaviour will change.** The new dual-model engine produces different probability values than the previous single-model approach. You may need to adjust your occupancy thresholds after upgrading. Environmental sensors now have a much smaller influence (20%) compared to presence indicators (80%).
+## Before the Good Stuff
+
+I just wanted to note, there are a LOT of config options, and this confuses some users. Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
+
+- A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
+- A Purpose. What the room is used for, [see more about purposes here](https://hankanman.github.io/Area-Occupancy-Detection/features/purpose/)
+- 1 Motion sensor. A physical device in the area like PIR, mmWave
+
+The integration will work with just these configured. Everything else can be added as you get new devices. However the more you add in, the more accurate the predictions will be.
+
+## New Features
+
+- **People Management** uses the Home Assistant people system to allow you to associate people with the area that they sleep in. This adds sleep sensors automatically to that area. This is intended to be used with the HA companion app for sleep confidence and device tracking. But you can manually select the appropriate entities for this as well in the config:
+    <img width="602" height="852" alt="config_manage_person" src="https://github.com/user-attachments/assets/4aa8a65f-b894-43db-bb85-248804cbb602" />
+
+- **Dual-model probability engine** replaces the single Bayesian calculation with a split presence/environmental approach. Presence indicators (motion, media, appliances, doors, windows, covers, power, sleep) are calculated independently from environmental sensors (temperature, humidity, CO2, etc.) and combined with an 80/20 weighting in logit space. This produces more accurate results by preventing noisy environmental readings from overwhelming strong presence signals. New **Presence Confidence** and **Environmental Confidence** diagnostic sensors expose the individual model outputs. ([#353](https://github.com/Hankanman/Area-Occupancy-Detection/pull/353))
+    <img width="318" height="415" alt="diagnostic_sensors" src="https://github.com/user-attachments/assets/44e15fc7-b50a-481c-b933-38f747db2c9f" />
+
+- **Activity detection** identifies what is happening in a room, not just whether it's occupied. The system recognises 10 activities — showering, bathing, cooking, eating, watching TV, listening to music, working, sleeping, idle, and unoccupied — and constrains them by the area's configured purpose (e.g., "showering" only appears in bathrooms). Scoring uses weighted indicator matching with learned Gaussian parameters for environmental sensors. New **Detected Activity** (enum) and **Activity Confidence** (%) sensors are created per area. ([#357](https://github.com/Hankanman/Area-Occupancy-Detection/pull/357), [#358](https://github.com/Hankanman/Area-Occupancy-Detection/pull/358))
+- **Sleep presence detection** uses Home Assistant Person entities combined with phone sleep confidence sensors (from the Companion App) to determine when someone is sleeping in an area. A new **Sleeping** binary sensor is created for areas with configured people, and sleep evidence feeds into the occupancy calculation with a weight of 0.90 and 2-hour decay half-life. Configure via the new **Manage People** option in the integration menu. ([#355](https://github.com/Hankanman/Area-Occupancy-Detection/pull/355))
+
+## Improvements & Fixes
+
+- **Improved prior calculation** broadens the ground truth window used for learning, lowers safety bounds (time prior minimum from 10% to 3%), and applies effective weights during prior computation for more accurate baseline probabilities. Passageway areas now use a minimum prior of 10% to better reflect transient occupancy patterns. ([#356](https://github.com/Hankanman/Area-Occupancy-Detection/pull/356))
+- **Tuned motion sensor defaults** — `P(Active | Not Occupied)` reduced from 0.02 to 0.005, making motion detection significantly more decisive as evidence of occupancy.
+- **Simulator fixes** for Docker builds, CSS scoping, JavaScript cleanup, and Gaussian parameter support in the web-based simulator. ([#359](https://github.com/Hankanman/Area-Occupancy-Detection/pull/359))
+- **Bug fixes and type safety** addressing 5 critical, 19 high, and 6 medium issues including silent failures in the calculation pipeline, missing type annotations, and edge cases in evidence collection. ([#354](https://github.com/Hankanman/Area-Occupancy-Detection/pull/354))
+- **Documentation overhaul** covering all new features, updated entity references, revised getting-started guides, and new pages for sleep presence and activity detection. ([#361](https://github.com/Hankanman/Area-Occupancy-Detection/pull/361))
 
 ## What's Changed
 * Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
@@ -39,11 +113,93 @@ This is a major release that fundamentally improves how occupancy probability is
 * Improve prior calculation accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/356
 * Add purpose-aware activity detection sensors by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/357
 * Fix activity detection accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/358
-* Fix simulator bugs: Docker build, CSS scoping, JS cleanup, and Gaussian param support by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/359
+* Fix simulator bugs and add Gaussian likelihood support by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/359
 * Rename and refine exposed sensor entities by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/360
 * Update documentation for post-2026.1.1 features by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/361
+* Add optional device_tracker override to People Management by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/362
+* Add activity-based probability boost by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/363
+
 
 **Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1
+
+
+## [2026.2.1-pre6] - 2026-02-17
+
+## What's Changed
+* Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
+* Fix critical bugs, stop silent failures, add type safety by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/354
+* Add sleep presence detection via HA Person integration by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/355
+* Improve prior calculation accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/356
+* Add purpose-aware activity detection sensors by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/357
+* Fix activity detection accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/358
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1-pre6
+
+
+## [2026.2.1-pre5] - 2026-02-17
+
+## What's Changed
+* Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
+* Fix critical bugs, stop silent failures, add type safety by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/354
+* Add sleep presence detection via HA Person integration by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/355
+* Improve prior calculation accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/356
+* Add purpose-aware activity detection sensors by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/357
+* Fix activity detection accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/358
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1-pre5
+
+
+## [2026.2.1-pre4] - 2026-02-17
+
+## What's Changed
+* Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
+* Fix critical bugs, stop silent failures, add type safety by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/354
+* Add sleep presence detection via HA Person integration by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/355
+* Improve prior calculation accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/356
+* Add purpose-aware activity detection sensors by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/357
+* Fix activity detection accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/358
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1-pre4
+
+
+## [2026.2.1-pre3] - 2026-02-16
+
+## What's Changed
+* Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
+* Fix critical bugs, stop silent failures, add type safety by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/354
+* Add sleep presence detection via HA Person integration by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/355
+* Improve prior calculation accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/356
+* Add purpose-aware activity detection sensors by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/357
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1-pre3
+
+
+## [2026.2.1-pre2] - 2026-02-16
+
+## What's Changed
+* Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
+* Fix critical bugs, stop silent failures, add type safety by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/354
+* Add sleep presence detection via HA Person integration by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/355
+* Improve prior calculation accuracy by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/356
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1-pre2
+
+
+## [2026.2.1-pre1] - 2026-02-15
+
+This update completely changes the way probability is calculated! You have been warned!
+
+## What's Changed
+* Add sigmoid-based occupancy detection framework by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/353
+* Fix critical bugs, stop silent failures, add type safety by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/354
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.1.1...2026.2.1-pre1
 
 
 ## [2026.1.1] - 2026-02-02

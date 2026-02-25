@@ -1,0 +1,50 @@
+{
+    "config": {
+        "step": {
+            "area_motion": {
+                "sections": {
+                    "motion": "mdi:motion-sensor"
+                }
+            },
+            "area_sensors": {
+                "sections": {
+                    "windows_and_doors": "mdi:door",
+                    "media": "mdi:cast",
+                    "appliances": "mdi:power-plug",
+                    "environmental": "mdi:thermometer",
+                    "power": "mdi:flash"
+                }
+            },
+            "area_behavior": {
+                "sections": {
+                    "wasp_in_box": "mdi:bee",
+                    "parameters": "mdi:tune-variant"
+                }
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "area_motion": {
+                "sections": {
+                    "motion": "mdi:motion-sensor"
+                }
+            },
+            "area_sensors": {
+                "sections": {
+                    "windows_and_doors": "mdi:door",
+                    "media": "mdi:cast",
+                    "appliances": "mdi:power-plug",
+                    "environmental": "mdi:thermometer",
+                    "power": "mdi:flash"
+                }
+            },
+            "area_behavior": {
+                "sections": {
+                    "wasp_in_box": "mdi:bee",
+                    "parameters": "mdi:tune-variant"
+                }
+            }
+        }
+    }
+}

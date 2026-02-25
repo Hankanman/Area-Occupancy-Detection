@@ -1,3 +1,7 @@
 run_analysis:
   name: Run Analysis
   description: "Run the analysis for all areas in the area occupancy instance."
+
+export_config:
+  name: Export Config
+  description: "Export the complete integration configuration as YAML."

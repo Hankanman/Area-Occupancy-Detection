@@ -1,11 +1,13 @@
-# https://www.home-assistant.io/integrations/default_config/
-default_config:
-
-# https://www.home-assistant.io/integrations/homeassistant/
+# Minimal config for development (default_config pulls too many deps)
 homeassistant:
   debug: true
 
-debugpy:
+frontend:
+energy:
+my:
+recorder:
+history:
+logbook:
 
 # https://www.home-assistant.io/integrations/logger/
 logger:
@@ -18,252 +20,1276 @@ logger:
     homeassistant.setup:
       - ".*go2rtc.*"
 
-# Input controls for testing
+# =============================================================================
+# Mock entities for testing Area Occupancy Detection
+# =============================================================================
+# Covers every InputType the integration supports:
+#   MOTION, MEDIA, APPLIANCE, DOOR, WINDOW, COVER,
+#   TEMPERATURE, HUMIDITY, ILLUMINANCE, CO2, CO,
+#   SOUND_PRESSURE, PRESSURE, AIR_QUALITY, VOC, PM25, PM10, POWER
+#
+# Multiple instances of each type allow testing multi-sensor scenarios.
+# Entities are spread across 5 rooms:
+#   Living Room, Kitchen, Bathroom, Bedroom, Hallway
+# Each room tests different integration features:
+#   - Living Room / Kitchen: full sensor suites (social/food_prep purpose)
+#   - Bathroom: wasp-in-box scenarios (bathroom purpose)
+#   - Bedroom: sleep detection, long decay (sleeping purpose)
+#   - Hallway: passageway, very short decay, minimal sensors
+# =============================================================================
 
-# Add to input_select section (create if it doesn't exist)
-input_select:
-  mock_media_state:
-    name: Mock Media Player State
-    options:
-      - playing
-      - paused
-      - idle
-      - off
-    initial: off
+# --------------- Input controls (the "knobs" to drive mock entities) ----------
+
 input_boolean:
-  # Door and window controls
-  mock_door:
-    name: Mock Door State
+  # --- Motion sensors (3 per room = 9 total) ---
+  mock_lr_motion_1:
+    name: "LR: Motion 1"
     initial: off
-  mock_window:
-    name: Mock Window State
+  mock_lr_motion_2:
+    name: "LR: Motion 2"
     initial: off
-  # Motion sensor controls
-  mock_motion_1:
-    name: Mock Motion Sensor 1
+  mock_lr_motion_3:
+    name: "LR: Motion 3"
     initial: off
-  mock_motion_2:
-    name: Mock Motion Sensor 2
+  mock_kit_motion_1:
+    name: "Kit: Motion 1"
     initial: off
-  mock_motion_3:
-    name: Mock Motion Sensor 3
+  mock_kit_motion_2:
+    name: "Kit: Motion 2"
+    initial: off
+  mock_kit_motion_3:
+    name: "Kit: Motion 3"
+    initial: off
+  mock_bath_motion_1:
+    name: "Bath: Motion 1"
+    initial: off
+  mock_bath_motion_2:
+    name: "Bath: Motion 2"
+    initial: off
+  mock_bath_motion_3:
+    name: "Bath: Motion 3"
     initial: off
 
-  # Device state controls
-  mock_tv:
-    name: Mock TV State
+  # --- Door sensors (2 per room = 6 total) ---
+  mock_lr_door_1:
+    name: "LR: Door 1"
     initial: off
-  mock_computer:
-    name: Mock Computer State
+  mock_lr_door_2:
+    name: "LR: Door 2"
     initial: off
-  mock_game_console:
-    name: Mock Game Console State
+  mock_kit_door_1:
+    name: "Kit: Door 1"
     initial: off
-  mock_lights:
-    name: Mock Area Lights
+  mock_kit_door_2:
+    name: "Kit: Door 2"
     initial: off
+  mock_bath_door_1:
+    name: "Bath: Door 1"
+    initial: off
+  mock_bath_door_2:
+    name: "Bath: Door 2"
+    initial: off
+
+  # --- Window sensors (2 per room = 6 total) ---
+  mock_lr_window_1:
+    name: "LR: Window 1"
+    initial: off
+  mock_lr_window_2:
+    name: "LR: Window 2"
+    initial: off
+  mock_kit_window_1:
+    name: "Kit: Window 1"
+    initial: off
+  mock_kit_window_2:
+    name: "Kit: Window 2"
+    initial: off
+  mock_bath_window_1:
+    name: "Bath: Window 1"
+    initial: off
+  mock_bath_window_2:
+    name: "Bath: Window 2"
+    initial: off
+
+  # --- Appliance power states ---
+  mock_lr_tv:
+    name: "LR: TV"
+    initial: off
+  mock_lr_computer:
+    name: "LR: Computer"
+    initial: off
+  mock_lr_game_console:
+    name: "LR: Game Console"
+    initial: off
+  mock_kit_oven:
+    name: "Kit: Oven"
+    initial: off
+  mock_kit_dishwasher:
+    name: "Kit: Dishwasher"
+    initial: off
+  mock_kit_kettle:
+    name: "Kit: Kettle"
+    initial: off
+  mock_bath_heater:
+    name: "Bath: Heater"
+    initial: off
+  mock_bath_fan:
+    name: "Bath: Fan"
+    initial: off
+
+  # --- Bedroom entities ---
+  mock_bed_motion_1:
+    name: "Bed: Motion 1"
+    initial: off
+  mock_bed_motion_2:
+    name: "Bed: Motion 2"
+    initial: off
+  mock_bed_door_1:
+    name: "Bed: Door"
+    initial: off
+  mock_bed_window_1:
+    name: "Bed: Window"
+    initial: off
+  mock_bed_tv:
+    name: "Bed: TV"
+    initial: off
+  mock_bed_lights:
+    name: "Bed: Lights"
+    initial: off
+
+  # --- Hallway entities ---
+  mock_hall_motion_1:
+    name: "Hall: Motion 1"
+    initial: off
+  mock_hall_motion_2:
+    name: "Hall: Motion 2"
+    initial: off
+  mock_hall_door_1:
+    name: "Hall: Front Door"
+    initial: off
+  mock_hall_lights:
+    name: "Hall: Lights"
+    initial: off
+
+  # --- Lights (used for appliance/power testing) ---
+  mock_lr_lights:
+    name: "LR: Lights"
+    initial: off
+  mock_kit_lights:
+    name: "Kit: Lights"
+    initial: off
+  mock_bath_lights:
+    name: "Bath: Lights"
+    initial: off
+
+input_select:
+  # --- Media player states ---
+  mock_lr_media_state:
+    name: "LR: Media Player State"
+    options: [playing, paused, idle, off]
+    initial: off
+  mock_kit_media_state:
+    name: "Kit: Media Player State"
+    options: [playing, paused, idle, off]
+    initial: off
+  mock_bath_media_state:
+    name: "Bath: Media Player State"
+    options: [playing, paused, idle, off]
+    initial: off
+  mock_bed_media_state:
+    name: "Bed: Media Player State"
+    options: [playing, paused, idle, off]
+    initial: off
+
+  # --- Cover states ---
+  mock_lr_cover_1:
+    name: "LR: Blinds State"
+    options: [open, closed, opening, closing]
+    initial: closed
+  mock_lr_cover_2:
+    name: "LR: Curtains State"
+    options: [open, closed, opening, closing]
+    initial: closed
+  mock_kit_cover_1:
+    name: "Kit: Blinds State"
+    options: [open, closed, opening, closing]
+    initial: closed
+  mock_bath_cover_1:
+    name: "Bath: Blinds State"
+    options: [open, closed, opening, closing]
+    initial: closed
+  mock_bed_cover_1:
+    name: "Bed: Curtains State"
+    options: [open, closed, opening, closing]
+    initial: closed
 
 input_number:
-  mock_media_volume:
-    name: Mock Media Volume
+  # --- Media volumes ---
+  mock_lr_media_volume:
+    name: "LR: Media Volume"
     min: 0
     max: 100
     step: 1
     initial: 50
-  # Environmental sensor controls
-  mock_illuminance_1:
-    name: Mock Illuminance 1
+  mock_kit_media_volume:
+    name: "Kit: Media Volume"
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
+  mock_bath_media_volume:
+    name: "Bath: Media Volume"
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
+  mock_bed_media_volume:
+    name: "Bed: Media Volume"
+    min: 0
+    max: 100
+    step: 1
+    initial: 30
+
+  # --- Illuminance sensors (2 per room) ---
+  mock_lr_illuminance_1:
+    name: "LR: Illuminance 1"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 200
+  mock_lr_illuminance_2:
+    name: "LR: Illuminance 2"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 200
+  mock_kit_illuminance_1:
+    name: "Kit: Illuminance 1"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 300
+  mock_kit_illuminance_2:
+    name: "Kit: Illuminance 2"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 300
+  mock_bath_illuminance_1:
+    name: "Bath: Illuminance 1"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 100
+  mock_bath_illuminance_2:
+    name: "Bath: Illuminance 2"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 100
+  mock_bed_illuminance_1:
+    name: "Bed: Illuminance 1"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 50
+  mock_hall_illuminance_1:
+    name: "Hall: Illuminance 1"
+    min: 0
+    max: 10000
+    step: 1
+    initial: 150
+
+  # --- Temperature sensors (2 per room) ---
+  mock_lr_temperature_1:
+    name: "LR: Temperature 1"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 21
+  mock_lr_temperature_2:
+    name: "LR: Temperature 2"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 21
+  mock_kit_temperature_1:
+    name: "Kit: Temperature 1"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 22
+  mock_kit_temperature_2:
+    name: "Kit: Temperature 2"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 22
+  mock_bath_temperature_1:
+    name: "Bath: Temperature 1"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 23
+  mock_bath_temperature_2:
+    name: "Bath: Temperature 2"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 23
+  mock_bed_temperature_1:
+    name: "Bed: Temperature 1"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 20
+  mock_hall_temperature_1:
+    name: "Hall: Temperature 1"
+    min: 10
+    max: 40
+    step: 0.1
+    initial: 19
+
+  # --- Humidity sensors (2 per room) ---
+  mock_lr_humidity_1:
+    name: "LR: Humidity 1"
+    min: 0
+    max: 100
+    step: 1
+    initial: 45
+  mock_lr_humidity_2:
+    name: "LR: Humidity 2"
+    min: 0
+    max: 100
+    step: 1
+    initial: 45
+  mock_kit_humidity_1:
+    name: "Kit: Humidity 1"
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
+  mock_kit_humidity_2:
+    name: "Kit: Humidity 2"
+    min: 0
+    max: 100
+    step: 1
+    initial: 50
+  mock_bath_humidity_1:
+    name: "Bath: Humidity 1"
+    min: 0
+    max: 100
+    step: 1
+    initial: 70
+  mock_bath_humidity_2:
+    name: "Bath: Humidity 2"
+    min: 0
+    max: 100
+    step: 1
+    initial: 70
+  mock_bed_humidity_1:
+    name: "Bed: Humidity 1"
+    min: 0
+    max: 100
+    step: 1
+    initial: 45
+
+  # --- CO2 sensors ---
+  mock_lr_co2:
+    name: "LR: CO2"
+    min: 300
+    max: 5000
+    step: 1
+    initial: 400
+  mock_kit_co2:
+    name: "Kit: CO2"
+    min: 300
+    max: 5000
+    step: 1
+    initial: 400
+  mock_bath_co2:
+    name: "Bath: CO2"
+    min: 300
+    max: 5000
+    step: 1
+    initial: 400
+
+  # --- CO sensors ---
+  mock_lr_co:
+    name: "LR: CO"
+    min: 0
+    max: 500
+    step: 1
+    initial: 0
+  mock_kit_co:
+    name: "Kit: CO"
+    min: 0
+    max: 500
+    step: 1
+    initial: 0
+
+  # --- Sound pressure (dB) sensors ---
+  mock_lr_sound:
+    name: "LR: Sound Level"
+    min: 0
+    max: 130
+    step: 1
+    initial: 30
+  mock_kit_sound:
+    name: "Kit: Sound Level"
+    min: 0
+    max: 130
+    step: 1
+    initial: 30
+  mock_bath_sound:
+    name: "Bath: Sound Level"
+    min: 0
+    max: 130
+    step: 1
+    initial: 25
+
+  # --- Atmospheric pressure sensors ---
+  mock_lr_pressure:
+    name: "LR: Pressure"
+    min: 900
+    max: 1100
+    step: 0.1
+    initial: 1013
+  mock_kit_pressure:
+    name: "Kit: Pressure"
+    min: 900
+    max: 1100
+    step: 0.1
+    initial: 1013
+
+  # --- Air quality index sensors ---
+  mock_lr_aqi:
+    name: "LR: Air Quality Index"
+    min: 0
+    max: 500
+    step: 1
+    initial: 25
+  mock_kit_aqi:
+    name: "Kit: Air Quality Index"
+    min: 0
+    max: 500
+    step: 1
+    initial: 25
+
+  # --- VOC sensors ---
+  mock_lr_voc:
+    name: "LR: VOC"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 100
+  mock_kit_voc:
+    name: "Kit: VOC"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 100
+  mock_bath_voc:
+    name: "Bath: VOC"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 100
+
+  # --- PM2.5 sensors ---
+  mock_lr_pm25:
+    name: "LR: PM2.5"
+    min: 0
+    max: 500
+    step: 0.1
+    initial: 10
+  mock_kit_pm25:
+    name: "Kit: PM2.5"
+    min: 0
+    max: 500
+    step: 0.1
+    initial: 10
+
+  # --- PM10 sensors ---
+  mock_lr_pm10:
+    name: "LR: PM10"
+    min: 0
+    max: 500
+    step: 0.1
+    initial: 15
+  mock_kit_pm10:
+    name: "Kit: PM10"
+    min: 0
+    max: 500
+    step: 0.1
+    initial: 15
+
+  # --- Power consumption (W) sensors ---
+  mock_lr_power_1:
+    name: "LR: Power Outlet 1"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 0
+  mock_lr_power_2:
+    name: "LR: Power Outlet 2"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 0
+  mock_kit_power_1:
+    name: "Kit: Power Outlet 1"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 0
+  mock_kit_power_2:
+    name: "Kit: Power Outlet 2"
+    min: 0
+    max: 5000
+    step: 1
+    initial: 0
+  mock_bath_power_1:
+    name: "Bath: Power Outlet 1"
+    min: 0
+    max: 3000
+    step: 1
+    initial: 0
+  mock_bed_power_1:
+    name: "Bed: Power Outlet 1"
+    min: 0
+    max: 3000
+    step: 1
+    initial: 0
+  mock_hall_power_1:
+    name: "Hall: Power Outlet 1"
     min: 0
     max: 1000
     step: 1
-    initial: 100
-  mock_illuminance_2:
-    name: Mock Illuminance 2
-    min: 0
-    max: 1000
-    step: 1
-    initial: 100
+    initial: 0
 
-  mock_temperature_1:
-    name: Mock Temperature 1
-    min: 15
-    max: 30
-    step: 0.1
-    initial: 21
-  mock_temperature_2:
-    name: Mock Temperature 2
-    min: 15
-    max: 30
-    step: 0.1
-    initial: 21
+# --------------- Template sensors (modern format) ----------------------------
 
-  mock_humidity_1:
-    name: Mock Humidity 1
-    min: 0
-    max: 100
-    step: 1
-    initial: 50
-  mock_humidity_2:
-    name: Mock Humidity 2
-    min: 0
-    max: 100
-    step: 1
-    initial: 50
-
-# Template sensors that simulate real devices
-binary_sensor:
-  - platform: template
-    sensors:
-      # Motion sensors
-      motion_sensor_1:
-        friendly_name: "Motion Sensor 1"
+template:
+  # ===== BINARY SENSORS =====
+  - binary_sensor:
+      # --- Motion sensors ---
+      - name: "LR Motion 1"
+        unique_id: "lr_motion_1"
         device_class: motion
-        unique_id: "motion_sensor_1"
-        value_template: "{{ states('input_boolean.mock_motion_1') }}"
-        availability_template: "true"
-
-      motion_sensor_2:
-        friendly_name: "Motion Sensor 2"
+        state: "{{ states('input_boolean.mock_lr_motion_1') }}"
+      - name: "LR Motion 2"
+        unique_id: "lr_motion_2"
         device_class: motion
-        unique_id: "motion_sensor_2"
-        value_template: "{{ states('input_boolean.mock_motion_2') }}"
-        availability_template: "true"
-
-      motion_sensor_3:
-        friendly_name: "Motion Sensor 3"
+        state: "{{ states('input_boolean.mock_lr_motion_2') }}"
+      - name: "LR Motion 3"
+        unique_id: "lr_motion_3"
         device_class: motion
-        unique_id: "motion_sensor_3"
-        value_template: "{{ states('input_boolean.mock_motion_3') }}"
-        availability_template: "{{ now().second < 50 }}" # Simulates periodic unavailability
+        state: "{{ states('input_boolean.mock_lr_motion_3') }}"
+        availability: "{{ now().second < 50 }}"
+      - name: "Kit Motion 1"
+        unique_id: "kit_motion_1"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_kit_motion_1') }}"
+      - name: "Kit Motion 2"
+        unique_id: "kit_motion_2"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_kit_motion_2') }}"
+      - name: "Kit Motion 3"
+        unique_id: "kit_motion_3"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_kit_motion_3') }}"
+      - name: "Bath Motion 1"
+        unique_id: "bath_motion_1"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_bath_motion_1') }}"
+      - name: "Bath Motion 2"
+        unique_id: "bath_motion_2"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_bath_motion_2') }}"
+      - name: "Bath Motion 3"
+        unique_id: "bath_motion_3"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_bath_motion_3') }}"
 
-      # Device power states
-      tv_power_sensor:
-        friendly_name: "TV Power State"
-        device_class: power
-        unique_id: "tv_power_sensor"
-        value_template: "{{ states('input_boolean.mock_tv') }}"
+      # --- Bedroom motion ---
+      - name: "Bed Motion 1"
+        unique_id: "bed_motion_1"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_bed_motion_1') }}"
+      - name: "Bed Motion 2"
+        unique_id: "bed_motion_2"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_bed_motion_2') }}"
 
-      computer_power_sensor:
-        friendly_name: "Computer Power State"
-        device_class: power
-        unique_id: "computer_power_sensor"
-        value_template: "{{ states('input_boolean.mock_computer') }}"
+      # --- Hallway motion ---
+      - name: "Hall Motion 1"
+        unique_id: "hall_motion_1"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_hall_motion_1') }}"
+      - name: "Hall Motion 2"
+        unique_id: "hall_motion_2"
+        device_class: motion
+        state: "{{ states('input_boolean.mock_hall_motion_2') }}"
 
-      game_console_power_sensor:
-        friendly_name: "Game Console Power State"
-        device_class: power
-        unique_id: "game_console_power_sensor"
-        value_template: "{{ states('input_boolean.mock_game_console') }}"
-
-      # Door and window sensors
-      door_sensor:
-        friendly_name: "Door Sensor"
+      # --- Door sensors ---
+      - name: "LR Door 1"
+        unique_id: "lr_door_1"
         device_class: door
-        unique_id: "door_sensor"
-        value_template: "{{ states('input_boolean.mock_door') }}"
-        availability_template: "true"
+        state: "{{ states('input_boolean.mock_lr_door_1') }}"
+      - name: "LR Door 2"
+        unique_id: "lr_door_2"
+        device_class: door
+        state: "{{ states('input_boolean.mock_lr_door_2') }}"
+      - name: "Kit Door 1"
+        unique_id: "kit_door_1"
+        device_class: door
+        state: "{{ states('input_boolean.mock_kit_door_1') }}"
+      - name: "Kit Door 2"
+        unique_id: "kit_door_2"
+        device_class: door
+        state: "{{ states('input_boolean.mock_kit_door_2') }}"
+      - name: "Bath Door 1"
+        unique_id: "bath_door_1"
+        device_class: door
+        state: "{{ states('input_boolean.mock_bath_door_1') }}"
+      - name: "Bath Door 2"
+        unique_id: "bath_door_2"
+        device_class: door
+        state: "{{ states('input_boolean.mock_bath_door_2') }}"
 
-      window_sensor:
-        friendly_name: "Window Sensor"
+      # --- Bedroom/Hallway doors ---
+      - name: "Bed Door 1"
+        unique_id: "bed_door_1"
+        device_class: door
+        state: "{{ states('input_boolean.mock_bed_door_1') }}"
+      - name: "Hall Front Door"
+        unique_id: "hall_door_1"
+        device_class: door
+        state: "{{ states('input_boolean.mock_hall_door_1') }}"
+
+      # --- Window sensors ---
+      - name: "LR Window 1"
+        unique_id: "lr_window_1"
         device_class: window
-        unique_id: "window_sensor"
-        value_template: "{{ states('input_boolean.mock_window') }}"
-        availability_template: "true"
+        state: "{{ states('input_boolean.mock_lr_window_1') }}"
+      - name: "LR Window 2"
+        unique_id: "lr_window_2"
+        device_class: window
+        state: "{{ states('input_boolean.mock_lr_window_2') }}"
+      - name: "Kit Window 1"
+        unique_id: "kit_window_1"
+        device_class: window
+        state: "{{ states('input_boolean.mock_kit_window_1') }}"
+      - name: "Kit Window 2"
+        unique_id: "kit_window_2"
+        device_class: window
+        state: "{{ states('input_boolean.mock_kit_window_2') }}"
+      - name: "Bath Window 1"
+        unique_id: "bath_window_1"
+        device_class: window
+        state: "{{ states('input_boolean.mock_bath_window_1') }}"
+      - name: "Bath Window 2"
+        unique_id: "bath_window_2"
+        device_class: window
+        state: "{{ states('input_boolean.mock_bath_window_2') }}"
 
-sensor:
-  - platform: template
-    sensors:
-      # Illuminance sensors
-      illuminance_sensor_1:
-        friendly_name: "Illuminance Sensor 1"
+      # --- Bedroom window ---
+      - name: "Bed Window 1"
+        unique_id: "bed_window_1"
+        device_class: window
+        state: "{{ states('input_boolean.mock_bed_window_1') }}"
+
+      # --- Appliance power states (binary) ---
+      - name: "LR TV Power"
+        unique_id: "lr_tv_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_lr_tv') }}"
+      - name: "LR Computer Power"
+        unique_id: "lr_computer_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_lr_computer') }}"
+      - name: "LR Game Console Power"
+        unique_id: "lr_game_console_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_lr_game_console') }}"
+      - name: "Kit Oven Power"
+        unique_id: "kit_oven_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_kit_oven') }}"
+      - name: "Kit Dishwasher Power"
+        unique_id: "kit_dishwasher_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_kit_dishwasher') }}"
+      - name: "Kit Kettle Power"
+        unique_id: "kit_kettle_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_kit_kettle') }}"
+      - name: "Bath Heater Power"
+        unique_id: "bath_heater_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_bath_heater') }}"
+      - name: "Bath Fan Power"
+        unique_id: "bath_fan_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_bath_fan') }}"
+
+      # --- Bedroom appliances ---
+      - name: "Bed TV Power"
+        unique_id: "bed_tv_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_bed_tv') }}"
+      - name: "Bed Lights Power"
+        unique_id: "bed_lights_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_bed_lights') }}"
+
+      # --- Hallway appliances ---
+      - name: "Hall Lights Power"
+        unique_id: "hall_lights_power"
+        device_class: power
+        state: "{{ states('input_boolean.mock_hall_lights') }}"
+
+    # ===== ANALOG SENSORS =====
+    sensor:
+      # --- Illuminance ---
+      - name: "LR Illuminance 1"
+        unique_id: "lr_illuminance_1"
         device_class: illuminance
         unit_of_measurement: "lx"
-        value_template: "{{ states('input_number.mock_illuminance_1') | float }}"
-        unique_id: "illuminance_sensor_1"
-      illuminance_sensor_2:
-        friendly_name: "Illuminance Sensor 2"
+        state: "{{ states('input_number.mock_lr_illuminance_1') | float }}"
+      - name: "LR Illuminance 2"
+        unique_id: "lr_illuminance_2"
         device_class: illuminance
         unit_of_measurement: "lx"
-        value_template: "{{ states('input_number.mock_illuminance_2') | float }}"
-        unique_id: "illuminance_sensor_2"
-        availability_template: "{{ now().minute < 55 }}" # Simulates periodic unavailability
+        state: "{{ states('input_number.mock_lr_illuminance_2') | float }}"
+        availability: "{{ now().minute < 55 }}"
+      - name: "Kit Illuminance 1"
+        unique_id: "kit_illuminance_1"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        state: "{{ states('input_number.mock_kit_illuminance_1') | float }}"
+      - name: "Kit Illuminance 2"
+        unique_id: "kit_illuminance_2"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        state: "{{ states('input_number.mock_kit_illuminance_2') | float }}"
+      - name: "Bath Illuminance 1"
+        unique_id: "bath_illuminance_1"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        state: "{{ states('input_number.mock_bath_illuminance_1') | float }}"
+      - name: "Bath Illuminance 2"
+        unique_id: "bath_illuminance_2"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        state: "{{ states('input_number.mock_bath_illuminance_2') | float }}"
 
-      # Temperature sensors
-      temperature_sensor_1:
-        friendly_name: "Temperature Sensor 1"
+      # --- Bedroom/Hallway illuminance ---
+      - name: "Bed Illuminance 1"
+        unique_id: "bed_illuminance_1"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        state: "{{ states('input_number.mock_bed_illuminance_1') | float }}"
+      - name: "Hall Illuminance 1"
+        unique_id: "hall_illuminance_1"
+        device_class: illuminance
+        unit_of_measurement: "lx"
+        state: "{{ states('input_number.mock_hall_illuminance_1') | float }}"
+
+      # --- Temperature ---
+      - name: "LR Temperature 1"
+        unique_id: "lr_temperature_1"
         device_class: temperature
         unit_of_measurement: "°C"
-        value_template: "{{ states('input_number.mock_temperature_1') | float }}"
-        unique_id: "temperature_sensor_1"
-      temperature_sensor_2:
-        friendly_name: "Temperature Sensor 2"
+        state: "{{ states('input_number.mock_lr_temperature_1') | float }}"
+      - name: "LR Temperature 2"
+        unique_id: "lr_temperature_2"
         device_class: temperature
         unit_of_measurement: "°C"
-        value_template: "{{ states('input_number.mock_temperature_2') | float }}"
-        unique_id: "temperature_sensor_2"
-      # Humidity sensors
-      humidity_sensor_1:
-        friendly_name: "Humidity Sensor 1"
+        state: "{{ states('input_number.mock_lr_temperature_2') | float }}"
+      - name: "Kit Temperature 1"
+        unique_id: "kit_temperature_1"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.mock_kit_temperature_1') | float }}"
+      - name: "Kit Temperature 2"
+        unique_id: "kit_temperature_2"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.mock_kit_temperature_2') | float }}"
+      - name: "Bath Temperature 1"
+        unique_id: "bath_temperature_1"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.mock_bath_temperature_1') | float }}"
+      - name: "Bath Temperature 2"
+        unique_id: "bath_temperature_2"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.mock_bath_temperature_2') | float }}"
+
+      # --- Bedroom/Hallway temperature ---
+      - name: "Bed Temperature 1"
+        unique_id: "bed_temperature_1"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.mock_bed_temperature_1') | float }}"
+      - name: "Hall Temperature 1"
+        unique_id: "hall_temperature_1"
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.mock_hall_temperature_1') | float }}"
+
+      # --- Humidity ---
+      - name: "LR Humidity 1"
+        unique_id: "lr_humidity_1"
         device_class: humidity
         unit_of_measurement: "%"
-        value_template: "{{ states('input_number.mock_humidity_1') | float }}"
-        unique_id: "humidity_sensor_1"
-      humidity_sensor_2:
-        friendly_name: "Humidity Sensor 2"
+        state: "{{ states('input_number.mock_lr_humidity_1') | float }}"
+      - name: "LR Humidity 2"
+        unique_id: "lr_humidity_2"
         device_class: humidity
         unit_of_measurement: "%"
-        value_template: "{{ states('input_number.mock_humidity_2') | float }}"
-        unique_id: "humidity_sensor_2"
+        state: "{{ states('input_number.mock_lr_humidity_2') | float }}"
+      - name: "Kit Humidity 1"
+        unique_id: "kit_humidity_1"
+        device_class: humidity
+        unit_of_measurement: "%"
+        state: "{{ states('input_number.mock_kit_humidity_1') | float }}"
+      - name: "Kit Humidity 2"
+        unique_id: "kit_humidity_2"
+        device_class: humidity
+        unit_of_measurement: "%"
+        state: "{{ states('input_number.mock_kit_humidity_2') | float }}"
+      - name: "Bath Humidity 1"
+        unique_id: "bath_humidity_1"
+        device_class: humidity
+        unit_of_measurement: "%"
+        state: "{{ states('input_number.mock_bath_humidity_1') | float }}"
+      - name: "Bath Humidity 2"
+        unique_id: "bath_humidity_2"
+        device_class: humidity
+        unit_of_measurement: "%"
+        state: "{{ states('input_number.mock_bath_humidity_2') | float }}"
+
+      # --- Bedroom humidity ---
+      - name: "Bed Humidity 1"
+        unique_id: "bed_humidity_1"
+        device_class: humidity
+        unit_of_measurement: "%"
+        state: "{{ states('input_number.mock_bed_humidity_1') | float }}"
+
+      # --- CO2 ---
+      - name: "LR CO2"
+        unique_id: "lr_co2"
+        device_class: carbon_dioxide
+        unit_of_measurement: "ppm"
+        state: "{{ states('input_number.mock_lr_co2') | float }}"
+      - name: "Kit CO2"
+        unique_id: "kit_co2"
+        device_class: carbon_dioxide
+        unit_of_measurement: "ppm"
+        state: "{{ states('input_number.mock_kit_co2') | float }}"
+      - name: "Bath CO2"
+        unique_id: "bath_co2"
+        device_class: carbon_dioxide
+        unit_of_measurement: "ppm"
+        state: "{{ states('input_number.mock_bath_co2') | float }}"
+
+      # --- CO ---
+      - name: "LR CO"
+        unique_id: "lr_co"
+        device_class: carbon_monoxide
+        unit_of_measurement: "ppm"
+        state: "{{ states('input_number.mock_lr_co') | float }}"
+      - name: "Kit CO"
+        unique_id: "kit_co"
+        device_class: carbon_monoxide
+        unit_of_measurement: "ppm"
+        state: "{{ states('input_number.mock_kit_co') | float }}"
+
+      # --- Sound pressure ---
+      - name: "LR Sound Level"
+        unique_id: "lr_sound"
+        device_class: sound_pressure
+        unit_of_measurement: "dB"
+        state: "{{ states('input_number.mock_lr_sound') | float }}"
+      - name: "Kit Sound Level"
+        unique_id: "kit_sound"
+        device_class: sound_pressure
+        unit_of_measurement: "dB"
+        state: "{{ states('input_number.mock_kit_sound') | float }}"
+      - name: "Bath Sound Level"
+        unique_id: "bath_sound"
+        device_class: sound_pressure
+        unit_of_measurement: "dB"
+        state: "{{ states('input_number.mock_bath_sound') | float }}"
+
+      # --- Atmospheric pressure ---
+      - name: "LR Pressure"
+        unique_id: "lr_pressure"
+        device_class: atmospheric_pressure
+        unit_of_measurement: "hPa"
+        state: "{{ states('input_number.mock_lr_pressure') | float }}"
+      - name: "Kit Pressure"
+        unique_id: "kit_pressure"
+        device_class: atmospheric_pressure
+        unit_of_measurement: "hPa"
+        state: "{{ states('input_number.mock_kit_pressure') | float }}"
+
+      # --- Air quality index ---
+      - name: "LR Air Quality"
+        unique_id: "lr_aqi"
+        device_class: aqi
+        state: "{{ states('input_number.mock_lr_aqi') | float }}"
+      - name: "Kit Air Quality"
+        unique_id: "kit_aqi"
+        device_class: aqi
+        state: "{{ states('input_number.mock_kit_aqi') | float }}"
+
+      # --- VOC ---
+      - name: "LR VOC"
+        unique_id: "lr_voc"
+        device_class: volatile_organic_compounds_parts
+        unit_of_measurement: "ppb"
+        state: "{{ states('input_number.mock_lr_voc') | float }}"
+      - name: "Kit VOC"
+        unique_id: "kit_voc"
+        device_class: volatile_organic_compounds_parts
+        unit_of_measurement: "ppb"
+        state: "{{ states('input_number.mock_kit_voc') | float }}"
+      - name: "Bath VOC"
+        unique_id: "bath_voc"
+        device_class: volatile_organic_compounds_parts
+        unit_of_measurement: "ppb"
+        state: "{{ states('input_number.mock_bath_voc') | float }}"
+
+      # --- PM2.5 ---
+      - name: "LR PM2.5"
+        unique_id: "lr_pm25"
+        device_class: pm25
+        unit_of_measurement: "µg/m³"
+        state: "{{ states('input_number.mock_lr_pm25') | float }}"
+      - name: "Kit PM2.5"
+        unique_id: "kit_pm25"
+        device_class: pm25
+        unit_of_measurement: "µg/m³"
+        state: "{{ states('input_number.mock_kit_pm25') | float }}"
+
+      # --- PM10 ---
+      - name: "LR PM10"
+        unique_id: "lr_pm10"
+        device_class: pm10
+        unit_of_measurement: "µg/m³"
+        state: "{{ states('input_number.mock_lr_pm10') | float }}"
+      - name: "Kit PM10"
+        unique_id: "kit_pm10"
+        device_class: pm10
+        unit_of_measurement: "µg/m³"
+        state: "{{ states('input_number.mock_kit_pm10') | float }}"
+
+      # --- Power consumption (W) ---
+      - name: "LR Power Outlet 1"
+        unique_id: "lr_power_1"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_lr_power_1') | float }}"
+      - name: "LR Power Outlet 2"
+        unique_id: "lr_power_2"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_lr_power_2') | float }}"
+      - name: "Kit Power Outlet 1"
+        unique_id: "kit_power_1"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_kit_power_1') | float }}"
+      - name: "Kit Power Outlet 2"
+        unique_id: "kit_power_2"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_kit_power_2') | float }}"
+      - name: "Bath Power Outlet 1"
+        unique_id: "bath_power_1"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_bath_power_1') | float }}"
+
+      # --- Bedroom/Hallway power ---
+      - name: "Bed Power Outlet 1"
+        unique_id: "bed_power_1"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_bed_power_1') | float }}"
+      - name: "Hall Power Outlet 1"
+        unique_id: "hall_power_1"
+        device_class: power
+        unit_of_measurement: "W"
+        state: "{{ states('input_number.mock_hall_power_1') | float }}"
+
+# --------------- Cover entities (modern template format) ----------------------
+
+  - cover:
+      - name: "LR Blinds"
+        unique_id: "lr_blinds"
+        device_class: blind
+        state: "{{ states('input_select.mock_lr_cover_1') }}"
+        open_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_lr_cover_1
+            data:
+              option: open
+        close_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_lr_cover_1
+            data:
+              option: closed
+      - name: "LR Curtains"
+        unique_id: "lr_curtains"
+        device_class: curtain
+        state: "{{ states('input_select.mock_lr_cover_2') }}"
+        open_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_lr_cover_2
+            data:
+              option: open
+        close_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_lr_cover_2
+            data:
+              option: closed
+      - name: "Kit Blinds"
+        unique_id: "kit_blinds"
+        device_class: blind
+        state: "{{ states('input_select.mock_kit_cover_1') }}"
+        open_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_kit_cover_1
+            data:
+              option: open
+        close_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_kit_cover_1
+            data:
+              option: closed
+      - name: "Bath Blinds"
+        unique_id: "bath_blinds"
+        device_class: blind
+        state: "{{ states('input_select.mock_bath_cover_1') }}"
+        open_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_bath_cover_1
+            data:
+              option: open
+        close_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_bath_cover_1
+            data:
+              option: closed
+      - name: "Bed Curtains"
+        unique_id: "bed_curtains"
+        device_class: curtain
+        state: "{{ states('input_select.mock_bed_cover_1') }}"
+        open_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_bed_cover_1
+            data:
+              option: open
+        close_cover:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.mock_bed_cover_1
+            data:
+              option: closed
+
+# --------------- Media player entities ----------------------------------------
+
 media_player:
   - platform: universal
-    name: Mock TV Player
-    state_template: >-
-      {% if is_state('input_select.mock_media_state', 'playing') %}
-        playing
-      {% elif is_state('input_select.mock_media_state', 'paused') %}
-        paused
-      {% elif is_state('input_select.mock_media_state', 'idle') %}
-        idle
-      {% else %}
-        off
-      {% endif %}
-    volume_level: "{{ states('input_number.mock_media_volume') | float / 100 }}"
+    name: LR TV Player
+    unique_id: "lr_tv_player"
+    state_template: "{{ states('input_select.mock_lr_media_state') }}"
+    volume_level: "{{ states('input_number.mock_lr_media_volume') | float / 100 }}"
     commands:
       turn_on:
-        service: input_select.select_option
+        action: input_select.select_option
         data:
-          entity_id: input_select.mock_media_state
+          entity_id: input_select.mock_lr_media_state
           option: idle
       turn_off:
-        service: input_select.select_option
+        action: input_select.select_option
         data:
-          entity_id: input_select.mock_media_state
-          option: off
+          entity_id: input_select.mock_lr_media_state
+          option: "off"
       volume_up:
-        service: input_number.increment
+        action: input_number.increment
         data:
-          entity_id: input_number.mock_media_volume
+          entity_id: input_number.mock_lr_media_volume
       volume_down:
-        service: input_number.decrement
+        action: input_number.decrement
         data:
-          entity_id: input_number.mock_media_volume
+          entity_id: input_number.mock_lr_media_volume
       volume_set:
-        service: input_number.set_value
-        data_template:
-          entity_id: input_number.mock_media_volume
+        action: input_number.set_value
+        data:
+          entity_id: input_number.mock_lr_media_volume
           value: "{{ volume_level * 100 }}"
       media_play:
-        service: input_select.select_option
+        action: input_select.select_option
         data:
-          entity_id: input_select.mock_media_state
+          entity_id: input_select.mock_lr_media_state
           option: playing
       media_pause:
-        service: input_select.select_option
+        action: input_select.select_option
         data:
-          entity_id: input_select.mock_media_state
+          entity_id: input_select.mock_lr_media_state
           option: paused
       media_stop:
-        service: input_select.select_option
+        action: input_select.select_option
         data:
-          entity_id: input_select.mock_media_state
+          entity_id: input_select.mock_lr_media_state
+          option: idle
+
+  - platform: universal
+    name: Kit Speaker
+    unique_id: "kit_speaker"
+    state_template: "{{ states('input_select.mock_kit_media_state') }}"
+    volume_level: "{{ states('input_number.mock_kit_media_volume') | float / 100 }}"
+    commands:
+      turn_on:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_kit_media_state
+          option: idle
+      turn_off:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_kit_media_state
+          option: "off"
+      volume_up:
+        action: input_number.increment
+        data:
+          entity_id: input_number.mock_kit_media_volume
+      volume_down:
+        action: input_number.decrement
+        data:
+          entity_id: input_number.mock_kit_media_volume
+      volume_set:
+        action: input_number.set_value
+        data:
+          entity_id: input_number.mock_kit_media_volume
+          value: "{{ volume_level * 100 }}"
+      media_play:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_kit_media_state
+          option: playing
+      media_pause:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_kit_media_state
+          option: paused
+      media_stop:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_kit_media_state
+          option: idle
+
+  - platform: universal
+    name: Bed TV Player
+    unique_id: "bed_tv_player"
+    state_template: "{{ states('input_select.mock_bed_media_state') }}"
+    volume_level: "{{ states('input_number.mock_bed_media_volume') | float / 100 }}"
+    commands:
+      turn_on:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bed_media_state
+          option: idle
+      turn_off:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bed_media_state
+          option: "off"
+      volume_up:
+        action: input_number.increment
+        data:
+          entity_id: input_number.mock_bed_media_volume
+      volume_down:
+        action: input_number.decrement
+        data:
+          entity_id: input_number.mock_bed_media_volume
+      volume_set:
+        action: input_number.set_value
+        data:
+          entity_id: input_number.mock_bed_media_volume
+          value: "{{ volume_level * 100 }}"
+      media_play:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bed_media_state
+          option: playing
+      media_pause:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bed_media_state
+          option: paused
+      media_stop:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bed_media_state
+          option: idle
+
+  - platform: universal
+    name: Bath Speaker
+    unique_id: "bath_speaker"
+    state_template: "{{ states('input_select.mock_bath_media_state') }}"
+    volume_level: "{{ states('input_number.mock_bath_media_volume') | float / 100 }}"
+    commands:
+      turn_on:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bath_media_state
+          option: idle
+      turn_off:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bath_media_state
+          option: "off"
+      volume_up:
+        action: input_number.increment
+        data:
+          entity_id: input_number.mock_bath_media_volume
+      volume_down:
+        action: input_number.decrement
+        data:
+          entity_id: input_number.mock_bath_media_volume
+      volume_set:
+        action: input_number.set_value
+        data:
+          entity_id: input_number.mock_bath_media_volume
+          value: "{{ volume_level * 100 }}"
+      media_play:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bath_media_state
+          option: playing
+      media_pause:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bath_media_state
+          option: paused
+      media_stop:
+        action: input_select.select_option
+        data:
+          entity_id: input_select.mock_bath_media_state
           option: idle

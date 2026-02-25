@@ -15,6 +15,7 @@ from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
+    floor_registry as fr,
 )
 from homeassistant.helpers.event import (
     async_track_point_in_time,
@@ -25,7 +26,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
-from .area import AllAreas, Area, AreaDeviceHandle
+from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
@@ -61,6 +62,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # All Areas aggregator (lazy initialization)
         self._all_areas: AllAreas | None = None
+
+        # Floor-based aggregators keyed by floor ID.
+        self._floor_aggregators: dict[str, FloorAreas] = {}
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
@@ -139,58 +143,49 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
     ) -> None:
-        """Load areas from config entry.
+        """Load areas from config entry CONF_AREAS list.
 
-        Loads areas from CONF_AREAS list format.
+        Reads area configurations from the merged data+options CONF_AREAS list.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.
         """
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-
         # Use target_dict if provided, otherwise use self.areas
         areas_dict = target_dict if target_dict is not None else self.areas
 
         area_reg = ar.async_get(self.hass)
-        areas_to_remove: list[str] = []  # Track areas to remove (deleted or invalid)
 
-        # Load areas from CONF_AREAS list
-        if CONF_AREAS not in merged or not isinstance(merged[CONF_AREAS], list):
-            _LOGGER.error(
-                "Configuration must contain CONF_AREAS list. "
-                "Please reconfigure the integration."
-            )
-            return
+        # Merge data and options to find CONF_AREAS.
+        merged = dict(self.config_entry.data)
+        merged.update(self.config_entry.options)
+        areas_list = merged.get(CONF_AREAS, [])
 
-        areas_list = merged[CONF_AREAS]
         for area_data in areas_list:
             area_id = area_data.get(CONF_AREA_ID)
 
             if not area_id:
-                _LOGGER.warning("Skipping area without area ID: %s", area_data)
+                _LOGGER.warning("Skipping area config without area ID")
                 continue
 
-            # Validate that area ID exists in Home Assistant
+            # Validate that area ID exists in Home Assistant.
             area_entry = area_reg.async_get_area(area_id)
             if not area_entry:
                 _LOGGER.warning(
                     "Area ID '%s' not found in Home Assistant registry. "
-                    "Area may have been deleted. Removing from configuration.",
+                    "Area may have been deleted. Skipping.",
                     area_id,
                 )
-                areas_to_remove.append(area_id)
                 continue
 
-            # Resolve area name from ID
+            # Resolve area name from ID.
             area_name = area_entry.name
 
-            # Check for duplicate area IDs
+            # Check for duplicate area names.
             if area_name in areas_dict:
                 _LOGGER.warning("Duplicate area name %s, skipping", area_name)
                 continue
 
-            # Create Area for this area
+            # Create Area for this area.
             areas_dict[area_name] = Area(
                 coordinator=self,
                 area_name=area_name,
@@ -198,14 +193,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
-
-        # Log warnings for deleted/invalid areas
-        if areas_to_remove:
-            _LOGGER.warning(
-                "Found %d deleted or invalid area(s) in configuration. "
-                "These areas will be skipped. Please reconfigure via options flow if needed.",
-                len(areas_to_remove),
-            )
 
     def get_area_handle(self, area_name: str) -> AreaDeviceHandle:
         """Return a stable handle for the requested area."""
@@ -264,6 +251,38 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._all_areas is None:
             self._all_areas = AllAreas(self)
         return self._all_areas
+
+    def _build_floor_aggregators(self) -> None:
+        """Discover floors from configured areas and create FloorAreas aggregators."""
+        area_reg = ar.async_get(self.hass)
+        floor_reg = fr.async_get(self.hass)
+
+        seen_floors: dict[str, str] = {}  # floor_id -> floor_name
+        for area in self.areas.values():
+            if not area.config.area_id:
+                continue
+            area_entry = area_reg.async_get_area(area.config.area_id)
+            if area_entry and area_entry.floor_id:
+                if area_entry.floor_id not in seen_floors:
+                    floor_entry = floor_reg.async_get_floor(area_entry.floor_id)
+                    if floor_entry:
+                        seen_floors[area_entry.floor_id] = floor_entry.name
+
+        self._floor_aggregators = {
+            floor_id: FloorAreas(self, floor_id, floor_name)
+            for floor_id, floor_name in seen_floors.items()
+        }
+
+        if self._floor_aggregators:
+            _LOGGER.debug(
+                "Built %d floor aggregator(s): %s",
+                len(self._floor_aggregators),
+                ", ".join(f.floor_name for f in self._floor_aggregators.values()),
+            )
+
+    def get_floor_aggregators(self) -> dict[str, FloorAreas]:
+        """Return floor-based aggregators keyed by floor_id."""
+        return self._floor_aggregators
 
     @property
     def setup_complete(self) -> bool:
@@ -337,6 +356,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_save_timer()
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
+
+            # Build floor-based aggregators from area floor assignments
+            self._build_floor_aggregators()
 
             # Mark setup as complete before initial refresh to prevent debouncer conflicts
             self._setup_complete = True
@@ -435,9 +457,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for area in list(self.areas.values()):
             await area.async_cleanup()
 
-        # Step 8: Reset AllAreas aggregator to release references to old areas
+        # Step 8: Reset AllAreas and floor aggregators to release references to old areas
         # This must be done after areas are cleaned up to break circular references
         self._all_areas = None
+        self._floor_aggregators.clear()
 
         # Step 9: Dispose database engine to close all connections
         # This must be done after all areas are cleaned up to ensure no active sessions
@@ -628,6 +651,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Remove duplicates
         all_entity_ids = list(set(all_entity_ids))
         await self.track_entity_state_changes(all_entity_ids)
+
+        # Rebuild floor-based aggregators for updated areas
+        self._build_floor_aggregators()
 
         # Force immediate save after configuration changes
         await self.hass.async_add_executor_job(self.db.save_data)

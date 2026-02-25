@@ -29,8 +29,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.2.4"
-CONF_VERSION: Final = 16  # Incremented for timezone normalization + local bucketing
+DEVICE_SW_VERSION: Final = "2026.2.5"
+CONF_VERSION: Final = 18
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -87,6 +87,7 @@ CONF_SENSORS: Final = "sensors"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
+CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 
@@ -94,6 +95,7 @@ CONF_SLEEP_END: Final = "sleep_end"
 CONF_PEOPLE: Final = "people"
 CONF_PERSON_ENTITY: Final = "person_entity"
 CONF_PERSON_SLEEP_SENSOR: Final = "sleep_confidence_sensor"
+CONF_PERSON_SLEEP_SENSORS: Final = "sleep_sensors"
 CONF_PERSON_SLEEP_AREA: Final = "sleep_area_id"
 CONF_PERSON_CONFIDENCE_THRESHOLD: Final = "confidence_threshold"
 CONF_PERSON_DEVICE_TRACKER: Final = "device_tracker"
@@ -129,6 +131,7 @@ DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
     0.005  # Matches DEFAULT_TYPES[InputType.MOTION]
 )
 DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
+DEFAULT_EXCLUDE_FROM_ALL_AREAS: Final = False
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
@@ -330,6 +333,7 @@ ATTR_VERIFICATION_PENDING: Final = "verification_pending"
 
 # Sleep Presence attributes
 ATTR_SLEEP_CONFIDENCE: Final = "sleep_confidence"
+ATTR_SLEEP_SENSORS: Final = "sleep_sensors"
 ATTR_PERSON_STATE: Final = "person_state"
 ATTR_SLEEP_THRESHOLD: Final = "sleep_threshold"
 ATTR_PEOPLE_SLEEPING: Final = "people_sleeping"
@@ -498,3 +502,13 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "window": InputType.WINDOW,
         }
     return _SENSOR_TYPE_MAPPING
+
+
+# Fields that use DurationSelector and need conversion.
+DURATION_FIELDS: Final[set[str]] = {
+    CONF_DECAY_HALF_LIFE,
+    CONF_MOTION_TIMEOUT,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_VERIFICATION_DELAY,
+}

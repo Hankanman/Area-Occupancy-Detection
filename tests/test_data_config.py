@@ -5,6 +5,7 @@ not Python dataclass behavior or trivial operations.
 """
 
 from datetime import datetime, timedelta
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -20,6 +21,12 @@ from custom_components.area_occupancy.const import (
     CONF_DOOR_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
+    CONF_PEOPLE,
+    CONF_PERSON_CONFIDENCE_THRESHOLD,
+    CONF_PERSON_ENTITY,
+    CONF_PERSON_SLEEP_AREA,
+    CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
     CONF_PM10_SENSORS,
     CONF_PM25_SENSORS,
     CONF_POWER_SENSORS,
@@ -41,6 +48,7 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
+    DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
     DEFAULT_WEIGHT_MEDIA,
@@ -64,69 +72,19 @@ from homeassistant.util import dt as dt_util
 def _setup_area_config(
     coordinator: AreaOccupancyCoordinator,
     area_id: str,
-    area_config: dict,
-    options: dict | None = None,
+    area_config: dict[str, Any],
 ) -> None:
-    """Helper function to set up area configuration for tests.
+    """Helper to set up area configuration as CONF_AREAS list entry for tests.
 
     Args:
         coordinator: The coordinator instance
         area_id: The area ID to use
         area_config: Dictionary of area configuration values
-        options: Optional dictionary of options (defaults to empty dict)
     """
-    test_data = {
-        CONF_AREAS: [
-            {
-                CONF_AREA_ID: area_id,
-                **area_config,
-            }
-        ]
-    }
-    coordinator.config_entry.data = test_data
-    coordinator.config_entry.options = options or {}
+    area_data = {CONF_AREA_ID: area_id, **area_config}
+    coordinator.config_entry.data = {CONF_AREAS: [area_data]}
+    coordinator.config_entry.options = {}
     coordinator._load_areas_from_config()
-
-
-def _setup_update_config_options(
-    coordinator: AreaOccupancyCoordinator,
-    area_id: str | None = None,
-    area_config: dict | None = None,
-) -> None:
-    """Helper function to set up config entry options for update tests.
-
-    Args:
-        coordinator: The coordinator instance
-        area_id: Optional area ID (if None, uses existing area_id from data)
-        area_config: Optional dictionary of area configuration values
-    """
-    if CONF_AREAS not in coordinator.config_entry.options:
-        if area_id is None:
-            # Use existing area from data
-            areas_list = coordinator.config_entry.data.get(CONF_AREAS, [])
-            coordinator.config_entry.options = {
-                CONF_AREAS: [area.copy() for area in areas_list]
-            }
-        else:
-            # Create new area config
-            coordinator.config_entry.options = {
-                CONF_AREAS: [
-                    {
-                        CONF_AREA_ID: area_id,
-                        **(area_config or {}),
-                    }
-                ]
-            }
-    elif area_id is not None and area_config is not None:
-        # Update existing options
-        coordinator.config_entry.options = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: area_id,
-                    **area_config,
-                }
-            ]
-        }
 
 
 class TestSensorsGetMotionSensors:
@@ -223,7 +181,6 @@ class TestAreaConfigInitialization:
             coordinator,
             area_id,
             {CONF_THRESHOLD: 50},  # Explicit value
-            options={},  # Clear options for deterministic test
         )
 
         config = AreaConfig(coordinator, area_name=area_name)
@@ -378,19 +335,15 @@ class TestAreaConfigInitialization:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        # Set up config_entry with different values to verify area_data takes precedence
-        coordinator.config_entry.data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: area_id,
-                    CONF_THRESHOLD: 30,  # Different from area_data
-                    CONF_MOTION_SENSORS: [
-                        "binary_sensor.other_motion"
-                    ],  # Different from area_data
-                }
-            ]
-        }
-        coordinator.config_entry.options = {}
+        # Set up config_entry with different values to verify area_data takes precedence.
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_THRESHOLD: 30,  # Different from area_data
+                CONF_MOTION_SENSORS: ["binary_sensor.other_motion"],
+            },
+        )
 
         # Create area_data dictionary that should be used instead of config_entry
         area_data = {
@@ -453,44 +406,39 @@ class TestAreaConfigProperties:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        test_data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: area_id,
-                    CONF_MOTION_SENSORS: [
-                        "binary_sensor.motion1",
-                        "binary_sensor.motion2",
-                    ],
-                    CONF_MEDIA_DEVICES: ["media_player.tv", "media_player.speaker"],
-                    CONF_APPLIANCES: ["switch.computer", "switch.lamp"],
-                    CONF_DOOR_SENSORS: ["binary_sensor.door1", "binary_sensor.door2"],
-                    CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
-                    CONF_TEMPERATURE_SENSORS: [
-                        "sensor.temperature1",
-                        "sensor.temperature2",
-                    ],
-                    CONF_CO2_SENSORS: ["sensor.co2_1"],
-                    CONF_CO_SENSORS: ["sensor.co_1"],
-                    CONF_SOUND_PRESSURE_SENSORS: ["sensor.sound_1"],
-                    CONF_PRESSURE_SENSORS: ["sensor.pressure_1"],
-                    CONF_VOC_SENSORS: ["sensor.voc_1"],
-                    CONF_PM25_SENSORS: ["sensor.pm25_1"],
-                    CONF_PM10_SENSORS: ["sensor.pm10_1"],
-                    CONF_POWER_SENSORS: ["sensor.power_1"],
-                    CONF_WEIGHT_MOTION: 0.9,
-                    CONF_WEIGHT_MEDIA: 0.7,
-                    CONF_WEIGHT_APPLIANCE: 0.6,
-                    CONF_WEIGHT_DOOR: 0.5,
-                    CONF_WEIGHT_WINDOW: 0.4,
-                    CONF_WEIGHT_ENVIRONMENTAL: 0.3,
-                    CONF_WASP_WEIGHT: 0.8,
-                }
-            ]
-        }
-        coordinator.config_entry.data = test_data
-        coordinator.config_entry.options = {}
-
-        coordinator._load_areas_from_config()
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_MOTION_SENSORS: [
+                    "binary_sensor.motion1",
+                    "binary_sensor.motion2",
+                ],
+                CONF_MEDIA_DEVICES: ["media_player.tv", "media_player.speaker"],
+                CONF_APPLIANCES: ["switch.computer", "switch.lamp"],
+                CONF_DOOR_SENSORS: ["binary_sensor.door1", "binary_sensor.door2"],
+                CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
+                CONF_TEMPERATURE_SENSORS: [
+                    "sensor.temperature1",
+                    "sensor.temperature2",
+                ],
+                CONF_CO2_SENSORS: ["sensor.co2_1"],
+                CONF_CO_SENSORS: ["sensor.co_1"],
+                CONF_SOUND_PRESSURE_SENSORS: ["sensor.sound_1"],
+                CONF_PRESSURE_SENSORS: ["sensor.pressure_1"],
+                CONF_VOC_SENSORS: ["sensor.voc_1"],
+                CONF_PM25_SENSORS: ["sensor.pm25_1"],
+                CONF_PM10_SENSORS: ["sensor.pm10_1"],
+                CONF_POWER_SENSORS: ["sensor.power_1"],
+                CONF_WEIGHT_MOTION: 0.9,
+                CONF_WEIGHT_MEDIA: 0.7,
+                CONF_WEIGHT_APPLIANCE: 0.6,
+                CONF_WEIGHT_DOOR: 0.5,
+                CONF_WEIGHT_WINDOW: 0.4,
+                CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                CONF_WASP_WEIGHT: 0.8,
+            },
+        )
 
         config = AreaConfig(coordinator, area_name=area_name)
         entity_ids = config.entity_ids
@@ -528,24 +476,19 @@ class TestAreaConfigProperties:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        test_data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: area_id,
-                    CONF_WEIGHT_MOTION: 0.9,
-                    CONF_WEIGHT_MEDIA: 0.7,
-                    CONF_WEIGHT_APPLIANCE: 0.6,
-                    CONF_WEIGHT_DOOR: 0.5,
-                    CONF_WEIGHT_WINDOW: 0.4,
-                    CONF_WEIGHT_ENVIRONMENTAL: 0.3,
-                    CONF_WASP_WEIGHT: 0.8,
-                }
-            ]
-        }
-        coordinator.config_entry.data = test_data
-        coordinator.config_entry.options = {}
-
-        coordinator._load_areas_from_config()
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_WEIGHT_MOTION: 0.9,
+                CONF_WEIGHT_MEDIA: 0.7,
+                CONF_WEIGHT_APPLIANCE: 0.6,
+                CONF_WEIGHT_DOOR: 0.5,
+                CONF_WEIGHT_WINDOW: 0.4,
+                CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                CONF_WASP_WEIGHT: 0.8,
+            },
+        )
 
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.entity_ids == []
@@ -560,26 +503,21 @@ class TestAreaConfigProperties:
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        test_data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: area_id,
-                    CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
-                    CONF_WASP_ENABLED: True,
-                    CONF_WEIGHT_MOTION: 0.9,
-                    CONF_WEIGHT_MEDIA: 0.7,
-                    CONF_WEIGHT_APPLIANCE: 0.6,
-                    CONF_WEIGHT_DOOR: 0.5,
-                    CONF_WEIGHT_WINDOW: 0.4,
-                    CONF_WEIGHT_ENVIRONMENTAL: 0.3,
-                    CONF_WASP_WEIGHT: 0.8,
-                }
-            ]
-        }
-        coordinator.config_entry.data = test_data
-        coordinator.config_entry.options = {}
-
-        coordinator._load_areas_from_config()
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                CONF_WASP_ENABLED: True,
+                CONF_WEIGHT_MOTION: 0.9,
+                CONF_WEIGHT_MEDIA: 0.7,
+                CONF_WEIGHT_APPLIANCE: 0.6,
+                CONF_WEIGHT_DOOR: 0.5,
+                CONF_WEIGHT_WINDOW: 0.4,
+                CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                CONF_WASP_WEIGHT: 0.8,
+            },
+        )
 
         config = AreaConfig(coordinator, area_name=area_name)
         # entity_ids should only include configured sensors, not wasp
@@ -784,17 +722,21 @@ class TestAreaConfigUpdate:
     """Test AreaConfig update methods."""
 
     async def test_update_config_success(
-        self, coordinator: AreaOccupancyCoordinator
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_config successfully updates configuration and calls update_entry."""
+        """Test update_config successfully updates CONF_AREAS and reloads config."""
         area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        # Set up area config in CONF_AREAS.
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
+
         config = AreaConfig(coordinator, area_name=area_name)
-        options = {CONF_THRESHOLD: 70}
+        assert config.area_id == area_id
 
-        # Ensure config entry options has CONF_AREAS format
-        _setup_update_config_options(coordinator)
-
-        # Mock async_update_entry and internal reload to verify behavior
+        # Mock async_update_entry and internal reload to verify behavior.
         with (
             patch.object(
                 coordinator.hass.config_entries, "async_update_entry"
@@ -802,61 +744,53 @@ class TestAreaConfigUpdate:
             patch.object(config, "_load_config") as mock_load_config,
             patch.object(coordinator, "_setup_complete", True),
         ):
-            await config.update_config(options)
+            await config.update_config({CONF_THRESHOLD: 70})
 
-            # Verify update_entry was called with correct options
+            # Verify async_update_entry was called.
             mock_update_entry.assert_called_once()
             call_args = mock_update_entry.call_args
             assert call_args is not None
-            updated_options = call_args[1]["options"]
-            assert CONF_AREAS in updated_options
+            # The data kwarg should contain CONF_AREAS with updated threshold.
+            updated_data = call_args[1]["data"]
+            areas_list = updated_data[CONF_AREAS]
+            area_data = next(a for a in areas_list if a[CONF_AREA_ID] == area_id)
+            assert area_data[CONF_THRESHOLD] == 70
 
-            # Verify threshold was updated in the area config passed to update_entry
-            areas_list = updated_options[CONF_AREAS]
-            area_found = False
-            for area_data in areas_list:
-                if area_data.get(CONF_AREA_ID) == config.area_id:
-                    assert area_data.get(CONF_THRESHOLD) == 70
-                    area_found = True
-                    break
-            assert area_found, "Area should be found in CONF_AREAS list"
-
-            # Verify config was reloaded after update
+            # Verify config was reloaded after update.
             mock_load_config.assert_called_once()
 
     async def test_update_config_with_exception_raises_homeassistant_error(
-        self, coordinator: AreaOccupancyCoordinator
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        setup_area_registry: dict[str, str],
     ) -> None:
         """Test update_config raises HomeAssistantError when update fails."""
         area_name = coordinator.get_area_names()[0]
-        config = AreaConfig(coordinator, area_name=area_name)
-        options = {CONF_THRESHOLD: 70}
+        area_id = setup_area_registry.get(area_name, "test_area")
 
-        # Ensure config entry options has CONF_AREAS format
-        _setup_update_config_options(coordinator)
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
+
+        config = AreaConfig(coordinator, area_name=area_name)
 
         with patch.object(
             coordinator.hass.config_entries, "async_update_entry"
         ) as mock_update_entry:
-            mock_update_entry.side_effect = Exception("Update failed")
+            mock_update_entry.side_effect = ValueError("Update failed")
 
             with pytest.raises(
                 HomeAssistantError, match="Failed to update configuration"
             ):
-                await config.update_config(options)
+                await config.update_config({CONF_THRESHOLD: 70})
 
     async def test_update_config_with_missing_area_id_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises ValueError when area_id is missing."""
+        """Test update_config raises HomeAssistantError when area_id is missing."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
         # Set area_id to None to simulate missing area_id
         config.area_id = None
-
-        # Ensure config entry options has CONF_AREAS format
-        _setup_update_config_options(coordinator)
 
         with pytest.raises(
             HomeAssistantError, match=".*Area ID not available for config update.*"
@@ -866,37 +800,32 @@ class TestAreaConfigUpdate:
     async def test_update_config_with_area_not_found_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises ValueError when area not found in CONF_AREAS."""
+        """Test update_config raises HomeAssistantError when area not found in CONF_AREAS."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Set up options with different area_id
-        coordinator.config_entry.options = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: "different_area_id",
-                    CONF_THRESHOLD: 50,
-                }
-            ]
+        # Set up CONF_AREAS with a different area_id so it won't match.
+        coordinator.config_entry.data = {
+            CONF_AREAS: [{CONF_AREA_ID: "different_area_id", CONF_THRESHOLD: 50}]
         }
 
         with pytest.raises(
-            HomeAssistantError, match=".*Area with ID.*not found in CONF_AREAS list.*"
+            HomeAssistantError, match=".*Area ID.*not found in CONF_AREAS.*"
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
-    async def test_update_config_with_invalid_format_raises_error(
+    async def test_update_config_with_no_areas_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises ValueError when format is invalid."""
+        """Test update_config raises HomeAssistantError when no areas exist."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Set up invalid format (not CONF_AREAS list)
-        coordinator.config_entry.options = {}
+        # Empty CONF_AREAS.
+        coordinator.config_entry.data = {CONF_AREAS: []}
 
         with pytest.raises(
-            HomeAssistantError, match=".*Configuration must be in multi-area format.*"
+            HomeAssistantError, match=".*Area ID.*not found in CONF_AREAS.*"
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
@@ -906,12 +835,13 @@ class TestAreaConfigUpdate:
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_from_entry successfully updates config from new entry."""
+        """Test update_from_entry successfully updates config from new entry with CONF_AREAS."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
         testing_area_id = setup_area_registry.get("Testing", "testing")
 
+        # Create a mock config entry with CONF_AREAS.
         new_config_entry = Mock()
         new_config_entry.data = {
             CONF_AREAS: [
@@ -936,44 +866,17 @@ class TestAreaConfigUpdate:
         assert config.threshold == 0.8
         assert config.config_entry == new_config_entry
 
-    def test_update_from_entry_with_missing_area_name_raises_error(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test update_from_entry raises ValueError when area_name is None."""
-        area_name = coordinator.get_area_names()[0]
-        config = AreaConfig(coordinator, area_name=area_name)
-
-        # Set area_name to None
-        config.area_name = None
-
-        new_config_entry = Mock()
-        new_config_entry.data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: "test_area_id",
-                    CONF_THRESHOLD: 80,
-                }
-            ]
-        }
-        new_config_entry.options = {}
-
-        with pytest.raises(
-            ValueError,
-            match="area_name is required when using multi-area configuration format",
-        ):
-            config.update_from_entry(new_config_entry)
-
     def test_update_from_entry_with_area_not_found_loads_defaults(
         self,
         coordinator: AreaOccupancyCoordinator,
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_from_entry loads default config when area not found."""
+        """Test update_from_entry loads default config when area not found in CONF_AREAS."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Use a non-existent area name
+        # Create a mock config entry with CONF_AREAS for a different area.
         new_config_entry = Mock()
         new_config_entry.data = {
             CONF_AREAS: [
@@ -1103,47 +1006,38 @@ class TestAreaConfigMergeEntry:
         assert merged == expected
 
 
-class TestAreaConfigOptionsOverride:
-    """Test AreaConfig options override behavior."""
+class TestAreaConfigReload:
+    """Test AreaConfig reload behavior."""
 
-    def test_config_with_options_override(
+    def test_config_loads_from_areas_list(
         self,
         coordinator: AreaOccupancyCoordinator,
         hass: HomeAssistant,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test config where options override data values."""
+        """Test config loads data from CONF_AREAS list."""
         testing_area_id = setup_area_registry.get("Testing", "testing")
 
-        coordinator.config_entry.data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: testing_area_id,
-                    CONF_THRESHOLD: 50,
-                    CONF_WEIGHT_MOTION: 0.9,
-                    CONF_WEIGHT_MEDIA: 0.7,
-                    CONF_WEIGHT_APPLIANCE: 0.6,
-                    CONF_WEIGHT_DOOR: 0.5,
-                    CONF_WEIGHT_WINDOW: 0.4,
-                    CONF_WEIGHT_ENVIRONMENTAL: 0.3,
-                    CONF_WASP_WEIGHT: 0.8,
-                }
-            ]
-        }
-        coordinator.config_entry.options = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: testing_area_id,
-                    CONF_THRESHOLD: 75,
-                }
-            ]
-        }
+        _setup_area_config(
+            coordinator,
+            testing_area_id,
+            {
+                CONF_THRESHOLD: 75,
+                CONF_WEIGHT_MOTION: 0.9,
+                CONF_WEIGHT_MEDIA: 0.7,
+                CONF_WEIGHT_APPLIANCE: 0.6,
+                CONF_WEIGHT_DOOR: 0.5,
+                CONF_WEIGHT_WINDOW: 0.4,
+                CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                CONF_WASP_WEIGHT: 0.8,
+            },
+        )
 
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
         assert config.name == "Testing"
-        assert config.threshold == 0.75  # Options override data
+        assert config.threshold == 0.75
 
 
 class TestIntegrationConfig:
@@ -1208,3 +1102,76 @@ class TestIntegrationConfig:
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
 
         assert integration_config.integration_name == "Test Integration"
+
+
+class TestIntegrationConfigPeople:
+    """Test IntegrationConfig.people property parsing."""
+
+    def test_people_with_new_sleep_sensors_key(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test people parsing with new sleep_sensors list key."""
+        mock_realistic_config_entry.options = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSORS: [
+                        "sensor.phone_sleep_confidence",
+                        "binary_sensor.withings_in_bed",
+                    ],
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                    CONF_PERSON_CONFIDENCE_THRESHOLD: 80,
+                }
+            ]
+        }
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert len(config.people) == 1
+        person = config.people[0]
+        assert person.person_entity == "person.alice"
+        assert person.sleep_sensors == [
+            "sensor.phone_sleep_confidence",
+            "binary_sensor.withings_in_bed",
+        ]
+        assert person.sleep_area_id == "bedroom"
+        assert person.confidence_threshold == 80
+
+    def test_people_backward_compat_old_single_sensor_key(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test people parsing falls back to old single-sensor key."""
+        mock_realistic_config_entry.options = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.bob",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.phone_bob_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert len(config.people) == 1
+        person = config.people[0]
+        assert person.sleep_sensors == ["sensor.phone_bob_sleep"]
+        assert person.confidence_threshold == DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
+
+    def test_people_skips_incomplete_config(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test that people with no sleep sensors are skipped."""
+        mock_realistic_config_entry.options = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.carol",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                    # No sleep sensor keys at all
+                }
+            ]
+        }
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+
+        assert len(config.people) == 0

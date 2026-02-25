@@ -57,12 +57,12 @@ This integration creates several entities in Home Assistant to expose the calcul
 
 *   **`binary_sensor.<area_name>_sleeping` (Sleeping)**
     *   **State:** `on` / `off`
-    *   **Description:** Turns `on` when one or more people assigned to this area are detected as sleeping. Only created for areas that have people configured via the **Manage People** option. See [Sleep Presence](sleep-presence.md) for details.
+    *   **Description:** Turns `on` when one or more people assigned to this area are detected as sleeping. Supports multiple sleep sensors per person (both numeric and binary). Only created for areas that have people configured via the **Manage People** option. See [Sleep Presence](sleep-presence.md) for details.
     *   **Device Class:** `occupancy`
     *   **Icon:** `mdi:sleep`
     *   **Attributes:**
         *   `people_sleeping`: List of friendly names of people currently sleeping.
-        *   `people`: Detailed list with person name, state, sleep confidence, threshold, and sleeping status per person.
+        *   `people`: Detailed list with person name, state, sleep sensor states, threshold, and sleeping status per person.
 
 ## Diagnostic Entities
 
@@ -102,7 +102,10 @@ These entities provide insight into the internal calculations and are useful for
 
 ## All Areas Aggregation Device
 
-When you configure your first area, the integration automatically creates an **"All Areas"** device that aggregates occupancy data across all configured areas. This provides a unified view of occupancy across your entire home or selected areas.
+When you configure your first area, the integration automatically creates an **"All Areas"** device that aggregates occupancy data across all configured areas. This provides a unified view of occupancy across your entire home.
+
+!!! info "Excluding areas from aggregation"
+    Areas can be excluded from the All Areas aggregation using the **Exclude from All Areas** toggle in each area's Detection Behavior settings. This is useful for outdoor or utility areas (garages, driveways, patios) that you don't want contributing to the whole-home occupancy status. See [Configuration](../getting-started/configuration.md) for details.
 
 ### Device Information
 
@@ -209,7 +212,74 @@ The "All Areas" device uses different aggregation strategies depending on the me
 ### Notes
 
 *   The "All Areas" device is created automatically when you configure your first area.
+*   Areas with **Exclude from All Areas** enabled are not included in the aggregation.
 *   The Evidence sensor is **not** created for "All Areas" as it would be too complex to aggregate evidence details across multiple areas.
 *   The Detected Activity and Activity Confidence sensors are **not** created for "All Areas" as activities are specific to individual rooms.
 *   All aggregation calculations are performed in real-time based on the current state of individual areas.
 *   The device appears in Home Assistant's device registry under the name "All Areas".
+
+## Floor-Based Aggregation Devices
+
+If your areas are assigned to [floors](https://www.home-assistant.io/docs/organizing/floors/) in Home Assistant, the integration automatically creates per-floor aggregation devices. These work identically to the All Areas device but only aggregate areas on the same floor.
+
+### How It Works
+
+At startup, the integration discovers which floors your configured areas belong to (via the Home Assistant floor registry) and creates a device for each floor. If you add or remove floors, the devices update on the next reload.
+
+### Device Information
+
+*   **Device Name:** `<Floor Name>` (e.g., "Upstairs", "Ground Floor")
+*   **Created Automatically:** Yes, for each floor that has at least one configured area
+
+### Floor Aggregation Entities
+
+Each floor device creates the same set of entities as the All Areas device, scoped to that floor:
+
+*   **`binary_sensor.area_occupancy_status_<floor_name>` (Floor Occupancy Status)**
+    *   Uses **OR logic**: `on` if any area on the floor is occupied.
+
+*   **`sensor.area_occupancy_probability_<floor_name>` (Floor Occupancy Probability)**
+    *   Average probability across areas on this floor.
+
+*   **`sensor.area_prior_probability_<floor_name>` (Floor Prior Probability)**
+    *   Average prior probability across areas on this floor.
+    *   **Entity Category:** `diagnostic`
+
+*   **`sensor.area_decay_status_<floor_name>` (Floor Decay Status)**
+    *   Average decay status across areas on this floor.
+    *   **Entity Category:** `diagnostic`
+
+*   **`sensor.area_presence_confidence_<floor_name>` (Floor Presence Confidence)**
+    *   Average presence confidence across areas on this floor.
+    *   **Entity Category:** `diagnostic`
+
+*   **`sensor.area_environmental_confidence_<floor_name>` (Floor Environmental Confidence)**
+    *   Average environmental confidence across areas on this floor.
+    *   **Entity Category:** `diagnostic`
+
+!!! note
+    Floor aggregation respects the **Exclude from All Areas** toggle — excluded areas are also excluded from their floor's aggregation.
+
+### Example Use Cases
+
+1. **Floor-Based Lighting:**
+   ```yaml
+   automation:
+     - alias: "Turn off upstairs lights when floor is clear"
+       trigger:
+         - platform: state
+           entity_id: binary_sensor.area_occupancy_status_upstairs
+           to: 'off'
+           for:
+             minutes: 10
+       action:
+         - service: light.turn_off
+           target:
+             area_id:
+               - master_bedroom
+               - guest_bedroom
+               - upstairs_bathroom
+   ```
+
+2. **Floor-Level HVAC Control:**
+   Use the floor occupancy probability to adjust heating/cooling zones per floor rather than per room.

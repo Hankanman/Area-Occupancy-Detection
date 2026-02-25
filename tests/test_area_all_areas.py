@@ -14,6 +14,15 @@ from custom_components.area_occupancy.const import (
 )
 
 
+def _mock_area(**overrides: object) -> MagicMock:
+    """Create a mock area with exclude_from_all_areas defaulting to False."""
+    area = MagicMock()
+    area.config.exclude_from_all_areas = False
+    for key, value in overrides.items():
+        setattr(area, key, value)
+    return area
+
+
 class TestAllAreas:
     """Test AllAreas aggregation class."""
 
@@ -48,9 +57,9 @@ class TestAllAreas:
         """Test aggregation methods average values across all areas."""
         all_areas = AllAreas(coordinator)
 
-        area1 = MagicMock()
+        area1 = _mock_area()
         setattr(area1, method_name, MagicMock(return_value=value1))
-        area2 = MagicMock()
+        area2 = _mock_area()
         setattr(area2, method_name, MagicMock(return_value=value2))
         with patch.dict(
             coordinator.areas,
@@ -64,9 +73,9 @@ class TestAllAreas:
         """Test occupied returns True if ANY area is occupied."""
         all_areas = AllAreas(coordinator)
 
-        area1 = MagicMock()
+        area1 = _mock_area()
         area1.occupied.return_value = False
-        area2 = MagicMock()
+        area2 = _mock_area()
         area2.occupied.return_value = True
         with patch.dict(
             coordinator.areas,
@@ -79,9 +88,9 @@ class TestAllAreas:
         """Test occupied returns False if no areas are occupied."""
         all_areas = AllAreas(coordinator)
 
-        area1 = MagicMock()
+        area1 = _mock_area()
         area1.occupied.return_value = False
-        area2 = MagicMock()
+        area2 = _mock_area()
         area2.occupied.return_value = False
         with patch.dict(
             coordinator.areas,
@@ -109,9 +118,9 @@ class TestAllAreas:
         all_areas = AllAreas(coordinator)
 
         # Test clamping to min_bound (average below minimum)
-        area1 = MagicMock()
+        area1 = _mock_area()
         setattr(area1, method_name, MagicMock(return_value=-0.5))
-        area2 = MagicMock()
+        area2 = _mock_area()
         setattr(area2, method_name, MagicMock(return_value=-0.3))
         with patch.dict(
             coordinator.areas,
@@ -123,9 +132,9 @@ class TestAllAreas:
             assert result == min_bound
 
         # Test clamping to max_bound (average above maximum)
-        area3 = MagicMock()
+        area3 = _mock_area()
         setattr(area3, method_name, MagicMock(return_value=1.5))
-        area4 = MagicMock()
+        area4 = _mock_area()
         setattr(area4, method_name, MagicMock(return_value=1.2))
         with patch.dict(
             coordinator.areas,
@@ -172,7 +181,7 @@ class TestAllAreas:
         """Test methods with only one area return that area's value."""
         all_areas = AllAreas(coordinator)
 
-        area1 = MagicMock()
+        area1 = _mock_area()
         setattr(area1, method_name, MagicMock(return_value=single_value))
         with patch.dict(
             coordinator.areas,
@@ -213,9 +222,9 @@ class TestAllAreas:
         all_areas = AllAreas(coordinator)
 
         # Test with all areas at boundary value
-        area1 = MagicMock()
+        area1 = _mock_area()
         setattr(area1, method_name, MagicMock(return_value=boundary_value))
-        area2 = MagicMock()
+        area2 = _mock_area()
         setattr(area2, method_name, MagicMock(return_value=boundary_value))
         with patch.dict(
             coordinator.areas,
@@ -244,9 +253,9 @@ class TestAllAreas:
         """Test methods with mixed boundary values return average."""
         all_areas = AllAreas(coordinator)
 
-        area1 = MagicMock()
+        area1 = _mock_area()
         setattr(area1, method_name, MagicMock(return_value=value1))
-        area2 = MagicMock()
+        area2 = _mock_area()
         setattr(area2, method_name, MagicMock(return_value=value2))
         with patch.dict(
             coordinator.areas,

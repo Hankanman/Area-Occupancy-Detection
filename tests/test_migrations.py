@@ -12,6 +12,11 @@ from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_MOTION_SENSORS,
+    CONF_PEOPLE,
+    CONF_PERSON_ENTITY,
+    CONF_PERSON_SLEEP_AREA,
+    CONF_PERSON_SLEEP_SENSOR,
+    CONF_PERSON_SLEEP_SENSORS,
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
@@ -21,6 +26,7 @@ from custom_components.area_occupancy.migrations import (
     _find_area_by_normalized_name,
     _find_or_create_area,
     _fuzzy_match_area,
+    _migrate_sleep_sensor_to_list,
     _normalize_area_name,
     async_migrate_entry,
     async_reset_database_if_needed,
@@ -84,6 +90,7 @@ def create_mock_entry_v12(
     entry.options = options or {}
     entry.title = title or area_id.title()
     entry.unique_id = unique_id or area_id
+
     return entry
 
 
@@ -154,16 +161,15 @@ class TestAsyncMigrateEntry:
             result = await async_migrate_entry(hass, mock_config_entry_v1_0)
             assert result is True
 
-        # Should have updated entry with new format
-        assert len(update_calls) == 1
+        # Consolidation sets version=CONF_VERSION with CONF_AREAS
         assert update_calls[0][1]["version"] == CONF_VERSION
         assert CONF_AREAS in update_calls[0][1]["data"]
+        areas_list = update_calls[0][1]["data"][CONF_AREAS]
+        assert len(areas_list) == 1
 
         # Verify area was created/found in registry
-        areas = update_calls[0][1]["data"][CONF_AREAS]
-        assert len(areas) == 1
-        area_id = areas[0][CONF_AREA_ID]
-        created_area = area_reg.async_get_area(area_id)
+        area_data = areas_list[0]
+        created_area = area_reg.async_get_area(area_data[CONF_AREA_ID])
         assert created_area is not None
         assert created_area.name == area_name
 
@@ -246,7 +252,9 @@ class TestAsyncMigrateEntryAdditional:
     """Additional tests for async_migrate_entry function."""
 
     async def test_async_migrate_entry_database_reset(
-        self, hass: HomeAssistant, tmp_path: Path
+        self,
+        hass: HomeAssistant,
+        tmp_path: Path,
     ) -> None:
         """Test migration resets database for old versions."""
         hass.config.config_dir = str(tmp_path)
@@ -305,6 +313,7 @@ class TestMultipleEntriesMigration:
         entry.options = {}
         entry.title = "Living Room"
         entry.unique_id = "living_room"
+
         return entry
 
     @pytest.fixture
@@ -323,10 +332,14 @@ class TestMultipleEntriesMigration:
         entry.options = {}
         entry.title = "Kitchen"
         entry.unique_id = "kitchen"
+
         return entry
 
     async def test_migrate_multiple_entries(
-        self, hass: HomeAssistant, mock_entry_1: Mock, mock_entry_2: Mock
+        self,
+        hass: HomeAssistant,
+        mock_entry_1: Mock,
+        mock_entry_2: Mock,
     ) -> None:
         """Test migrating multiple old entries into one entry."""
         # Mock hass.config_entries.async_entries to return both entries
@@ -352,8 +365,6 @@ class TestMultipleEntriesMigration:
 
         async def mock_remove(entry_id):
             remove_calls.append(entry_id)
-            # Simulate UnknownEntry if entry doesn't exist (as real code would)
-            # But in tests, we just track the call
             return True
 
         hass.config_entries.async_remove = Mock(side_effect=mock_remove)
@@ -369,29 +380,30 @@ class TestMultipleEntriesMigration:
             # Migration should succeed
             assert result is True
 
-        # Should update both entries:
-        # 1. Target entry with new areas
-        # 2. Old entry marked as deleted
+        # Updates: consolidation with CONF_AREAS, loser marked deleted
         assert len(update_calls) == 2
 
-        # Check target entry update
-        target_update = next(call for call in update_calls if call[0] == mock_entry_1)
-        _, target_kwargs = target_update
-        assert target_kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in target_kwargs["data"]
-        assert len(target_kwargs["data"][CONF_AREAS]) == 2
+        # Get all calls for target entry (mock_entry_1)
+        target_calls = [call for call in update_calls if call[0] == mock_entry_1]
+        assert len(target_calls) == 1
+
+        # Target call: consolidation with CONF_AREAS at CONF_VERSION
+        _, consolidation_kwargs = target_calls[0]
+        assert consolidation_kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS in consolidation_kwargs["data"]
+        assert len(consolidation_kwargs["data"][CONF_AREAS]) == 2
+
+        # Verify area configs were preserved
+        areas = consolidation_kwargs["data"][CONF_AREAS]
+        area_ids = [area[CONF_AREA_ID] for area in areas]
+        assert "living_room" in area_ids
+        assert "kitchen" in area_ids
 
         # Check loser entry update
         loser_update = next(call for call in update_calls if call[0] == mock_entry_2)
         _, loser_kwargs = loser_update
         assert loser_kwargs["version"] == CONF_VERSION
         assert loser_kwargs["data"].get("deleted") is True
-
-        # Verify area configs were preserved
-        areas = target_kwargs["data"][CONF_AREAS]
-        area_ids = [area[CONF_AREA_ID] for area in areas]
-        assert "living_room" in area_ids
-        assert "kitchen" in area_ids
 
         # Should remove the second entry
         assert len(remove_calls) == 1
@@ -425,21 +437,21 @@ class TestMultipleEntriesMigration:
             # Migration should succeed
             assert result is True
 
-        # Should update entry with new format
+        # One update: consolidation with CONF_AREAS at CONF_VERSION
         assert len(update_calls) == 1
-        updated_entry, update_kwargs = update_calls[0]
+
+        # Consolidation with CONF_AREAS
+        updated_entry, consolidation_kwargs = update_calls[0]
         assert updated_entry == mock_entry_1
-        assert update_kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in update_kwargs["data"]
-        assert len(update_kwargs["data"][CONF_AREAS]) == 1
+        assert consolidation_kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS in consolidation_kwargs["data"]
+        assert len(consolidation_kwargs["data"][CONF_AREAS]) == 1
 
         # Verify area config was preserved and area was created/found
-        area = update_kwargs["data"][CONF_AREAS][0]
+        area = consolidation_kwargs["data"][CONF_AREAS][0]
         area_id = area[CONF_AREA_ID]
-        # Verify area exists in registry (was created or matched)
         created_area = area_reg.async_get_area(area_id)
         assert created_area is not None
-        # Verify area name matches (normalized matching should find "Living Room")
         normalized_name = (
             created_area.name.lower().replace(" ", "").replace("_", "").replace("-", "")
         )
@@ -475,7 +487,9 @@ class TestMultipleEntriesMigration:
             result = await async_migrate_entry(hass, entry)
             assert result is True
 
-        # Verify options were merged and area was created/found
+        # Consolidation with CONF_AREAS at CONF_VERSION
+        assert len(update_calls) == 1
+        assert update_calls[0][1]["version"] == CONF_VERSION
         area = update_calls[0][1]["data"][CONF_AREAS][0]
         area_id = area[CONF_AREA_ID]
         # Verify area exists in registry
@@ -517,13 +531,14 @@ class TestMultipleEntriesMigration:
             result = await async_migrate_entry(hass, entry)
             assert result is True
 
-        # Should use title as fallback and create/find area
+        # Single consolidation call with CONF_AREAS at CONF_VERSION
+        assert len(update_calls) == 1
+        assert update_calls[0][1]["version"] == CONF_VERSION
         area = update_calls[0][1]["data"][CONF_AREAS][0]
         area_id = area[CONF_AREA_ID]
         # Verify area was created/found in registry
         created_area = area_reg.async_get_area(area_id)
         assert created_area is not None
-        # Area ID should be the actual area ID from registry (not just "my_area")
         assert area_id is not None
 
     async def test_migrate_entry_missing_area_id_no_fallback(
@@ -548,7 +563,9 @@ class TestMultipleEntriesMigration:
         assert result is False  # Should fail
 
     async def test_migrate_multiple_entries_with_unconvertible_entry(
-        self, hass: HomeAssistant, mock_entry_1: Mock
+        self,
+        hass: HomeAssistant,
+        mock_entry_1: Mock,
     ) -> None:
         """Test that an unconvertible entry prevents migration and leaves entries intact."""
         # Create an unconvertible entry (missing CONF_AREA_ID and no fallback)
@@ -586,8 +603,6 @@ class TestMultipleEntriesMigration:
 
         async def mock_remove(entry_id):
             remove_calls.append(entry_id)
-            # Simulate UnknownEntry if entry doesn't exist (as real code would)
-            # But in tests, we just track the call
             return True
 
         hass.config_entries.async_remove = Mock(side_effect=mock_remove)
@@ -603,19 +618,21 @@ class TestMultipleEntriesMigration:
             # Migration should succeed (valid entry migrated, invalid removed)
             assert result is True
 
-        # Verify updates:
-        # 1. Valid entry updated with areas
-        # 2. Invalid entry marked as deleted
+        # Updates: consolidation with CONF_AREAS, invalid marked deleted
         assert len(update_calls) == 2
 
-        # Check valid entry update
-        valid_update = next(call for call in update_calls if call[0] == mock_entry_1)
-        entry, kwargs = valid_update
-        assert entry == mock_entry_1
-        assert kwargs["version"] == CONF_VERSION
-        assert CONF_AREAS in kwargs["data"]
-        assert len(kwargs["data"][CONF_AREAS]) == 1
-        assert kwargs["data"][CONF_AREAS][0][CONF_AREA_ID] == "living_room"
+        # Get target entry calls (mock_entry_1)
+        target_calls = [call for call in update_calls if call[0] == mock_entry_1]
+        assert len(target_calls) == 1
+
+        # Target call: consolidation with CONF_AREAS at CONF_VERSION
+        _, consolidation_kwargs = target_calls[0]
+        assert consolidation_kwargs["version"] == CONF_VERSION
+        assert CONF_AREAS in consolidation_kwargs["data"]
+        assert len(consolidation_kwargs["data"][CONF_AREAS]) == 1
+        assert (
+            consolidation_kwargs["data"][CONF_AREAS][0][CONF_AREA_ID] == "living_room"
+        )
 
         # Check invalid entry update (marked as deleted)
         invalid_update = next(
@@ -729,7 +746,10 @@ class TestRegistryCleanup:
         assert devices_removed == 0
         assert entities_removed == 0
 
-    async def test_migrate_calls_registry_cleanup(self, hass: HomeAssistant) -> None:
+    async def test_migrate_calls_registry_cleanup(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
         """Test that migration calls registry cleanup."""
         entry = Mock(spec=ConfigEntry)
         entry.version = 12
@@ -993,7 +1013,9 @@ class TestMigrationEdgeCases:
             assert result is False
 
     async def test_migrate_filters_invalid_areas(
-        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+        self,
+        hass: HomeAssistant,
+        setup_area_registry: dict[str, str],
     ) -> None:
         """Test that invalid area IDs are filtered out during migration."""
         # Use existing area from setup_area_registry for valid area
@@ -1225,7 +1247,8 @@ class TestConcurrentMigration:
         assert len(update_calls) == 0
 
     async def test_concurrent_migration_lock_prevents_duplicate_migrations(
-        self, hass: HomeAssistant
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """Test that lock prevents concurrent migrations from running simultaneously."""
         entry1 = Mock(spec=ConfigEntry)
@@ -1400,3 +1423,90 @@ class TestErrorHandling:
             result = await async_migrate_entry(hass, entry)
             # Should return False on exception
             assert result is False
+
+
+class TestMigrateSleepSensorToList:
+    """Test _migrate_sleep_sensor_to_list function."""
+
+    def test_converts_old_single_sensor_to_list(self) -> None:
+        """Test migration converts old single sensor key to list."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.phone_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is True
+        person = data[CONF_PEOPLE][0]
+        assert person[CONF_PERSON_SLEEP_SENSORS] == ["sensor.phone_sleep"]
+        assert CONF_PERSON_SLEEP_SENSOR not in person
+
+    def test_skips_already_migrated(self) -> None:
+        """Test migration is idempotent when sleep_sensors already present."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSORS: ["sensor.phone_sleep"],
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is False
+        assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == ["sensor.phone_sleep"]
+
+    def test_handles_no_people(self) -> None:
+        """Test migration handles missing people config."""
+        data: dict = {}
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is False
+
+    def test_handles_missing_old_sensor_key(self) -> None:
+        """Test migration handles person without old sensor key."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                }
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is True
+        assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == []
+
+    def test_handles_multiple_people(self) -> None:
+        """Test migration converts all people."""
+        data = {
+            CONF_PEOPLE: [
+                {
+                    CONF_PERSON_ENTITY: "person.alice",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.alice_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                },
+                {
+                    CONF_PERSON_ENTITY: "person.bob",
+                    CONF_PERSON_SLEEP_SENSOR: "sensor.bob_sleep",
+                    CONF_PERSON_SLEEP_AREA: "bedroom",
+                },
+            ]
+        }
+
+        result = _migrate_sleep_sensor_to_list(data)
+
+        assert result is True
+        assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == ["sensor.alice_sleep"]
+        assert data[CONF_PEOPLE][1][CONF_PERSON_SLEEP_SENSORS] == ["sensor.bob_sleep"]
