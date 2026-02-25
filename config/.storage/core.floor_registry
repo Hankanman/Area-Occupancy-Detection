@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "minor_version": 3,
+  "key": "core.floor_registry",
+  "data": {
+    "floors": [
+      {
+        "aliases": [],
+        "floor_id": "upstairs",
+        "icon": null,
+        "level": 1,
+        "name": "Upstairs",
+        "created_at": "2026-02-25T08:21:50.694839+00:00",
+        "modified_at": "2026-02-25T08:21:50.694842+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": "downstairs",
+        "icon": null,
+        "level": 0,
+        "name": "Downstairs",
+        "created_at": "2026-02-25T08:21:59.632294+00:00",
+        "modified_at": "2026-02-25T08:21:59.632297+00:00"
+      }
+    ]
+  }
+}

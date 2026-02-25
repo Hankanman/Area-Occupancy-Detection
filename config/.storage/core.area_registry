@@ -6,33 +6,7 @@
     "areas": [
       {
         "aliases": [],
-        "floor_id": null,
-        "humidity_entity_id": null,
-        "icon": "mdi:sofa",
-        "id": "living_room",
-        "labels": [],
-        "name": "Living Room",
-        "picture": null,
-        "temperature_entity_id": null,
-        "created_at": "2026-02-20T12:03:45.104838+00:00",
-        "modified_at": "2026-02-20T12:03:45.104846+00:00"
-      },
-      {
-        "aliases": [],
-        "floor_id": null,
-        "humidity_entity_id": null,
-        "icon": "mdi:stove",
-        "id": "kitchen",
-        "labels": [],
-        "name": "Kitchen",
-        "picture": null,
-        "temperature_entity_id": null,
-        "created_at": "2026-02-20T12:03:45.105148+00:00",
-        "modified_at": "2026-02-20T12:03:45.105150+00:00"
-      },
-      {
-        "aliases": [],
-        "floor_id": null,
+        "floor_id": "upstairs",
         "humidity_entity_id": null,
         "icon": "mdi:bed",
         "id": "bedroom",
@@ -41,11 +15,11 @@
         "picture": null,
         "temperature_entity_id": null,
         "created_at": "2026-02-20T12:03:45.105199+00:00",
-        "modified_at": "2026-02-20T12:03:45.105200+00:00"
+        "modified_at": "2026-02-25T08:22:12.779782+00:00"
       },
       {
         "aliases": [],
-        "floor_id": null,
+        "floor_id": "upstairs",
         "humidity_entity_id": null,
         "icon": "mdi:bathtub",
         "id": "bathroom",
@@ -54,11 +28,11 @@
         "picture": null,
         "temperature_entity_id": null,
         "created_at": "2026-02-20T12:33:17.338107+00:00",
-        "modified_at": "2026-02-20T12:34:02.966509+00:00"
+        "modified_at": "2026-02-25T08:22:14.963406+00:00"
       },
       {
         "aliases": [],
-        "floor_id": null,
+        "floor_id": "upstairs",
         "humidity_entity_id": null,
         "icon": "mdi:door",
         "id": "hallway",
@@ -67,7 +41,33 @@
         "picture": null,
         "temperature_entity_id": null,
         "created_at": "2026-02-20T12:34:58.140654+00:00",
-        "modified_at": "2026-02-20T14:00:51.098181+00:00"
+        "modified_at": "2026-02-25T08:22:17.995997+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": "downstairs",
+        "humidity_entity_id": null,
+        "icon": "mdi:sofa",
+        "id": "living_room",
+        "labels": [],
+        "name": "Living Room",
+        "picture": null,
+        "temperature_entity_id": null,
+        "created_at": "2026-02-20T12:03:45.104838+00:00",
+        "modified_at": "2026-02-25T08:22:03.802855+00:00"
+      },
+      {
+        "aliases": [],
+        "floor_id": "downstairs",
+        "humidity_entity_id": null,
+        "icon": "mdi:stove",
+        "id": "kitchen",
+        "labels": [],
+        "name": "Kitchen",
+        "picture": null,
+        "temperature_entity_id": null,
+        "created_at": "2026-02-20T12:03:45.105148+00:00",
+        "modified_at": "2026-02-25T08:22:16.850230+00:00"
       }
     ]
   }
