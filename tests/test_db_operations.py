@@ -709,6 +709,53 @@ class TestPruneOldIntervals:
                 tzinfo=None
             )
 
+    def test_prune_old_intervals_persists_timestamp(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test that prune_old_intervals persists the last-prune timestamp."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        old_time = dt_util.utcnow() - timedelta(days=RETENTION_DAYS + 10)
+
+        # Ensure area and entity exist
+        save_area_data(db, area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion1",
+                entity_type="motion",
+            )
+            session.add(entity)
+            session.commit()
+
+        with db.get_session() as session:
+            old_interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion1",
+                start_time=old_time,
+                end_time=old_time + timedelta(hours=1),
+                state="on",
+                duration_seconds=3600,
+            )
+            session.add(old_interval)
+            session.commit()
+
+        # Prune and verify outcome and timestamp
+        deleted_count = prune_old_intervals(db, force=True)
+        assert deleted_count >= 1, "Should have pruned at least one old interval"
+
+        with db.get_session() as session:
+            remaining = session.query(db.Intervals).all()
+            assert len(remaining) == 0, "All intervals should be pruned (all were old)"
+
+            result = session.query(db.Metadata).filter_by(key="last_prune_time").first()
+            assert result is not None, (
+                "last_prune_time should be persisted after pruning"
+            )
+            assert result.value is not None
+
     def test_prune_old_intervals_error(
         self, coordinator: AreaOccupancyCoordinator, monkeypatch
     ):
