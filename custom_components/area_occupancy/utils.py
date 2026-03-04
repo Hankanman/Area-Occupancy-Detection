@@ -493,9 +493,10 @@ def bayesian_probability(entities: dict[str, Entity], prior: float = 0.5) -> flo
             decay_factor = max(0.0, min(1.0, decay_factor))
         is_decaying = entity.decay.is_decaying
 
-        # Skip entities with no evidence (unavailable) unless they're decaying
-        # Unavailable entities should not contribute to the calculation
-        if value is None and not is_decaying:
+        # Skip entities with no evidence (unavailable/unknown)
+        # Unavailable entities should never contribute to the calculation,
+        # even if they were previously decaying
+        if value is None:
             continue
 
         # Determine effective evidence: True if evidence is True OR if decaying
