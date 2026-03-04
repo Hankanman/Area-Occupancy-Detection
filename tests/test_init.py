@@ -534,7 +534,7 @@ class TestEntryUpdated:
         # Should call update_from_entry and cleanup on each area.
         for area in mock_coordinator.areas.values():
             area.config.update_from_entry.assert_called_once_with(mock_config_entry)
-            area.entities.cleanup.assert_called_once()
+            area.entities.cleanup.assert_awaited_once()
         mock_coordinator.async_request_refresh.assert_called_once()
 
     async def test_area_added_triggers_reload(
