@@ -299,6 +299,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.areas:
             raise HomeAssistantError("No areas configured")
 
+    def _reconcile_entity_state(self) -> None:
+        """Reconcile restored entity state with current HA sensor states.
+
+        After loading from the database, entities may have stale decay and
+        evidence state from the previous session.  This method:
+        1. Ticks all decays so that any that have expired are resolved.
+        2. Calls has_new_evidence() on every entity so that previous_evidence
+           is reconciled against the live HA state.
+        """
+        for area in self.areas.values():
+            # Resolve expired decays immediately
+            area.tick_decay()
+            # Reconcile previous_evidence with current HA state
+            for entity in area.entities.entities.values():
+                entity.has_new_evidence()
+
     async def setup(self) -> None:
         """Initialize the coordinator and its components (fast startup mode)."""
         try:
@@ -330,6 +346,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Load cached correlations for probability calculations
             await self.async_refresh_correlations()
+
+            # Reconcile restored entity state with current HA reality.
+            # Database may have stale decay/evidence from before the reload.
+            self._reconcile_entity_state()
 
             # Ensure areas and entities exist in database and persist configuration/state
             # This must happen before analysis runs so that get_occupied_intervals() can
@@ -642,6 +662,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Refresh cached correlations for new areas
         await self.async_refresh_correlations()
+
+        # Reconcile restored entity state with current HA reality
+        self._reconcile_entity_state()
 
         # Re-establish entity state tracking with new entity lists
         all_entity_ids = []
