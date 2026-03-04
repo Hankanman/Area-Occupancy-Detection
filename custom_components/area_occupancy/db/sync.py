@@ -328,11 +328,15 @@ async def sync_states(db: AreaOccupancyDB) -> None:
         # Convert states to proper intervals with correct duration calculation
         intervals = _states_to_intervals(db, states, to_utc(end_time))
         if intervals:
-            # Pre-compute area mappings on the event loop (accesses HA state)
+            # Pre-compute entity->area map once to avoid O(n*m) lookups
             entry_id = db.coordinator.entry_id
+            entity_area_map: dict[str, str] = {}
+            for area_name, area in db.coordinator.areas.items():
+                for eid in area.entities.entity_ids:
+                    entity_area_map[eid] = area_name
+
             for interval_data in intervals:
-                entity_id = interval_data["entity_id"]
-                area_name = db.coordinator.find_area_for_entity(entity_id)
+                area_name = entity_area_map.get(interval_data["entity_id"])
                 if area_name:
                     interval_data["entry_id"] = entry_id
                     interval_data["area_name"] = area_name
