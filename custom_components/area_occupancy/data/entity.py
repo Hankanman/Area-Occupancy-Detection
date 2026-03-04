@@ -1004,11 +1004,11 @@ class EntityManager:
 
     @property
     def inactive_entities(self) -> list[Entity]:
-        """Get the inactive entities."""
+        """Get the inactive entities (evidence is explicitly False, not unavailable)."""
         return [
             entity
             for entity in self._entities.values()
-            if not entity.evidence and not entity.decay.is_decaying
+            if entity.evidence is False and not entity.decay.is_decaying
         ]
 
     @property
