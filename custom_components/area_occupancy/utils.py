@@ -595,8 +595,8 @@ def combine_priors(
 
     # Handle identical priors case
     if abs(area_prior - time_prior) < 1e-10:
-        # Priors are essentially identical, return the common value
-        return area_prior
+        # Priors are essentially identical, return the common value (clamped)
+        return clamp_probability(area_prior)
 
     # Clamp inputs to valid ranges to prevent division by zero in logit conversion
     # prob_to_logit(p) = log(p / (1 - p)) requires p ∈ (0, 1)
