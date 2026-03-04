@@ -618,11 +618,13 @@ def _cleanup_area_orphans(db: AreaOccupancyDB, area_name: str, area_data: Any) -
         ).delete(synchronize_session=False)
 
         session.query(db.NumericSamples).filter(
-            db.NumericSamples.entity_id.in_(orphaned_entity_ids)
+            db.NumericSamples.area_name == area_name,
+            db.NumericSamples.entity_id.in_(orphaned_entity_ids),
         ).delete(synchronize_session=False)
 
         session.query(db.NumericAggregates).filter(
-            db.NumericAggregates.entity_id.in_(orphaned_entity_ids)
+            db.NumericAggregates.area_name == area_name,
+            db.NumericAggregates.entity_id.in_(orphaned_entity_ids),
         ).delete(synchronize_session=False)
 
         session.query(db.Correlations).filter(
@@ -749,17 +751,15 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
             # Delete interval aggregates for this area
             session.query(db.IntervalAggregates).filter_by(area_name=area_name).delete()
 
-            # Delete numeric samples for entities in this area
-            if entity_ids:
-                session.query(db.NumericSamples).filter(
-                    db.NumericSamples.entity_id.in_(entity_ids)
-                ).delete(synchronize_session=False)
+            # Delete numeric samples for this area (scoped by area_name)
+            session.query(db.NumericSamples).filter(
+                db.NumericSamples.area_name == area_name
+            ).delete(synchronize_session=False)
 
-            # Delete numeric aggregates for entities in this area
-            if entity_ids:
-                session.query(db.NumericAggregates).filter(
-                    db.NumericAggregates.entity_id.in_(entity_ids)
-                ).delete(synchronize_session=False)
+            # Delete numeric aggregates for this area (scoped by area_name)
+            session.query(db.NumericAggregates).filter(
+                db.NumericAggregates.area_name == area_name
+            ).delete(synchronize_session=False)
 
             # Delete correlations for this area
             session.query(db.Correlations).filter_by(area_name=area_name).delete()
@@ -772,6 +772,14 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                 sa.or_(
                     db.AreaRelationships.area_name == area_name,
                     db.AreaRelationships.related_area_name == area_name,
+                )
+            ).delete(synchronize_session=False)
+
+            # Delete cross-area stats referencing this area
+            # involved_areas is a JSON array; use cast+like for SQLite compatibility
+            session.query(db.CrossAreaStats).filter(
+                sa.cast(db.CrossAreaStats.involved_areas, sa.String).like(
+                    f'%"{area_name}"%'
                 )
             ).delete(synchronize_session=False)
 
