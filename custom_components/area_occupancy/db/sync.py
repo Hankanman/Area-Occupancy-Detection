@@ -222,6 +222,82 @@ def _states_to_intervals(
     return intervals
 
 
+def _commit_intervals(db: AreaOccupancyDB, intervals: list[dict[str, Any]]) -> None:
+    """Commit interval data to the database (runs in executor)."""
+    # Filter to only intervals that have an area_name (pre-computed by caller)
+    mapped_intervals = [i for i in intervals if "area_name" in i]
+    if not mapped_intervals:
+        return
+
+    with db.get_session() as session:
+        interval_keys = {
+            (
+                interval_data["entity_id"],
+                interval_data["start_time"],
+                interval_data["end_time"],
+            )
+            for interval_data in mapped_intervals
+        }
+
+        existing_keys = (
+            _get_existing_interval_keys(session, db, interval_keys)
+            if interval_keys
+            else set()
+        )
+
+        new_intervals = []
+        seen_keys: set[tuple[str, datetime, datetime]] = set()
+        for interval_data in mapped_intervals:
+            start = _normalize_db_key_datetime(interval_data["start_time"])
+            end = _normalize_db_key_datetime(interval_data["end_time"])
+            key = (interval_data["entity_id"], start, end)
+            if key in existing_keys or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            new_intervals.append(interval_data)
+
+        if new_intervals:
+            session.bulk_insert_mappings(db.Intervals, new_intervals)
+            session.commit()
+            _LOGGER.debug("Synced %d new intervals from recorder", len(new_intervals))
+
+
+def _commit_numeric_samples(
+    db: AreaOccupancyDB, numeric_samples: list[dict[str, Any]]
+) -> None:
+    """Commit numeric sample data to the database (runs in executor)."""
+    with db.get_session() as session:
+        sample_keys = {
+            (
+                sample_data["entity_id"],
+                sample_data["timestamp"],
+            )
+            for sample_data in numeric_samples
+        }
+
+        existing_samples = (
+            _get_existing_numeric_sample_keys(session, db, sample_keys)
+            if sample_keys
+            else set()
+        )
+
+        new_samples = []
+        seen_sample_keys: set[tuple[str, datetime]] = set()
+        for sample_data in numeric_samples:
+            timestamp = _normalize_db_key_datetime(sample_data["timestamp"])
+            key = (sample_data["entity_id"], timestamp)
+            if key in existing_samples or key in seen_sample_keys:
+                continue
+            seen_sample_keys.add(key)
+            sample_data["timestamp"] = timestamp
+            new_samples.append(sample_data)
+
+        if new_samples:
+            session.bulk_insert_mappings(db.NumericSamples, new_samples)
+            session.commit()
+            _LOGGER.debug("Synced %d numeric samples from recorder", len(new_samples))
+
+
 async def sync_states(db: AreaOccupancyDB) -> None:
     """Fetch states history from recorder and commit to Intervals table for all areas."""
     hass = db.coordinator.hass
@@ -258,82 +334,26 @@ async def sync_states(db: AreaOccupancyDB) -> None:
         # Convert states to proper intervals with correct duration calculation
         intervals = _states_to_intervals(db, states, to_utc(end_time))
         if intervals:
-            with db.get_session() as session:
-                interval_keys = {
-                    (
-                        interval_data["entity_id"],
-                        interval_data["start_time"],
-                        interval_data["end_time"],
-                    )
-                    for interval_data in intervals
-                }
+            # Pre-compute entity->area map once to avoid O(n*m) lookups
+            entry_id = db.coordinator.entry_id
+            entity_area_map: dict[str, str] = {}
+            for area_name, area in db.coordinator.areas.items():
+                for eid in area.entities.entity_ids:
+                    entity_area_map[eid] = area_name
 
-                if interval_keys:
-                    existing_keys = _get_existing_interval_keys(
-                        session, db, interval_keys
-                    )
-                else:
-                    existing_keys = set()
+            for interval_data in intervals:
+                area_name = entity_area_map.get(interval_data["entity_id"])
+                if area_name:
+                    interval_data["entry_id"] = entry_id
+                    interval_data["area_name"] = area_name
 
-                new_intervals = []
-                for interval_data in intervals:
-                    start = _normalize_db_key_datetime(interval_data["start_time"])
-                    end = _normalize_db_key_datetime(interval_data["end_time"])
-                    if (
-                        interval_data["entity_id"],
-                        start,
-                        end,
-                    ) in existing_keys:
-                        continue
-
-                    entity_id = interval_data["entity_id"]
-                    area_name = db.coordinator.find_area_for_entity(entity_id)
-
-                    if area_name:
-                        interval_data["entry_id"] = db.coordinator.entry_id
-                        interval_data["area_name"] = area_name
-                        new_intervals.append(interval_data)
-
-                if new_intervals:
-                    session.bulk_insert_mappings(db.Intervals, new_intervals)
-                    session.commit()
-                    _LOGGER.debug(
-                        "Synced %d new intervals from recorder", len(new_intervals)
-                    )
+            await hass.async_add_executor_job(_commit_intervals, db, intervals)
 
         numeric_samples = _states_to_numeric_samples(db, states)
         if numeric_samples:
-            with db.get_session() as session:
-                sample_keys = {
-                    (
-                        sample_data["entity_id"],
-                        sample_data["timestamp"],
-                    )
-                    for sample_data in numeric_samples
-                }
-
-                if sample_keys:
-                    existing_samples = _get_existing_numeric_sample_keys(
-                        session, db, sample_keys
-                    )
-                else:
-                    existing_samples = set()
-
-                new_samples = []
-                for sample_data in numeric_samples:
-                    timestamp = _normalize_db_key_datetime(sample_data["timestamp"])
-                    if (sample_data["entity_id"], timestamp) in existing_samples:
-                        continue
-
-                    sample_data["timestamp"] = timestamp
-                    new_samples.append(sample_data)
-
-                if new_samples:
-                    session.bulk_insert_mappings(db.NumericSamples, new_samples)
-                    session.commit()
-                    _LOGGER.debug(
-                        "Synced %d numeric samples from recorder", len(new_samples)
-                    )
+            await hass.async_add_executor_job(
+                _commit_numeric_samples, db, numeric_samples
+            )
 
     except (
         sa.exc.SQLAlchemyError,
