@@ -31,7 +31,7 @@ from ..const import (
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
-from ..data.entity_type import CorrelationType
+from ..data.entity_type import CorrelationType, InputType
 from ..time_utils import to_db_utc
 from . import maintenance, queries
 
@@ -137,9 +137,16 @@ def _update_existing_entity(
 
     # Restore probabilities from database
     # Correlation data takes priority, but if absent, use database values
-    if corr_data:
+    # Motion and sleep sensors always use user-configured values
+    is_motion_or_sleep = hasattr(
+        existing_entity, "type"
+    ) and existing_entity.type.input_type in (
+        InputType.MOTION,
+        InputType.SLEEP,
+    )
+    if corr_data and not is_motion_or_sleep:
         _apply_correlation_data(existing_entity, corr_data)
-    else:
+    elif not is_motion_or_sleep:
         # No correlation data, restore probabilities directly from database
         if (
             hasattr(entity_obj, "prob_given_true")

@@ -143,13 +143,14 @@ class TestLoadData:
             100,
         )
 
-        # Create and save an entity with specific values
-        entity_id = "binary_sensor.test_motion"
+        # Create and save an appliance entity (non-motion) with specific values
+        # to test probability restoration from DB
+        entity_id = "switch.test_appliance"
         try:
             entity = area.entities.get_entity(entity_id)
         except ValueError:
             entity = area.factory.create_from_config_spec(
-                entity_id, InputType.MOTION.value
+                entity_id, InputType.APPLIANCE.value
             )
             area.entities.add_entity(entity)
 
@@ -170,7 +171,7 @@ class TestLoadData:
         # Verify global prior was restored
         assert area.prior.global_prior == expected_prior
 
-        # Verify entity data was restored
+        # Verify entity data was restored (non-motion entities get DB values)
         reloaded_entity = area.entities.get_entity(entity_id)
         assert reloaded_entity.prob_given_true == 0.85
         assert reloaded_entity.prob_given_false == 0.05
