@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [2026.3.2] - 2026-03-04
+
+Went on a Bug hunt 🐛
+
+## Bug Fixes
+
+* **Sync states blocking event loop** — `sync_states` ran database queries on the event loop, causing UI lag. Refactored to run all DB operations in the executor and pre-compute entity-area mappings to avoid O(n×m) lookups. Fixes #388 in #403
+* **Entity evidence identity check** — Used truthiness check (`not entity.evidence`) instead of identity check (`entity.evidence is False`), incorrectly treating `None` (unavailable) as inactive. Now correctly distinguishes unavailable from inactive entities. Fixes #389 in #404
+* **Orphan cleanup missing tables** — `_cleanup_area_orphans` and `delete_area_data` did not clean up `IntervalAggregates`, `CrossAreaStats`, `NumericSamples`, or `NumericAggregates`, leaving stale data after area removal. All tables are now scoped and cleaned. Fixes #390 in #405
+* **Motion sensor type guard on reload** — `load_data` did not verify that restored motion/sleep sensor entity IDs still had the correct `InputType`, allowing misclassified sensors to carry stale probabilities after reconfiguration. Added type guard validation. Fixes #391 in #406
+* **Prune timestamp not persisted** — `set_last_prune_time` opened a session but never committed, so the prune timestamp was lost on restart, causing redundant full-table prunes on every cycle. Consolidated into a single transaction with the prune deletes. Fixes #392 in #407
+* **Duplicate person validation** — Adding the same person entity to multiple people slots was silently accepted, causing undefined behavior. Now rejects duplicates with a clear error. Fixes #393 in #408
+* **Unavailable entities still decaying** — Entities in unavailable state (`value is None`) were still included in the probability calculation when decay was active, inflating occupancy probability. Now skipped regardless of decay. Fixes #394 in #409
+* **`combine_priors` unclamped early return** — When only one area had data, `combine_priors` returned its raw prior without clamping, potentially producing values outside the 1–99% range. Now applies `clamp_probability()` on all return paths. Fixes #395 in #410
+* **Analysis exception scope too narrow** — Analysis pipeline only caught `HomeAssistantError | OSError | RuntimeError`, letting unexpected exceptions (e.g., `KeyError`, `TypeError`) crash the coordinator. Broadened to catch `Exception` with full logging. Fixes #396 in #411
+* **`"nan"` string not filtered** — Entities reporting the string `"nan"` as their state were treated as valid, producing `NaN` in probability calculations. Added `"nan"` to the invalid states filter. Fixes #397 in #412
+* **Lightweight config update crash** — A single area failing during `_async_lightweight_config_update` would abort the entire update loop, leaving remaining areas with stale configuration. Each area is now wrapped in its own try/except. Fixes #398 in #413
+* **WAL checkpoint errors silently suppressed** — `contextlib.suppress` on WAL checkpoint hid potentially actionable errors. Replaced with explicit try/except and warning-level logging with `exc_info=True`. Fixes #399 in #414
+* **Draft corruption on validation failure** — Config flow updated `_area_config_draft` before validating, so a validation failure left the draft in a partially-modified state. Now validates on a candidate copy first. Fixes #400 in #415
+* **`CONF_AREAS` type safety** — `CONF_AREAS` was assumed to be a `list[dict]` but could contain non-dict items after manual config edits or corruption. Added per-item type validation with warning logging. Fixes #401 in #416
+* **`AnalysisStatus` raw strings** — Analysis status was tracked with raw string literals (`"idle"`, `"running"`, etc.), risking typo bugs and making refactoring fragile. Replaced with `AnalysisStatus` enum values throughout. Fixes #402 in #417
+
+A big thank you to those who have chosen to sponsor my work!
+[You can sponsor me here](https://github.com/sponsors/Hankanman)
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.3.1...2026.3.2
+
+
 ## [2026.3.1] - 2026-03-04
 
 ## Bug Fixes
