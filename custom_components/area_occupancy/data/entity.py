@@ -882,9 +882,9 @@ class EntityFactory:
         # Set default analysis_error based on entity type
         # Motion and Sleep sensors are excluded from correlation analysis
         analysis_error = (
-            "motion_sensor_excluded"
+            AnalysisStatus.MOTION_EXCLUDED
             if input_type_enum in (InputType.MOTION, InputType.SLEEP)
-            else "not_analyzed"
+            else AnalysisStatus.NOT_ANALYZED
         )
 
         return Entity(
