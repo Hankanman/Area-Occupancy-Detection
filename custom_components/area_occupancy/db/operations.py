@@ -611,6 +611,25 @@ def _cleanup_area_orphans(db: AreaOccupancyDB, area_name: str, area_data: Any) -
             .delete(synchronize_session=False)
         )
 
+        # Delete related records for orphaned entities
+        session.query(db.NumericSamples).filter(
+            db.NumericSamples.entity_id.in_(orphaned_entity_ids)
+        ).delete(synchronize_session=False)
+
+        session.query(db.NumericAggregates).filter(
+            db.NumericAggregates.entity_id.in_(orphaned_entity_ids)
+        ).delete(synchronize_session=False)
+
+        session.query(db.Correlations).filter(
+            db.Correlations.area_name == area_name,
+            db.Correlations.entity_id.in_(orphaned_entity_ids),
+        ).delete(synchronize_session=False)
+
+        session.query(db.EntityStatistics).filter(
+            db.EntityStatistics.area_name == area_name,
+            db.EntityStatistics.entity_id.in_(orphaned_entity_ids),
+        ).delete(synchronize_session=False)
+
         # Bulk delete all orphaned entities in a single query
         # Filter by both area_name and entity_id to avoid deleting entities
         # with the same ID in other areas
@@ -721,6 +740,35 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
                 .filter_by(area_name=area_name)
                 .delete()
             )
+
+            # Delete interval aggregates for this area
+            session.query(db.IntervalAggregates).filter_by(area_name=area_name).delete()
+
+            # Delete numeric samples for entities in this area
+            if entity_ids:
+                session.query(db.NumericSamples).filter(
+                    db.NumericSamples.entity_id.in_(entity_ids)
+                ).delete(synchronize_session=False)
+
+            # Delete numeric aggregates for entities in this area
+            if entity_ids:
+                session.query(db.NumericAggregates).filter(
+                    db.NumericAggregates.entity_id.in_(entity_ids)
+                ).delete(synchronize_session=False)
+
+            # Delete correlations for this area
+            session.query(db.Correlations).filter_by(area_name=area_name).delete()
+
+            # Delete entity statistics for this area
+            session.query(db.EntityStatistics).filter_by(area_name=area_name).delete()
+
+            # Delete area relationships involving this area
+            session.query(db.AreaRelationships).filter(
+                sa.or_(
+                    db.AreaRelationships.area_name == area_name,
+                    db.AreaRelationships.related_area_name == area_name,
+                )
+            ).delete(synchronize_session=False)
 
             # Delete the area record itself
             area_deleted = (
