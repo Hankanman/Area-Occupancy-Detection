@@ -905,6 +905,7 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
                 _LOGGER.debug("No old intervals to prune")
                 # Still record the prune attempt to prevent other instances from trying
                 maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
+                session.commit()
                 return 0
 
             # Delete old intervals
@@ -924,6 +925,7 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
 
             # Record successful prune
             maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
+            session.commit()
 
             return deleted_count
 
