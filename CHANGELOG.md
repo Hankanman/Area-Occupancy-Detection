@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [2026.3.1] - 2026-03-04
+
+## Bug Fixes
+
+* **People config lost on area changes** — Area add/edit/remove operations were overwriting `config_entry.options` with only the areas key, silently dropping configured people and their sleep sensors. Now preserves the full options dict. Fixes https://github.com/Hankanman/Area-Occupancy-Detection/issues/382 in https://github.com/Hankanman/Area-Occupancy-Detection/pull/383
+* **Sensor weight changes not taking effect** — Adjusting sensor weights, `prob_given_true`, or `prob_given_false` via the config flow had no effect because Entity objects cached their values at creation time and were never recreated on settings-only updates. Fixes https://github.com/Hankanman/Area-Occupancy-Detection/issues/381 in https://github.com/Hankanman/Area-Occupancy-Detection/pull/384
+* **Shelly Door/Window sensors not available as door sensors** — Sensors with ambiguous device classes (e.g., `opening`) were exclusively classified as either door or window due to mutually exclusive logic. Ambiguous sensors now appear in both selector lists so users can choose the correct category. Fixes https://github.com/Hankanman/Area-Occupancy-Detection/issues/380 in https://github.com/Hankanman/Area-Occupancy-Detection/pull/385
+* **Empty rooms showing 100% occupancy after updates** — After integration reload/update, stale entity decay and evidence state restored from the database could cause rooms to show full occupancy. Now reconciles restored state against current HA sensor states on startup. Fixes https://github.com/Hankanman/Area-Occupancy-Detection/issues/379 in https://github.com/Hankanman/Area-Occupancy-Detection/pull/386
+
+A big thank you to those who have chosen to sponsor my work!
+[You can sponsor me here](https://github.com/sponsors/Hankanman)
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.5...2026.3.1
+
+
+## [2026.2.5] - 2026-02-25
+
+## New Features
+
+* **Multi-sensor sleep detection** — Configure multiple sleep sensors per person, supporting both numeric sensors (e.g., Companion App sleep confidence) and binary sensors (e.g., iOS Sleep Focus, Withings sleep mats). Any active sensor triggers sleep detection. Existing single-sensor configs are automatically migrated. By @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/375 closes https://github.com/Hankanman/Area-Occupancy-Detection/issues/374
+* **Exclude from All Areas toggle** — Per-area option to exclude outdoor or utility areas (garages, driveways) from the All Areas aggregate sensors. By @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/377 closes https://github.com/Hankanman/Area-Occupancy-Detection/issues/335
+* **Floor-based aggregate sensors** — Automatically creates per-floor occupancy devices (probability, binary status, decay, prior, presence confidence, environmental confidence) when areas are assigned to floors in Home Assistant. By @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/377 closes https://github.com/Hankanman/Area-Occupancy-Detection/issues/335
+* **Export config service** — New `area_occupancy.export_config` service returns the complete integration configuration as YAML, useful for debugging and backup. By @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/376 closes https://github.com/Hankanman/Area-Occupancy-Detection/issues/287
+
+## Improvements
+
+* **Config flow UX overhaul** — Area configuration now uses a multi-step wizard (Area Basics → Motion Sensors → Additional Sensors → Detection Behavior) instead of a single long form. Duration fields (motion timeout, decay half-life, Wasp in Box timers) now use Home Assistant's native duration picker. By @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/373
+
+And a big thank you to those who have chosen to sponsor my work!
+[You can sponsor me here](https://github.com/sponsors/Hankanman)
+
+## What's Changed
+* Config flow UX improvements with multi-step wizard by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/373
+* Add multi-sensor sleep detection support by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/375
+* Add export_config service by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/376
+* Add exclude from All Areas toggle and floor-based aggregate sensors by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/377
+* Bump werkzeug from 3.1.5 to 3.1.6 in /simulator by @dependabot[bot] in https://github.com/Hankanman/Area-Occupancy-Detection/pull/372
+
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.2.4...2026.2.5
+
+
 ## [2026.2.4] - 2026-02-20
 
 ## What's Changed
