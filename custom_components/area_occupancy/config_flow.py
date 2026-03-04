@@ -2239,20 +2239,19 @@ class BaseOccupancyFlow:
 
         if user_input is not None:
             flattened = _flatten_sectioned_input(user_input)
-            self._area_config_draft.update(flattened)
+
+            # Validate on a copy to avoid corrupting the draft on failure
+            candidate = {**self._area_config_draft, **flattened}
 
             # Auto-set decay half-life based on purpose
-            selected_purpose = self._area_config_draft.get(CONF_PURPOSE)
-            _apply_purpose_based_decay_default(
-                self._area_config_draft, selected_purpose
-            )
+            selected_purpose = candidate.get(CONF_PURPOSE)
+            _apply_purpose_based_decay_default(candidate, selected_purpose)
 
-            # Run full validation on the complete draft
-            validation_errors = self._validate_config(
-                self._area_config_draft, self.hass
-            )
+            # Run full validation on the complete candidate
+            validation_errors = self._validate_config(candidate, self.hass)
 
             if not validation_errors:
+                self._area_config_draft.update(candidate)
                 return await self._on_area_config_complete(self._area_config_draft)
 
             errors.update(validation_errors)
