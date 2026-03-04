@@ -494,6 +494,7 @@ class TestEntryUpdated:
             mock_area = Mock()
             mock_area.config.area_id = aid
             mock_area.config.update_from_entry = Mock()
+            mock_area.entities.cleanup = AsyncMock()
             areas[f"Area {aid}"] = mock_area
         mock_coordinator.areas = areas
 
@@ -530,9 +531,10 @@ class TestEntryUpdated:
 
         # Should NOT reload
         mock_reload.assert_not_called()
-        # Should call update_from_entry with the config entry on each area config.
+        # Should call update_from_entry and cleanup on each area.
         for area in mock_coordinator.areas.values():
             area.config.update_from_entry.assert_called_once_with(mock_config_entry)
+            area.entities.cleanup.assert_awaited_once()
         mock_coordinator.async_request_refresh.assert_called_once()
 
     async def test_area_added_triggers_reload(
