@@ -2573,7 +2573,24 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         """Get areas list from merged config entry data+options."""
         merged = dict(self.config_entry.data)
         merged.update(self.config_entry.options)
-        return list(merged.get(CONF_AREAS, []))
+        areas = merged.get(CONF_AREAS, [])
+        if not isinstance(areas, list):
+            _LOGGER.warning(
+                "CONF_AREAS has unexpected type %s, using empty list",
+                type(areas).__name__,
+            )
+            return []
+        valid_areas: list[dict[str, Any]] = []
+        for i, item in enumerate(areas):
+            if isinstance(item, dict):
+                valid_areas.append(item)
+            else:
+                _LOGGER.warning(
+                    "CONF_AREAS[%d] has unexpected type %s, skipping",
+                    i,
+                    type(item).__name__,
+                )
+        return valid_areas
 
     def _get_wizard_areas(self) -> list[dict[str, Any]]:
         """Get areas list for duplicate checking."""
