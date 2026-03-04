@@ -63,7 +63,7 @@ async def run_full_analysis(
             _LOGGER.info(
                 "Step %d: %s completed in %.2f ms", step_num, step_name, elapsed_ms
             )
-        except (HomeAssistantError, OSError, RuntimeError):
+        except Exception:
             elapsed_ms = (time.perf_counter() - start) * 1000
             failed_steps.append(step_name)
             _LOGGER.exception(
