@@ -372,7 +372,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
 
             if is_window_candidate:
                 include_window_entities.append(entry.entity_id)
-            elif is_door_candidate:
+            if is_door_candidate:
                 include_door_entities.append(entry.entity_id)
 
             # Exclude our own integration's sensors from motion selection
