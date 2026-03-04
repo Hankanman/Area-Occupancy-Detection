@@ -663,6 +663,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Refresh cached correlations for new areas
         await self.async_refresh_correlations()
 
+        # Reconcile restored entity state with current HA reality
+        self._reconcile_entity_state()
+
         # Re-establish entity state tracking with new entity lists
         all_entity_ids = []
         for area in self.areas.values():
