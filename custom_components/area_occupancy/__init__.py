@@ -268,4 +268,5 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.debug("Config entry settings updated, refreshing area configs")
         for area in coordinator.areas.values():
             area.config.update_from_entry(entry)
+            await area.entities.cleanup()
         await coordinator.async_request_refresh()
