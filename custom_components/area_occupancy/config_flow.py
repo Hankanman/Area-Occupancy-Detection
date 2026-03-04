@@ -2596,7 +2596,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         self._area_config_draft = {}
 
         # Store updated areas in options; the update listener handles the reload
-        return self.async_create_entry(title="", data={CONF_AREAS: areas})
+        config_data = dict(self.config_entry.options)
+        config_data[CONF_AREAS] = areas
+        return self.async_create_entry(title="", data=config_data)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -2716,7 +2718,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             return self.async_abort(reason="cannot_remove_last_area")
 
         self._area_to_remove = None
-        return self.async_create_entry(title="", data={CONF_AREAS: updated_areas})
+        config_data = dict(self.config_entry.options)
+        config_data[CONF_AREAS] = updated_areas
+        return self.async_create_entry(title="", data=config_data)
 
     async def async_step_cancel_remove_area(
         self, user_input: dict[str, Any] | None = None
