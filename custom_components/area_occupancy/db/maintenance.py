@@ -301,7 +301,9 @@ def _backup_database(db: AreaOccupancyDB) -> bool:
                 conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
         except (SQLAlchemyError, OSError) as wal_err:
             _LOGGER.warning(
-                "WAL checkpoint failed, backup may be incomplete: %s", wal_err
+                "WAL checkpoint failed, backup may be incomplete: %s",
+                wal_err,
+                exc_info=True,
             )
 
         backup_path = db.db_path.with_suffix(".db.backup")
