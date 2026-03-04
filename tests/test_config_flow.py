@@ -532,13 +532,15 @@ class TestHelperFunctions:
         assert "door" in result
         assert "binary_sensor.test_contact_sensor_2" in result["door"]
 
-    def test_get_include_entities_prioritize_window_in_name_over_door(
+    def test_get_include_entities_ambiguous_door_window_appears_in_both(
         self, hass, entity_registry
     ):
-        """Test that window keyword in name takes precedence over door classification.
+        """Test that ambiguous sensors appear in both door and window lists.
 
-        When an entity has 'window' in its friendly name, it should be categorized as
-        a window sensor even if it has door-like device class.
+        When an entity has 'window' in its friendly name but door-like device class,
+        it should appear in both lists so the user can choose the correct category.
+        This fixes issues with Shelly Door/Window sensors that could only be added
+        as window sensors.
         """
         # Register a sensor with door device class
         entity_registry.async_get_or_create(
@@ -557,11 +559,9 @@ class TestHelperFunctions:
 
         result = _get_include_entities(hass)
 
-        # The entity should appear in window list due to name, not door list
-        assert "window" in result
+        # The entity should appear in both lists since it matches both criteria
         assert "binary_sensor.test_contact_3" in result["window"]
-        # Should NOT be in door list
-        assert "binary_sensor.test_contact_3" not in result.get("door", [])
+        assert "binary_sensor.test_contact_3" in result["door"]
 
     def test_get_include_entities_door_with_door_keyword_in_opening(
         self, hass, entity_registry
