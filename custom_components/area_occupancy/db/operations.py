@@ -612,6 +612,11 @@ def _cleanup_area_orphans(db: AreaOccupancyDB, area_name: str, area_data: Any) -
         )
 
         # Delete related records for orphaned entities
+        session.query(db.IntervalAggregates).filter(
+            db.IntervalAggregates.area_name == area_name,
+            db.IntervalAggregates.entity_id.in_(orphaned_entity_ids),
+        ).delete(synchronize_session=False)
+
         session.query(db.NumericSamples).filter(
             db.NumericSamples.entity_id.in_(orphaned_entity_ids)
         ).delete(synchronize_session=False)
