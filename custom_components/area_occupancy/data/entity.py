@@ -275,6 +275,7 @@ class Entity:
             None,
             "",
             "NaN",
+            "nan",
         ]:
             return None
         return state_value
