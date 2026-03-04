@@ -177,6 +177,35 @@ class TestLoadData:
         assert reloaded_entity.prob_given_false == 0.05
         assert reloaded_entity.type.weight == 0.9
 
+        # Verify motion entities preserve configured values, not DB values
+        motion_id = "binary_sensor.test_motion"
+        try:
+            motion_entity = area.entities.get_entity(motion_id)
+        except ValueError:
+            motion_entity = area.factory.create_from_config_spec(
+                motion_id, InputType.MOTION.value
+            )
+            area.entities.add_entity(motion_entity)
+
+        # Record configured defaults before save
+        configured_pgt = motion_entity.prob_given_true
+        configured_pgf = motion_entity.prob_given_false
+
+        # Save with different DB values
+        motion_entity.prob_given_true = 0.50
+        motion_entity.prob_given_false = 0.50
+        save_entity_data(db)
+
+        # Restore configured values (simulating what config provides)
+        motion_entity.prob_given_true = configured_pgt
+        motion_entity.prob_given_false = configured_pgf
+
+        # Reload from DB — motion should keep configured, not DB values
+        await load_data(db)
+        reloaded_motion = area.entities.get_entity(motion_id)
+        assert reloaded_motion.prob_given_true == configured_pgt
+        assert reloaded_motion.prob_given_false == configured_pgf
+
     @pytest.mark.asyncio
     async def test_load_data_deletes_stale_entities(
         self, coordinator: AreaOccupancyCoordinator
