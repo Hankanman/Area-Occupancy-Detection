@@ -296,8 +296,13 @@ def _backup_database(db: AreaOccupancyDB) -> bool:
     try:
         # Checkpoint WAL file to ensure all data is in main database file
         # This ensures the backup includes all committed data
-        with suppress(SQLAlchemyError, OSError), db.engine.connect() as conn:
-            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        except (SQLAlchemyError, OSError) as wal_err:
+            _LOGGER.warning(
+                "WAL checkpoint failed, backup may be incomplete: %s", wal_err
+            )
 
         backup_path = db.db_path.with_suffix(".db.backup")
 
