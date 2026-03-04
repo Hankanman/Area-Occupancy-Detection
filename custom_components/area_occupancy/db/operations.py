@@ -914,6 +914,8 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
             )
             deleted_count = delete_query.delete(synchronize_session=False)
 
+            # Record successful prune in the same transaction as the delete
+            maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
             session.commit()
 
             _LOGGER.info(
@@ -922,10 +924,6 @@ def prune_old_intervals(db: AreaOccupancyDB, force: bool = False) -> int:
                 RETENTION_DAYS,
                 cutoff_date,
             )
-
-            # Record successful prune
-            maintenance.set_last_prune_time(db, dt_util.utcnow(), session)
-            session.commit()
 
             return deleted_count
 

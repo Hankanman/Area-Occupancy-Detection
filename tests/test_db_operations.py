@@ -742,10 +742,14 @@ class TestPruneOldIntervals:
             session.add(old_interval)
             session.commit()
 
-        # Prune and verify timestamp was persisted
-        prune_old_intervals(db, force=True)
+        # Prune and verify outcome and timestamp
+        deleted_count = prune_old_intervals(db, force=True)
+        assert deleted_count >= 1, "Should have pruned at least one old interval"
 
         with db.get_session() as session:
+            remaining = session.query(db.Intervals).all()
+            assert len(remaining) == 0, "All intervals should be pruned (all were old)"
+
             result = session.query(db.Metadata).filter_by(key="last_prune_time").first()
             assert result is not None, (
                 "last_prune_time should be persisted after pruning"
