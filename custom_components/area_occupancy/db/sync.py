@@ -246,11 +246,14 @@ def _commit_intervals(db: AreaOccupancyDB, intervals: list[dict[str, Any]]) -> N
         )
 
         new_intervals = []
+        seen_keys: set[tuple[str, datetime, datetime]] = set()
         for interval_data in mapped_intervals:
             start = _normalize_db_key_datetime(interval_data["start_time"])
             end = _normalize_db_key_datetime(interval_data["end_time"])
-            if (interval_data["entity_id"], start, end) in existing_keys:
+            key = (interval_data["entity_id"], start, end)
+            if key in existing_keys or key in seen_keys:
                 continue
+            seen_keys.add(key)
             new_intervals.append(interval_data)
 
         if new_intervals:
@@ -279,10 +282,13 @@ def _commit_numeric_samples(
         )
 
         new_samples = []
+        seen_sample_keys: set[tuple[str, datetime]] = set()
         for sample_data in numeric_samples:
             timestamp = _normalize_db_key_datetime(sample_data["timestamp"])
-            if (sample_data["entity_id"], timestamp) in existing_samples:
+            key = (sample_data["entity_id"], timestamp)
+            if key in existing_samples or key in seen_sample_keys:
                 continue
+            seen_sample_keys.add(key)
             sample_data["timestamp"] = timestamp
             new_samples.append(sample_data)
 
