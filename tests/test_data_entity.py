@@ -504,12 +504,14 @@ class TestEntityPropertiesAndMethods:
         )
 
         original_states = coordinator.hass.states
-        # Test initial state (no transition)
+        # Test initial state: entity becomes available with positive evidence (unknown→on)
         mock_state = Mock()
         mock_state.state = STATE_ON
         _set_states_get(coordinator.hass, lambda _: mock_state)
         try:
-            assert not entity.has_new_evidence()  # No transition on first call
+            assert (
+                entity.has_new_evidence()
+            )  # Should trigger refresh for unknown→occupied
 
             # Test transition from True to False
             mock_state.state = "off"
@@ -721,12 +723,14 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
-        # Test with previous evidence None but current evidence available
+        # Test with previous evidence None but current evidence available (e.g. unknown→occupied)
         mock_state = Mock()
         mock_state.state = STATE_ON
         _set_states_get(coordinator.hass, lambda _: mock_state)
         try:
-            assert not entity.has_new_evidence()  # No transition when previous is None
+            assert (
+                entity.has_new_evidence()
+            )  # Should trigger refresh for unknown→occupied
             assert entity.previous_evidence is True
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
@@ -843,7 +847,9 @@ class TestEntityPropertiesAndMethods:
     ) -> None:
         """Test has_new_evidence when unavailable entity becomes available with evidence.
 
-        When an entity becomes available with positive evidence, decay should stop.
+        When an entity becomes available with positive evidence (e.g. unknown→occupied
+        during startup), decay should stop AND a refresh should be triggered so the
+        coordinator recalculates probability.
         """
         mock_entity_type = Mock()
         mock_entity_type.active_states = [STATE_ON]
@@ -869,8 +875,8 @@ class TestEntityPropertiesAndMethods:
         try:
             result = entity.has_new_evidence()
 
-            # Should return False (entity just became available, not a transition)
-            assert result is False
+            # Should return True to trigger coordinator refresh (unknown→occupied)
+            assert result is True
 
             # Decay should be stopped since entity has positive evidence
             entity.decay.stop_decay.assert_called_once()
