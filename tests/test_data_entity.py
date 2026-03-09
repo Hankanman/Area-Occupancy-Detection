@@ -523,6 +523,21 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
+        # Test unknown→off (None→False) does NOT trigger refresh
+        entity2 = create_test_entity(
+            entity_type=mock_entity_type,
+            coordinator=coordinator,
+            previous_evidence=None,
+        )
+        mock_state_off = Mock()
+        mock_state_off.state = "off"
+        _set_states_get(coordinator.hass, lambda _: mock_state_off)
+        try:
+            assert not entity2.has_new_evidence()  # No refresh for unknown→clear
+            assert entity2.previous_evidence is False
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
     def test_entity_properties_comprehensive(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
@@ -723,6 +738,19 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
+        # Test with previous evidence None and current evidence False (unknown→clear)
+        mock_state_off = Mock()
+        mock_state_off.state = "off"
+        _set_states_get(coordinator.hass, lambda _: mock_state_off)
+        try:
+            assert not entity.has_new_evidence()  # No refresh for unknown→clear
+            assert entity.previous_evidence is False
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+        # Reset to None for the next test
+        entity.previous_evidence = None
+
         # Test with previous evidence None but current evidence available (e.g. unknown→occupied)
         mock_state = Mock()
         mock_state.state = STATE_ON
@@ -866,6 +894,9 @@ class TestEntityPropertiesAndMethods:
         entity.decay.stop_decay = Mock()
         entity.decay.is_decaying = True  # Decay was running
 
+        # Record last_updated before the call
+        old_last_updated = entity.last_updated
+
         original_states = coordinator.hass.states
 
         # Test: Entity becomes available with evidence
@@ -883,6 +914,9 @@ class TestEntityPropertiesAndMethods:
 
             # previous_evidence should be updated to True
             assert entity.previous_evidence is True
+
+            # last_updated should be stamped (same as normal transition path)
+            assert entity.last_updated >= old_last_updated
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 

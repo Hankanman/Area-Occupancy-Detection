@@ -566,6 +566,7 @@ class Entity:
             # Entity just became available - stop any lingering decay if active
             if current_evidence:
                 self.decay.stop_decay()
+                self.last_updated = dt_util.utcnow()
             self.previous_evidence = current_evidence
             # If entity became available with positive evidence (e.g. unknown→occupied
             # during startup), we must trigger a refresh so the coordinator recalculates
