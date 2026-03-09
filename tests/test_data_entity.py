@@ -504,12 +504,14 @@ class TestEntityPropertiesAndMethods:
         )
 
         original_states = coordinator.hass.states
-        # Test initial state (no transition)
+        # Test initial state: entity becomes available with positive evidence (unknown→on)
         mock_state = Mock()
         mock_state.state = STATE_ON
         _set_states_get(coordinator.hass, lambda _: mock_state)
         try:
-            assert not entity.has_new_evidence()  # No transition on first call
+            assert (
+                entity.has_new_evidence()
+            )  # Should trigger refresh for unknown→occupied
 
             # Test transition from True to False
             mock_state.state = "off"
@@ -518,6 +520,21 @@ class TestEntityPropertiesAndMethods:
             # Test transition from False to True
             mock_state.state = STATE_ON
             assert entity.has_new_evidence()  # Should detect transition
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+        # Test unknown→off (None→False) does NOT trigger refresh
+        entity2 = create_test_entity(
+            entity_type=mock_entity_type,
+            coordinator=coordinator,
+            previous_evidence=None,
+        )
+        mock_state_off = Mock()
+        mock_state_off.state = "off"
+        _set_states_get(coordinator.hass, lambda _: mock_state_off)
+        try:
+            assert not entity2.has_new_evidence()  # No refresh for unknown→clear
+            assert entity2.previous_evidence is False
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
@@ -721,12 +738,27 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
-        # Test with previous evidence None but current evidence available
+        # Test with previous evidence None and current evidence False (unknown→clear)
+        mock_state_off = Mock()
+        mock_state_off.state = "off"
+        _set_states_get(coordinator.hass, lambda _: mock_state_off)
+        try:
+            assert not entity.has_new_evidence()  # No refresh for unknown→clear
+            assert entity.previous_evidence is False
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+        # Reset to None for the next test
+        entity.previous_evidence = None
+
+        # Test with previous evidence None but current evidence available (e.g. unknown→occupied)
         mock_state = Mock()
         mock_state.state = STATE_ON
         _set_states_get(coordinator.hass, lambda _: mock_state)
         try:
-            assert not entity.has_new_evidence()  # No transition when previous is None
+            assert (
+                entity.has_new_evidence()
+            )  # Should trigger refresh for unknown→occupied
             assert entity.previous_evidence is True
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
@@ -843,7 +875,9 @@ class TestEntityPropertiesAndMethods:
     ) -> None:
         """Test has_new_evidence when unavailable entity becomes available with evidence.
 
-        When an entity becomes available with positive evidence, decay should stop.
+        When an entity becomes available with positive evidence (e.g. unknown→occupied
+        during startup), decay should stop AND a refresh should be triggered so the
+        coordinator recalculates probability.
         """
         mock_entity_type = Mock()
         mock_entity_type.active_states = [STATE_ON]
@@ -860,6 +894,9 @@ class TestEntityPropertiesAndMethods:
         entity.decay.stop_decay = Mock()
         entity.decay.is_decaying = True  # Decay was running
 
+        # Record last_updated before the call
+        old_last_updated = entity.last_updated
+
         original_states = coordinator.hass.states
 
         # Test: Entity becomes available with evidence
@@ -869,14 +906,17 @@ class TestEntityPropertiesAndMethods:
         try:
             result = entity.has_new_evidence()
 
-            # Should return False (entity just became available, not a transition)
-            assert result is False
+            # Should return True to trigger coordinator refresh (unknown→occupied)
+            assert result is True
 
             # Decay should be stopped since entity has positive evidence
             entity.decay.stop_decay.assert_called_once()
 
             # previous_evidence should be updated to True
             assert entity.previous_evidence is True
+
+            # last_updated should be stamped (same as normal transition path)
+            assert entity.last_updated >= old_last_updated
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 

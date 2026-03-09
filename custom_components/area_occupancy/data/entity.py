@@ -563,12 +563,16 @@ class Entity:
 
         # Handle entity becoming available (previous was None, now has evidence)
         if previous_evidence is None:
-            # Entity just became available - update previous and don't trigger transition
-            # If it has positive evidence, stop any lingering decay
+            # Entity just became available - stop any lingering decay if active
             if current_evidence:
                 self.decay.stop_decay()
+                self.last_updated = dt_util.utcnow()
             self.previous_evidence = current_evidence
-            return False  # Entity just became available, not a true transition
+            # If entity became available with positive evidence (e.g. unknown→occupied
+            # during startup), we must trigger a refresh so the coordinator recalculates
+            # probability. Without this, sensors that go directly from unknown to active
+            # (common when Z2M loads after AOD) would be silently ignored.
+            return bool(current_evidence)
 
         # Fix inconsistent state: if evidence is True but decay is running, stop decay
         if current_evidence and self.decay.is_decaying:
