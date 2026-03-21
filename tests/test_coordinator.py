@@ -1697,6 +1697,165 @@ class TestCoordinatorAreaRemoval:
             coordinator.config_entry.data = original_data
 
 
+class TestCoordinatorOrphanedAreaCleanup:
+    """Test cleanup of areas whose HA area was deleted."""
+
+    def test_load_areas_returns_orphaned_ids(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """Test _load_areas_from_config returns orphaned area IDs."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+
+        # Add an orphaned area (area_id not in HA registry) to config
+        original_data = mock_realistic_config_entry.data.copy()
+        areas_list = list(original_data.get(CONF_AREAS, []))
+        areas_list.append({CONF_AREA_ID: "deleted_ha_area_id"})
+        mock_realistic_config_entry.data = {CONF_AREAS: areas_list}
+
+        try:
+            orphaned = coordinator._load_areas_from_config()
+            assert orphaned == ["deleted_ha_area_id"]
+            # Valid areas should still be loaded
+            assert len(coordinator.areas) > 0
+        finally:
+            mock_realistic_config_entry.data = original_data
+
+    async def test_cleanup_orphaned_areas_removes_config_and_device(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test _cleanup_orphaned_areas removes device, entities, and config entry."""
+        orphaned_area_id = "deleted_ha_area_id"
+
+        # Mock device registry with a device for the orphaned area
+        mock_device = Mock()
+        mock_device.id = "device_123"
+        mock_device_registry = Mock()
+        mock_device_registry.async_get_device.return_value = mock_device
+        mock_device_registry.async_remove_device = Mock()
+
+        # Mock entity registry with an entity belonging to that device
+        mock_entity_entry = Mock()
+        mock_entity_entry.config_entry_id = coordinator.entry_id
+        mock_entity_entry.device_id = "device_123"
+        mock_entity_registry = Mock()
+        mock_entity_registry.entities = {"sensor.orphaned_entity": mock_entity_entry}
+        mock_entity_registry.async_remove = Mock()
+
+        # Mock the DB lookup returning a name
+        mock_update_entry = Mock()
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.dr.async_get",
+                return_value=mock_device_registry,
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.er.async_get",
+                return_value=mock_entity_registry,
+            ),
+            patch.object(
+                coordinator,
+                "_get_area_name_from_db",
+                return_value="Deleted Room",
+            ),
+            patch.object(coordinator.db, "delete_area_data") as mock_db_delete,
+            patch.object(
+                hass.config_entries,
+                "async_update_entry",
+                mock_update_entry,
+            ),
+        ):
+            # Set up config entry with the orphaned area
+            original_data = coordinator.config_entry.data.copy()
+            areas_list = list(original_data.get(CONF_AREAS, []))
+            areas_list.append({CONF_AREA_ID: orphaned_area_id})
+            coordinator.config_entry.data = {CONF_AREAS: areas_list}
+
+            try:
+                await coordinator._cleanup_orphaned_areas([orphaned_area_id])
+
+                # Verify entity was removed
+                mock_entity_registry.async_remove.assert_called_once_with(
+                    "sensor.orphaned_entity"
+                )
+                # Verify device was removed
+                mock_device_registry.async_remove_device.assert_called_once_with(
+                    "device_123"
+                )
+                # Verify DB records were deleted
+                mock_db_delete.assert_called_once_with("Deleted Room")
+                # Verify config entry was updated (orphaned area removed)
+                mock_update_entry.assert_called_once()
+            finally:
+                coordinator.config_entry.data = original_data
+
+    async def test_cleanup_orphaned_areas_no_db_name(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test _cleanup_orphaned_areas when area_name can't be found in DB."""
+        orphaned_area_id = "deleted_ha_area_id"
+
+        mock_device_registry = Mock()
+        mock_device_registry.async_get_device.return_value = None
+
+        mock_entity_registry = Mock()
+        mock_entity_registry.entities = {}
+
+        mock_update_entry = Mock()
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.dr.async_get",
+                return_value=mock_device_registry,
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.er.async_get",
+                return_value=mock_entity_registry,
+            ),
+            patch.object(
+                coordinator,
+                "_get_area_name_from_db",
+                return_value=None,
+            ),
+            patch.object(coordinator.db, "delete_area_data") as mock_db_delete,
+            patch.object(
+                hass.config_entries,
+                "async_update_entry",
+                mock_update_entry,
+            ),
+        ):
+            original_data = coordinator.config_entry.data.copy()
+            areas_list = list(original_data.get(CONF_AREAS, []))
+            areas_list.append({CONF_AREA_ID: orphaned_area_id})
+            coordinator.config_entry.data = {CONF_AREAS: areas_list}
+
+            try:
+                await coordinator._cleanup_orphaned_areas([orphaned_area_id])
+
+                # DB delete should NOT be called when area_name is unknown
+                mock_db_delete.assert_not_called()
+                # Config should still be updated
+                mock_update_entry.assert_called_once()
+            finally:
+                coordinator.config_entry.data = original_data
+
+    async def test_cleanup_orphaned_areas_empty_list(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test _cleanup_orphaned_areas does nothing with empty list."""
+        mock_update_entry = Mock()
+        with patch.object(hass.config_entries, "async_update_entry", mock_update_entry):
+            await coordinator._cleanup_orphaned_areas([])
+            # No config updates should happen
+            mock_update_entry.assert_not_called()
+
+
 class TestCoordinatorFindAreaForEntity:
     """Test coordinator find_area_for_entity edge cases."""
 
