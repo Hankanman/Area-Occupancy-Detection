@@ -2083,6 +2083,41 @@ class TestEntityFactory:
         assert "sensor.co" in mapping
         assert mapping["sensor.co"] == "co"
 
+    @pytest.mark.parametrize(
+        ("input_type", "sensor_attr", "entity_id"),
+        [
+            ("temperature", "temperature", "sensor.temp"),
+            ("humidity", "humidity", "sensor.hum"),
+            ("illuminance", "illuminance", "sensor.lux"),
+            ("co2", "co2", "sensor.co2"),
+            ("pressure", "pressure", "sensor.press"),
+        ],
+    )
+    def test_environmental_weight_applied_to_subtypes(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        input_type: str,
+        sensor_attr: str,
+        entity_id: str,
+    ) -> None:
+        """Test that the environmental weight config applies to all env sensor sub-types."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Set a non-default environmental weight
+        area.config.weights.environmental = 0.7
+
+        # Configure a sensor of the given type
+        setattr(area.config.sensors, sensor_attr, [entity_id])
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, input_type)
+
+        assert entity.weight == 0.7, (
+            f"Environmental weight 0.7 should apply to {input_type} sensor, "
+            f"got {entity.weight}"
+        )
+
 
 # ruff: noqa: SLF001
 @pytest.fixture
