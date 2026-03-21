@@ -2118,6 +2118,40 @@ class TestEntityFactory:
             f"got {entity.weight}"
         )
 
+    def test_create_from_db_environmental_weight(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test that create_from_db applies the environmental weight to env sub-types."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Set a non-default environmental weight
+        area.config.weights.environmental = 0.7
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+
+        # Mock a DB entity for a temperature sensor with an invalid weight
+        # so the config weight is used as fallback
+        mock_db_entity = Mock()
+        mock_db_entity.to_dict = lambda: {
+            "entity_id": "sensor.db_temp",
+            "entity_type": "temperature",
+            "prob_given_true": 0.5,
+            "prob_given_false": 0.05,
+            "weight": -1.0,  # Invalid — should fall back to config
+            "is_decaying": False,
+            "decay_start": dt_util.utcnow(),
+            "last_updated": dt_util.utcnow(),
+            "evidence": None,
+        }
+
+        entity = factory.create_from_db(mock_db_entity)
+        assert entity.weight == 0.7, (
+            f"DB-loaded temperature sensor should use environmental config weight 0.7, "
+            f"got {entity.weight}"
+        )
+
 
 # ruff: noqa: SLF001
 @pytest.fixture

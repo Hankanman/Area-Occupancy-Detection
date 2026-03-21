@@ -700,7 +700,8 @@ class EntityFactory:
 
         weights = getattr(self.config, "weights", None)
         if weights:
-            weight_attr = getattr(weights, input_type.value, None)
+            weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(input_type, input_type.value)
+            weight_attr = getattr(weights, weight_key, None)
             if weight_attr is not None:
                 config_weight = weight_attr
 
