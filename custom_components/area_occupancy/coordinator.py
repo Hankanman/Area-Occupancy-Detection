@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard library imports
+import contextlib
 from datetime import datetime, timedelta
 import logging
 from typing import Any
@@ -142,16 +143,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
-    ) -> None:
+    ) -> list[str]:
         """Load areas from config entry CONF_AREAS list.
 
         Reads area configurations from the merged data+options CONF_AREAS list.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.
+
+        Returns:
+            List of area_ids that were not found in the Home Assistant registry
+            (orphaned areas whose HA area was deleted).
         """
         # Use target_dict if provided, otherwise use self.areas
         areas_dict = target_dict if target_dict is not None else self.areas
+        orphaned_area_ids: list[str] = []
 
         area_reg = ar.async_get(self.hass)
 
@@ -175,6 +181,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Area may have been deleted. Skipping.",
                     area_id,
                 )
+                orphaned_area_ids.append(area_id)
                 continue
 
             # Resolve area name from ID.
@@ -193,6 +200,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
+
+        return orphaned_area_ids
 
     def get_area_handle(self, area_name: str) -> AreaDeviceHandle:
         """Return a stable handle for the requested area."""
@@ -319,7 +328,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Initialize the coordinator and its components (fast startup mode)."""
         try:
             # Load areas from config entry
-            self._load_areas_from_config()
+            orphaned_area_ids = self._load_areas_from_config()
+
+            # Clean up areas whose HA area was deleted (removes config, device,
+            # entities, and database records so the user isn't left with orphans)
+            if orphaned_area_ids:
+                await self._cleanup_orphaned_areas(orphaned_area_ids)
 
             self._validate_areas_configured()
 
@@ -594,6 +608,143 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.info("Cleaned up removed area: %s", area_name)
 
+    async def _cleanup_orphaned_areas(self, orphaned_area_ids: list[str]) -> None:
+        """Clean up areas whose Home Assistant area was deleted.
+
+        When a user deletes an area from Home Assistant, the AOD config still
+        references it. This method removes the orphaned config entries and
+        cleans up associated devices, entities, and database records.
+
+        Args:
+            orphaned_area_ids: List of area_ids no longer in the HA registry.
+        """
+        if not orphaned_area_ids:
+            return
+
+        _LOGGER.info(
+            "Cleaning up %d orphaned area(s) (HA area deleted): %s",
+            len(orphaned_area_ids),
+            ", ".join(orphaned_area_ids),
+        )
+
+        device_registry = dr.async_get(self.hass)
+        entity_registry = er.async_get(self.hass)
+
+        for area_id in orphaned_area_ids:
+            # Look up the area_name from the database (needed for DB cleanup)
+            area_name: str | None = None
+            try:
+                area_name = await self.hass.async_add_executor_job(
+                    self._get_area_name_from_db, area_id
+                )
+            except (HomeAssistantError, OSError, RuntimeError) as err:
+                _LOGGER.debug(
+                    "Could not look up area_name for area_id '%s' from DB: %s",
+                    area_id,
+                    err,
+                )
+
+            # Clean up device and entities from registries
+            device = device_registry.async_get_device(identifiers={(DOMAIN, area_id)})
+            if device:
+                # Remove entities belonging to this device
+                for entity_id, entity_entry in list(entity_registry.entities.items()):
+                    if (
+                        entity_entry.config_entry_id == self.entry_id
+                        and entity_entry.device_id == device.id
+                    ):
+                        with contextlib.suppress(ValueError, KeyError, AttributeError):
+                            entity_registry.async_remove(entity_id)
+
+                # Remove the device itself
+                try:
+                    device_registry.async_remove_device(device.id)
+                    _LOGGER.debug("Removed device for orphaned area_id '%s'", area_id)
+                except (ValueError, KeyError, AttributeError) as err:
+                    _LOGGER.warning(
+                        "Failed to remove device for orphaned area_id '%s': %s",
+                        area_id,
+                        err,
+                    )
+
+            # Clean up database records if we found the area_name
+            if area_name:
+                try:
+                    await self.hass.async_add_executor_job(
+                        self.db.delete_area_data, area_name
+                    )
+                    _LOGGER.debug(
+                        "Deleted database records for orphaned area '%s' (area_id: %s)",
+                        area_name,
+                        area_id,
+                    )
+                except (HomeAssistantError, OSError, RuntimeError) as err:
+                    _LOGGER.warning(
+                        "Failed to delete database records for orphaned area '%s': %s",
+                        area_name,
+                        err,
+                    )
+
+            _LOGGER.info(
+                "Cleaned up orphaned area (area_id: %s, name: %s)",
+                area_id,
+                area_name or "unknown",
+            )
+
+        # Remove orphaned areas from config entry to prevent repeated warnings
+        orphaned_set = set(orphaned_area_ids)
+        merged = dict(self.config_entry.data)
+        merged.update(self.config_entry.options)
+        areas_list = merged.get(CONF_AREAS, [])
+        updated_areas = [
+            a for a in areas_list if a.get(CONF_AREA_ID) not in orphaned_set
+        ]
+
+        if len(updated_areas) != len(areas_list):
+            try:
+                if CONF_AREAS in self.config_entry.options:
+                    new_options = dict(self.config_entry.options)
+                    new_options[CONF_AREAS] = updated_areas
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        options=new_options,
+                    )
+                else:
+                    new_data = dict(self.config_entry.data)
+                    new_data[CONF_AREAS] = updated_areas
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        data=new_data,
+                    )
+                _LOGGER.info(
+                    "Removed %d orphaned area(s) from configuration",
+                    len(areas_list) - len(updated_areas),
+                )
+            except (ValueError, KeyError, AttributeError) as err:
+                _LOGGER.error(
+                    "Failed to update config entry after orphan cleanup: %s", err
+                )
+
+    def _get_area_name_from_db(self, area_id: str) -> str | None:
+        """Look up area_name from the database by area_id.
+
+        Args:
+            area_id: The Home Assistant area ID.
+
+        Returns:
+            The area_name if found, None otherwise.
+        """
+        try:
+            with self.db.get_session() as session:
+                result = (
+                    session.query(self.db.Areas.area_name)
+                    .filter_by(area_id=area_id)
+                    .first()
+                )
+                return result[0] if result else None
+        except (OSError, RuntimeError, HomeAssistantError):
+            return None
+
     async def async_update_options(self, options: dict[str, Any]) -> None:
         """Update coordinator options.
 
@@ -606,7 +757,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Load new areas into a temporary dict first to avoid race condition
         # where self.areas is empty while platform entities are still active
         new_areas: dict[str, Area] = {}
-        self._load_areas_from_config(target_dict=new_areas)
+        self._load_areas_from_config(
+            target_dict=new_areas
+        )  # orphans already cleaned at setup
 
         # Identify areas that will be removed by comparing old and new area names
         removed_area_names = set(self.areas.keys()) - set(new_areas.keys())
