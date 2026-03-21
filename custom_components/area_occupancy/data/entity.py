@@ -37,6 +37,23 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Environmental sensor sub-types share a single configurable weight
+# ("environmental") rather than having individual weight fields. This map
+# translates each sub-type's InputType to the Weights attribute name.
+_WEIGHT_KEY_FOR_INPUT_TYPE: dict[InputType, str] = {
+    InputType.TEMPERATURE: "environmental",
+    InputType.HUMIDITY: "environmental",
+    InputType.ILLUMINANCE: "environmental",
+    InputType.CO2: "environmental",
+    InputType.CO: "environmental",
+    InputType.SOUND_PRESSURE: "environmental",
+    InputType.PRESSURE: "environmental",
+    InputType.AIR_QUALITY: "environmental",
+    InputType.VOC: "environmental",
+    InputType.PM25: "environmental",
+    InputType.PM10: "environmental",
+}
+
 
 @dataclass
 class Entity:
@@ -683,7 +700,8 @@ class EntityFactory:
 
         weights = getattr(self.config, "weights", None)
         if weights:
-            weight_attr = getattr(weights, input_type.value, None)
+            weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(input_type, input_type.value)
+            weight_attr = getattr(weights, weight_key, None)
             if weight_attr is not None:
                 config_weight = weight_attr
 
@@ -806,7 +824,12 @@ class EntityFactory:
 
         weights = getattr(self.config, "weights", None)
         if weights:
-            weight_attr = getattr(weights, input_type_enum.value, None)
+            # Look up weight by input type, falling back to the shared
+            # "environmental" weight for environmental sensor sub-types
+            weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(
+                input_type_enum, input_type_enum.value
+            )
+            weight_attr = getattr(weights, weight_key, None)
             if weight_attr is not None:
                 weight = weight_attr
 
