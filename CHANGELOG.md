@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [2026.3.3] - 2026-03-09
+
+## Hotfix
+* fix: Trigger coordinator refresh on unknown→occupied transition by @Hankanman in https://github.com/Hankanman/Area-Occupancy-Detection/pull/420 closes https://github.com/Hankanman/Area-Occupancy-Detection/issues/419 Thank you to @SFenton for noticing the issue
+
+A big thank you to those who have chosen to sponsor my work!
+[You can sponsor me here](https://github.com/sponsors/Hankanman)
+
+**Full Changelog**: https://github.com/Hankanman/Area-Occupancy-Detection/compare/2026.3.2...2026.3.3
+
+
 ## [2026.3.2] - 2026-03-04
 
 Went on a Bug hunt 🐛
