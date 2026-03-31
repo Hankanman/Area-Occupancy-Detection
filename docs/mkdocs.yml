@@ -117,6 +117,7 @@ nav:
       - Activity Detection: features/activity-detection.md
       - Decay: features/decay.md
       - Entities: features/entities.md
+      - Sensor Health: features/sensor-health.md
       - Services: features/services.md
   - Technical:
       - Deep Dive: technical/deep-dive.md

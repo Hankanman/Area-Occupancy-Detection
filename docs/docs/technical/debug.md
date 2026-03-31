@@ -1,5 +1,11 @@
 Below are the instructions for debugging the integration.
 
+## Sensor Health Repairs
+
+The integration automatically monitors sensor health and creates repair entries in **Settings → System → Repairs** when issues are detected. Check there first if occupancy detection seems inaccurate — a stuck or offline sensor may be the cause. See [Sensor Health Monitoring](../features/sensor-health.md) for details.
+
+## Debug Logging
+
 1. Enable debug logging
     - Add the following to the `configuration.yaml` file
     ```yaml
