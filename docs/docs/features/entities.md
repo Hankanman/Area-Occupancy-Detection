@@ -91,6 +91,18 @@ These entities provide insight into the internal calculations and are useful for
         *   `total`: Total number of entities.
         *   `details`: Detailed information for each entity including probabilities and decay status.
 
+*   **`sensor.<area_name>_sensor_health` (Sensor Health)**
+    *   **State:** Number of current health issues (0 = all sensors healthy)
+    *   **Description:** Monitors the health of all sensors in the area. Detects stuck, unavailable, and never-triggered sensors. See [Sensor Health Monitoring](sensor-health.md) for details.
+    *   **Icon:** `mdi:heart-pulse` (healthy) / `mdi:alert-circle` (issues detected)
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+    *   **Attributes:**
+        *   `issues`: List of detected issues with entity_id, type, duration, and description.
+        *   `healthy_count`: Number of sensors with no health issues.
+        *   `total_count`: Total number of sensors in the area.
+        *   `last_check`: Timestamp of the last health check run.
+
 *   **`sensor.area_decay_status_<area_name>` (Decay Status)**
     *   **State:** Numeric value (0.0 to 100.0)
     *   **Unit:** `%`

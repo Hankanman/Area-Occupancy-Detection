@@ -52,7 +52,7 @@ async def run_full_analysis(
 
     analysis_start_time = time.perf_counter()
     failed_steps: list[str] = []
-    total_steps = 10
+    total_steps = 11
 
     async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
@@ -89,6 +89,23 @@ async def run_full_analysis(
             coordinator.db.prune_old_intervals
         )
 
+    async def _sensor_health_check() -> None:
+        for area in coordinator.areas.values():
+            excluded = set()
+            if area.wasp_entity_id:
+                excluded.add(area.wasp_entity_id)
+            if area.sleep_entity_id:
+                excluded.add(area.sleep_entity_id)
+            issues = area.health_monitor.check_health(
+                area.entities.entities, excluded_entity_ids=excluded or None
+            )
+            if issues:
+                _LOGGER.info(
+                    "Area '%s' has %d sensor health issue(s)",
+                    area.area_name,
+                    len(issues),
+                )
+
     async def _recalculate_priors() -> None:
         for area in coordinator.areas.values():
             await area.run_prior_analysis()
@@ -106,22 +123,23 @@ async def run_full_analysis(
     try:
         await _run_step(1, "sync_states", _sync_states())
         await _run_step(2, "health_check_and_prune", _health_check_and_prune())
+        await _run_step(3, "sensor_health_check", _sensor_health_check())
         await _run_step(
-            3,
+            4,
             "populate_occupied_intervals_cache",
             ensure_occupied_intervals_cache(coordinator),
         )
         await _run_step(
-            4, "interval_aggregation", run_interval_aggregation(coordinator, _now)
+            5, "interval_aggregation", run_interval_aggregation(coordinator, _now)
         )
         await _run_step(
-            5, "numeric_aggregation", run_numeric_aggregation(coordinator, _now)
+            6, "numeric_aggregation", run_numeric_aggregation(coordinator, _now)
         )
-        await _run_step(6, "recalculate_priors", _recalculate_priors())
-        await _run_step(7, "correlation_analysis", _run_correlations())
-        await _run_step(8, "save_data_before_refresh", _save_data())
-        await _run_step(9, "refresh_coordinator", _refresh())
-        await _run_step(10, "save_data_after_refresh", _save_data())
+        await _run_step(7, "recalculate_priors", _recalculate_priors())
+        await _run_step(8, "correlation_analysis", _run_correlations())
+        await _run_step(9, "save_data_before_refresh", _save_data())
+        await _run_step(10, "refresh_coordinator", _refresh())
+        await _run_step(11, "save_data_after_refresh", _save_data())
 
     except Exception as err:
         _LOGGER.error("Fatal error during analysis pipeline: %s", err)
