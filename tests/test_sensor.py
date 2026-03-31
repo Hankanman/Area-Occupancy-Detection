@@ -750,14 +750,14 @@ class TestAsyncSetupEntry:
         entities = []
         for call_args in mock_async_add_entities.call_args_list:
             entities.extend(call_args[0][0])
-        # Should have 8 sensors per area + 5 All Areas sensors (no EvidenceSensor/Activity for All Areas)
-        # With 1 area: 8 (area) + 5 (All Areas) = 13 total
+        # Should have 9 sensors per area + 5 All Areas sensors (no EvidenceSensor/Activity/Health for All Areas)
+        # With 1 area: 9 (area) + 5 (All Areas) = 14 total
         # Area sensors: ProbabilitySensor, DecaySensor, PriorsSensor, EvidenceSensor,
         #               PresenceProbabilitySensor, EnvironmentalConfidenceSensor,
-        #               DetectedActivitySensor, ActivityConfidenceSensor
+        #               DetectedActivitySensor, ActivityConfidenceSensor, SensorHealthSensor
         # All Areas: ProbabilitySensor, DecaySensor, PriorsSensor,
         #            PresenceProbabilitySensor, EnvironmentalConfidenceSensor
-        assert len(entities) == 13
+        assert len(entities) == 14
 
         entity_types = [type(entity).__name__ for entity in entities]
         expected_types = [
@@ -803,9 +803,9 @@ class TestAsyncSetupEntry:
         assert "DetectedActivitySensor" not in all_areas_types
         assert "ActivityConfidenceSensor" not in all_areas_types
 
-        # Should have 8 area sensors (one for each sensor type)
-        assert len(area_entities) == 8, (
-            f"Expected 8 area sensors, got {len(area_entities)}"
+        # Should have 9 area sensors (one for each sensor type)
+        assert len(area_entities) == 9, (
+            f"Expected 9 area sensors, got {len(area_entities)}"
         )
 
         # Verify all entities have correct coordinator assignment

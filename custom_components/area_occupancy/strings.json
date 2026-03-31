@@ -890,5 +890,23 @@
                 "name": "Occupancy Threshold"
             }
         }
+    },
+    "issues": {
+        "sensor_health_stuck_active": {
+            "title": "{entity_id} appears stuck in {area}",
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has been continuously active for {duration} hours, which exceeds the expected threshold for this sensor type.\n\nThis may indicate a hardware malfunction (e.g. a stuck PIR sensor), a connectivity issue, or an automation keeping the device in an unexpected state.\n\n**What to do:**\n- Check the physical sensor for obstructions or damage\n- Verify Zigbee/Z-Wave connectivity\n- Restart the device or replace the battery\n\nThis issue will resolve automatically when the sensor changes state."
+        },
+        "sensor_health_stuck_inactive": {
+            "title": "{entity_id} hasn't triggered in {area}",
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has not changed state for {duration} hours, which is unusually long for this sensor type.\n\nThis may indicate the sensor is offline, has a dead battery, or is misconfigured.\n\n**What to do:**\n- Check the physical sensor and battery level\n- Verify the sensor is still paired and reachable\n- Check if the entity's active state mapping is correct in the integration configuration\n\nThis issue will resolve automatically when the sensor changes state."
+        },
+        "sensor_health_unavailable": {
+            "title": "{entity_id} is offline in {area}",
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has been unavailable for {duration} hours.\n\nThe integration is currently falling back to learned priors for this area, which reduces occupancy detection accuracy.\n\n**What to do:**\n- Check the device battery level\n- Verify Zigbee/Z-Wave network connectivity\n- Re-pair the device if necessary\n- Check if the device's integration (e.g. Zigbee2MQTT) is running\n\nThis issue will resolve automatically when the sensor comes back online."
+        },
+        "sensor_health_never_triggered": {
+            "title": "{entity_id} may be misconfigured in {area}",
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has never been active in {duration} hours of monitoring.\n\nThis sensor is not contributing any useful data to occupancy detection. It may be misconfigured (wrong active state), broken, or not appropriate for this area.\n\n**What to do:**\n- Verify the sensor's active state mapping matches the actual device behavior\n- Check if the device is functional by triggering it manually\n- Consider removing it from the area configuration if it's not needed\n\nThis issue will resolve automatically if the sensor triggers."
+        }
     }
 }

@@ -21,6 +21,7 @@ from ..const import (
 )
 from ..data.activity import ActivityId, DetectedActivity, detect_activity
 from ..data.analysis import start_prior_analysis
+from ..data.health import HealthMonitor
 from ..utils import (
     apply_activity_boost,
     combined_probability as calc_combined,
@@ -120,6 +121,7 @@ class Area:
         self._prior: Prior | None = None
         self._purpose: Purpose | None = None
         self._entities: EntityManager | None = None
+        self._health_monitor: HealthMonitor | None = None
 
         # Entity IDs for platform entities (set by platform modules)
         self.occupancy_entity_id: str | None = None
@@ -160,6 +162,13 @@ class Area:
         if self._entities is None:
             self._entities = EntityManager(self.coordinator, area_name=self.area_name)
         return self._entities
+
+    @property
+    def health_monitor(self) -> HealthMonitor:
+        """Get or create the HealthMonitor for this area."""
+        if self._health_monitor is None:
+            self._health_monitor = HealthMonitor(self.area_name, self.coordinator.hass)
+        return self._health_monitor
 
     async def run_prior_analysis(self) -> None:
         """Run prior analysis for this area."""
