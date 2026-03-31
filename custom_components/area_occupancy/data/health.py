@@ -119,8 +119,30 @@ class HealthMonitor:
         self._issues: list[HealthIssue] = []
         self._checked_count: int = 0
         self._last_check: datetime | None = None
-        # Track active issue IDs so we can delete resolved ones
-        self._active_issue_ids: set[str] = set()
+        # Seed active issue IDs from the persisted issue registry so that
+        # resolved issues can be cleaned up even after a restart.
+        self._active_issue_ids: set[str] = self._load_existing_issue_ids()
+
+    def _load_existing_issue_ids(self) -> set[str]:
+        """Load existing repair issue IDs for this area from the HA issue registry.
+
+        This ensures that issues created before a restart can be properly
+        cleaned up if the underlying sensor has recovered while HA was down.
+        """
+        prefix = f"sensor_health_{self._area_id}_"
+        try:
+            registry = ir.async_get(self._hass)
+            return {
+                issue_id
+                for (domain, issue_id) in registry.issues
+                if domain == DOMAIN and issue_id.startswith(prefix)
+            }
+        except (AttributeError, KeyError, TypeError):
+            _LOGGER.debug(
+                "Could not load existing health issues for area '%s'",
+                self._area_name,
+            )
+            return set()
 
     @property
     def issues(self) -> list[HealthIssue]:
