@@ -141,6 +141,7 @@ class HealthMonitor:
             _LOGGER.debug(
                 "Could not load existing health issues for area '%s'",
                 self._area_name,
+                exc_info=True,
             )
             return set()
 
@@ -414,11 +415,17 @@ class HealthMonitor:
                 self._area_name,
             )
 
-        if self._issues and current_issue_ids != self._active_issue_ids:
+        new_issue_ids = current_issue_ids - self._active_issue_ids
+        if new_issue_ids:
+            new_issues = [
+                i
+                for i in self._issues
+                if _issue_id(self._area_id, i.entity_id, i.issue_type) in new_issue_ids
+            ]
             _LOGGER.warning(
-                "Sensor health issues in area '%s': %s",
+                "New sensor health issues in area '%s': %s",
                 self._area_name,
-                ", ".join(f"{i.entity_id} ({i.issue_type})" for i in self._issues),
+                ", ".join(f"{i.entity_id} ({i.issue_type})" for i in new_issues),
             )
 
         self._active_issue_ids = current_issue_ids
