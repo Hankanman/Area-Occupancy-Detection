@@ -61,8 +61,9 @@ STUCK_INACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
 # Report unavailable sensors after this duration
 UNAVAILABLE_THRESHOLD: timedelta = timedelta(hours=1)
 
-# Only flag "never triggered" after this much integration uptime
-NEVER_TRIGGERED_MIN_UPTIME: timedelta = timedelta(days=7)
+# A sensor whose last_updated is older than this and has never been active
+# is flagged as "never triggered" (uses persisted last_updated, survives restarts)
+NEVER_TRIGGERED_THRESHOLD: timedelta = timedelta(days=7)
 
 
 class HealthIssueType(StrEnum):
@@ -86,11 +87,15 @@ class HealthIssue:
     details: str
 
 
-def _issue_id(area_name: str, entity_id: str, issue_type: HealthIssueType) -> str:
-    """Build a unique repair issue ID."""
-    # Replace dots with underscores for cleaner issue IDs
+def _issue_id(area_id: str, entity_id: str, issue_type: HealthIssueType) -> str:
+    """Build a unique repair issue ID using the stable area_id."""
     safe_entity = entity_id.replace(".", "_")
-    return f"sensor_health_{area_name}_{safe_entity}_{issue_type}"
+    return f"sensor_health_{area_id}_{safe_entity}_{issue_type}"
+
+
+def _issue_id_prefix(area_id: str) -> str:
+    """Return the prefix used by all repair issue IDs for an area."""
+    return f"sensor_health_{area_id}_"
 
 
 class HealthMonitor:
@@ -100,15 +105,24 @@ class HealthMonitor:
     - Stuck active/inactive states (binary sensors only)
     - Prolonged unavailability
     - Sensors that have never triggered
+
+    Uses the stable area_id (HA area registry ID) for repair issue keys
+    so issues survive area renames.
     """
 
-    def __init__(self, area_name: str, hass: HomeAssistant) -> None:
-        """Initialize health monitor for an area."""
+    def __init__(self, area_name: str, area_id: str, hass: HomeAssistant) -> None:
+        """Initialize health monitor for an area.
+
+        Args:
+            area_name: Human-readable area name (for log messages and translations)
+            area_id: Stable HA area registry ID (for repair issue keys)
+            hass: Home Assistant instance
+        """
         self._area_name = area_name
+        self._area_id = area_id
         self._hass = hass
         self._issues: list[HealthIssue] = []
         self._last_check: datetime | None = None
-        self._start_time: datetime = dt_util.utcnow()
         # Track active issue IDs so we can delete resolved ones
         self._active_issue_ids: set[str] = set()
 
@@ -176,24 +190,34 @@ class HealthMonitor:
             issue = self._check_stuck_sensor(entity, now)
             if issue:
                 issues.append(issue)
+                continue
 
-        # Never-triggered check requires minimum uptime
-        if now - self._start_time >= NEVER_TRIGGERED_MIN_UPTIME:
-            for entity in entities.values():
-                if entity.entity_id in excluded:
-                    continue
-                if entity.type.input_type in _EXCLUDED_TYPES:
-                    continue
-                # Only if not already flagged for another issue
-                if any(i.entity_id == entity.entity_id for i in issues):
-                    continue
-                issue = self._check_never_triggered(entity, now)
-                if issue:
-                    issues.append(issue)
+            # Never-triggered uses persisted last_updated, so it survives restarts
+            issue = self._check_never_triggered(entity, now)
+            if issue:
+                issues.append(issue)
 
         self._issues = issues
         self._update_repair_issues()
         return issues
+
+    def cleanup(self) -> None:
+        """Remove all repair issues for this area.
+
+        Call when the area is unloaded, removed, or the integration shuts down
+        to prevent orphaned repair entries.
+        """
+        for issue_id in self._active_issue_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+
+        if self._active_issue_ids:
+            _LOGGER.debug(
+                "Cleaned up %d health repair issue(s) for area '%s'",
+                len(self._active_issue_ids),
+                self._area_name,
+            )
+        self._active_issue_ids.clear()
+        self._issues.clear()
 
     def _check_stuck_sensor(self, entity: Entity, now: datetime) -> HealthIssue | None:
         """Check if a binary sensor is stuck in one state too long."""
@@ -272,7 +296,18 @@ class HealthMonitor:
     def _check_never_triggered(
         self, entity: Entity, now: datetime
     ) -> HealthIssue | None:
-        """Check if a binary sensor has never been active."""
+        """Check if a binary sensor has never been active.
+
+        Uses the persisted entity.last_updated field (stored in DB, survives
+        restarts). An entity that has never transitioned will have last_updated
+        still at its initial value from when it was first created. If that
+        timestamp is older than NEVER_TRIGGERED_THRESHOLD and the entity is
+        currently inactive, it has likely never triggered.
+
+        This intentionally overlaps with stuck_inactive detection for long
+        durations but provides a distinct "misconfiguration" message for sensors
+        that have literally never been active.
+        """
         if entity.type.input_type not in _STUCK_CHECK_TYPES:
             return None
 
@@ -283,29 +318,32 @@ class HealthMonitor:
         if entity.evidence is True:
             return None
 
-        # Check if last_updated is close to start time (never had a transition)
-        # A sensor that has transitioned would have last_updated >> start_time
-        time_since_start = now - self._start_time
+        # If previous_evidence was ever set to True (and is now False),
+        # the sensor HAS triggered before - this is just normal inactive
+        if entity.previous_evidence is True:
+            return None
+
+        # Check if last_updated is old enough to flag as never-triggered.
+        # Entity.last_updated is persisted in the DB and only advances on
+        # evidence transitions, so a sensor that has never triggered will
+        # have last_updated close to its creation time.
         time_since_update = now - entity.last_updated
+        if time_since_update < NEVER_TRIGGERED_THRESHOLD:
+            return None
 
-        # If the sensor was last updated close to when we started tracking
-        # (within a small margin) and has been running for 7+ days, flag it
-        if time_since_update >= time_since_start - timedelta(minutes=5):
-            days = time_since_start.total_seconds() / 86400
-            return HealthIssue(
-                entity_id=entity.entity_id,
-                issue_type=HealthIssueType.NEVER_TRIGGERED,
-                input_type=entity.type.input_type,
-                since=self._start_time,
-                duration_hours=round(days * 24, 1),
-                details=(
-                    f"{entity.type.input_type.value} sensor has never been "
-                    f"active in {days:.0f} days of monitoring "
-                    f"(possible misconfiguration)"
-                ),
-            )
-
-        return None
+        days = time_since_update.total_seconds() / 86400
+        return HealthIssue(
+            entity_id=entity.entity_id,
+            issue_type=HealthIssueType.NEVER_TRIGGERED,
+            input_type=entity.type.input_type,
+            since=entity.last_updated,
+            duration_hours=round(days * 24, 1),
+            details=(
+                f"{entity.type.input_type.value} sensor has never been "
+                f"active in {days:.0f} days of monitoring "
+                f"(possible misconfiguration)"
+            ),
+        )
 
     def _update_repair_issues(self) -> None:
         """Create or delete HA repair issues based on current health state."""
@@ -320,7 +358,7 @@ class HealthMonitor:
         }
 
         for issue in self._issues:
-            repair_id = _issue_id(self._area_name, issue.entity_id, issue.issue_type)
+            repair_id = _issue_id(self._area_id, issue.entity_id, issue.issue_type)
             current_issue_ids.add(repair_id)
 
             ir.async_create_issue(

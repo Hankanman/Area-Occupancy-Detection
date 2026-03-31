@@ -167,7 +167,10 @@ class Area:
     def health_monitor(self) -> HealthMonitor:
         """Get or create the HealthMonitor for this area."""
         if self._health_monitor is None:
-            self._health_monitor = HealthMonitor(self.area_name, self.coordinator.hass)
+            area_id = self.config.area_id or self.area_name
+            self._health_monitor = HealthMonitor(
+                self.area_name, area_id, self.coordinator.hass
+            )
         return self._health_monitor
 
     async def run_prior_analysis(self) -> None:
@@ -183,6 +186,9 @@ class Area:
         # Clear prior cache first to release cached data
         if self._prior is not None:
             self._prior.clear_cache()
+        # Clean up health monitor repair issues to prevent orphans
+        if self._health_monitor is not None:
+            self._health_monitor.cleanup()
         await self.entities.cleanup()
         self.purpose.cleanup()
 

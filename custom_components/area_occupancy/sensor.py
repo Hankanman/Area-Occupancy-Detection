@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .area import AllAreas, AreaDeviceHandle, FloorAreas
 from .const import ALL_AREAS_IDENTIFIER
 from .data.activity import ActivityId
+from .data.entity_type import InputType
 from .utils import format_float, format_percentage, generate_entity_unique_id
 
 if TYPE_CHECKING:
@@ -248,6 +249,16 @@ class EvidenceSensor(AreaOccupancySensorBase):
                 ]
             )
             health_monitor = area.health_monitor
+            excluded_ids = {
+                eid for eid in (area.wasp_entity_id, area.sleep_entity_id) if eid
+            }
+
+            def _health_status(entity_id: str, input_type: InputType) -> str:
+                if entity_id in excluded_ids or input_type == InputType.SLEEP:
+                    return "excluded"
+                issue = health_monitor.get_issue_for_entity(entity_id)
+                return issue.issue_type if issue else "healthy"
+
             return {
                 "evidence": active_entity_names,
                 "no_evidence": inactive_entity_names,
@@ -263,14 +274,8 @@ class EvidenceSensor(AreaOccupancySensorBase):
                         "state": entity.state,
                         "decaying": entity.decay.is_decaying,
                         "decay_factor": entity.decay.decay_factor,
-                        "health_status": (
-                            issue.issue_type
-                            if (
-                                issue := health_monitor.get_issue_for_entity(
-                                    entity.entity_id
-                                )
-                            )
-                            else "healthy"
+                        "health_status": _health_status(
+                            entity.entity_id, entity.type.input_type
                         ),
                     }
                     for entity in sorted(

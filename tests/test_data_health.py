@@ -1,7 +1,5 @@
 """Tests for sensor health monitoring."""
 
-# ruff: noqa: SLF001
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -54,10 +52,8 @@ def mock_hass() -> Mock:
 
 @pytest.fixture
 def monitor(mock_hass: Mock) -> HealthMonitor:
-    """Create a HealthMonitor with a start time 10 days ago."""
-    m = HealthMonitor("test_area", mock_hass)
-    m._start_time = dt_util.utcnow() - timedelta(days=10)
-    return m
+    """Create a HealthMonitor for testing."""
+    return HealthMonitor("test_area", "test_area_id", mock_hass)
 
 
 # --- Stuck Active Tests ---
@@ -304,14 +300,13 @@ class TestSleepExclusion:
 class TestNeverTriggered:
     """Tests for never-triggered sensor detection."""
 
-    def test_never_triggered_after_min_uptime(self, monitor: HealthMonitor) -> None:
-        """Sensor that has never been active after 8 days should trigger."""
-        # Entity last_updated is close to monitor start_time (never transitioned)
+    def test_never_triggered_old_last_updated(self, monitor: HealthMonitor) -> None:
+        """Sensor with last_updated >7 days old and never active should trigger."""
         entity = _make_entity(
             "binary_sensor.oven",
             InputType.APPLIANCE,
             state="off",
-            last_updated=monitor._start_time + timedelta(seconds=1),
+            last_updated=dt_util.utcnow() - timedelta(days=10),
             evidence=False,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -320,37 +315,37 @@ class TestNeverTriggered:
         assert len(issues) == 1
         assert issues[0].issue_type == HealthIssueType.NEVER_TRIGGERED
 
-    def test_never_triggered_before_min_uptime(self, mock_hass: Mock) -> None:
-        """Sensor should NOT trigger never_triggered before 7 days uptime."""
-        monitor = HealthMonitor("test_area", mock_hass)
-        monitor._start_time = dt_util.utcnow() - timedelta(days=3)
-
+    def test_never_triggered_recent_last_updated(self, monitor: HealthMonitor) -> None:
+        """Sensor with last_updated <7 days old should NOT trigger."""
         entity = _make_entity(
             "binary_sensor.oven",
             InputType.APPLIANCE,
             state="off",
-            last_updated=monitor._start_time + timedelta(seconds=1),
+            last_updated=dt_util.utcnow() - timedelta(days=3),
             evidence=False,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"oven": entity})
 
-        assert len(issues) == 0
+        never_triggered = [
+            i for i in issues if i.issue_type == HealthIssueType.NEVER_TRIGGERED
+        ]
+        assert len(never_triggered) == 0
 
     def test_previously_active_sensor_not_flagged(self, monitor: HealthMonitor) -> None:
-        """Sensor that was active at some point should NOT be flagged."""
-        # Entity last_updated is recent (has transitioned)
+        """Sensor with previous_evidence=True should NOT be flagged."""
         entity = _make_entity(
             "binary_sensor.oven",
             InputType.APPLIANCE,
             state="off",
-            last_updated=dt_util.utcnow() - timedelta(hours=2),
+            last_updated=dt_util.utcnow() - timedelta(days=10),
             evidence=False,
         )
+        # Simulate that the sensor was previously active
+        entity.previous_evidence = True
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"oven": entity})
 
-        # Should not have never_triggered (last_updated is recent)
         never_triggered = [
             i for i in issues if i.issue_type == HealthIssueType.NEVER_TRIGGERED
         ]

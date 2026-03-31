@@ -769,6 +769,7 @@ class TestAsyncSetupEntry:
             "EnvironmentalConfidenceSensor",
             "DetectedActivitySensor",
             "ActivityConfidenceSensor",
+            "SensorHealthSensor",
         ]
         # All expected types should be present (from area sensors)
         for expected_type in expected_types:
