@@ -93,11 +93,6 @@ def _issue_id(area_id: str, entity_id: str, issue_type: HealthIssueType) -> str:
     return f"sensor_health_{area_id}_{safe_entity}_{issue_type}"
 
 
-def _issue_id_prefix(area_id: str) -> str:
-    """Return the prefix used by all repair issue IDs for an area."""
-    return f"sensor_health_{area_id}_"
-
-
 class HealthMonitor:
     """Monitors sensor health for a single area.
 
@@ -122,6 +117,7 @@ class HealthMonitor:
         self._area_id = area_id
         self._hass = hass
         self._issues: list[HealthIssue] = []
+        self._checked_count: int = 0
         self._last_check: datetime | None = None
         # Track active issue IDs so we can delete resolved ones
         self._active_issue_ids: set[str] = set()
@@ -135,6 +131,11 @@ class HealthMonitor:
     def issue_count(self) -> int:
         """Number of current health issues."""
         return len(self._issues)
+
+    @property
+    def checked_count(self) -> int:
+        """Number of entities that were actually checked (excludes virtual sensors)."""
+        return self._checked_count
 
     @property
     def has_critical_issues(self) -> bool:
@@ -175,6 +176,7 @@ class HealthMonitor:
         self._last_check = now
         excluded = excluded_entity_ids or set()
         issues: list[HealthIssue] = []
+        checked = 0
 
         for entity in entities.values():
             if entity.entity_id in excluded:
@@ -182,6 +184,7 @@ class HealthMonitor:
             if entity.type.input_type in _EXCLUDED_TYPES:
                 continue
 
+            checked += 1
             issue = self._check_unavailable(entity, now)
             if issue:
                 issues.append(issue)
@@ -197,6 +200,7 @@ class HealthMonitor:
             if issue:
                 issues.append(issue)
 
+        self._checked_count = checked
         self._issues = issues
         self._update_repair_issues()
         return issues

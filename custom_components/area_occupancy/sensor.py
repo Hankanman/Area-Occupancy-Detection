@@ -557,7 +557,8 @@ class SensorHealthSensor(AreaOccupancySensorBase):
                     }
                     for issue in monitor.issues
                 ],
-                "healthy_count": (len(area.entities.entities) - monitor.issue_count),
+                "healthy_count": monitor.checked_count - monitor.issue_count,
+                "checked_count": monitor.checked_count,
                 "total_count": len(area.entities.entities),
                 "last_check": (
                     monitor.last_check.isoformat() if monitor.last_check else None
