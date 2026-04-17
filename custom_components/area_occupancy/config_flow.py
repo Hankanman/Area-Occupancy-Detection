@@ -1574,8 +1574,10 @@ def _apply_purpose_based_decay_default(
         return
 
     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
-    if user_set_decay is None or Purpose.is_purpose_half_life(user_set_decay):
-        # Set to 0 to indicate "use purpose value"
+    if user_set_decay is None or Purpose.is_purpose_half_life(user_set_decay, purpose):
+        # Normalise to 0 ("use purpose value") when the user left the field
+        # empty or entered exactly the selected purpose's default. Any other
+        # custom value is preserved so it persists across reloads (#439).
         flattened_input[CONF_DECAY_HALF_LIFE] = 0
 
 

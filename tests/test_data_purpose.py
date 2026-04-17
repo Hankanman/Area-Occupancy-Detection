@@ -173,3 +173,44 @@ class TestGetDefaultDecayHalfLife:
         half_life = get_default_decay_half_life(invalid_purpose)
         expected_half_life = PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
         assert half_life == expected_half_life
+
+
+class TestIsPurposeHalfLife:
+    """Test Purpose.is_purpose_half_life static helper."""
+
+    def test_zero_is_auto(self):
+        """Zero is the sentinel meaning "use purpose value"."""
+        assert Purpose.is_purpose_half_life(0) is True
+        assert Purpose.is_purpose_half_life(0, "social") is True
+
+    def test_matches_selected_purpose_default(self):
+        """Value equal to the selected purpose's default returns True."""
+        # Social/Living Room default is 520s.
+        social_default = PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
+        assert Purpose.is_purpose_half_life(social_default, "social") is True
+
+    def test_ignores_other_purpose_defaults(self):
+        """Value equal to a *different* purpose's default returns False.
+
+        Regression test for #439: the previous implementation matched any
+        purpose default regardless of the area's selected purpose, which
+        silently clobbered custom half-life values.
+        """
+        # Office default is 600s, Social default is 520s.
+        office_default = PURPOSE_DEFINITIONS[AreaPurpose.WORKING].half_life
+        assert office_default != PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
+        assert Purpose.is_purpose_half_life(office_default, "social") is False
+
+    def test_arbitrary_value_returns_false(self):
+        """Arbitrary values never match."""
+        assert Purpose.is_purpose_half_life(777, "social") is False
+        assert Purpose.is_purpose_half_life(777) is False
+
+    def test_none_purpose_only_matches_zero(self):
+        """Without a purpose, only the 0 sentinel is treated as auto."""
+        assert Purpose.is_purpose_half_life(520) is False
+        assert Purpose.is_purpose_half_life(0) is True
+
+    def test_invalid_purpose_returns_false(self):
+        """Unknown purpose strings cause False for any non-zero value."""
+        assert Purpose.is_purpose_half_life(520, "not_a_real_purpose") is False
