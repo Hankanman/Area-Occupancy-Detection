@@ -1,15 +1,18 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
+import contextlib
 from dataclasses import asdict
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+import voluptuous as vol
+
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 
-from .const import DEVICE_SW_VERSION, DOMAIN
+from .const import CONF_AREA_ID, DEVICE_SW_VERSION, DOMAIN
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
 
@@ -17,6 +20,12 @@ if TYPE_CHECKING:
     from .area.area import Area
 
 _LOGGER = logging.getLogger(__name__)
+
+PURGE_AREA_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+    }
+)
 
 
 def _collect_entity_states(hass: HomeAssistant, area: "Area") -> dict[str, str]:
@@ -209,6 +218,109 @@ async def _export_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, An
         return config
 
 
+def _find_area_by_area_id(
+    coordinator: Any, area_id: str
+) -> tuple[str | None, "Area | None"]:
+    """Look up an area by its Home Assistant area_id.
+
+    Args:
+        coordinator: AreaOccupancyCoordinator instance
+        area_id: Home Assistant area_id stored on each area's config
+
+    Returns:
+        Tuple of (area_name, area) — both None when no match is found.
+    """
+    for area_name, area in coordinator.areas.items():
+        if area.config.area_id == area_id:
+            return area_name, area
+    return None, None
+
+
+async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Purge learned history for a single configured area.
+
+    Deletes all database rows for the area (intervals, priors, correlations,
+    caches, etc.) without removing the area from configuration. The area's
+    in-memory prior cache is cleared and a coordinator refresh is requested so
+    the UI immediately reflects the purge.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data[CONF_AREA_ID]
+
+    area_name, area = _find_area_by_area_id(coordinator, area_id)
+    if area_name is None or area is None:
+        known = sorted(a.config.area_id for a in coordinator.areas.values())
+        raise ServiceValidationError(
+            f"No configured area found for area_id '{area_id}'. "
+            f"Known area_ids: {', '.join(known) if known else '(none)'}"
+        )
+
+    _LOGGER.info(
+        "Purging learned history for area '%s' (area_id=%s) on user request",
+        area_name,
+        area_id,
+    )
+
+    try:
+        deleted = await hass.async_add_executor_job(
+            coordinator.db.delete_area_data, area_name
+        )
+    except Exception as err:
+        error_msg = f"Failed to purge database records for area '{area_name}': {err}"
+        _LOGGER.exception(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+    # Reset in-memory prior state so next calculation rebuilds cleanly.
+    with contextlib.suppress(AttributeError):
+        area.prior.clear_cache()
+
+    # Re-persist the area shell so subsequent operations still find it.
+    # A failure here does not invalidate the purge itself (the user-visible
+    # history has been deleted) — the shell is re-created on the next save
+    # cycle. Surfaced via the response and at warning level so callers can
+    # see partial failures without the service raising.
+    shell_repersisted = True
+    try:
+        await hass.async_add_executor_job(coordinator.db.save_area_data, area_name)
+    except Exception:  # noqa: BLE001
+        shell_repersisted = False
+        _LOGGER.warning(
+            "Failed to re-persist area shell for '%s' after purge; "
+            "it will be recreated on the next save cycle",
+            area_name,
+            exc_info=True,
+        )
+
+    # Reload priors/correlations/entity state from DB (now empty for this area).
+    try:
+        await coordinator.db.load_data()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning("db.load_data() after purge raised; continuing", exc_info=True)
+
+    try:
+        await coordinator.async_refresh_correlations()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "async_refresh_correlations() after purge raised; continuing",
+            exc_info=True,
+        )
+
+    try:
+        await coordinator.async_request_refresh()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "async_request_refresh() after purge raised; continuing", exc_info=True
+        )
+
+    return {
+        "area_id": area_id,
+        "area_name": area_name,
+        "entities_deleted": int(deleted),
+        "shell_repersisted": shell_repersisted,
+        "purged_at": dt_util.utcnow().isoformat(),
+    }
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -218,6 +330,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_export_config(call: ServiceCall) -> dict[str, Any]:
         return await _export_config(hass, call)
+
+    async def handle_purge_area_history(call: ServiceCall) -> dict[str, Any]:
+        return await _purge_area_history(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -234,4 +349,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         handle_export_config,
         schema=None,
         supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "purge_area_history",
+        handle_purge_area_history,
+        schema=PURGE_AREA_HISTORY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )

@@ -1855,6 +1855,75 @@ class TestCoordinatorOrphanedAreaCleanup:
             # No config updates should happen
             mock_update_entry.assert_not_called()
 
+    async def test_prune_fully_orphaned_db_areas_deletes_unknown_rows(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """DB rows whose area_name AND area_id aren't in config are pruned."""
+        db = coordinator.db
+
+        # Seed a row that is neither in config by name nor by id.
+        stale_name = "GhostRoom"
+        with db.get_session() as session:
+            session.add(
+                db.Areas(
+                    entry_id=coordinator.entry_id,
+                    area_name=stale_name,
+                    area_id="ghost_area_id_not_in_config",
+                    purpose="social",
+                    threshold=0.5,
+                )
+            )
+            session.commit()
+
+        # Sanity: ghost row exists before prune.
+        with db.get_session() as session:
+            before = {row[0] for row in session.query(db.Areas.area_name).all()}
+        assert stale_name in before
+
+        await coordinator._prune_fully_orphaned_db_areas()
+
+        with db.get_session() as session:
+            after = {row[0] for row in session.query(db.Areas.area_name).all()}
+        assert stale_name not in after
+
+    async def test_prune_fully_orphaned_db_areas_preserves_configured_rows(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Rows whose area_id IS in config (rename case) are NOT pruned.
+
+        This documents the conservative-by-design behavior: the startup prune
+        only removes rows fully disconnected from the current config (both
+        area_name and area_id absent).
+        """
+        db = coordinator.db
+
+        # Seed an area_name that isn't configured, but WITH an area_id that IS
+        # configured (simulates a rename).
+        target_name = coordinator.get_area_names()[0]
+        configured_area_id = coordinator.get_area(target_name).config.area_id
+
+        rename_stale_name = "OldName_SameAreaId"
+        with db.get_session() as session:
+            session.add(
+                db.Areas(
+                    entry_id=coordinator.entry_id,
+                    area_name=rename_stale_name,
+                    area_id=configured_area_id,
+                    purpose="social",
+                    threshold=0.5,
+                )
+            )
+            session.commit()
+
+        await coordinator._prune_fully_orphaned_db_areas()
+
+        with db.get_session() as session:
+            after = {row[0] for row in session.query(db.Areas.area_name).all()}
+        # Rename-orphan must remain: follow-up work will address renames.
+        assert rename_stale_name in after
+
 
 class TestCoordinatorFindAreaForEntity:
     """Test coordinator find_area_for_entity edge cases."""

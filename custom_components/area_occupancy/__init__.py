@@ -2,16 +2,43 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
+from pathlib import Path
+from typing import Any
+
+import sqlalchemy as sa
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker as create_sessionmaker
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import (
+    area_registry as ar,
+    config_validation as cv,
+    device_registry as dr,
+)
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DOMAIN, PLATFORMS
+from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DB_NAME, DOMAIN, PLATFORMS
 from .coordinator import AreaOccupancyCoordinator
+from .db.operations import delete_area_data as _delete_area_data
+from .db.schema import (
+    AreaRelationships,
+    Areas as AreasTable,
+    Correlations,
+    CrossAreaStats,
+    Entities,
+    EntityStatistics,
+    GlobalPriors,
+    IntervalAggregates,
+    Intervals,
+    NumericAggregates,
+    NumericSamples,
+    OccupiedIntervalsCache,
+    Priors,
+)
 from .migrations import async_migrate_entry
 from .service import async_setup_services
 
@@ -166,8 +193,233 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def _resolve_db_path(hass: HomeAssistant) -> Path | None:
+    """Return the absolute path to the Area Occupancy SQLite database, if any."""
+    config_dir = getattr(hass.config, "config_dir", None)
+    if not config_dir:
+        return None
+    return Path(config_dir) / ".storage" / DB_NAME
+
+
+def _read_area_names_by_area_id(db_path: Path) -> dict[str, list[str]]:
+    """Read every (area_id -> [area_name, ...]) mapping from the Areas table.
+
+    Multiple ``area_name`` rows can exist for a single ``area_id`` because
+    ``area_name`` is the Areas PK and renames leave historical rows behind.
+    All names are returned so removal can clean up historical rows too.
+
+    Runs synchronously and is expected to be invoked via
+    ``hass.async_add_executor_job`` — it performs blocking SQLAlchemy I/O.
+    """
+    if not db_path.exists():
+        return {}
+    by_area_id: dict[str, list[str]] = {}
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=sa.pool.NullPool,
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.select(AreasTable.area_id, AreasTable.area_name)
+            ).all()
+        for area_id, area_name in rows:
+            if not area_id or not area_name:
+                continue
+            by_area_id.setdefault(area_id, []).append(area_name)
+    finally:
+        engine.dispose()
+    return by_area_id
+
+
+def _purge_entry_database_data(
+    db_path: Path, area_names: list[str], entry_id: str
+) -> dict[str, int]:
+    """Delete all database rows for the given areas using a temporary offline session.
+
+    Runs in an executor because it performs blocking SQLAlchemy I/O.
+    """
+    result = {"areas_attempted": len(area_names), "areas_deleted": 0, "rows_deleted": 0}
+    if not area_names or not db_path.exists():
+        return result
+
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=sa.pool.NullPool,
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    try:
+        session_maker = create_sessionmaker(bind=engine)
+
+        class _OfflineDB:
+            """Lightweight DB adapter matching delete_area_data's interface."""
+
+            def __init__(self) -> None:
+                self.Areas = AreasTable
+                self.Entities = Entities
+                self.Intervals = Intervals
+                self.Priors = Priors
+                self.GlobalPriors = GlobalPriors
+                self.OccupiedIntervalsCache = OccupiedIntervalsCache
+                self.IntervalAggregates = IntervalAggregates
+                self.NumericSamples = NumericSamples
+                self.NumericAggregates = NumericAggregates
+                self.Correlations = Correlations
+                self.EntityStatistics = EntityStatistics
+                self.AreaRelationships = AreaRelationships
+                self.CrossAreaStats = CrossAreaStats
+
+            @contextmanager
+            def get_session(self) -> Any:
+                session = session_maker()
+                try:
+                    yield session
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
+
+        offline_db = _OfflineDB()
+        for area_name in area_names:
+            try:
+                deleted = _delete_area_data(offline_db, area_name)
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to purge database data for area '%s' during entry removal",
+                    area_name,
+                )
+                continue
+            if deleted:
+                result["areas_deleted"] += 1
+                result["rows_deleted"] += deleted
+            _LOGGER.info(
+                "Purged database rows for area '%s' during entry removal (entry_id=%s, rows=%d)",
+                area_name,
+                entry_id,
+                deleted,
+            )
+    finally:
+        engine.dispose()
+    return result
+
+
+def _delete_db_file(db_path: Path) -> bool:
+    """Delete the SQLite database file and its WAL/SHM siblings if present."""
+    deleted_any = False
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        target = db_path.with_name(db_path.name + suffix) if suffix else db_path
+        try:
+            if target.exists():
+                target.unlink()
+                deleted_any = True
+                _LOGGER.info("Removed Area Occupancy database file: %s", target)
+        except OSError:
+            _LOGGER.exception("Failed to remove database file %s", target)
+    return deleted_any
+
+
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle removal of a config entry and clean up storage."""
+    """Handle removal of a config entry and clean up learned history.
+
+    Deletes all database rows for every area in the removed entry. When this
+    is the last config entry for the domain, the SQLite database file itself
+    is removed so a fresh install starts with a clean slate.
+
+    Idempotent and never raises: failures are logged but must not prevent
+    Home Assistant from completing the entry removal.
+    """
+    _LOGGER.info(
+        "Removing Area Occupancy config entry %s (cleaning up learned history)",
+        entry.entry_id,
+    )
+
+    try:
+        merged: dict[str, Any] = dict(entry.data)
+        merged.update(entry.options)
+        area_configs = merged.get(CONF_AREAS, []) or []
+
+        db_path = _resolve_db_path(hass)
+
+        # Resolve area_name(s) per area. Prefer names stored in the DB by
+        # area_id (survives renames and captures historical rows from prior
+        # renames); otherwise fall back to the HA area registry. Blocking DB
+        # I/O runs in an executor.
+        by_area_id: dict[str, list[str]] = {}
+        if db_path is not None and db_path.exists():
+            try:
+                by_area_id = await hass.async_add_executor_job(
+                    _read_area_names_by_area_id, db_path
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to read area names from database during removal"
+                )
+                by_area_id = {}
+
+        area_names: list[str] = []
+        seen: set[str] = set()
+        for area_data in area_configs:
+            area_id = area_data.get(CONF_AREA_ID)
+            if not area_id:
+                continue
+            candidates: list[str] = list(by_area_id.get(area_id, []))
+            try:
+                area_entry = ar.async_get(hass).async_get_area(area_id)
+            except Exception:  # noqa: BLE001
+                area_entry = None
+            if area_entry is not None and area_entry.name:
+                candidates.append(area_entry.name)
+            for name in candidates:
+                if name and name not in seen:
+                    seen.add(name)
+                    area_names.append(name)
+
+        other_entries = [
+            e
+            for e in hass.config_entries.async_entries(DOMAIN)
+            if e.entry_id != entry.entry_id
+        ]
+
+        if db_path is not None and db_path.exists() and area_names:
+            try:
+                stats = await hass.async_add_executor_job(
+                    _purge_entry_database_data, db_path, area_names, entry.entry_id
+                )
+                _LOGGER.info(
+                    "Cleaned learned history for %d/%d area(s) (rows deleted=%d) during "
+                    "entry removal %s",
+                    stats["areas_deleted"],
+                    stats["areas_attempted"],
+                    stats["rows_deleted"],
+                    entry.entry_id,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to purge learned history during entry removal %s",
+                    entry.entry_id,
+                )
+
+        # When no other entries remain, drop the whole database so a re-install
+        # starts clean.
+        if not other_entries and db_path is not None:
+            try:
+                await hass.async_add_executor_job(_delete_db_file, db_path)
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to remove database file during entry removal %s",
+                    entry.entry_id,
+                )
+    except Exception:
+        # Final safety net — entry removal must never raise.
+        _LOGGER.exception(
+            "Unexpected error during async_remove_entry for %s", entry.entry_id
+        )
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

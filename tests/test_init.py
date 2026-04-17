@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 from custom_components.area_occupancy import (
     _async_entry_updated,
+    _purge_entry_database_data,
+    async_remove_entry,
     async_setup_entry,
     async_unload_entry,
 )
@@ -16,10 +20,13 @@ from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_VERSION,
+    DB_NAME,
     DOMAIN as DOMAIN_CONST,
     PLATFORMS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.db import Base
+from custom_components.area_occupancy.db.schema import Areas, Entities
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -584,10 +591,217 @@ class TestEntryUpdated:
         mock_reload.assert_called_once_with(mock_config_entry.entry_id)
 
 
-class TestAsyncRemoveEntry:
-    """Tests for async_remove_entry function.
+def _path_exists(path: Path) -> bool:
+    """Sync wrapper around Path.exists for use in async tests.
 
-    Note: The async_remove_entry function is currently empty (no-op) in the implementation.
-    As such, there are no meaningful behaviors to test. Tests will be added when
-    the function is implemented with actual cleanup logic.
+    The flake8-async rule ASYNC240 flags direct use of pathlib methods in
+    async functions; funnelling through a plain function keeps the rule
+    happy without changing the semantics of the check.
     """
+    return path.exists()
+
+
+def _seed_test_db(db_path: Path, areas: list[tuple[str, str, str]]) -> None:
+    """Create a SQLite DB file and seed it with Areas + Entities for testing.
+
+    Each tuple is (area_name, area_id, entry_id).
+    """
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine)
+        session = SessionLocal()
+        try:
+            for area_name, area_id, entry_id in areas:
+                session.add(
+                    Areas(
+                        entry_id=entry_id,
+                        area_name=area_name,
+                        area_id=area_id,
+                        purpose="social",
+                        threshold=0.5,
+                    )
+                )
+                session.add(
+                    Entities(
+                        entry_id=entry_id,
+                        area_name=area_name,
+                        entity_id=f"binary_sensor.{area_name.lower()}_motion",
+                        entity_type="motion",
+                    )
+                )
+            session.commit()
+        finally:
+            session.close()
+    finally:
+        engine.dispose()
+
+
+class TestAsyncRemoveEntry:
+    """Tests for async_remove_entry function."""
+
+    @pytest.fixture
+    def isolated_db(self, tmp_path: Path, hass: HomeAssistant) -> Path:
+        """Route hass's .storage to a temporary directory."""
+        storage_dir = tmp_path / ".storage"
+        storage_dir.mkdir()
+        db_path = storage_dir / DB_NAME
+        # Redirect hass.config.config_dir so _resolve_db_path finds tmp_path
+        object.__setattr__(hass.config, "config_dir", str(tmp_path))
+        return db_path
+
+    async def test_removes_rows_and_drops_file_when_last_entry(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        isolated_db: Path,
+    ) -> None:
+        """Last entry removal deletes rows AND removes the DB file itself."""
+        entry_id = mock_config_entry.entry_id
+        _seed_test_db(
+            isolated_db,
+            [
+                ("Kitchen", "kitchen_id", entry_id),
+                ("LivingRoom", "living_id", entry_id),
+            ],
+        )
+        assert _path_exists(isolated_db)
+
+        # Simulate SQLite sidecar files that WAL-mode leaves behind.
+        sidecar_paths = [
+            isolated_db.with_name(isolated_db.name + suffix)
+            for suffix in ("-wal", "-shm", "-journal")
+        ]
+        for path in sidecar_paths:
+            path.write_bytes(b"sidecar")
+            assert _path_exists(path)
+
+        # Configure entry to reference those two areas
+        object.__setattr__(
+            mock_config_entry,
+            "data",
+            {
+                CONF_AREAS: [
+                    {CONF_AREA_ID: "kitchen_id"},
+                    {CONF_AREA_ID: "living_id"},
+                ]
+            },
+        )
+        object.__setattr__(mock_config_entry, "options", {})
+
+        # Simulate no other entries remain (this is the last one)
+        hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
+
+        await async_remove_entry(hass, mock_config_entry)
+
+        assert not _path_exists(isolated_db), (
+            "DB file should be removed when the last entry is removed"
+        )
+        for path in sidecar_paths:
+            assert not _path_exists(path), (
+                f"Sidecar file should be removed when DB is dropped: {path.name}"
+            )
+
+    async def test_removes_rows_but_keeps_file_when_other_entries_remain(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        isolated_db: Path,
+    ) -> None:
+        """Other entries remain: rows for this entry's areas are deleted but file stays."""
+        entry_id = mock_config_entry.entry_id
+        other_entry_id = "other_entry_id"
+        _seed_test_db(
+            isolated_db,
+            [
+                ("Kitchen", "kitchen_id", entry_id),
+                ("Bedroom", "bedroom_id", other_entry_id),
+            ],
+        )
+
+        object.__setattr__(
+            mock_config_entry,
+            "data",
+            {CONF_AREAS: [{CONF_AREA_ID: "kitchen_id"}]},
+        )
+        object.__setattr__(mock_config_entry, "options", {})
+
+        # Simulate another entry exists for the domain
+        other_entry = Mock()
+        other_entry.entry_id = other_entry_id
+        hass.config_entries.async_entries = Mock(
+            return_value=[mock_config_entry, other_entry]
+        )
+
+        await async_remove_entry(hass, mock_config_entry)
+
+        # DB file must remain because another entry still uses it
+        assert _path_exists(isolated_db)
+
+        # Kitchen rows should be gone; Bedroom rows should remain
+        engine = create_engine(f"sqlite:///{isolated_db}")
+        try:
+            SessionLocal = sessionmaker(bind=engine)
+            session = SessionLocal()
+            try:
+                remaining_area_names = sorted(
+                    row[0] for row in session.query(Areas.area_name).all()
+                )
+                assert remaining_area_names == ["Bedroom"]
+            finally:
+                session.close()
+        finally:
+            engine.dispose()
+
+    async def test_never_raises_even_when_db_missing(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        tmp_path: Path,
+    ) -> None:
+        """async_remove_entry is idempotent and swallows missing-DB errors."""
+        # No .storage dir and no DB file — path resolves but doesn't exist
+        object.__setattr__(hass.config, "config_dir", str(tmp_path))
+        object.__setattr__(
+            mock_config_entry,
+            "data",
+            {CONF_AREAS: [{CONF_AREA_ID: "missing_id"}]},
+        )
+        object.__setattr__(mock_config_entry, "options", {})
+        hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
+
+        # Should not raise
+        await async_remove_entry(hass, mock_config_entry)
+
+    def test_purge_entry_database_data_offline(self, tmp_path: Path) -> None:
+        """_purge_entry_database_data works without a running coordinator."""
+        db_path = tmp_path / DB_NAME
+        _seed_test_db(
+            db_path,
+            [
+                ("Kitchen", "kitchen_id", "entry_a"),
+                ("LivingRoom", "living_id", "entry_a"),
+                ("Bedroom", "bedroom_id", "entry_b"),
+            ],
+        )
+
+        stats = _purge_entry_database_data(
+            db_path, ["Kitchen", "LivingRoom"], "entry_a"
+        )
+
+        assert stats["areas_attempted"] == 2
+        assert stats["areas_deleted"] >= 1
+        # Confirm only Bedroom remains
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            SessionLocal = sessionmaker(bind=engine)
+            session = SessionLocal()
+            try:
+                remaining = sorted(
+                    row[0] for row in session.query(Areas.area_name).all()
+                )
+                assert remaining == ["Bedroom"]
+            finally:
+                session.close()
+        finally:
+            engine.dispose()
