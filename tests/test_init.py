@@ -667,6 +667,15 @@ class TestAsyncRemoveEntry:
         )
         assert _path_exists(isolated_db)
 
+        # Simulate SQLite sidecar files that WAL-mode leaves behind.
+        sidecar_paths = [
+            isolated_db.with_name(isolated_db.name + suffix)
+            for suffix in ("-wal", "-shm", "-journal")
+        ]
+        for path in sidecar_paths:
+            path.write_bytes(b"sidecar")
+            assert _path_exists(path)
+
         # Configure entry to reference those two areas
         object.__setattr__(
             mock_config_entry,
@@ -688,6 +697,10 @@ class TestAsyncRemoveEntry:
         assert not _path_exists(isolated_db), (
             "DB file should be removed when the last entry is removed"
         )
+        for path in sidecar_paths:
+            assert not _path_exists(path), (
+                f"Sidecar file should be removed when DB is dropped: {path.name}"
+            )
 
     async def test_removes_rows_but_keeps_file_when_other_entries_remain(
         self,

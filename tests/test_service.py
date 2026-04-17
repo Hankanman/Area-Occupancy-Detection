@@ -606,11 +606,19 @@ class TestPurgeAreaHistory:
         mock_config_entry: Mock,
         coordinator: AreaOccupancyCoordinator,
     ) -> None:
-        """A bogus area_id must raise ServiceValidationError."""
+        """A bogus area_id must raise ServiceValidationError with guidance."""
         _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        known_ids = sorted(a.config.area_id for a in coordinator.areas.values())
         call = _create_service_call(area_id="does_not_exist")
-        with pytest.raises(ServiceValidationError):
+        with pytest.raises(ServiceValidationError) as excinfo:
             await _purge_area_history(hass, call)
+
+        message = str(excinfo.value)
+        assert "does_not_exist" in message
+        assert "Known area_ids" in message
+        for area_id in known_ids:
+            assert area_id in message
 
     async def test_purge_area_history_deletes_only_target(
         self,
@@ -659,13 +667,17 @@ class TestPurgeAreaHistory:
 
         assert result["area_id"] == target_area_id
         assert result["area_name"] == target_name
+        assert result["shell_repersisted"] is True
 
-        # Unrelated area must still exist in the DB.
         with db.get_session() as session:
             remaining = sorted(
                 row[0] for row in session.query(db.Areas.area_name).all()
             )
+        # Unrelated area must still exist in the DB.
         assert other_name in remaining
+        # Target area row must have been re-persisted after the purge so
+        # subsequent operations still find it.
+        assert target_name in remaining
 
     def test_find_area_by_area_id_returns_match(
         self,

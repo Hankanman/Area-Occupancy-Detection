@@ -275,21 +275,32 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
         area.prior.clear_cache()
 
     # Re-persist the area shell so subsequent operations still find it.
+    # A failure here does not invalidate the purge itself (the user-visible
+    # history has been deleted) — the shell is re-created on the next save
+    # cycle. Surfaced via the response and at warning level so callers can
+    # see partial failures without the service raising.
+    shell_repersisted = True
     try:
         await hass.async_add_executor_job(coordinator.db.save_area_data, area_name)
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("Failed to re-persist area shell for '%s' after purge", area_name)
+        shell_repersisted = False
+        _LOGGER.warning(
+            "Failed to re-persist area shell for '%s' after purge; "
+            "it will be recreated on the next save cycle",
+            area_name,
+            exc_info=True,
+        )
 
     # Reload priors/correlations/entity state from DB (now empty for this area).
     try:
         await coordinator.db.load_data()
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("db.load_data() after purge raised; continuing", exc_info=True)
+        _LOGGER.warning("db.load_data() after purge raised; continuing", exc_info=True)
 
     try:
         await coordinator.async_refresh_correlations()
     except Exception:  # noqa: BLE001
-        _LOGGER.debug(
+        _LOGGER.warning(
             "async_refresh_correlations() after purge raised; continuing",
             exc_info=True,
         )
@@ -297,7 +308,7 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
     try:
         await coordinator.async_request_refresh()
     except Exception:  # noqa: BLE001
-        _LOGGER.debug(
+        _LOGGER.warning(
             "async_request_refresh() after purge raised; continuing", exc_info=True
         )
 
@@ -305,6 +316,7 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
         "area_id": area_id,
         "area_name": area_name,
         "entities_deleted": int(deleted),
+        "shell_repersisted": shell_repersisted,
         "purged_at": dt_util.utcnow().isoformat(),
     }
 

@@ -756,12 +756,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
 
     def _list_db_areas(self) -> list[tuple[str, str | None]]:
-        """Return all (area_name, area_id) pairs currently in the Areas table."""
+        """Return (area_name, area_id) pairs in the Areas table for this entry.
+
+        Scoped to ``self.entry_id`` so a coordinator never considers rows
+        owned by a different config entry when deciding what to prune.
+        """
         try:
             with self.db.get_session() as session:
-                rows = session.query(
-                    self.db.Areas.area_name, self.db.Areas.area_id
-                ).all()
+                rows = (
+                    session.query(self.db.Areas.area_name, self.db.Areas.area_id)
+                    .filter(self.db.Areas.entry_id == self.entry_id)
+                    .all()
+                )
                 return [(row[0], row[1]) for row in rows]
         except (OSError, RuntimeError, HomeAssistantError):
             return []
@@ -777,9 +783,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         area_name nor the original area_id appears in the current config, so
         those rows are fully orphaned.
 
-        This method prunes such rows additively and conservatively: it only
-        deletes a DB area when BOTH its area_name and its area_id are absent
-        from the currently loaded configuration.
+        Scoped to this coordinator's entry (see ``_list_db_areas``) and
+        conservative: only deletes a DB area when BOTH its ``area_name`` and
+        its ``area_id`` are absent from the currently loaded configuration.
         """
         configured_names = set(self.areas.keys())
         configured_ids: set[str] = {

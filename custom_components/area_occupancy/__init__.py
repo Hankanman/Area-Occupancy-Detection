@@ -201,6 +201,40 @@ def _resolve_db_path(hass: HomeAssistant) -> Path | None:
     return Path(config_dir) / ".storage" / DB_NAME
 
 
+def _read_area_names_by_area_id(db_path: Path) -> dict[str, list[str]]:
+    """Read every (area_id -> [area_name, ...]) mapping from the Areas table.
+
+    Multiple ``area_name`` rows can exist for a single ``area_id`` because
+    ``area_name`` is the Areas PK and renames leave historical rows behind.
+    All names are returned so removal can clean up historical rows too.
+
+    Runs synchronously and is expected to be invoked via
+    ``hass.async_add_executor_job`` — it performs blocking SQLAlchemy I/O.
+    """
+    if not db_path.exists():
+        return {}
+    by_area_id: dict[str, list[str]] = {}
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=sa.pool.NullPool,
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.select(AreasTable.area_id, AreasTable.area_name)
+            ).all()
+        for area_id, area_name in rows:
+            if not area_id or not area_name:
+                continue
+            by_area_id.setdefault(area_id, []).append(area_name)
+    finally:
+        engine.dispose()
+    return by_area_id
+
+
 def _purge_entry_database_data(
     db_path: Path, area_names: list[str], entry_id: str
 ) -> dict[str, int]:
@@ -312,53 +346,39 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         db_path = _resolve_db_path(hass)
 
-        # Resolve area_name per area. Prefer the name stored in the DB by
-        # area_id (survives renames); otherwise fall back to the HA area
-        # registry.
-        area_names: list[str] = []
-        seen: set[str] = set()
-
+        # Resolve area_name(s) per area. Prefer names stored in the DB by
+        # area_id (survives renames and captures historical rows from prior
+        # renames); otherwise fall back to the HA area registry. Blocking DB
+        # I/O runs in an executor.
+        by_area_id: dict[str, list[str]] = {}
         if db_path is not None and db_path.exists():
             try:
-                engine = create_engine(
-                    f"sqlite:///{db_path}",
-                    echo=False,
-                    pool_pre_ping=True,
-                    poolclass=sa.pool.NullPool,
-                    connect_args={"check_same_thread": False, "timeout": 10},
+                by_area_id = await hass.async_add_executor_job(
+                    _read_area_names_by_area_id, db_path
                 )
-                try:
-                    with engine.connect() as conn:
-                        rows = conn.execute(
-                            sa.select(AreasTable.area_id, AreasTable.area_name)
-                        ).all()
-                        by_area_id = {row[0]: row[1] for row in rows if row[0]}
-                finally:
-                    engine.dispose()
             except Exception:
                 _LOGGER.exception(
                     "Failed to read area names from database during removal"
                 )
                 by_area_id = {}
-        else:
-            by_area_id = {}
 
+        area_names: list[str] = []
+        seen: set[str] = set()
         for area_data in area_configs:
             area_id = area_data.get(CONF_AREA_ID)
             if not area_id:
                 continue
-            candidate = by_area_id.get(area_id)
-            if not candidate:
-                # Fallback: resolve via HA area registry
-                try:
-                    area_entry = ar.async_get(hass).async_get_area(area_id)
-                    if area_entry is not None:
-                        candidate = area_entry.name
-                except Exception:  # noqa: BLE001
-                    candidate = None
-            if candidate and candidate not in seen:
-                seen.add(candidate)
-                area_names.append(candidate)
+            candidates: list[str] = list(by_area_id.get(area_id, []))
+            try:
+                area_entry = ar.async_get(hass).async_get_area(area_id)
+            except Exception:  # noqa: BLE001
+                area_entry = None
+            if area_entry is not None and area_entry.name:
+                candidates.append(area_entry.name)
+            for name in candidates:
+                if name and name not in seen:
+                    seen.add(name)
+                    area_names.append(name)
 
         other_entries = [
             e
