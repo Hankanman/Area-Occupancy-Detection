@@ -194,6 +194,35 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             return None
         return format_float(area.probability() * 100)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return diagnostic attributes exposing what drives the probability.
+
+        Surfaces the prior's learned components and the floor (if any) that
+        was applied, plus lists of currently active and decaying entities
+        with their decay factors. Helps users diagnose "stuck" occupancy
+        reports without needing debug logging.
+        """
+        if self._all_areas is not None:
+            return {}
+        area = self._get_area()
+        if area is None:
+            return {}
+        try:
+            snapshot = area.prior.diagnostic_snapshot()
+            active_entities = [e.entity_id for e in area.entities.active_entities]
+            decaying_entities = [
+                {"entity_id": e.entity_id, "decay_factor": e.decay.decay_factor}
+                for e in area.entities.decaying_entities
+            ]
+        except (AttributeError, KeyError, TypeError):
+            return {}
+        return {
+            **snapshot,
+            "active_entities": active_entities,
+            "decaying_entities": decaying_entities,
+        }
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
