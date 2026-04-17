@@ -753,6 +753,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 return result[0] if result else None
         except (OSError, RuntimeError, HomeAssistantError):
+            _LOGGER.exception(
+                "Failed to look up area_name for area_id '%s' from DB", area_id
+            )
             return None
 
     def _list_db_areas(self) -> list[tuple[str, str | None]]:
@@ -770,6 +773,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 return [(row[0], row[1]) for row in rows]
         except (OSError, RuntimeError, HomeAssistantError):
+            _LOGGER.exception(
+                "Failed to list DB areas for entry '%s' during orphan prune",
+                self.entry_id,
+            )
             return []
 
     async def _prune_fully_orphaned_db_areas(self) -> None:
