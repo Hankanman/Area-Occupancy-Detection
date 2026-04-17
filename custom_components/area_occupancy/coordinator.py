@@ -335,6 +335,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if orphaned_area_ids:
                 await self._cleanup_orphaned_areas(orphaned_area_ids)
 
+            # Prune DB rows for areas no longer tracked by either area_name or
+            # area_id (e.g. historical rows left behind by reconfiguration).
+            try:
+                await self._prune_fully_orphaned_db_areas()
+            except (HomeAssistantError, OSError, RuntimeError):
+                _LOGGER.debug(
+                    "Pruning fully-orphaned DB areas failed at startup",
+                    exc_info=True,
+                )
+
             self._validate_areas_configured()
 
             _LOGGER.info(
@@ -744,6 +754,67 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return result[0] if result else None
         except (OSError, RuntimeError, HomeAssistantError):
             return None
+
+    def _list_db_areas(self) -> list[tuple[str, str | None]]:
+        """Return all (area_name, area_id) pairs currently in the Areas table."""
+        try:
+            with self.db.get_session() as session:
+                rows = session.query(
+                    self.db.Areas.area_name, self.db.Areas.area_id
+                ).all()
+                return [(row[0], row[1]) for row in rows]
+        except (OSError, RuntimeError, HomeAssistantError):
+            return []
+
+    async def _prune_fully_orphaned_db_areas(self) -> None:
+        """Delete DB rows for areas orphaned by both area_name and area_id.
+
+        The existing orphan cleanup handles HA-area deletions by looking up the
+        area_name from the DB via area_id. That path only runs when an area_id
+        is no longer present in the HA registry. DB rows can still linger when
+        a user removes an area from the integration and re-adds it under a
+        different HA area (new area_id and area_name) — neither the original
+        area_name nor the original area_id appears in the current config, so
+        those rows are fully orphaned.
+
+        This method prunes such rows additively and conservatively: it only
+        deletes a DB area when BOTH its area_name and its area_id are absent
+        from the currently loaded configuration.
+        """
+        configured_names = set(self.areas.keys())
+        configured_ids: set[str] = {
+            area.config.area_id for area in self.areas.values() if area.config.area_id
+        }
+
+        db_areas = await self.hass.async_add_executor_job(self._list_db_areas)
+        if not db_areas:
+            return
+
+        stale_names = [
+            area_name
+            for area_name, area_id in db_areas
+            if area_name not in configured_names
+            and (area_id is None or area_id not in configured_ids)
+        ]
+
+        if not stale_names:
+            return
+
+        _LOGGER.info(
+            "Pruning %d fully-orphaned area record(s) from database: %s",
+            len(stale_names),
+            ", ".join(stale_names),
+        )
+
+        for area_name in stale_names:
+            try:
+                await self.hass.async_add_executor_job(
+                    self.db.delete_area_data, area_name
+                )
+            except (HomeAssistantError, OSError, RuntimeError) as err:
+                _LOGGER.warning(
+                    "Failed to prune orphaned DB area '%s': %s", area_name, err
+                )
 
     async def async_update_options(self, options: dict[str, Any]) -> None:
         """Update coordinator options.

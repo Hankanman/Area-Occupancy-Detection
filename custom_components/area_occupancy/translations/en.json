@@ -892,5 +892,25 @@
                 "name": "Occupancy Threshold"
             }
         }
+    },
+    "services": {
+        "run_analysis": {
+            "name": "Run Analysis",
+            "description": "Run the analysis for all areas in the area occupancy instance."
+        },
+        "export_config": {
+            "name": "Export Config",
+            "description": "Export the complete integration configuration as YAML."
+        },
+        "purge_area_history": {
+            "name": "Purge Area History",
+            "description": "Delete all learned history for a single configured area (priors, correlations, intervals, aggregates, cached occupied intervals) without removing the area from the integration. Use this when a room's learned behavior is no longer accurate and you want the integration to re-learn from scratch.",
+            "fields": {
+                "area_id": {
+                    "name": "Area",
+                    "description": "The Home Assistant area whose learned history should be purged."
+                }
+            }
+        }
     }
 }

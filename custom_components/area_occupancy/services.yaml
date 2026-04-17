@@ -5,3 +5,19 @@ run_analysis:
 export_config:
   name: Export Config
   description: "Export the complete integration configuration as YAML."
+
+purge_area_history:
+  name: Purge Area History
+  description: >-
+    Delete all learned history (priors, correlations, intervals, aggregates,
+    cached occupied intervals) for a single configured area, without removing
+    the area from the integration. Use this when a room's learned behavior is
+    no longer accurate and you want the integration to re-learn from scratch.
+  fields:
+    area_id:
+      name: Area
+      description: >-
+        The Home Assistant area_id whose learned history should be purged.
+      required: true
+      selector:
+        area: {}

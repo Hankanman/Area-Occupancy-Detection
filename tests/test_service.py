@@ -16,11 +16,13 @@ from custom_components.area_occupancy.service import (
     _build_analysis_data,
     _collect_entity_states,
     _collect_likelihood_data,
+    _find_area_by_area_id,
+    _purge_area_history,
     _run_analysis,
     async_setup_services,
 )
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 
 # Helper functions to reduce code duplication
@@ -593,3 +595,91 @@ class TestAsyncSetupServices:
 
         # Verify SupportsResponse.ONLY is set
         assert service.supports_response == SupportsResponse.ONLY
+
+
+class TestPurgeAreaHistory:
+    """Tests for the purge_area_history service."""
+
+    async def test_purge_unknown_area_raises_validation_error(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """A bogus area_id must raise ServiceValidationError."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        call = _create_service_call(area_id="does_not_exist")
+        with pytest.raises(ServiceValidationError):
+            await _purge_area_history(hass, call)
+
+    async def test_purge_area_history_deletes_only_target(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Purging one area deletes only its rows; other areas remain intact."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        # Seed DB: save the (single-area) coordinator's area and a second
+        # synthetic "other" area that must be preserved by the purge.
+        target_name = coordinator.get_area_names()[0]
+        target_area = coordinator.get_area(target_name)
+        target_area_id = target_area.config.area_id
+
+        db = coordinator.db
+        db.save_area_data(target_name)
+        # Seed a second area directly in the DB that must be left alone.
+        other_name = "UnrelatedArea"
+        with db.get_session() as session:
+            session.add(
+                db.Areas(
+                    entry_id=coordinator.entry_id,
+                    area_name=other_name,
+                    area_id="unrelated_id",
+                    purpose="social",
+                    threshold=0.5,
+                )
+            )
+            session.add(
+                db.Entities(
+                    entry_id=coordinator.entry_id,
+                    area_name=other_name,
+                    entity_id="binary_sensor.unrelated_motion",
+                    entity_type="motion",
+                )
+            )
+            session.commit()
+
+        # Avoid async_request_refresh pulling in real HA plumbing: stub it.
+        coordinator.async_request_refresh = AsyncMock()
+
+        call = _create_service_call(area_id=target_area_id)
+        result = await _purge_area_history(hass, call)
+
+        assert result["area_id"] == target_area_id
+        assert result["area_name"] == target_name
+
+        # Unrelated area must still exist in the DB.
+        with db.get_session() as session:
+            remaining = sorted(
+                row[0] for row in session.query(db.Areas.area_name).all()
+            )
+        assert other_name in remaining
+
+    def test_find_area_by_area_id_returns_match(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """_find_area_by_area_id resolves by area_id, returns None otherwise."""
+        target_name = coordinator.get_area_names()[0]
+        target_area = coordinator.get_area(target_name)
+        target_area_id = target_area.config.area_id
+
+        name, area = _find_area_by_area_id(coordinator, target_area_id)
+        assert name == target_name
+        assert area is target_area
+
+        miss_name, miss_area = _find_area_by_area_id(coordinator, "not_a_real_id")
+        assert miss_name is None
+        assert miss_area is None
