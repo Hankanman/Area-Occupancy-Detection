@@ -11,6 +11,7 @@ from custom_components.area_occupancy.const import (
     MAX_PROBABILITY,
     MIN_PRIOR,
     MIN_PROBABILITY,
+    PRIOR_FLOOR_THRESHOLD_MARGIN,
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
@@ -624,3 +625,121 @@ def test_purpose_min_prior_does_not_override_higher_value(
         result = prior.value
 
     assert result == 0.5
+
+
+def test_min_prior_override_capped_below_threshold(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """A min_prior_override above the threshold is clamped below it (#435)."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    area.config.threshold = 0.5
+    area.config.min_prior_override = 0.9
+    prior.global_prior = 0.01
+
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        result = prior.value
+
+    expected_cap = 0.5 - PRIOR_FLOOR_THRESHOLD_MARGIN
+    assert result == pytest.approx(expected_cap)
+    assert result < area.config.threshold
+
+
+def test_purpose_min_prior_capped_below_threshold(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """A purpose min_prior above the threshold is clamped below it (#435)."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    area.config.threshold = 0.05
+    area._purpose = Purpose(purpose=AreaPurpose.PASSAGEWAY)
+    prior.global_prior = 0.01
+
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        result = prior.value
+
+    expected_cap = max(MIN_PRIOR, 0.05 - PRIOR_FLOOR_THRESHOLD_MARGIN)
+    assert result == pytest.approx(expected_cap)
+    assert result < area.config.threshold
+
+
+def test_learned_prior_above_threshold_passes_through(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """Learned priors above the threshold are not capped (#435).
+
+    Only floors (purpose min_prior, min_prior_override) are capped.
+    A learned global_prior reflects real historical occupancy and is
+    allowed to exceed the threshold.
+    """
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    area.config.threshold = 0.5
+    area.config.min_prior_override = 0.0
+    prior.global_prior = 0.8
+
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        result = prior.value
+
+    assert result == pytest.approx(0.8)
+
+
+def test_diagnostic_snapshot_contents(coordinator: AreaOccupancyCoordinator):
+    """diagnostic_snapshot surfaces the terms that drive prior.value."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    area.config.threshold = 0.5
+    area.config.min_prior_override = 0.9  # triggers override floor (capped)
+    prior.global_prior = 0.2
+
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        snapshot = prior.diagnostic_snapshot()
+
+    assert set(snapshot.keys()) == {
+        "prior_value",
+        "global_prior",
+        "time_prior",
+        "min_prior_floor_applied",
+        "threshold",
+    }
+    assert snapshot["min_prior_floor_applied"] == "override"
+    assert snapshot["threshold"] == 0.5
+    assert snapshot["global_prior"] == 0.2
+    assert snapshot["prior_value"] == pytest.approx(0.5 - PRIOR_FLOOR_THRESHOLD_MARGIN)
+
+
+def test_diagnostic_snapshot_reports_no_floor_when_learned_dominates(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """When the learned prior dominates, snapshot reports floor 'none'."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+
+    area.config.threshold = 0.5
+    area.config.min_prior_override = 0.0
+    prior.global_prior = 0.7
+
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        snapshot = prior.diagnostic_snapshot()
+
+    assert snapshot["min_prior_floor_applied"] == "none"
+    assert snapshot["prior_value"] == pytest.approx(0.7)

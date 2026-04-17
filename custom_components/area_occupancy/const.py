@@ -172,6 +172,11 @@ MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
 MAX_WEIGHT: Final[float] = 0.99
 
+# Margin kept between a prior *floor* (purpose min_prior, min_prior_override)
+# and the area's occupancy threshold. Floors alone must not be able to
+# hold an area above the threshold with no active evidence — see issue #435.
+PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
+
 # Time Prior Bounds
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9

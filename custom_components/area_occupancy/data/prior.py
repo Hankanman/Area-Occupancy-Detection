@@ -16,6 +16,7 @@ from ..const import (
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
     MIN_PRIOR,
+    PRIOR_FLOOR_THRESHOLD_MARGIN,
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
@@ -81,39 +82,82 @@ class Prior:
         The prior is calculated by combining global_prior and time_prior,
         applying PRIOR_FACTOR boost, and clamping to [MIN_PRIOR, MAX_PRIOR].
 
+        Floors (purpose.min_prior, config.min_prior_override) can raise the
+        learned prior, but they are capped strictly below the configured
+        occupancy threshold so that a floor alone cannot hold an area above
+        the threshold with no active evidence (see issue #435). Learned
+        priors — which reflect real historical occupancy — are allowed to
+        exceed the threshold.
+
         Returns:
-            Prior probability in range [MIN_PRIOR, MAX_PRIOR]
+            Prior probability in range [MIN_PRIOR, MAX_PRIOR].
         """
-        # Initialize result to MIN_PRIOR if global_prior is None
-        # This allows min_prior_override to be applied even when prior hasn't been calculated
+        return self._compute_value_and_floor()[0]
+
+    def _compute_value_and_floor(self) -> tuple[float, str]:
+        """Compute prior.value and report which floor (if any) applied.
+
+        Returns:
+            Tuple of (prior value, floor label). Floor label is one of
+            ``"none"``, ``"purpose"``, ``"override"``. The label reflects the
+            floor responsible for raising the value above the learned prior,
+            or ``"none"`` if the learned prior is already at or above every
+            floor.
+        """
         if self.global_prior is None:
-            result = MIN_PRIOR
+            learned = MIN_PRIOR
         else:
-            # Use global_prior directly if time_prior is None, otherwise combine them
-            # Both global_prior (via set_global_prior) and combine_priors output
-            # are already clamped to [MIN_PROBABILITY, MAX_PROBABILITY]
             if self.time_prior is None:
                 prior = self.global_prior
             else:
                 prior = combine_priors(self.global_prior, self.time_prior)
 
-            # Apply PRIOR_FACTOR boost and clamp to [MIN_PRIOR, MAX_PRIOR]
-            # The boost rewards areas with learned occupancy patterns
             adjusted_prior = prior * PRIOR_FACTOR
-            result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
+            learned = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
-        # Apply purpose-based minimum prior. Transit spaces have duration-biased
-        # learned priors that are unrealistically low because people don't linger.
+        purpose_floor = 0.0
         area = self.coordinator.areas.get(self.area_name)
         if area is not None and area.purpose.min_prior > 0.0:
-            result = max(result, area.purpose.min_prior)
+            purpose_floor = area.purpose.min_prior
 
-        # Apply minimum prior override if configured (user override takes precedence)
-        # This check must run for all code paths, including when global_prior is None
+        override_floor = 0.0
         if self.config.min_prior_override > 0.0:
-            result = max(result, self.config.min_prior_override)
+            override_floor = self.config.min_prior_override
 
-        return result
+        floor_cap = max(MIN_PRIOR, self.config.threshold - PRIOR_FLOOR_THRESHOLD_MARGIN)
+        capped_purpose = min(purpose_floor, floor_cap)
+        capped_override = min(override_floor, floor_cap)
+
+        result = learned
+        applied = "none"
+        if capped_purpose > result:
+            result = capped_purpose
+            applied = "purpose"
+        if capped_override > result:
+            result = capped_override
+            applied = "override"
+
+        return result, applied
+
+    def diagnostic_snapshot(self) -> dict[str, float | str | None]:
+        """Return a snapshot of the prior's current inputs and output.
+
+        Exposed to users via the probability sensor's extra_state_attributes
+        so they can see which term is driving the prior — especially useful
+        when an area appears "stuck" occupied with no active evidence.
+
+        Returns:
+            Dict with learned components, the floor that was applied (if
+            any), the effective prior value, and the configured threshold.
+        """
+        value, applied = self._compute_value_and_floor()
+        return {
+            "prior_value": value,
+            "global_prior": self.global_prior,
+            "time_prior": self.time_prior,
+            "min_prior_floor_applied": applied,
+            "threshold": self.config.threshold,
+        }
 
     @property
     def time_prior(self) -> float:
