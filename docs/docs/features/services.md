@@ -72,3 +72,43 @@ The full merged configuration (config entry data + options) as a dictionary. Eac
 
 !!! tip "Viewing the output"
     Call this service from **Developer Tools > Services** in Home Assistant. The response is rendered as YAML directly in the UI, making it easy to review or copy your full configuration.
+
+## `area_occupancy.purge_area_history`
+
+Deletes **all learned history** for a single configured area without removing the area itself. This clears the area's intervals, priors, correlations, aggregates, and cached occupied intervals from the database, then reloads and refreshes the coordinator so the UI immediately reflects the purge.
+
+Use this when a room's learned behaviour is no longer accurate — for example after significantly changing the sensor layout, swapping hardware, or repurposing a room — and you want the integration to re-learn from scratch.
+
+**Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `area_id` | Yes | The Home Assistant `area_id` whose learned history should be purged. Use the area selector in the UI or the raw `area_id` string in YAML. |
+
+**Example:**
+
+```yaml
+service: area_occupancy.purge_area_history
+data:
+  area_id: living_room
+```
+
+**Returns:**
+
+| Key | Description |
+|-----|-------------|
+| `area_id` | The area_id that was purged |
+| `area_name` | The area's display name |
+| `entities_deleted` | Number of entity rows removed from the database for this area |
+| `shell_repersisted` | `true` if the empty area shell was successfully re-saved, `false` on a non-fatal re-persist failure (the purge itself still succeeds; the shell is recreated on the next save cycle) |
+| `purged_at` | ISO timestamp of when the purge completed |
+
+**Errors:**
+
+- Calling the service with an unknown `area_id` raises a `ServiceValidationError` listing the currently configured area_ids.
+
+!!! warning "This is destructive"
+    All learned priors, correlations, intervals, and aggregates for the selected area are permanently deleted. The integration will start re-learning from scratch on the next analysis cycle (hourly by default). Other areas are unaffected.
+
+!!! tip "Resetting everything"
+    To wipe learned history for *every* area, remove the integration entirely (which now also deletes the database file — see the [2026.4.1 release notes](https://github.com/Hankanman/Area-Occupancy-Detection/releases/tag/2026.4.1)) and reinstall. Use `purge_area_history` when you only want to reset one area.

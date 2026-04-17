@@ -22,6 +22,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 - **[Sleep Presence Detection](features/sleep-presence.md)**: Detects when people are sleeping using HA Person entities and phone sleep confidence
 - **[Sensor Likelihoods](features/likelihood.md)**: Learns how reliable each sensor is for occupancy detection
 - **[Purpose-Based Configuration](features/purpose.md)**: Automatic configuration based on room purpose
+- **[Sensor Health Monitoring](features/sensor-health.md)**: Flags stuck, offline, or silently misconfigured sensors through Home Assistant Repairs so degraded occupancy detection doesn't go unnoticed
 
 ### User Interface
 
