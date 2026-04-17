@@ -1462,6 +1462,31 @@ class TestNewHelperFunctions:
         else:
             assert CONF_DECAY_HALF_LIFE not in flattened_input
 
+    def test_apply_purpose_based_decay_default_preserves_custom_value(self):
+        """Custom half-life must persist when it doesn't equal the selected purpose default.
+
+        Regression test for #439: values matching *another* purpose's default
+        (e.g. 600s = Office default) were silently overwritten to 0 when the
+        selected purpose was different (e.g. Social/Living Room = 520s).
+        """
+        # "social" purpose default is 520s; 600s is the Office default.
+        flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 600}
+        _apply_purpose_based_decay_default(flattened_input, "social")
+        assert flattened_input[CONF_DECAY_HALF_LIFE] == 600
+
+    def test_apply_purpose_based_decay_default_normalises_matching_value(self):
+        """Entering the current purpose's default must normalise to 0 (auto)."""
+        # "social" purpose default is 520s.
+        flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 520}
+        _apply_purpose_based_decay_default(flattened_input, "social")
+        assert flattened_input[CONF_DECAY_HALF_LIFE] == 0
+
+    def test_apply_purpose_based_decay_default_preserves_arbitrary_value(self):
+        """Arbitrary custom values must be preserved verbatim."""
+        flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 777}
+        _apply_purpose_based_decay_default(flattened_input, "social")
+        assert flattened_input[CONF_DECAY_HALF_LIFE] == 777
+
     def test_flatten_sectioned_input(self):
         """Test flattening sectioned input."""
         user_input = {

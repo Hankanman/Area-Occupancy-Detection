@@ -122,18 +122,35 @@ class Purpose:
             return purpose.replace("_", " ").title()
 
     @staticmethod
-    def is_purpose_half_life(value: float) -> bool:
-        """Check whether a half-life value matches any purpose default.
+    def is_purpose_half_life(value: float, purpose: str | None = None) -> bool:
+        """Check whether a half-life value matches the purpose's default.
+
+        When ``purpose`` is provided, the value is compared only against that
+        purpose's built-in half-life. This is the correct check when deciding
+        whether a user-entered override should be normalised to 0 (auto), so
+        that switching purpose later picks up the new default.
+
+        When ``purpose`` is ``None``, only the ``0`` sentinel returns True.
+        The legacy behaviour of matching against *any* purpose's default was
+        removed because it silently overwrote valid custom half-lives that
+        happened to equal another purpose's default (see issue #439).
 
         Args:
             value: Half-life value to check.
+            purpose: Purpose string to compare against. Optional.
 
         Returns:
-            True if the value is a built-in purpose half-life or 0 (auto).
+            True if the value is 0 (auto) or equals the selected purpose's
+            built-in half-life.
         """
         if value == 0:
             return True
-        return any(p.half_life == value for p in PURPOSE_DEFINITIONS.values())
+        if purpose is None:
+            return False
+        try:
+            return PURPOSE_DEFINITIONS[AreaPurpose(purpose)].half_life == value
+        except (ValueError, KeyError):
+            return False
 
     def cleanup(self) -> None:
         """Clean up the purpose (no-op for compatibility)."""
