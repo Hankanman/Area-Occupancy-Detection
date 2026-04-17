@@ -28,3 +28,9 @@ jobs:
         working-directory: ./docs
       - run: uv run mkdocs gh-deploy --force
         working-directory: ./docs
+        env:
+          # MkDocs 2.0 is intentionally incompatible with Material for MkDocs.
+          # We are pinned to mkdocs<2.0 in docs/pyproject.toml; silence the
+          # upstream build warning until we migrate (planned: Zensical, see
+          # docs/MIGRATION.md).
+          NO_MKDOCS_2_WARNING: "1"
