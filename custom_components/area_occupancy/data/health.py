@@ -254,7 +254,7 @@ class HealthMonitor:
         if entity.last_updated is None:
             return None
 
-        duration = now - entity.last_updated
+        duration = now - dt_util.as_utc(entity.last_updated)
         evidence = entity.evidence
 
         # Check stuck active
@@ -303,7 +303,7 @@ class HealthMonitor:
         if entity.last_updated is None:
             return None
 
-        duration = now - entity.last_updated
+        duration = now - dt_util.as_utc(entity.last_updated)
         if duration < UNAVAILABLE_THRESHOLD:
             return None
 
