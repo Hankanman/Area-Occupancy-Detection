@@ -32,7 +32,7 @@ from ..const import (
     TIME_PRIOR_MIN_BOUND,
 )
 from ..data.entity_type import CorrelationType, InputType
-from ..time_utils import to_db_utc
+from ..time_utils import to_db_utc, to_utc
 from . import maintenance, queries
 
 ar = helpers.area_registry
@@ -132,7 +132,9 @@ def _update_existing_entity(
                 entity_obj.entity_id,
                 err,
             )
-    existing_entity.last_updated = entity_obj.last_updated
+    existing_entity.last_updated = (
+        to_utc(entity_obj.last_updated) if entity_obj.last_updated is not None else None
+    )
     existing_entity.previous_evidence = entity_obj.evidence
 
     # Restore probabilities from database

@@ -21,11 +21,20 @@ def _make_entity(
     *,
     state: str | None = "off",
     last_updated: datetime | None = None,
+    naive_last_updated: bool = False,
     evidence: bool | None = False,
 ) -> Entity:
-    """Create a minimal Entity for health testing."""
+    """Create a minimal Entity for health testing.
+
+    When ``naive_last_updated`` is True, the supplied ``last_updated`` is
+    stripped of tzinfo before being passed to the constructor. This mirrors
+    the SQLite DB-restore path, where ``DateTime(timezone=True)`` columns
+    return naive values; ``Entity.__post_init__`` is expected to normalize.
+    """
     if last_updated is None:
         last_updated = dt_util.utcnow()
+    if naive_last_updated:
+        last_updated = last_updated.replace(tzinfo=None)
 
     entity_type = EntityType(
         input_type=input_type,
@@ -600,3 +609,82 @@ class TestProperties:
             monitor.check_health({"motion_1": entity})
 
         assert monitor.last_check is not None
+
+
+# --- Naive last_updated regression tests (PR #446 / issue #445) ---
+
+
+class TestNaiveLastUpdatedRegression:
+    """Regression: naive last_updated must not break health checks.
+
+    Naive datetimes can leak in from SQLite-backed DB restoration —
+    ``DateTime(timezone=True)`` columns return naive values on SQLite. The
+    ``Entity`` contract is that ``last_updated`` is always tz-aware UTC, so
+    ``Entity.__post_init__`` normalizes any naive input via ``to_utc()``.
+    These tests pin both ends of that contract: the normalization itself,
+    and the consumer-side health checks correctly handling caller-supplied
+    naive timestamps.
+    """
+
+    def test_post_init_normalizes_naive_last_updated(self) -> None:
+        """Construction with a naive last_updated yields tz-aware UTC."""
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            last_updated=dt_util.utcnow(),
+            naive_last_updated=True,
+        )
+        assert entity.last_updated is not None
+        assert entity.last_updated.tzinfo is dt_util.UTC
+
+    def test_check_stuck_sensor_with_naive_input(self, monitor: HealthMonitor) -> None:
+        """Stuck-active fires for motion sensor whose caller supplied naive."""
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            naive_last_updated=True,
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"motion_1": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
+    def test_check_unavailable_with_naive_input(self, monitor: HealthMonitor) -> None:
+        """Unavailable fires for entity whose caller supplied naive."""
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            naive_last_updated=True,
+            evidence=None,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"motion_1": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.UNAVAILABLE
+
+    def test_check_never_triggered_with_naive_input(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Never-triggered fires for appliance whose caller supplied naive."""
+        entity = _make_entity(
+            "binary_sensor.oven",
+            InputType.APPLIANCE,
+            state="off",
+            last_updated=dt_util.utcnow() - timedelta(days=10),
+            naive_last_updated=True,
+            evidence=False,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"oven": entity})
+
+        never_triggered = [
+            i for i in issues if i.issue_type == HealthIssueType.NEVER_TRIGGERED
+        ]
+        assert len(never_triggered) == 1

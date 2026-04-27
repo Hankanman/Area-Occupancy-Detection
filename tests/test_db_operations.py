@@ -207,6 +207,56 @@ class TestLoadData:
         assert reloaded_motion.prob_given_false == configured_pgf
 
     @pytest.mark.asyncio
+    async def test_load_data_normalizes_naive_last_updated_from_sqlite(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Regression (PR #446): naive last_updated from DB is normalized to UTC.
+
+        SQLite returns naive datetimes for ``DateTime(timezone=True)`` columns,
+        and prior to the fix ``_update_existing_entity`` assigned that raw value
+        directly to ``Entity.last_updated``. Subsequent arithmetic in
+        ``HealthMonitor`` then raised ``TypeError: can't subtract offset-naive
+        and offset-aware datetimes``. Verify the restore path now hands back a
+        tz-aware UTC value even when the row is naive.
+        """
+        db = coordinator.db
+        db.init_db()
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+        save_area_data(db, area_name)
+
+        entity_id = "switch.test_appliance_naive"
+        try:
+            entity = area.entities.get_entity(entity_id)
+        except ValueError:
+            entity = area.factory.create_from_config_spec(
+                entity_id, InputType.APPLIANCE.value
+            )
+            area.entities.add_entity(entity)
+        save_entity_data(db)
+
+        # Force a *naive* last_updated value into the DB row to faithfully
+        # reproduce SQLite's behavior with DateTime(timezone=True) columns.
+        naive_ts = (dt_util.utcnow() - timedelta(hours=2)).replace(tzinfo=None)
+        with db.get_session() as session:
+            row = (
+                session.query(db.Entities)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .one()
+            )
+            row.last_updated = naive_ts
+            session.commit()
+
+        # Drop the in-memory aware value so we can observe the restore.
+        entity.last_updated = None
+
+        await load_data(db)
+
+        reloaded = area.entities.get_entity(entity_id)
+        assert reloaded.last_updated is not None
+        assert reloaded.last_updated.tzinfo is dt_util.UTC
+
+    @pytest.mark.asyncio
     async def test_load_data_deletes_stale_entities(
         self, coordinator: AreaOccupancyCoordinator
     ):
