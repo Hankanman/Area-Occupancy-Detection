@@ -1,8 +1,12 @@
 Below are the instructions for debugging the integration.
 
+## Diagnostics Export
+
+For most "why does occupancy look wrong?" questions, **download diagnostics first** — it captures every prior, weight, evidence value, decay state, learned correlation, and health issue in a single JSON file without any logging configuration. Open the integration card in **Settings → Devices & Services**, click the **⋮** menu, and choose **Download diagnostics**. See [Diagnostics](diagnostics.md) for what's in the file and how to read it.
+
 ## Sensor Health Repairs
 
-The integration automatically monitors sensor health and creates repair entries in **Settings → System → Repairs** when issues are detected. Check there first if occupancy detection seems inaccurate — a stuck or offline sensor may be the cause. See [Sensor Health Monitoring](../features/sensor-health.md) for details.
+The integration automatically monitors sensor health and creates repair entries in **Settings → System → Repairs** when issues are detected. Check there if occupancy detection seems inaccurate — a stuck or offline sensor may be the cause. See [Sensor Health Monitoring](../features/sensor-health.md) for details.
 
 ## Debug Logging
 
