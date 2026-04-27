@@ -131,5 +131,6 @@ nav:
       - Likelihood Calculation: technical/likelihood-calculation.md
       - Database Schema: technical/database-schema.md
       - Pre-Releases: technical/prerelease.md
+      - Diagnostics: technical/diagnostics.md
       - Debugging: technical/debug.md
   - Simulator: simulator/index.md
