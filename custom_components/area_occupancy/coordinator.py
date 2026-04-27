@@ -75,6 +75,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._setup_complete: bool = False
         self._analysis_running: bool = False
         self._cached_correlations: dict[str, dict[str, float]] = {}
+        # Most recent full-analysis duration in milliseconds, written by
+        # data.analysis.run_full_analysis at the end of each pipeline run.
+        # Read by HealthMonitor.check_pipeline_health to flag slow analysis.
+        self._last_analysis_duration_ms: float | None = None
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -297,6 +301,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def setup_complete(self) -> bool:
         """Return whether setup is complete."""
         return self._setup_complete
+
+    @property
+    def last_analysis_duration_ms(self) -> float | None:
+        """Return the most recent full-analysis duration in milliseconds, if any."""
+        return self._last_analysis_duration_ms
 
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:

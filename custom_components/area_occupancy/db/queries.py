@@ -502,6 +502,20 @@ def is_occupied_intervals_cache_valid(
     Returns:
         True if cache is valid, False otherwise
     """
+    age = get_occupied_intervals_cache_age_hours(db, area_name)
+    return age is not None and age < max_age_hours
+
+
+def get_occupied_intervals_cache_age_hours(
+    db: AreaOccupancyDB,
+    area_name: str,
+) -> float | None:
+    """Return age of the most recent occupied-intervals cache entry in hours.
+
+    Returns None if no cache entry exists yet (e.g., the populate step
+    hasn't run for this area), or on query error. Used by both the
+    cache-freshness boolean check above and the pipeline health monitor.
+    """
     try:
         with db.get_session() as session:
             latest = (
@@ -512,19 +526,40 @@ def is_occupied_intervals_cache_valid(
             )
 
             if not latest:
-                return False
+                return None
 
-            # Normalize datetimes for comparison (database may return with/without tzinfo)
-            # DB stores naive UTC; compare using aware UTC
+            # DB stores naive UTC; compare using aware UTC.
             now = to_utc(dt_util.utcnow())
             calc_date = from_db_utc(latest.calculation_date)
-
-            age = (now - calc_date).total_seconds() / 3600
-            return age < max_age_hours
+            return (now - calc_date).total_seconds() / 3600
 
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
-        _LOGGER.error("Error checking cache validity: %s", e)
-        return False
+        _LOGGER.error("Error reading cache age for area '%s': %s", area_name, e)
+        return None
+
+
+def get_area_created_at(
+    db: AreaOccupancyDB,
+    area_name: str,
+) -> datetime | None:
+    """Return the persisted ``created_at`` for an area, or None if not stored.
+
+    Used by the pipeline health monitor to compute "is this area old enough
+    that priors should have trained?" without exposing the DB row to callers.
+    """
+    try:
+        with db.get_session() as session:
+            row = (
+                session.query(db.Areas.created_at)
+                .filter_by(area_name=area_name)
+                .first()
+            )
+            if not row or row[0] is None:
+                return None
+            return from_db_utc(row[0])
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error reading created_at for area '%s': %s", area_name, e)
+        return None
 
 
 def get_total_occupied_seconds(

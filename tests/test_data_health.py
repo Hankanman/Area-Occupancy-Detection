@@ -688,3 +688,197 @@ class TestNaiveLastUpdatedRegression:
             i for i in issues if i.issue_type == HealthIssueType.NEVER_TRIGGERED
         ]
         assert len(never_triggered) == 1
+
+
+# --- Pipeline-scope health tests ---
+
+
+class TestPipelineHealth:
+    """Cover pipeline-scope checks emitted by ``check_pipeline_health``."""
+
+    def test_no_issues_when_all_inputs_healthy(self, monitor: HealthMonitor) -> None:
+        """Healthy inputs produce no pipeline issues."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,  # mature area
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=2_000.0,
+                correlation_failure_count=0,
+                correlatable_entity_count=10,
+            )
+        assert issues == []
+
+    def test_insufficient_priors_after_grace_period(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Mature area with no global prior triggers insufficient_priors."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 14,  # 14 days
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.INSUFFICIENT_PRIORS
+        assert issues[0].entity_id is None
+
+    def test_insufficient_priors_within_grace_period(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Young area with no prior is *not* flagged — still warming up."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 3,  # 3 days
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        assert issues == []
+
+    def test_stale_cache_above_threshold(self, monitor: HealthMonitor) -> None:
+        """Cache older than threshold triggers stale_intervals_cache."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=48.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.STALE_INTERVALS_CACHE in types
+
+    def test_missing_cache_after_grace_period(self, monitor: HealthMonitor) -> None:
+        """Mature area with no cache at all also flags stale_intervals_cache."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=True,
+                cache_age_hours=None,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.STALE_INTERVALS_CACHE in types
+
+    def test_missing_cache_within_grace_period(self, monitor: HealthMonitor) -> None:
+        """Young area with no cache yet is not flagged."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 1,  # 1 day
+                has_global_prior=False,
+                cache_age_hours=None,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        assert issues == []
+
+    def test_slow_analysis_above_threshold(self, monitor: HealthMonitor) -> None:
+        """Last analysis > 30s triggers slow_analysis."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=45_000.0,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.SLOW_ANALYSIS in types
+
+    def test_correlation_failures_above_ratio(self, monitor: HealthMonitor) -> None:
+        """≥50% correlatable entities failed → correlation_failures."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=6,
+                correlatable_entity_count=10,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.CORRELATION_FAILURES in types
+
+    def test_correlation_failures_below_ratio(self, monitor: HealthMonitor) -> None:
+        """Failures under the 50% ratio are tolerated."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=3,
+                correlatable_entity_count=10,
+            )
+        assert issues == []
+
+    def test_correlation_failures_zero_correlatable(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """No correlatable entities → no failures issue (avoid div by zero)."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        assert issues == []
+
+    def test_pipeline_issues_use_distinct_repair_id_namespace(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Pipeline issues are registered with the ``pipeline_health_*`` prefix."""
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+
+        mock_ir.async_create_issue.assert_called_once()
+        call = mock_ir.async_create_issue.call_args
+        repair_id = call.args[2]
+        assert repair_id.startswith("pipeline_health_")
+        assert call.kwargs["translation_key"] == "pipeline_health_insufficient_priors"
+
+    def test_pipeline_issues_merge_with_sensor_issues(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Sensor issues from check_health survive a check_pipeline_health pass."""
+        sensor_entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            evidence=None,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"motion_1": sensor_entity})
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.UNAVAILABLE in types  # from check_health
+        assert HealthIssueType.INSUFFICIENT_PRIORS in types  # from pipeline check

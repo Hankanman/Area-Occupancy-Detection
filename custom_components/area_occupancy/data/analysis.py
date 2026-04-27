@@ -12,10 +12,15 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, TIME_PRIOR_MAX_BOUND, TIME_PRIOR_MIN_BOUND
-from ..db.queries import is_occupied_intervals_cache_valid
+from ..db.queries import (
+    get_area_created_at,
+    get_occupied_intervals_cache_age_hours,
+    is_occupied_intervals_cache_valid,
+)
 from ..time_utils import ensure_timezone_aware, ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
 from .entity_type import InputType
+from .health import CORRELATION_FAILURE_ERRORS
 from .prior import Prior
 
 if TYPE_CHECKING:
@@ -32,14 +37,16 @@ async def run_full_analysis(
     This function orchestrates the complete analysis process:
     1. Sync states from recorder
     2. Database health check and pruning
-    3. Populate occupied intervals cache
-    4. Run interval aggregation
-    5. Run numeric aggregation
-    6. Recalculate priors for all areas
-    7. Run correlation analysis
-    8. Save data (preserve decay state before refresh)
-    9. Refresh coordinator
-    10. Save data (persist all changes)
+    3. Sensor health check (per-entity anomalies → repair issues)
+    4. Populate occupied intervals cache
+    5. Run interval aggregation
+    6. Run numeric aggregation
+    7. Recalculate priors for all areas
+    8. Run correlation analysis
+    9. Pipeline health check (per-area calc anomalies → repair issues)
+    10. Save data (preserve decay state before refresh)
+    11. Refresh coordinator
+    12. Save data (persist all changes)
 
     Args:
         coordinator: The coordinator instance containing areas and database
@@ -52,7 +59,7 @@ async def run_full_analysis(
 
     analysis_start_time = time.perf_counter()
     failed_steps: list[str] = []
-    total_steps = 11
+    total_steps = 12
 
     async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
@@ -114,6 +121,61 @@ async def run_full_analysis(
         await run_correlation_analysis(coordinator)
         await coordinator.async_refresh_correlations()
 
+    async def _pipeline_health_check() -> None:
+        """Check pipeline-scope anomalies after priors + correlation have run.
+
+        Reads area age and cache age from the DB (executor-offloaded), reads
+        the prior + correlation state from in-memory area objects, and feeds
+        the inputs to ``HealthMonitor.check_pipeline_health``. The monitor
+        merges these with the sensor-scope issues from step 3 and updates
+        the HA repair registry in one pass.
+        """
+        now_aware = dt_util.utcnow()
+        for area in coordinator.areas.values():
+            try:
+                created_at = await coordinator.hass.async_add_executor_job(
+                    get_area_created_at, coordinator.db, area.area_name
+                )
+                cache_age_hours = await coordinator.hass.async_add_executor_job(
+                    get_occupied_intervals_cache_age_hours,
+                    coordinator.db,
+                    area.area_name,
+                )
+            except (ValueError, TypeError, RuntimeError, OSError) as err:
+                _LOGGER.debug(
+                    "Pipeline health: failed to read DB state for area '%s': %s",
+                    area.area_name,
+                    err,
+                    exc_info=True,
+                )
+                continue
+
+            area_age_hours: float | None = (
+                (now_aware - created_at).total_seconds() / 3600
+                if created_at is not None
+                else None
+            )
+
+            failure_count = sum(
+                1
+                for entity in area.entities.entities.values()
+                if entity.analysis_error in CORRELATION_FAILURE_ERRORS
+            )
+            correlatable_count = sum(
+                1
+                for entity in area.entities.entities.values()
+                if entity.analysis_error is not None
+            )
+
+            area.health_monitor.check_pipeline_health(
+                area_age_hours=area_age_hours,
+                has_global_prior=area.prior.global_prior is not None,
+                cache_age_hours=cache_age_hours,
+                last_analysis_duration_ms=coordinator.last_analysis_duration_ms,
+                correlation_failure_count=failure_count,
+                correlatable_entity_count=correlatable_count,
+            )
+
     async def _save_data() -> None:
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
 
@@ -137,9 +199,10 @@ async def run_full_analysis(
         )
         await _run_step(7, "recalculate_priors", _recalculate_priors())
         await _run_step(8, "correlation_analysis", _run_correlations())
-        await _run_step(9, "save_data_before_refresh", _save_data())
-        await _run_step(10, "refresh_coordinator", _refresh())
-        await _run_step(11, "save_data_after_refresh", _save_data())
+        await _run_step(9, "pipeline_health_check", _pipeline_health_check())
+        await _run_step(10, "save_data_before_refresh", _save_data())
+        await _run_step(11, "refresh_coordinator", _refresh())
+        await _run_step(12, "save_data_after_refresh", _save_data())
 
     except Exception as err:
         _LOGGER.error("Fatal error during analysis pipeline: %s", err)
@@ -149,6 +212,9 @@ async def run_full_analysis(
     finally:
         succeeded = total_steps - len(failed_steps)
         final_elapsed_ms = (time.perf_counter() - analysis_start_time) * 1000
+        # Persist on the coordinator so the next pipeline_health_check run
+        # can flag slow analysis without needing logs or external metrics.
+        coordinator._last_analysis_duration_ms = final_elapsed_ms  # noqa: SLF001
         if failed_steps:
             _LOGGER.warning(
                 "Analysis completed: %d/%d steps succeeded (FAILED: %s) in %.2f ms",

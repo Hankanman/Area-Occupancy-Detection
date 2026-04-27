@@ -104,6 +104,24 @@ Each area gets a diagnostic sensor entity that exposes health status:
 
 The Evidence sensor also includes a `health_status` field in its `details` attribute for each entity, showing one of: `healthy`, `stuck_active`, `stuck_inactive`, `unavailable`, `never_triggered`, or `excluded`.
 
+## Pipeline Health
+
+In addition to per-sensor checks, the same health monitor flags **calculation pipeline** issues per area — silent failures in the integration's own learning surface that would otherwise leave you wondering why occupancy looks wrong. These appear in **Settings → System → Repairs** alongside sensor issues, with their own translation key family (`pipeline_health_*`) so they're distinguishable.
+
+| Issue | When it fires | Severity |
+|------|---------------|----------|
+| **Insufficient priors** | Area has been running for more than 7 days but no global occupancy prior has been learned. The integration is silently falling back to a minimum baseline for every Bayesian update. | Warning |
+| **Stale intervals cache** | The occupied-intervals cache (rebuilt hourly) is older than 25h, or has never been populated for an area more than 7 days old. Indicates the analysis pipeline has stopped refreshing for this area. | Error |
+| **Slow analysis** | The most recent full analysis cycle took longer than 30 seconds. Usually points to database pressure, very large sensor / area count, or a long-running correlation run. | Warning |
+| **Correlation failures** | Half or more of the area's correlatable sensors failed correlation analysis on the last cycle (e.g. `too_few_samples`, `no_occupied_intervals`). Without correlations, sensors can't be tuned to your installation's behavior. | Warning |
+
+### How to read pipeline issues
+
+Each repair entry includes a short numeric summary in the title (hours since the issue started, hours of cache age, etc.) and a longer description with **What to do** steps tailored to the failure.
+
+- For the deepest detail, download diagnostics from the integration card — pipeline issues are surfaced under each area's `health` section, and the inputs that drove them (priors, cache age, correlation `analysis_error` fields) are visible in the same dump. See [Diagnostics](../technical/diagnostics.md).
+- All four issues auto-resolve when the next analysis cycle finds the underlying state has recovered (e.g. the prior is learned, the cache rebuilds, analysis completes faster, correlations succeed).
+
 ## Common Scenarios
 
 ### Dead Battery

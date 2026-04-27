@@ -907,6 +907,22 @@
         "sensor_health_never_triggered": {
             "title": "{entity_id} may be misconfigured in {area}",
             "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has never been active in {duration} hours of monitoring.\n\nThis sensor is not contributing any useful data to occupancy detection. It may be misconfigured (wrong active state), broken, or not appropriate for this area.\n\n**What to do:**\n- Verify the sensor's active state mapping matches the actual device behavior\n- Check if the device is functional by triggering it manually\n- Consider removing it from the area configuration if it's not needed\n\nThis issue will resolve automatically if the sensor triggers."
+        },
+        "pipeline_health_insufficient_priors": {
+            "title": "Priors haven't trained for {area}",
+            "description": "The integration has been running for {duration} hours in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every Bayesian update falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
+        },
+        "pipeline_health_stale_intervals_cache": {
+            "title": "Occupancy data hasn't refreshed for {area}",
+            "description": "The occupied-intervals cache for **{area}** is {duration} hours old. The hourly analysis pipeline rebuilds this cache from your sensor history; if it stops refreshing, prior learning and correlation analysis silently degrade.\n\n{details}\n\n**What to do:**\n- Check the Home Assistant logs for `Area Occupancy Detection` errors during the analysis pipeline\n- Verify the `recorder` integration is healthy (the cache is built from recorder history)\n- Try the **Run Analysis** service to force a rebuild\n\nThis issue will resolve automatically when the next successful analysis cycle rebuilds the cache."
+        },
+        "pipeline_health_slow_analysis": {
+            "title": "Analysis cycle is slow for {area}",
+            "description": "The most recent analysis cycle took longer than 30 seconds. This usually indicates a database under pressure, a very large sensor / area count, or a long-running correlation run.\n\n{details}\n\n**What to do:**\n- Check `Settings → System → Repairs` for related warnings\n- If the database is large, consider lowering retention via integration options\n- Open a GitHub issue with a downloaded diagnostic if the slowness persists across cycles\n\nThis issue will resolve automatically when the next analysis cycle completes within the threshold."
+        },
+        "pipeline_health_correlation_failures": {
+            "title": "Sensor correlation analysis is failing in {area}",
+            "description": "Half or more of the correlatable sensors in **{area}** failed correlation analysis on the last cycle. Without correlations, sensors fall back to default likelihoods and the integration can't learn how reliable each one is for *your* installation.\n\n{details}\n\n**What to do:**\n- Open the integration's downloaded diagnostics and check each entity's `analysis_error` field\n- Common causes: insufficient historical data (`too_few_samples`), no occupied periods to compare against (`no_occupied_intervals`), or sensors that never change state\n- Confirm motion sensors are configured and triggering — they're the ground truth used to score every other sensor\n\nThis issue will resolve automatically once enough sensors complete correlation analysis successfully."
         }
     }
 }
