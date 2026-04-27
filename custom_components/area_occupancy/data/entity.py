@@ -96,8 +96,11 @@ class Entity:
             raise ValueError("Either hass or state_provider must be provided")
         if self.hass is not None and self.state_provider is not None:
             raise ValueError("Cannot provide both hass and state_provider")
-        if self.last_updated is None:
-            self.last_updated = dt_util.utcnow()
+        self.last_updated = (
+            to_utc(self.last_updated)
+            if self.last_updated is not None
+            else dt_util.utcnow()
+        )
 
         # Store the static probability values in protected attributes
         # These are used as fallbacks when Gaussian calculation is not available
