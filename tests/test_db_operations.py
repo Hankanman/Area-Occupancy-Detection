@@ -255,6 +255,8 @@ class TestLoadData:
         reloaded = area.entities.get_entity(entity_id)
         assert reloaded.last_updated is not None
         assert reloaded.last_updated.tzinfo is dt_util.UTC
+        # Wall-clock value must be preserved — only tzinfo should change.
+        assert reloaded.last_updated == naive_ts.replace(tzinfo=dt_util.UTC)
 
     @pytest.mark.asyncio
     async def test_load_data_deletes_stale_entities(
