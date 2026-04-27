@@ -15,6 +15,8 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_VERSION, CONF_VERSION_MINOR, DEVICE_SW_VERSION
@@ -28,6 +30,15 @@ if TYPE_CHECKING:
     from .data.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
+
+# Canonical DB exception tuple used across db/queries.py and db/operations.py.
+_DB_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    SQLAlchemyError,
+    ValueError,
+    TypeError,
+    RuntimeError,
+    OSError,
+)
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -151,14 +162,29 @@ def _health_snapshot(area: Area) -> dict[str, Any]:
 def _area_snapshot(
     coordinator: AreaOccupancyCoordinator, area_name: str, area: Area
 ) -> dict[str, Any]:
-    """Capture a snapshot for a single area, defending each subsection."""
+    """Capture a snapshot for a single area, defending each subsection.
+
+    Each subsection is wrapped in a broad ``except Exception`` because the
+    underlying calls touch a wide surface (probability math, state lookups,
+    cache reads, sub-property access on lazily-initialized components) and
+    we don't want a single failure to discard the rest of the diagnostic.
+    Failures are surfaced both in the diagnostic dump (as a
+    ``<section>_error`` key) and in the HA log with a stack trace, so a
+    triager can act on them.
+    """
     snapshot: dict[str, Any] = {"area_name": area_name}
 
     try:
         snapshot["area_id"] = area.config.area_id
         snapshot["purpose"] = area.config.purpose
         snapshot["threshold"] = area.config.threshold
-    except Exception as err:  # noqa: BLE001 — diagnostic must not raise
+    except (AttributeError, KeyError) as err:
+        _LOGGER.warning(
+            "Diagnostics: failed to read area config for '%s': %s",
+            area_name,
+            err,
+            exc_info=True,
+        )
         snapshot["config_error"] = repr(err)
 
     try:
@@ -170,17 +196,35 @@ def _area_snapshot(
             "decaying_entity_count": len(area.entities.decaying_entities),
             "entity_count": len(area.entities.entities),
         }
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:  # noqa: BLE001 — see docstring
+        _LOGGER.warning(
+            "Diagnostics: failed to compute current state for '%s': %s",
+            area_name,
+            err,
+            exc_info=True,
+        )
         snapshot["current_error"] = repr(err)
 
     try:
         snapshot["prior"] = area.prior.diagnostic_snapshot()
     except Exception as err:  # noqa: BLE001
+        _LOGGER.warning(
+            "Diagnostics: failed to read prior snapshot for '%s': %s",
+            area_name,
+            err,
+            exc_info=True,
+        )
         snapshot["prior_error"] = repr(err)
 
     try:
         snapshot["config"] = _area_config_snapshot(area)
-    except Exception as err:  # noqa: BLE001
+    except (AttributeError, TypeError) as err:
+        _LOGGER.warning(
+            "Diagnostics: failed to capture config snapshot for '%s': %s",
+            area_name,
+            err,
+            exc_info=True,
+        )
         snapshot["config_snapshot_error"] = repr(err)
 
     try:
@@ -190,11 +234,23 @@ def _area_snapshot(
             for entity in area.entities.entities.values()
         ]
     except Exception as err:  # noqa: BLE001
+        _LOGGER.warning(
+            "Diagnostics: failed to capture entity snapshots for '%s': %s",
+            area_name,
+            err,
+            exc_info=True,
+        )
         snapshot["entities_error"] = repr(err)
 
     try:
         snapshot["health"] = _health_snapshot(area)
-    except Exception as err:  # noqa: BLE001
+    except (AttributeError, TypeError) as err:
+        _LOGGER.warning(
+            "Diagnostics: failed to capture health snapshot for '%s': %s",
+            area_name,
+            err,
+            exc_info=True,
+        )
         snapshot["health_error"] = repr(err)
 
     return snapshot
@@ -215,7 +271,10 @@ def _collect_db_stats(coordinator: AreaOccupancyCoordinator) -> dict[str, Any]:
             stats["correlation_count"] = session.query(db.Correlations).count()
             stats["entity_count"] = session.query(db.Entities).count()
             stats["area_count"] = session.query(db.Areas).count()
-    except Exception as err:  # noqa: BLE001
+    except _DB_EXCEPTIONS as err:
+        _LOGGER.warning(
+            "Diagnostics: failed to read DB row counts: %s", err, exc_info=True
+        )
         stats["counts_error"] = repr(err)
 
     cache_status: dict[str, dict[str, Any]] = {}
@@ -224,7 +283,13 @@ def _collect_db_stats(coordinator: AreaOccupancyCoordinator) -> dict[str, Any]:
             cache_status[area_name] = {
                 "valid": queries.is_occupied_intervals_cache_valid(db, area_name),
             }
-        except Exception as err:  # noqa: BLE001
+        except _DB_EXCEPTIONS as err:
+            _LOGGER.warning(
+                "Diagnostics: failed to check cache validity for '%s': %s",
+                area_name,
+                err,
+                exc_info=True,
+            )
             cache_status[area_name] = {"error": repr(err)}
     stats["occupied_intervals_cache"] = cache_status
 
@@ -257,7 +322,10 @@ async def async_get_config_entry_diagnostics(
         integration_section["sleep_start"] = integration_config.sleep_start
         integration_section["sleep_end"] = integration_config.sleep_end
         integration_section["people_count"] = len(integration_config.people)
-    except Exception as err:  # noqa: BLE001
+    except (AttributeError, TypeError, KeyError) as err:
+        _LOGGER.warning(
+            "Diagnostics: failed to read integration config: %s", err, exc_info=True
+        )
         integration_section["config_error"] = repr(err)
 
     areas_section = [
@@ -269,7 +337,12 @@ async def async_get_config_entry_diagnostics(
         database_section = await hass.async_add_executor_job(
             _collect_db_stats, coordinator
         )
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:  # noqa: BLE001 — executor failure is opaque
+        _LOGGER.warning(
+            "Diagnostics: failed to dispatch DB stats collection: %s",
+            err,
+            exc_info=True,
+        )
         database_section = {"error": repr(err)}
 
     return {
