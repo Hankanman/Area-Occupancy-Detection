@@ -1372,6 +1372,160 @@ class TestAreaOccupancyOptionsFlow:
         assert result_data[CONF_SLEEP_START] == "23:00:00"
         assert result_data[CONF_SLEEP_END] == "08:00:00"
 
+    async def test_options_flow_area_action_menu_includes_reset_learning(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ) -> None:
+        """area_action menu surfaces ``reset_learning_confirm`` alongside edit/remove."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        areas = flow._get_areas_from_config()
+        assert areas, "fixture should have at least one configured area"
+        flow._area_being_edited = areas[0][CONF_AREA_ID]
+
+        result = await flow.async_step_area_action()
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "area_action"
+        menu_options = result.get("menu_options", [])
+        assert "edit_area" in menu_options
+        assert "reset_learning_confirm" in menu_options
+        assert "remove_area_confirm" in menu_options
+
+    async def test_options_flow_reset_learning_confirm_shows_yes_no(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ) -> None:
+        """``reset_learning_confirm`` advances to the yes/no menu."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        areas = flow._get_areas_from_config()
+        flow._area_being_edited = areas[0][CONF_AREA_ID]
+
+        result = await flow.async_step_reset_learning_confirm()
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "reset_learning"
+        menu_options = result.get("menu_options", [])
+        assert "confirm_reset_learning" in menu_options
+        assert "cancel_reset_learning" in menu_options
+        # State has moved from "being_edited" to "to_reset"
+        assert flow._area_to_reset == areas[0][CONF_AREA_ID]
+
+    async def test_options_flow_cancel_reset_learning_returns_to_area_action(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ) -> None:
+        """Cancelling the reset returns to the area_action menu and clears state."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        areas = flow._get_areas_from_config()
+        area_id = areas[0][CONF_AREA_ID]
+        flow._area_to_reset = area_id
+
+        result = await flow.async_step_cancel_reset_learning()
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "area_action"
+        assert flow._area_to_reset is None
+        # The user should land back on the same area they were managing.
+        assert flow._area_being_edited == area_id
+
+    async def test_options_flow_confirm_reset_learning_calls_purge_helper(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ) -> None:
+        """Confirm step delegates to async_purge_area_data and returns to area_action."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        areas = flow._get_areas_from_config()
+        area_id = areas[0][CONF_AREA_ID]
+        flow._area_to_reset = area_id
+
+        # Stub coordinator + area lookup; the helper itself is mocked so we
+        # don't need a real DB. Only the orchestration in the step matters.
+        fake_area = Mock()
+        fake_area.config.area_id = area_id
+        fake_coordinator = Mock()
+        fake_coordinator.areas = {"Living Room": fake_area}
+        flow.config_entry.runtime_data = fake_coordinator
+
+        with (
+            patch(
+                "custom_components.area_occupancy.service._find_area_by_area_id",
+                return_value=("Living Room", fake_area),
+            ),
+            patch(
+                "custom_components.area_occupancy.service.async_purge_area_data",
+                new=AsyncMock(return_value={"area_id": area_id, "entities_deleted": 7}),
+            ) as mock_purge,
+        ):
+            result = await flow.async_step_confirm_reset_learning()
+
+        mock_purge.assert_awaited_once()
+        # Returns the user to the area_action menu (still managing the area).
+        assert result.get("type") == FlowResultType.MENU
+        assert result.get("step_id") == "area_action"
+        assert flow._area_to_reset is None
+        assert flow._area_being_edited == area_id
+
+    async def test_options_flow_confirm_reset_learning_aborts_when_no_coordinator(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ) -> None:
+        """If runtime_data isn't loaded, the reset aborts cleanly."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        areas = flow._get_areas_from_config()
+        flow._area_to_reset = areas[0][CONF_AREA_ID]
+        flow.config_entry.runtime_data = None
+
+        result = await flow.async_step_confirm_reset_learning()
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == "reset_learning_failed"
+        assert flow._area_to_reset is None
+
+    async def test_options_flow_confirm_reset_learning_aborts_when_purge_raises(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ) -> None:
+        """A HomeAssistantError from the helper aborts the flow without raising."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        areas = flow._get_areas_from_config()
+        area_id = areas[0][CONF_AREA_ID]
+        flow._area_to_reset = area_id
+
+        fake_area = Mock()
+        fake_area.config.area_id = area_id
+        fake_coordinator = Mock()
+        flow.config_entry.runtime_data = fake_coordinator
+
+        with (
+            patch(
+                "custom_components.area_occupancy.service._find_area_by_area_id",
+                return_value=("Living Room", fake_area),
+            ),
+            patch(
+                "custom_components.area_occupancy.service.async_purge_area_data",
+                new=AsyncMock(side_effect=HomeAssistantError("simulated")),
+            ),
+        ):
+            result = await flow.async_step_confirm_reset_learning()
+
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == "reset_learning_failed"
+        assert flow._area_to_reset is None
+
 
 class TestHelperFunctionEdgeCases:
     """Test edge cases for helper functions."""

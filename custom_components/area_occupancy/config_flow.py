@@ -2567,6 +2567,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         super().__init__()
         self._area_being_edited: str | None = None
         self._area_to_remove: str | None = None
+        self._area_to_reset: str | None = None  # area_id pending learning reset
         self._area_config_draft: dict[str, Any] = {}
         self._person_being_edited: int | None = None  # Index into people list
         self._person_to_remove: int | None = None  # Index into people list for removal
@@ -2683,7 +2684,12 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
 
         return self.async_show_menu(
             step_id="area_action",
-            menu_options=["edit_area", "remove_area_confirm", "cancel_area_action"],
+            menu_options=[
+                "edit_area",
+                "reset_learning_confirm",
+                "remove_area_confirm",
+                "cancel_area_action",
+            ],
             description_placeholders=description_placeholders,
         )
 
@@ -2701,6 +2707,13 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         """Initiate area removal."""
         self._prepare_area_action_remove()
         return await self.async_step_remove_area()
+
+    async def async_step_reset_learning_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Initiate learning reset for the area being edited."""
+        self._area_to_reset = self._area_being_edited
+        return await self.async_step_reset_learning()
 
     async def async_step_cancel_area_action(
         self, user_input: dict[str, Any] | None = None
@@ -2745,6 +2758,86 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     ) -> ConfigFlowResult:
         """Cancel area removal."""
         self._area_to_remove = None
+        return await self.async_step_init()
+
+    async def async_step_reset_learning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Yes/no menu confirming learning reset for the selected area."""
+        if not self._area_to_reset:
+            return await self.async_step_init()
+
+        return self.async_show_menu(
+            step_id="reset_learning",
+            menu_options=["confirm_reset_learning", "cancel_reset_learning"],
+        )
+
+    async def async_step_confirm_reset_learning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Execute the per-area learning reset.
+
+        Wipes the area's learned history (intervals, priors, correlations,
+        cache) without removing the area from the configuration. Returns to
+        the area_action menu so the user can continue editing.
+        """
+        # Lazy import to avoid pulling service.py into the config-flow load path.
+        from .service import (  # noqa: PLC0415
+            _find_area_by_area_id,
+            async_purge_area_data,
+        )
+
+        area_id = self._area_to_reset
+        if not area_id:
+            return await self.async_step_init()
+
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            _LOGGER.warning(
+                "Reset learning aborted for area_id '%s': coordinator not loaded",
+                area_id,
+            )
+            self._area_to_reset = None
+            return self.async_abort(reason="reset_learning_failed")
+
+        area_name, area = _find_area_by_area_id(coordinator, area_id)
+        if area_name is None or area is None:
+            _LOGGER.warning(
+                "Reset learning aborted: no configured area found for area_id '%s'",
+                area_id,
+            )
+            self._area_to_reset = None
+            return self.async_abort(reason="reset_learning_failed")
+
+        _LOGGER.info(
+            "Resetting learned history for area '%s' (area_id=%s) via options flow",
+            area_name,
+            area_id,
+        )
+
+        try:
+            await async_purge_area_data(self.hass, coordinator, area_name, area)
+        except HomeAssistantError:
+            _LOGGER.exception(
+                "Reset learning failed for area '%s' (area_id=%s)", area_name, area_id
+            )
+            self._area_to_reset = None
+            return self.async_abort(reason="reset_learning_failed")
+
+        self._area_to_reset = None
+        # Stay scoped to the same area so the user lands back in its menu.
+        self._area_being_edited = area_id
+        return await self.async_step_area_action()
+
+    async def async_step_cancel_reset_learning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Cancel the learning reset and return to the area_action menu."""
+        area_id = self._area_to_reset
+        self._area_to_reset = None
+        if area_id:
+            self._area_being_edited = area_id
+            return await self.async_step_area_action()
         return await self.async_step_init()
 
     async def async_step_global_settings(
