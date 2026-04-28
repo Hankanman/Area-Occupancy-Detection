@@ -6,6 +6,7 @@ and area occupancy to identify sensors that can be used as occupancy indicators.
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
@@ -1657,6 +1658,130 @@ def get_correlatable_entities_by_area(
     return correlatable_entities
 
 
+async def _analyze_area_sensors(
+    coordinator: AreaOccupancyCoordinator,
+    area_name: str,
+    entities: dict[str, dict[str, Any]],
+    return_results: bool,
+) -> list[dict[str, Any]]:
+    """Run correlation/likelihood analysis for one area's correlatable entities.
+
+    Per-entity loop is serial within an area to keep the existing
+    per-entity error handling semantics and avoid saturating the executor
+    pool when a single area has many entities. Multiple areas run
+    concurrently via the ``asyncio.gather`` in ``run_correlation_analysis``.
+    """
+    results: list[dict[str, Any]] = []
+    for entity_id, entity_info in entities.items():
+        try:
+            if entity_info["is_binary"]:
+                # Binary sensors: Use duration-based likelihood analysis
+                likelihood_result = await coordinator.hass.async_add_executor_job(
+                    coordinator.db.analyze_binary_likelihoods,
+                    area_name,
+                    entity_id,
+                    30,  # analysis_period_days
+                    entity_info["active_states"],
+                )
+
+                # Save binary likelihood results to database (including errors)
+                if likelihood_result:
+                    input_type = entity_info.get("input_type")
+                    await coordinator.hass.async_add_executor_job(
+                        save_binary_likelihood_result,
+                        coordinator.db,
+                        likelihood_result,
+                        input_type,
+                    )
+
+                # Apply analysis results to live entities immediately
+                if likelihood_result and area_name in coordinator.areas:
+                    area = coordinator.areas[area_name]
+                    try:
+                        entity = area.entities.get_entity(entity_id)
+                        entity.update_binary_likelihoods(likelihood_result)
+                    except ValueError as e:
+                        # Entity might have been removed during analysis
+                        _LOGGER.debug(
+                            "Entity %s in area %s no longer exists: %s",
+                            entity_id,
+                            area_name,
+                            e,
+                        )
+
+                # Track result if requested
+                if return_results:
+                    results.append(
+                        {
+                            "area": area_name,
+                            "entity_id": entity_id,
+                            "type": "binary_likelihood",
+                            "success": bool(likelihood_result),
+                        }
+                    )
+            else:
+                # Numeric sensors: Use correlation analysis
+                correlation_result = await coordinator.hass.async_add_executor_job(
+                    coordinator.db.analyze_and_save_correlation,
+                    area_name,
+                    entity_id,
+                    30,  # analysis_period_days
+                    False,  # is_binary
+                    None,  # active_states (not used for numeric)
+                    entity_info.get("input_type"),  # Pass input_type
+                )
+
+                # Apply analysis results to live entities immediately
+                if correlation_result and area_name in coordinator.areas:
+                    area = coordinator.areas[area_name]
+                    try:
+                        entity = area.entities.get_entity(entity_id)
+                        entity.update_correlation(correlation_result)
+                    except ValueError as e:
+                        # Entity might have been removed during analysis
+                        _LOGGER.debug(
+                            "Entity %s in area %s no longer exists: %s",
+                            entity_id,
+                            area_name,
+                            e,
+                        )
+
+                # Track result if requested
+                if return_results:
+                    results.append(
+                        {
+                            "area": area_name,
+                            "entity_id": entity_id,
+                            "type": "correlation",
+                            "success": bool(correlation_result),
+                        }
+                    )
+        except (
+            SQLAlchemyError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+        ) as err:
+            _LOGGER.error(
+                "Sensor analysis failed for %s (%s): %s",
+                area_name,
+                entity_id,
+                err,
+            )
+            # Track error result if requested
+            if return_results:
+                results.append(
+                    {
+                        "area": area_name,
+                        "entity_id": entity_id,
+                        "success": False,
+                        "error": str(err),
+                    }
+                )
+    return results
+
+
 async def run_correlation_analysis(
     coordinator: AreaOccupancyCoordinator,
     return_results: bool = False,
@@ -1667,6 +1792,16 @@ async def run_correlation_analysis(
     Binary sensors use duration-based probability calculation (static values).
     Requires OccupiedIntervalsCache to be populated.
 
+    Areas are analyzed concurrently via ``asyncio.gather`` — each area's
+    per-entity work still runs serially inside the per-area helper, but
+    the previous outer loop's serial wait between areas is gone. With N
+    areas the analysis step's wall-clock time drops from sum(per-area)
+    to roughly max(per-area), bounded by the executor pool depth.
+
+    ``return_exceptions=True`` ensures one area's failure (e.g. a coding
+    error that escapes the per-entity catch) doesn't abort the others;
+    the failure is logged and surfaced in ``return_results`` output.
+
     Args:
         coordinator: The coordinator instance containing areas and database
         return_results: If True, returns a list of correlation results for summary
@@ -1676,126 +1811,42 @@ async def run_correlation_analysis(
         Each dictionary contains: area, entity_id, type, success, and optionally error.
     """
     correlatable_entities = get_correlatable_entities_by_area(coordinator)
-    results: list[dict[str, Any]] = []
 
-    if correlatable_entities:
-        _LOGGER.debug(
-            "Starting sensor analysis for %d area(s)",
-            len(correlatable_entities),
-        )
-        for area_name, entities in correlatable_entities.items():
-            for entity_id, entity_info in entities.items():
-                try:
-                    if entity_info["is_binary"]:
-                        # Binary sensors: Use duration-based likelihood analysis
-                        likelihood_result = (
-                            await coordinator.hass.async_add_executor_job(
-                                coordinator.db.analyze_binary_likelihoods,
-                                area_name,
-                                entity_id,
-                                30,  # analysis_period_days
-                                entity_info["active_states"],
-                            )
-                        )
-
-                        # Save binary likelihood results to database (including errors)
-                        if likelihood_result:
-                            input_type = entity_info.get("input_type")
-                            await coordinator.hass.async_add_executor_job(
-                                save_binary_likelihood_result,
-                                coordinator.db,
-                                likelihood_result,
-                                input_type,
-                            )
-
-                        # Apply analysis results to live entities immediately
-                        if likelihood_result and area_name in coordinator.areas:
-                            area = coordinator.areas[area_name]
-                            try:
-                                entity = area.entities.get_entity(entity_id)
-                                entity.update_binary_likelihoods(likelihood_result)
-                            except ValueError as e:
-                                # Entity might have been removed during analysis
-                                _LOGGER.debug(
-                                    "Entity %s in area %s no longer exists: %s",
-                                    entity_id,
-                                    area_name,
-                                    e,
-                                )
-
-                        # Track result if requested
-                        if return_results:
-                            results.append(
-                                {
-                                    "area": area_name,
-                                    "entity_id": entity_id,
-                                    "type": "binary_likelihood",
-                                    "success": bool(likelihood_result),
-                                }
-                            )
-                    else:
-                        # Numeric sensors: Use correlation analysis
-                        correlation_result = (
-                            await coordinator.hass.async_add_executor_job(
-                                coordinator.db.analyze_and_save_correlation,
-                                area_name,
-                                entity_id,
-                                30,  # analysis_period_days
-                                False,  # is_binary
-                                None,  # active_states (not used for numeric)
-                                entity_info.get("input_type"),  # Pass input_type
-                            )
-                        )
-
-                        # Apply analysis results to live entities immediately
-                        if correlation_result and area_name in coordinator.areas:
-                            area = coordinator.areas[area_name]
-                            try:
-                                entity = area.entities.get_entity(entity_id)
-                                entity.update_correlation(correlation_result)
-                            except ValueError as e:
-                                # Entity might have been removed during analysis
-                                _LOGGER.debug(
-                                    "Entity %s in area %s no longer exists: %s",
-                                    entity_id,
-                                    area_name,
-                                    e,
-                                )
-
-                        # Track result if requested
-                        if return_results:
-                            results.append(
-                                {
-                                    "area": area_name,
-                                    "entity_id": entity_id,
-                                    "type": "correlation",
-                                    "success": bool(correlation_result),
-                                }
-                            )
-                except (
-                    SQLAlchemyError,
-                    ValueError,
-                    TypeError,
-                    RuntimeError,
-                    OSError,
-                ) as err:
-                    _LOGGER.error(
-                        "Sensor analysis failed for %s (%s): %s",
-                        area_name,
-                        entity_id,
-                        err,
-                    )
-                    # Track error result if requested
-                    if return_results:
-                        results.append(
-                            {
-                                "area": area_name,
-                                "entity_id": entity_id,
-                                "success": False,
-                                "error": str(err),
-                            }
-                        )
-    else:
+    if not correlatable_entities:
         _LOGGER.debug("Skipping sensor analysis - no correlatable entities configured")
+        return [] if return_results else None
 
-    return results if return_results else None
+    _LOGGER.debug(
+        "Starting sensor analysis for %d area(s) in parallel",
+        len(correlatable_entities),
+    )
+
+    area_names = list(correlatable_entities.keys())
+    area_tasks = [
+        _analyze_area_sensors(
+            coordinator, area_name, correlatable_entities[area_name], return_results
+        )
+        for area_name in area_names
+    ]
+    area_results = await asyncio.gather(*area_tasks, return_exceptions=True)
+
+    flat_results: list[dict[str, Any]] = []
+    for area_name, area_result in zip(area_names, area_results, strict=False):
+        if isinstance(area_result, BaseException):
+            _LOGGER.exception(
+                "Sensor analysis raised for area '%s'",
+                area_name,
+                exc_info=area_result,
+            )
+            if return_results:
+                flat_results.append(
+                    {
+                        "area": area_name,
+                        "success": False,
+                        "error": str(area_result),
+                    }
+                )
+        elif return_results:
+            flat_results.extend(area_result)
+
+    return flat_results if return_results else None

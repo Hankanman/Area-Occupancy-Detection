@@ -1,5 +1,6 @@
 """Tests for database correlation analysis functions."""
 
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -2986,3 +2987,134 @@ class TestRunCorrelationAnalysis:
             assert media_result["success"] is False
             assert "error" in media_result
             assert "Database error" in media_result["error"]
+
+    async def test_run_correlation_analysis_parallelizes_areas(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Multi-area runs concurrently via asyncio.gather, results merge.
+
+        Mock ``get_correlatable_entities_by_area`` to return two synthetic
+        areas. Patch ``_analyze_area_sensors`` to record the order it's
+        invoked and to ``await asyncio.sleep`` so the two areas overlap if
+        the orchestration is truly concurrent. Both areas' results must
+        appear in the merged output.
+        """
+        invocations: list[str] = []
+
+        async def fake_analyze_area_sensors(
+            _coordinator,
+            area_name,
+            _entities,
+            return_results,
+        ):
+            invocations.append(f"start:{area_name}")
+            # Yield to the loop so the second gather task can start
+            # before this one finishes — proves concurrency.
+            await asyncio.sleep(0)
+            invocations.append(f"end:{area_name}")
+            return (
+                [
+                    {
+                        "area": area_name,
+                        "entity_id": f"sensor.{area_name}",
+                        "type": "binary_likelihood",
+                        "success": True,
+                    }
+                ]
+                if return_results
+                else []
+            )
+
+        with (
+            patch(
+                "custom_components.area_occupancy.db.correlation.get_correlatable_entities_by_area",
+                return_value={
+                    "AreaOne": {
+                        "sensor.a": {"is_binary": True, "active_states": ["on"]}
+                    },
+                    "AreaTwo": {
+                        "sensor.b": {"is_binary": True, "active_states": ["on"]}
+                    },
+                },
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation._analyze_area_sensors",
+                side_effect=fake_analyze_area_sensors,
+            ),
+        ):
+            results = await run_correlation_analysis(coordinator, return_results=True)
+
+        # Both areas appear in the merged results.
+        assert results is not None
+        result_areas = {r["area"] for r in results}
+        assert result_areas == {"AreaOne", "AreaTwo"}
+
+        # Both areas started before either finished — proves gather, not serial.
+        starts = [i for i in invocations if i.startswith("start:")]
+        ends = [i for i in invocations if i.startswith("end:")]
+        assert len(starts) == 2
+        assert len(ends) == 2
+        # The first end must come after both starts.
+        assert invocations.index(ends[0]) > invocations.index(starts[1])
+
+    async def test_run_correlation_analysis_isolates_per_area_exception(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """An unexpected exception in one area must not abort other areas.
+
+        ``return_exceptions=True`` on the gather catches anything that
+        escapes the per-entity ``except`` (e.g. a coding error like
+        AttributeError). Verify the surviving area's results still
+        come back, and the failed area is recorded with success=False.
+        """
+
+        async def fake_analyze_area_sensors(
+            _coordinator,
+            area_name,
+            _entities,
+            return_results,
+        ):
+            if area_name == "BrokenArea":
+                raise AttributeError("simulated coding error")
+            return (
+                [
+                    {
+                        "area": area_name,
+                        "entity_id": "sensor.ok",
+                        "type": "binary_likelihood",
+                        "success": True,
+                    }
+                ]
+                if return_results
+                else []
+            )
+
+        with (
+            patch(
+                "custom_components.area_occupancy.db.correlation.get_correlatable_entities_by_area",
+                return_value={
+                    "BrokenArea": {
+                        "sensor.x": {"is_binary": True, "active_states": ["on"]}
+                    },
+                    "GoodArea": {
+                        "sensor.y": {"is_binary": True, "active_states": ["on"]}
+                    },
+                },
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation._analyze_area_sensors",
+                side_effect=fake_analyze_area_sensors,
+            ),
+        ):
+            results = await run_correlation_analysis(coordinator, return_results=True)
+
+        assert results is not None
+        good = next((r for r in results if r["area"] == "GoodArea"), None)
+        broken = next((r for r in results if r["area"] == "BrokenArea"), None)
+
+        assert good is not None
+        assert good["success"] is True
+
+        assert broken is not None
+        assert broken["success"] is False
+        assert "simulated coding error" in broken["error"]
