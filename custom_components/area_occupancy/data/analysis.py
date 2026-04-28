@@ -122,59 +122,7 @@ async def run_full_analysis(
         await coordinator.async_refresh_correlations()
 
     async def _pipeline_health_check() -> None:
-        """Check pipeline-scope anomalies after priors + correlation have run.
-
-        Reads area age and cache age from the DB (executor-offloaded), reads
-        the prior + correlation state from in-memory area objects, and feeds
-        the inputs to ``HealthMonitor.check_pipeline_health``. The monitor
-        merges these with the sensor-scope issues from step 3 and updates
-        the HA repair registry in one pass.
-        """
-        now_aware = dt_util.utcnow()
-        for area in coordinator.areas.values():
-            try:
-                created_at = await coordinator.hass.async_add_executor_job(
-                    get_area_created_at, coordinator.db, area.area_name
-                )
-                cache_age_hours = await coordinator.hass.async_add_executor_job(
-                    get_occupied_intervals_cache_age_hours,
-                    coordinator.db,
-                    area.area_name,
-                )
-            except (ValueError, TypeError, RuntimeError, OSError) as err:
-                _LOGGER.debug(
-                    "Pipeline health: failed to read DB state for area '%s': %s",
-                    area.area_name,
-                    err,
-                    exc_info=True,
-                )
-                continue
-
-            area_age_hours: float | None = (
-                (now_aware - created_at).total_seconds() / 3600
-                if created_at is not None
-                else None
-            )
-
-            failure_count = sum(
-                1
-                for entity in area.entities.entities.values()
-                if entity.analysis_error in CORRELATION_FAILURE_ERRORS
-            )
-            correlatable_count = sum(
-                1
-                for entity in area.entities.entities.values()
-                if entity.analysis_error is not None
-            )
-
-            area.health_monitor.check_pipeline_health(
-                area_age_hours=area_age_hours,
-                has_global_prior=area.prior.global_prior is not None,
-                cache_age_hours=cache_age_hours,
-                last_analysis_duration_ms=coordinator.last_analysis_duration_ms,
-                correlation_failure_count=failure_count,
-                correlatable_entity_count=correlatable_count,
-            )
+        await _run_pipeline_health_check(coordinator)
 
     async def _save_data() -> None:
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
@@ -212,9 +160,6 @@ async def run_full_analysis(
     finally:
         succeeded = total_steps - len(failed_steps)
         final_elapsed_ms = (time.perf_counter() - analysis_start_time) * 1000
-        # Persist on the coordinator so the next pipeline_health_check run
-        # can flag slow analysis without needing logs or external metrics.
-        coordinator._last_analysis_duration_ms = final_elapsed_ms  # noqa: SLF001
         if failed_steps:
             _LOGGER.warning(
                 "Analysis completed: %d/%d steps succeeded (FAILED: %s) in %.2f ms",
@@ -224,6 +169,11 @@ async def run_full_analysis(
                 final_elapsed_ms,
             )
         else:
+            # Only persist the duration on a fully successful run — a partial
+            # / aborted cycle's duration isn't comparable to the slow-analysis
+            # threshold and would let a fast-failing run mask a previously-
+            # slow successful one (or vice versa).
+            coordinator._last_analysis_duration_ms = final_elapsed_ms  # noqa: SLF001
             _LOGGER.info(
                 "Full analysis completed: %d/%d steps succeeded in %.2f ms",
                 total_steps,
@@ -237,6 +187,70 @@ async def run_full_analysis(
         raise HomeAssistantError(
             f"Analysis pipeline had {len(failed_steps)} failed step(s): "
             f"{', '.join(failed_steps)}"
+        )
+
+
+async def _run_pipeline_health_check(
+    coordinator: AreaOccupancyCoordinator,
+) -> None:
+    """Check pipeline-scope anomalies after priors + correlation have run.
+
+    Reads area age and cache age from the DB (executor-offloaded), reads
+    the prior + correlation state from in-memory area objects, and feeds
+    the inputs to ``HealthMonitor.check_pipeline_health``. The monitor
+    merges these with the sensor-scope issues from step 3 and updates the
+    HA repair registry in one pass. Extracted from ``run_full_analysis``
+    to keep the orchestrator's complexity inside ruff's threshold.
+    """
+    now_aware = dt_util.utcnow()
+    for area in coordinator.areas.values():
+        try:
+            created_at = await coordinator.hass.async_add_executor_job(
+                get_area_created_at, coordinator.db, area.area_name
+            )
+            cache_age_hours = await coordinator.hass.async_add_executor_job(
+                get_occupied_intervals_cache_age_hours,
+                coordinator.db,
+                area.area_name,
+            )
+        except (ValueError, TypeError, RuntimeError, OSError) as err:
+            _LOGGER.debug(
+                "Pipeline health: failed to read DB state for area '%s': %s",
+                area.area_name,
+                err,
+                exc_info=True,
+            )
+            continue
+
+        area_age_hours: float | None = (
+            (now_aware - created_at).total_seconds() / 3600
+            if created_at is not None
+            else None
+        )
+
+        # An entity is "correlatable" if it has either succeeded
+        # (``analysis_error is None``) or hit a real failure mode in
+        # CORRELATION_FAILURE_ERRORS. Designed exclusions like
+        # ``not_analyzed`` (warm-up) and ``motion_sensor_excluded`` (motion
+        # is ground truth) must not inflate the denominator, else the
+        # failure ratio is silently diluted.
+        failure_count = 0
+        correlatable_count = 0
+        for entity in area.entities.entities.values():
+            err = entity.analysis_error
+            if err is None:
+                correlatable_count += 1
+            elif err in CORRELATION_FAILURE_ERRORS:
+                correlatable_count += 1
+                failure_count += 1
+
+        area.health_monitor.check_pipeline_health(
+            area_age_hours=area_age_hours,
+            has_global_prior=area.prior.global_prior is not None,
+            cache_age_hours=cache_age_hours,
+            last_analysis_duration_ms=coordinator.last_analysis_duration_ms,
+            correlation_failure_count=failure_count,
+            correlatable_entity_count=correlatable_count,
         )
 
 

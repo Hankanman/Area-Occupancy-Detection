@@ -882,3 +882,36 @@ class TestPipelineHealth:
         types = {i.issue_type for i in issues}
         assert HealthIssueType.UNAVAILABLE in types  # from check_health
         assert HealthIssueType.INSUFFICIENT_PRIORS in types  # from pipeline check
+
+    def test_pipeline_issues_clear_when_condition_resolves(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A previously-flagged pipeline issue must drop out when its condition resolves.
+
+        Regression: an earlier implementation copied the entire ``self._issues``
+        list into the new run, so an issue whose check no longer fires would
+        survive as a ghost entry on every subsequent call.
+        """
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            # First pass: priors missing → insufficient_priors fires.
+            first = monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+            assert HealthIssueType.INSUFFICIENT_PRIORS in {i.issue_type for i in first}
+
+            # Second pass: priors now learned, no other anomalies →
+            # insufficient_priors must clear.
+            second = monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        assert second == []

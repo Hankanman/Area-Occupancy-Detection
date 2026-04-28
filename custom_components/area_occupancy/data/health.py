@@ -95,18 +95,27 @@ SLOW_ANALYSIS_THRESHOLD_MS: float = 30_000.0
 CORRELATION_FAILURE_RATIO: float = 0.5
 
 # ``analysis_error`` strings that represent real correlation failures (not
-# "by design" states like ``not_analyzed``, ``motion_excluded``, or
-# ``binary_likelihood`` which are normal pipeline states). Public because
-# the analysis pipeline reads it when counting per-area failures to feed
-# into ``check_pipeline_health``.
+# "by design" states like ``not_analyzed`` or ``motion_sensor_excluded``).
+# Sourced from db/correlation.py — keep this in sync when new failure
+# branches are added there. Public because the analysis pipeline reads it
+# when counting per-area failures to feed into ``check_pipeline_health``.
 CORRELATION_FAILURE_ERRORS: frozenset[str] = frozenset(
     {
         "no_occupied_intervals",
         "no_occupied_time",
+        "no_unoccupied_time",
         "no_occupancy_data",
+        "no_sensor_data",
+        "no_state_changes",
+        "no_active_intervals",
+        "no_active_during_occupied",
+        "no_occupied_samples",
+        "no_unoccupied_samples",
+        "no_correlation",
         "insufficient_data",
         "too_few_samples",
-        "no_state_changes",
+        "too_few_samples_after_filtering",
+        "zero_samples_after_filtering",
     }
 )
 
@@ -351,7 +360,16 @@ class HealthMonitor:
         Returns the full list of current issues (sensor + pipeline).
         """
         now = dt_util.utcnow()
-        new_issues: list[HealthIssue] = list(self._issues)
+        # Carry over only sensor-scope issues from the most recent
+        # ``check_health`` run; drop any prior pipeline issues so that a
+        # check whose condition has cleared can't survive as a stale entry
+        # if ``check_pipeline_health`` is called twice without an
+        # intervening ``check_health``.
+        new_issues: list[HealthIssue] = [
+            issue
+            for issue in self._issues
+            if issue.issue_type not in _PIPELINE_ISSUE_TYPES
+        ]
 
         issue = self._check_insufficient_priors(area_age_hours, has_global_prior, now)
         if issue:
