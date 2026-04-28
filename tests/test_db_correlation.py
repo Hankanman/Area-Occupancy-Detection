@@ -3118,3 +3118,53 @@ class TestRunCorrelationAnalysis:
         assert broken is not None
         assert broken["success"] is False
         assert "simulated coding error" in broken["error"]
+
+    async def test_run_correlation_analysis_reraises_when_no_results_flag(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Pipeline-mode caller (return_results=False) re-raises gather exceptions.
+
+        Pre-parallel, an unexpected exception in correlation propagated up
+        and ``data.analysis._run_step`` marked the step as failed. After
+        the parallel refactor, ``return_exceptions=True`` would silently
+        swallow such exceptions. The function now logs each per-area
+        failure and re-raises the first so step-level failure semantics
+        survive: the analysis pipeline marks step 8 failed and coordinator
+        backoff kicks in. The OTHER areas' work still completes — gather
+        is still load-bearing.
+        """
+        good_calls: list[str] = []
+
+        async def fake_analyze_area_sensors(
+            _coordinator,
+            area_name,
+            _entities,
+            _return_results,
+        ):
+            if area_name == "BrokenArea":
+                raise RuntimeError("simulated coding error")
+            good_calls.append(area_name)
+            return []
+
+        with (
+            patch(
+                "custom_components.area_occupancy.db.correlation.get_correlatable_entities_by_area",
+                return_value={
+                    "BrokenArea": {
+                        "sensor.x": {"is_binary": True, "active_states": ["on"]}
+                    },
+                    "GoodArea": {
+                        "sensor.y": {"is_binary": True, "active_states": ["on"]}
+                    },
+                },
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation._analyze_area_sensors",
+                side_effect=fake_analyze_area_sensors,
+            ),
+            pytest.raises(RuntimeError, match="simulated coding error"),
+        ):
+            await run_correlation_analysis(coordinator, return_results=False)
+
+        # The good area must still have completed — gather is load-bearing.
+        assert "GoodArea" in good_calls

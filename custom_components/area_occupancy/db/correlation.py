@@ -1763,11 +1763,14 @@ async def _analyze_area_sensors(
             RuntimeError,
             OSError,
         ) as err:
-            _LOGGER.error(
-                "Sensor analysis failed for %s (%s): %s",
-                area_name,
-                entity_id,
-                err,
+            # ``exception`` (vs ``error``) captures the full traceback so a
+            # triager can see *where* the analysis failed, not just the
+            # exception's repr. The exception tuple is the canonical
+            # project surface for DB + numeric work — narrowing further
+            # would require more knowledge of analyze_*'s internals than
+            # is exposed.
+            _LOGGER.exception(
+                "Sensor analysis failed for %s (%s)", area_name, entity_id
             )
             # Track error result if requested
             if return_results:
@@ -1831,6 +1834,7 @@ async def run_correlation_analysis(
     area_results = await asyncio.gather(*area_tasks, return_exceptions=True)
 
     flat_results: list[dict[str, Any]] = []
+    per_area_exceptions: list[tuple[str, BaseException]] = []
     # ``strict=True`` codifies the invariant that ``asyncio.gather`` returns
     # one result per input task (always true with ``return_exceptions=True``);
     # any future refactor that filters tasks or names before gather will
@@ -1842,6 +1846,7 @@ async def run_correlation_analysis(
                 area_name,
                 exc_info=area_result,
             )
+            per_area_exceptions.append((area_name, area_result))
             if return_results:
                 flat_results.append(
                     {
@@ -1852,5 +1857,18 @@ async def run_correlation_analysis(
                 )
         elif return_results:
             flat_results.extend(area_result)
+
+    # When the caller is the analysis pipeline (return_results=False, e.g.
+    # ``data.analysis._run_correlations``), re-raise so the step is marked
+    # as failed and coordinator backoff kicks in — matching the pre-parallel
+    # serial behavior where any uncaught exception killed
+    # ``run_correlation_analysis``. ``return_exceptions=True`` on the gather
+    # is still load-bearing so the OTHER areas complete first; we only
+    # re-raise after all logging is done. With multiple per-area failures,
+    # raise the first; the rest are already in the log via the
+    # ``_LOGGER.exception`` call above.
+    if not return_results and per_area_exceptions:
+        _, first_exc = per_area_exceptions[0]
+        raise first_exc
 
     return flat_results if return_results else None
