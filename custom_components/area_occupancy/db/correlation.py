@@ -1831,7 +1831,11 @@ async def run_correlation_analysis(
     area_results = await asyncio.gather(*area_tasks, return_exceptions=True)
 
     flat_results: list[dict[str, Any]] = []
-    for area_name, area_result in zip(area_names, area_results, strict=False):
+    # ``strict=True`` codifies the invariant that ``asyncio.gather`` returns
+    # one result per input task (always true with ``return_exceptions=True``);
+    # any future refactor that filters tasks or names before gather will
+    # surface the mismatch loudly rather than silently dropping results.
+    for area_name, area_result in zip(area_names, area_results, strict=True):
         if isinstance(area_result, BaseException):
             _LOGGER.exception(
                 "Sensor analysis raised for area '%s'",
