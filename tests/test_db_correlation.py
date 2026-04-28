@@ -2869,7 +2869,14 @@ class TestRunCorrelationAnalysis:
         # Run correlation analysis
         results = await run_correlation_analysis(coordinator, return_results=True)
 
-        # Should have analyzed the temperature sensor
+        # Should have analyzed the temperature sensor. The fixture data
+        # (100 samples × ~10h occupied window) yields fewer than
+        # MIN_CORRELATION_SAMPLES inside the occupied window, so the
+        # correlation runner produces a soft-failure result with
+        # ``analysis_error`` set rather than a strong correlation. The
+        # smoke check here is "the numeric path executed and produced a
+        # result entry" — the success-flag computation is covered by
+        # ``test_run_correlation_analysis_marks_soft_failures``.
         assert results is not None
         assert len(results) > 0
         temp_result = next(
@@ -2877,7 +2884,6 @@ class TestRunCorrelationAnalysis:
         )
         assert temp_result is not None
         assert temp_result["type"] == "correlation"
-        assert temp_result["success"] is True
 
     async def test_run_correlation_analysis_no_results_flag(
         self, coordinator: AreaOccupancyCoordinator
@@ -2978,9 +2984,14 @@ class TestRunCorrelationAnalysis:
                 (r for r in results if r.get("entity_id") == "media_player.tv"), None
             )
 
-            # Temperature sensor should succeed
+            # Temperature sensor's analysis path ran and produced a
+            # result entry — the test's intent is "errors in one entity
+            # don't stop others." The fixture data is too sparse to
+            # produce a strong correlation, so the success flag is False
+            # via the soft-failure path; the soft-failure semantics are
+            # covered by test_run_correlation_analysis_marks_soft_failures.
             assert temp_result is not None
-            assert temp_result["success"] is True
+            assert temp_result["type"] == "correlation"
 
             # Media player should have error recorded
             assert media_result is not None
@@ -3168,3 +3179,54 @@ class TestRunCorrelationAnalysis:
 
         # The good area must still have completed — gather is load-bearing.
         assert "GoodArea" in good_calls
+
+    async def test_run_correlation_analysis_marks_soft_failures(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Soft analysis failures (analysis_error in result dict) report success=False.
+
+        Regression: ``analyze_binary_likelihoods`` returns a populated dict
+        with ``analysis_error`` set when there are no occupied intervals,
+        no occupied/unoccupied time, etc. The previous
+        ``success: bool(result)`` check marked these as ``success=True``
+        because non-empty dicts are truthy. The fix: also require
+        ``result.get("analysis_error") is None``.
+
+        Drives a soft failure through the real code path by adding a
+        binary entity but leaving the occupied-intervals cache empty —
+        ``analyze_binary_likelihoods`` then returns
+        ``{..., "analysis_error": "no_occupied_intervals"}``.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        media_type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.7,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            active_states=[STATE_ON],
+        )
+        media_entity = Entity(
+            entity_id="media_player.tv",
+            type=media_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda x: STATE_ON,
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities["media_player.tv"] = media_entity
+
+        # Deliberately do NOT populate occupied-intervals cache for the area
+        # — analyze_binary_likelihoods will return its
+        # ``"no_occupied_intervals"`` soft-failure dict.
+        results = await run_correlation_analysis(coordinator, return_results=True)
+
+        media_result = next(
+            (r for r in results if r.get("entity_id") == "media_player.tv"), None
+        )
+        assert media_result is not None
+        # The analysis returned a populated dict so it isn't a hard failure,
+        # but ``analysis_error`` is set — the summary must reflect that.
+        assert media_result["success"] is False

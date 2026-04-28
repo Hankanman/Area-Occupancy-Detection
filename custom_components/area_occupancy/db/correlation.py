@@ -1709,14 +1709,19 @@ async def _analyze_area_sensors(
                             e,
                         )
 
-                # Track result if requested
+                # Track result if requested. ``analyze_binary_likelihoods``
+                # returns a non-empty dict on *soft* failures (e.g.
+                # ``analysis_error="no_occupied_intervals"``) — ``bool(...)``
+                # alone would mark those as ``success=True``. Treat any
+                # non-None ``analysis_error`` as a failure for the summary.
                 if return_results:
                     results.append(
                         {
                             "area": area_name,
                             "entity_id": entity_id,
                             "type": "binary_likelihood",
-                            "success": bool(likelihood_result),
+                            "success": bool(likelihood_result)
+                            and likelihood_result.get("analysis_error") is None,
                         }
                     )
             else:
@@ -1746,14 +1751,18 @@ async def _analyze_area_sensors(
                             e,
                         )
 
-                # Track result if requested
+                # Track result if requested. Same soft-failure caveat as
+                # the binary path: ``analyze_and_save_correlation`` may
+                # return a populated dict with ``analysis_error`` set
+                # (e.g. ``too_few_samples``). Treat that as success=False.
                 if return_results:
                     results.append(
                         {
                             "area": area_name,
                             "entity_id": entity_id,
                             "type": "correlation",
-                            "success": bool(correlation_result),
+                            "success": bool(correlation_result)
+                            and correlation_result.get("analysis_error") is None,
                         }
                     )
         except (
