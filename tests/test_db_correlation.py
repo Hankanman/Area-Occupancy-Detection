@@ -1,5 +1,6 @@
 """Tests for database correlation analysis functions."""
 
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -2868,7 +2869,14 @@ class TestRunCorrelationAnalysis:
         # Run correlation analysis
         results = await run_correlation_analysis(coordinator, return_results=True)
 
-        # Should have analyzed the temperature sensor
+        # Should have analyzed the temperature sensor. The fixture data
+        # (100 samples × ~10h occupied window) yields fewer than
+        # MIN_CORRELATION_SAMPLES inside the occupied window, so the
+        # correlation runner produces a soft-failure result with
+        # ``analysis_error`` set rather than a strong correlation. The
+        # smoke check here is "the numeric path executed and produced a
+        # result entry" — the success-flag computation is covered by
+        # ``test_run_correlation_analysis_marks_soft_failures``.
         assert results is not None
         assert len(results) > 0
         temp_result = next(
@@ -2876,7 +2884,6 @@ class TestRunCorrelationAnalysis:
         )
         assert temp_result is not None
         assert temp_result["type"] == "correlation"
-        assert temp_result["success"] is True
 
     async def test_run_correlation_analysis_no_results_flag(
         self, coordinator: AreaOccupancyCoordinator
@@ -2977,12 +2984,249 @@ class TestRunCorrelationAnalysis:
                 (r for r in results if r.get("entity_id") == "media_player.tv"), None
             )
 
-            # Temperature sensor should succeed
+            # Temperature sensor's analysis path ran and produced a
+            # result entry — the test's intent is "errors in one entity
+            # don't stop others." The fixture data is too sparse to
+            # produce a strong correlation, so the success flag is False
+            # via the soft-failure path; the soft-failure semantics are
+            # covered by test_run_correlation_analysis_marks_soft_failures.
             assert temp_result is not None
-            assert temp_result["success"] is True
+            assert temp_result["type"] == "correlation"
 
             # Media player should have error recorded
             assert media_result is not None
             assert media_result["success"] is False
             assert "error" in media_result
             assert "Database error" in media_result["error"]
+
+    async def test_run_correlation_analysis_parallelizes_areas(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Multi-area runs concurrently via asyncio.gather, results merge.
+
+        Mock ``get_correlatable_entities_by_area`` to return two synthetic
+        areas. Patch ``_analyze_area_sensors`` to record the order it's
+        invoked and to ``await asyncio.sleep`` so the two areas overlap if
+        the orchestration is truly concurrent. Both areas' results must
+        appear in the merged output.
+        """
+        invocations: list[str] = []
+
+        async def fake_analyze_area_sensors(
+            _coordinator,
+            area_name,
+            _entities,
+            return_results,
+        ):
+            invocations.append(f"start:{area_name}")
+            # Yield to the loop so the second gather task can start
+            # before this one finishes — proves concurrency.
+            await asyncio.sleep(0)
+            invocations.append(f"end:{area_name}")
+            return (
+                [
+                    {
+                        "area": area_name,
+                        "entity_id": f"sensor.{area_name}",
+                        "type": "binary_likelihood",
+                        "success": True,
+                    }
+                ]
+                if return_results
+                else []
+            )
+
+        with (
+            patch(
+                "custom_components.area_occupancy.db.correlation.get_correlatable_entities_by_area",
+                return_value={
+                    "AreaOne": {
+                        "sensor.a": {"is_binary": True, "active_states": ["on"]}
+                    },
+                    "AreaTwo": {
+                        "sensor.b": {"is_binary": True, "active_states": ["on"]}
+                    },
+                },
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation._analyze_area_sensors",
+                side_effect=fake_analyze_area_sensors,
+            ),
+        ):
+            results = await run_correlation_analysis(coordinator, return_results=True)
+
+        # Both areas appear in the merged results.
+        assert results is not None
+        result_areas = {r["area"] for r in results}
+        assert result_areas == {"AreaOne", "AreaTwo"}
+
+        # Both areas started before either finished — proves gather, not serial.
+        starts = [i for i in invocations if i.startswith("start:")]
+        ends = [i for i in invocations if i.startswith("end:")]
+        assert len(starts) == 2
+        assert len(ends) == 2
+        # The first end must come after both starts.
+        assert invocations.index(ends[0]) > invocations.index(starts[1])
+
+    async def test_run_correlation_analysis_isolates_per_area_exception(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """An unexpected exception in one area must not abort other areas.
+
+        ``return_exceptions=True`` on the gather catches anything that
+        escapes the per-entity ``except`` (e.g. a coding error like
+        AttributeError). Verify the surviving area's results still
+        come back, and the failed area is recorded with success=False.
+        """
+
+        async def fake_analyze_area_sensors(
+            _coordinator,
+            area_name,
+            _entities,
+            return_results,
+        ):
+            if area_name == "BrokenArea":
+                raise AttributeError("simulated coding error")
+            return (
+                [
+                    {
+                        "area": area_name,
+                        "entity_id": "sensor.ok",
+                        "type": "binary_likelihood",
+                        "success": True,
+                    }
+                ]
+                if return_results
+                else []
+            )
+
+        with (
+            patch(
+                "custom_components.area_occupancy.db.correlation.get_correlatable_entities_by_area",
+                return_value={
+                    "BrokenArea": {
+                        "sensor.x": {"is_binary": True, "active_states": ["on"]}
+                    },
+                    "GoodArea": {
+                        "sensor.y": {"is_binary": True, "active_states": ["on"]}
+                    },
+                },
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation._analyze_area_sensors",
+                side_effect=fake_analyze_area_sensors,
+            ),
+        ):
+            results = await run_correlation_analysis(coordinator, return_results=True)
+
+        assert results is not None
+        good = next((r for r in results if r["area"] == "GoodArea"), None)
+        broken = next((r for r in results if r["area"] == "BrokenArea"), None)
+
+        assert good is not None
+        assert good["success"] is True
+
+        assert broken is not None
+        assert broken["success"] is False
+        assert "simulated coding error" in broken["error"]
+
+    async def test_run_correlation_analysis_reraises_when_no_results_flag(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Pipeline-mode caller (return_results=False) re-raises gather exceptions.
+
+        Pre-parallel, an unexpected exception in correlation propagated up
+        and ``data.analysis._run_step`` marked the step as failed. After
+        the parallel refactor, ``return_exceptions=True`` would silently
+        swallow such exceptions. The function now logs each per-area
+        failure and re-raises the first so step-level failure semantics
+        survive: the analysis pipeline marks step 8 failed and coordinator
+        backoff kicks in. The OTHER areas' work still completes — gather
+        is still load-bearing.
+        """
+        good_calls: list[str] = []
+
+        async def fake_analyze_area_sensors(
+            _coordinator,
+            area_name,
+            _entities,
+            _return_results,
+        ):
+            if area_name == "BrokenArea":
+                raise RuntimeError("simulated coding error")
+            good_calls.append(area_name)
+            return []
+
+        with (
+            patch(
+                "custom_components.area_occupancy.db.correlation.get_correlatable_entities_by_area",
+                return_value={
+                    "BrokenArea": {
+                        "sensor.x": {"is_binary": True, "active_states": ["on"]}
+                    },
+                    "GoodArea": {
+                        "sensor.y": {"is_binary": True, "active_states": ["on"]}
+                    },
+                },
+            ),
+            patch(
+                "custom_components.area_occupancy.db.correlation._analyze_area_sensors",
+                side_effect=fake_analyze_area_sensors,
+            ),
+            pytest.raises(RuntimeError, match="simulated coding error"),
+        ):
+            await run_correlation_analysis(coordinator, return_results=False)
+
+        # The good area must still have completed — gather is load-bearing.
+        assert "GoodArea" in good_calls
+
+    async def test_run_correlation_analysis_marks_soft_failures(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Soft analysis failures (analysis_error in result dict) report success=False.
+
+        Regression: ``analyze_binary_likelihoods`` returns a populated dict
+        with ``analysis_error`` set when there are no occupied intervals,
+        no occupied/unoccupied time, etc. The previous
+        ``success: bool(result)`` check marked these as ``success=True``
+        because non-empty dicts are truthy. The fix: also require
+        ``result.get("analysis_error") is None``.
+
+        Drives a soft failure through the real code path by adding a
+        binary entity but leaving the occupied-intervals cache empty —
+        ``analyze_binary_likelihoods`` then returns
+        ``{..., "analysis_error": "no_occupied_intervals"}``.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        media_type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.7,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            active_states=[STATE_ON],
+        )
+        media_entity = Entity(
+            entity_id="media_player.tv",
+            type=media_type,
+            prob_given_true=0.5,
+            prob_given_false=0.5,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda x: STATE_ON,
+            last_updated=dt_util.utcnow(),
+        )
+        area.entities.entities["media_player.tv"] = media_entity
+
+        # Deliberately do NOT populate occupied-intervals cache for the area
+        # — analyze_binary_likelihoods will return its
+        # ``"no_occupied_intervals"`` soft-failure dict.
+        results = await run_correlation_analysis(coordinator, return_results=True)
+
+        media_result = next(
+            (r for r in results if r.get("entity_id") == "media_player.tv"), None
+        )
+        assert media_result is not None
+        # The analysis returned a populated dict so it isn't a hard failure,
+        # but ``analysis_error`` is set — the summary must reflect that.
+        assert media_result["success"] is False
