@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, TIME_PRIOR_MAX_BOUND, TIME_PRIOR_MIN_BOUND
+from ..db.correlation import CORRELATION_FAILURE_ERRORS
 from ..db.queries import (
     get_area_created_at,
     get_occupied_intervals_cache_age_hours,
@@ -20,7 +21,6 @@ from ..db.queries import (
 from ..time_utils import ensure_timezone_aware, ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
 from .entity_type import InputType
-from .health import CORRELATION_FAILURE_ERRORS
 from .prior import Prior
 
 if TYPE_CHECKING:

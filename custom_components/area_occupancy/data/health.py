@@ -91,33 +91,10 @@ SLOW_ANALYSIS_THRESHOLD_MS: float = 30_000.0
 
 # Fraction of correlatable entities whose ``analysis_error`` indicates a real
 # failure (not a designed exclusion) before we flag the area's correlation
-# pipeline as broken. 0.5 = "half or more failed".
+# pipeline as broken. 0.5 = "half or more failed". The set of failure
+# strings themselves is owned by ``db.correlation.CORRELATION_FAILURE_ERRORS``
+# — single source of truth alongside the code that emits them.
 CORRELATION_FAILURE_RATIO: float = 0.5
-
-# ``analysis_error`` strings that represent real correlation failures (not
-# "by design" states like ``not_analyzed`` or ``motion_sensor_excluded``).
-# Sourced from db/correlation.py — keep this in sync when new failure
-# branches are added there. Public because the analysis pipeline reads it
-# when counting per-area failures to feed into ``check_pipeline_health``.
-CORRELATION_FAILURE_ERRORS: frozenset[str] = frozenset(
-    {
-        "no_occupied_intervals",
-        "no_occupied_time",
-        "no_unoccupied_time",
-        "no_occupancy_data",
-        "no_sensor_data",
-        "no_state_changes",
-        "no_active_intervals",
-        "no_active_during_occupied",
-        "no_occupied_samples",
-        "no_unoccupied_samples",
-        "no_correlation",
-        "insufficient_data",
-        "too_few_samples",
-        "too_few_samples_after_filtering",
-        "zero_samples_after_filtering",
-    }
-)
 
 
 class HealthIssueType(StrEnum):
@@ -161,6 +138,25 @@ class HealthIssue:
     since: datetime
     duration_hours: float
     details: str
+
+
+def _format_duration_human(hours: float) -> str:
+    """Format a duration (in hours) as an adaptive ``Xs/Ym/Zh/Wd`` string.
+
+    Used for pipeline-issue translation placeholders so that durations
+    smaller than an hour (e.g. a 30-second slow analysis) don't collapse
+    to ``"0"`` when the existing sensor-scope ``str(round(hours))``
+    pattern is reused. Sensor-scope durations are always >= 1 hour by
+    threshold design and keep their integer-hour formatting.
+    """
+    total_seconds = int(round(hours * 3600))
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    if total_seconds < 3600:
+        return f"{total_seconds // 60}m"
+    if total_seconds < 86400:
+        return f"{total_seconds // 3600}h"
+    return f"{total_seconds // 86400}d"
 
 
 def _issue_id(area_id: str, entity_id: str | None, issue_type: HealthIssueType) -> str:
@@ -669,9 +665,13 @@ class HealthMonitor:
 
             if issue.issue_type in _PIPELINE_ISSUE_TYPES:
                 translation_key = f"pipeline_health_{issue.issue_type}"
+                # Adaptive Xs/Ym/Zh/Wd format — pipeline durations can be
+                # sub-hour (slow_analysis) or zero-as-sentinel
+                # (correlation_failures), so the sensor-scope
+                # ``str(round(hours))`` would collapse to "0".
                 placeholders = {
                     "area": self._area_name,
-                    "duration": str(round(issue.duration_hours)),
+                    "duration": _format_duration_human(issue.duration_hours),
                     "details": issue.details,
                 }
             else:

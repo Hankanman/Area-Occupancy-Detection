@@ -10,7 +10,11 @@ import pytest
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
-from custom_components.area_occupancy.data.health import HealthIssueType, HealthMonitor
+from custom_components.area_occupancy.data.health import (
+    HealthIssueType,
+    HealthMonitor,
+    _format_duration_human,
+)
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -915,3 +919,61 @@ class TestPipelineHealth:
                 correlatable_entity_count=0,
             )
         assert second == []
+
+
+# --- Duration formatter ---
+
+
+class TestFormatDurationHuman:
+    """Cover the adaptive duration formatter used by pipeline placeholders."""
+
+    @pytest.mark.parametrize(
+        ("hours", "expected"),
+        [
+            # Sub-minute → seconds. A 30-second slow_analysis would have
+            # collapsed to "0" under the previous str(round(hours)) pattern.
+            (30 / 3600, "30s"),
+            (0.0, "0s"),
+            (59 / 3600, "59s"),
+            # Minutes
+            (5 / 60, "5m"),
+            (59 / 60, "59m"),
+            # Hours
+            (1.0, "1h"),
+            (12.0, "12h"),
+            (23.9, "23h"),
+            # Days (>= 24h)
+            (24.0, "1d"),
+            (24 * 7, "7d"),
+            (24 * 14, "14d"),
+        ],
+    )
+    def test_adaptive_units(self, hours: float, expected: str) -> None:
+        assert _format_duration_human(hours) == expected
+
+
+# --- Pipeline placeholder formatting ---
+
+
+class TestPipelinePlaceholderFormatting:
+    """Pipeline issues must populate placeholders with the adaptive format."""
+
+    def test_pipeline_duration_uses_adaptive_format(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A 14-day insufficient_priors duration is rendered as '14d'."""
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+
+        mock_ir.async_create_issue.assert_called_once()
+        placeholders = mock_ir.async_create_issue.call_args.kwargs[
+            "translation_placeholders"
+        ]
+        assert placeholders["duration"] == "14d"

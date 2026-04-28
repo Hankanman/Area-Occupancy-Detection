@@ -40,6 +40,32 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# ``analysis_error`` strings emitted by this module to mark correlation
+# failures (as opposed to designed exclusions like ``not_analyzed`` or
+# ``motion_sensor_excluded``). Single source of truth — the pipeline
+# health monitor in ``data.health`` imports this set to compute the
+# correlation_failures ratio. Keep in sync with the literal strings
+# assigned to ``analysis_error`` in this file.
+CORRELATION_FAILURE_ERRORS: frozenset[str] = frozenset(
+    {
+        "no_occupied_intervals",
+        "no_occupied_time",
+        "no_unoccupied_time",
+        "no_occupancy_data",
+        "no_sensor_data",
+        "no_state_changes",
+        "no_active_intervals",
+        "no_active_during_occupied",
+        "no_occupied_samples",
+        "no_unoccupied_samples",
+        "no_correlation",
+        "insufficient_data",
+        "too_few_samples",
+        "too_few_samples_after_filtering",
+        "zero_samples_after_filtering",
+    }
+)
+
 
 def calculate_pearson_correlation(
     x_values: list[float], y_values: list[float]
