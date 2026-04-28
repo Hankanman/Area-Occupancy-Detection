@@ -12,7 +12,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_LOOKBACK_DAYS, TIME_PRIOR_MAX_BOUND, TIME_PRIOR_MIN_BOUND
-from ..db.correlation import CORRELATION_FAILURE_ERRORS
+from ..db.correlation import (
+    CORRELATION_FAILURE_ERRORS,
+    get_correlatable_entities_by_area,
+)
 from ..db.queries import (
     get_area_created_at,
     get_occupied_intervals_cache_age_hours,
@@ -203,6 +206,12 @@ async def _run_pipeline_health_check(
     to keep the orchestrator's complexity inside ruff's threshold.
     """
     now_aware = dt_util.utcnow()
+    # Canonical correlatable set per area — defined by the same helper
+    # the correlation runner uses, so the denominator matches what the
+    # pipeline actually attempts. Filtering by ``analysis_error`` alone
+    # would miss reclassifications and warm-up state.
+    correlatable_by_area = get_correlatable_entities_by_area(coordinator)
+
     for area in coordinator.areas.values():
         try:
             created_at = await coordinator.hass.async_add_executor_job(
@@ -228,21 +237,20 @@ async def _run_pipeline_health_check(
             else None
         )
 
-        # An entity is "correlatable" if it has either succeeded
-        # (``analysis_error is None``) or hit a real failure mode in
-        # CORRELATION_FAILURE_ERRORS. Designed exclusions like
-        # ``not_analyzed`` (warm-up) and ``motion_sensor_excluded`` (motion
-        # is ground truth) must not inflate the denominator, else the
-        # failure ratio is silently diluted.
-        failure_count = 0
-        correlatable_count = 0
-        for entity in area.entities.entities.values():
-            err = entity.analysis_error
-            if err is None:
-                correlatable_count += 1
-            elif err in CORRELATION_FAILURE_ERRORS:
-                correlatable_count += 1
-                failure_count += 1
+        # Denominator: entities that the correlation runner would attempt.
+        # Numerator: among those, the subset whose last attempt landed in
+        # a real failure mode (CORRELATION_FAILURE_ERRORS). ``not_analyzed``
+        # is treated as not-yet-attempted and excluded from the failure
+        # count — so a brand-new area doesn't fire the issue while priors
+        # are still warming up.
+        correlatable_ids = correlatable_by_area.get(area.area_name, {})
+        correlatable_count = len(correlatable_ids)
+        failure_count = sum(
+            1
+            for entity_id in correlatable_ids
+            if (entity := area.entities.entities.get(entity_id)) is not None
+            and entity.analysis_error in CORRELATION_FAILURE_ERRORS
+        )
 
         area.health_monitor.check_pipeline_health(
             area_age_hours=area_age_hours,

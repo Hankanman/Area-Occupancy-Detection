@@ -150,6 +150,45 @@ class TestDiagnosticsExport:
             assert health["issue_count"] == len(health["issues"])
 
     @pytest.mark.asyncio
+    async def test_pipeline_health_issue_serializes_with_null_input_type(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        entry_with_runtime_data,
+    ) -> None:
+        """Pipeline issues have ``input_type=None``; diagnostics must not crash.
+
+        Regression: an earlier version called ``issue.input_type.value``
+        unconditionally. For pipeline-scope issues that's an
+        ``AttributeError`` and the whole area's health snapshot fell back
+        to a ``health_error`` field, hiding the issue from the dump.
+        """
+        # Seed a pipeline-scope issue on every area so the serializer hits
+        # the null input_type branch.
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            for area in coordinator.areas.values():
+                area.health_monitor.check_pipeline_health(
+                    area_age_hours=24 * 14,
+                    has_global_prior=False,
+                    cache_age_hours=1.0,
+                    last_analysis_duration_ms=None,
+                    correlation_failure_count=0,
+                    correlatable_entity_count=0,
+                )
+
+        result = await async_get_config_entry_diagnostics(hass, entry_with_runtime_data)
+
+        for area in result["areas"]:
+            assert "health_error" not in area
+            health = area["health"]
+            pipeline = [
+                i for i in health["issues"] if i["issue_type"] == "insufficient_priors"
+            ]
+            assert len(pipeline) == 1
+            assert pipeline[0]["input_type"] is None
+            assert pipeline[0]["entity_id"] is None
+
+    @pytest.mark.asyncio
     async def test_database_section_includes_counts(
         self,
         hass: HomeAssistant,
