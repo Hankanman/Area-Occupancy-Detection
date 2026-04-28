@@ -140,7 +140,13 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
 
 
 def _health_snapshot(area: Area) -> dict[str, Any]:
-    """Capture cached health issues without re-running checks."""
+    """Capture cached health issues without re-running checks.
+
+    ``HealthIssue.entity_id`` and ``HealthIssue.input_type`` are both
+    ``None`` for pipeline-scope issues (``insufficient_priors`` etc.) — the
+    issue applies to the whole area. Both are null-safe here so a
+    pipeline-scope issue doesn't poison the entire area's diagnostic.
+    """
     monitor = area.health_monitor
     return {
         "issue_count": len(monitor.issues),
@@ -149,7 +155,9 @@ def _health_snapshot(area: Area) -> dict[str, Any]:
             {
                 "entity_id": issue.entity_id,
                 "issue_type": issue.issue_type.value,
-                "input_type": issue.input_type.value,
+                "input_type": (
+                    issue.input_type.value if issue.input_type is not None else None
+                ),
                 "since": _isoformat(issue.since),
                 "duration_hours": issue.duration_hours,
                 "details": issue.details,

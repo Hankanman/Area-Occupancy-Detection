@@ -81,7 +81,7 @@ One row per configured sensor. The most useful fields when debugging:
 
 #### `health`
 
-The cached output of the [Sensor Health Monitoring](../features/sensor-health.md) checks — no re-check is triggered to capture them, so you see exactly what the user sees in **Repairs**.
+The cached output of the [Sensor Health Monitoring](../features/sensor-health.md) checks — no re-check is triggered to capture them, so you see exactly what the user sees in **Repairs**. Both sensor-scope issues (with `entity_id` and `input_type` populated) and pipeline-scope issues (with both `null`) appear in the same `issues` array; the `issue_type` field tells them apart — e.g. `stuck_active` vs. `insufficient_priors`, `stale_intervals_cache`, `slow_analysis`, `correlation_failures`.
 
 ### `database`
 
