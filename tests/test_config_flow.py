@@ -1467,7 +1467,12 @@ class TestAreaOccupancyOptionsFlow:
         ):
             result = await flow.async_step_confirm_reset_learning()
 
-        mock_purge.assert_awaited_once()
+        mock_purge.assert_awaited_once_with(
+            flow.hass,
+            fake_coordinator,
+            "Living Room",
+            fake_area,
+        )
         # Returns the user to the area_action menu (still managing the area).
         assert result.get("type") == FlowResultType.MENU
         assert result.get("step_id") == "area_action"

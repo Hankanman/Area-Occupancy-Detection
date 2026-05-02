@@ -333,7 +333,11 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
 
     area_name, area = _find_area_by_area_id(coordinator, area_id)
     if area_name is None or area is None:
-        known = sorted(a.config.area_id for a in coordinator.areas.values())
+        known = sorted(
+            a.config.area_id
+            for a in coordinator.areas.values()
+            if isinstance(a.config.area_id, str)
+        )
         raise ServiceValidationError(
             f"No configured area found for area_id '{area_id}'. "
             f"Known area_ids: {', '.join(known) if known else '(none)'}"
