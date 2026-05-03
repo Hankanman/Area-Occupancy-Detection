@@ -401,6 +401,15 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                     )
                 # Update debounce timestamp only after a successful attempt
                 db.last_area_save_ts = time.monotonic()
+                # Hydrate AreaRelationships from each area's adjacent_areas
+                # JSON column. The schema row has just been committed, so
+                # this read sees the freshest version. Errors here are
+                # non-fatal (logged inside the helper) — the area save
+                # itself has already succeeded.
+                from . import relationships as _relationships  # noqa: PLC0415
+
+                for area_name_item in areas_to_save:
+                    _relationships.sync_adjacent_areas_from_config(db, area_name_item)
                 break
             except (sa.exc.OperationalError, sa.exc.TimeoutError) as err:
                 _LOGGER.warning("save_area_data attempt %d failed: %s", attempt, err)
