@@ -66,6 +66,17 @@ async def run_full_analysis(
 
     async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
+        # Skip remaining steps once HA has signalled shutdown — the inner
+        # awaitable would still create the coroutine object so we close it
+        # to avoid a "coroutine was never awaited" warning. We don't append
+        # to ``failed_steps`` because a clean cancellation isn't a failure
+        # the caller should back off on.
+        if coordinator.stop_requested:
+            coro.close()
+            _LOGGER.debug(
+                "Step %d: %s skipped — shutdown in progress", step_num, step_name
+            )
+            return
         start = time.perf_counter()
         try:
             await coro

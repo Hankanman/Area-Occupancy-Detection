@@ -31,7 +31,8 @@ from ..time_utils import from_db_utc, to_db_utc, to_local, to_utc
 from ..utils import clamp_probability, map_binary_state_to_semantic
 from .utils import (
     get_occupied_intervals_for_analysis,
-    is_timestamp_occupied,
+    is_timestamp_in_prepared_intervals,
+    prepare_occupied_intervals,
     validate_sample_count,
 )
 
@@ -66,6 +67,16 @@ CORRELATION_FAILURE_ERRORS: frozenset[str] = frozenset(
         "zero_samples_after_filtering",
     }
 )
+
+
+class AnalysisCancelled(RuntimeError):
+    """Raised when the analysis pipeline is cancelled mid-run.
+
+    Distinct from ``CORRELATION_FAILURE_ERRORS`` so the pipeline-health
+    monitor doesn't count a clean shutdown as a correlation failure when
+    computing the failure ratio. The per-area helper catches this and
+    short-circuits the rest of its work.
+    """
 
 
 def calculate_pearson_correlation(
@@ -446,6 +457,12 @@ def analyze_binary_likelihoods(
             unique_states = set()
 
             for interval in binary_intervals:
+                # Coarse cancellation check on the outer loop. The inner
+                # overlap loop is bounded by the number of occupied
+                # intervals (typically tens to low hundreds) so per-interval
+                # granularity is enough to keep shutdown latency bounded.
+                if db.coordinator.stop_requested:
+                    raise AnalysisCancelled  # noqa: TRY301
                 interval_start = from_db_utc(interval.start_time)
                 interval_end = from_db_utc(interval.end_time)
                 # Clamp to analysis period
@@ -595,6 +612,12 @@ def analyze_binary_likelihoods(
             )
             return base_result
 
+    except AnalysisCancelled:
+        # Propagate so ``_analyze_area_sensors`` can break out cleanly.
+        # Without this re-raise the wider ``RuntimeError`` clause below
+        # would swallow it and the caller would treat the cancellation
+        # as a missing result.
+        raise
     except SQLAlchemyError as e:
         _LOGGER.error(
             "Database error analyzing binary likelihoods for %s: %s",
@@ -740,9 +763,17 @@ def analyze_correlation(  # noqa: C901
                 base_result.update(error)
                 return base_result
 
-            # Get occupied intervals for the area
+            # Get occupied intervals for the area, then build a sorted UTC
+            # index once. The per-chunk / per-sample membership checks below
+            # were the analysis cycle's hot loop — with the unindexed helper,
+            # each check did an O(N) scan plus two ``astimezone`` calls per
+            # scanned interval, compounding into tens of millions of
+            # conversions per cycle on areas with many intervals.
             occupied_intervals = get_occupied_intervals_for_analysis(
                 db, area_name, period_start, period_end
+            )
+            occupied_starts, occupied_ends = prepare_occupied_intervals(
+                occupied_intervals
             )
 
             # Initialize diagnostic counters (used for both binary and numeric)
@@ -778,6 +809,11 @@ def analyze_correlation(  # noqa: C901
                 chunk_duration_seconds = 60.0
 
                 for interval in binary_intervals:
+                    # Coarse cancellation check at the per-interval boundary.
+                    # The inner per-chunk loop is fast post-perf-fix (bisect
+                    # over a prepared index) so checking here is sufficient.
+                    if db.coordinator.stop_requested:
+                        raise AnalysisCancelled  # noqa: TRY301
                     interval_start = from_db_utc(interval.start_time)
                     interval_end = from_db_utc(interval.end_time)
                     # Clamp to analysis period
@@ -809,8 +845,8 @@ def analyze_correlation(  # noqa: C901
                         chunk_midpoint = current_time + (chunk_end - current_time) / 2
 
                         # Check if chunk midpoint falls within any occupied interval
-                        is_occupied = is_timestamp_occupied(
-                            chunk_midpoint, occupied_intervals
+                        is_occupied = is_timestamp_in_prepared_intervals(
+                            chunk_midpoint, occupied_starts, occupied_ends
                         )
 
                         # Create one sample per chunk with unambiguous occupancy flag
@@ -855,10 +891,16 @@ def analyze_correlation(  # noqa: C901
                 inactive_samples_in_occupied = 0
                 inactive_samples_in_unoccupied = 0
 
-                for sample in samples:
+                for sample_idx, sample in enumerate(samples):
+                    # Periodic cancellation check. With the bisect-based
+                    # membership test the per-sample cost is microseconds,
+                    # so checking every 1024 samples bounds shutdown
+                    # latency without measurable overhead in the steady state.
+                    if sample_idx & 1023 == 0 and db.coordinator.stop_requested:
+                        raise AnalysisCancelled  # noqa: TRY301
                     # Check if sample timestamp falls within any occupied interval
-                    is_occupied = is_timestamp_occupied(
-                        sample.timestamp, occupied_intervals
+                    is_occupied = is_timestamp_in_prepared_intervals(
+                        sample.timestamp, occupied_starts, occupied_ends
                     )
 
                     sample_value = float(sample.value)
@@ -1059,6 +1101,12 @@ def analyze_correlation(  # noqa: C901
 
             return result
 
+    except AnalysisCancelled:
+        # Propagate so ``_analyze_area_sensors`` can break out cleanly.
+        # Without this re-raise the wider ``RuntimeError`` clause below
+        # would swallow it and the caller would treat the cancellation
+        # as a missing result.
+        raise
     except (
         SQLAlchemyError,
         ValueError,
@@ -1673,6 +1721,17 @@ async def _analyze_area_sensors(
     """
     results: list[dict[str, Any]] = []
     for entity_id, entity_info in entities.items():
+        # Per-entity loop boundary: bail if HA is shutting down so the
+        # async layer doesn't dispatch another sync block that the
+        # executor will refuse to abandon. The current entity (if any)
+        # is already mid-flight in the executor; we can't yank it, but
+        # we stop *adding* to the work queue from here on.
+        if coordinator.stop_requested:
+            _LOGGER.debug(
+                "Skipping remaining entities for area '%s' — shutdown in progress",
+                area_name,
+            )
+            break
         try:
             if entity_info["is_binary"]:
                 # Binary sensors: Use duration-based likelihood analysis
@@ -1765,6 +1824,17 @@ async def _analyze_area_sensors(
                             and correlation_result.get("analysis_error") is None,
                         }
                     )
+        except AnalysisCancelled:
+            # Clean shutdown signal — break out of the per-entity loop
+            # without logging or recording a failure. A cancelled run
+            # mustn't poison ``correlation_failure_count`` in the
+            # pipeline-health monitor on the next start-up.
+            _LOGGER.debug(
+                "Sensor analysis cancelled mid-entity for area '%s' (%s)",
+                area_name,
+                entity_id,
+            )
+            break
         except (
             SQLAlchemyError,
             ValueError,

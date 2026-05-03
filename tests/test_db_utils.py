@@ -1,12 +1,18 @@
 """Tests for database utility functions."""
 
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import UTC, timedelta, timezone
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.db.utils import is_intervals_empty, is_valid_state
+from custom_components.area_occupancy.db.utils import (
+    is_intervals_empty,
+    is_timestamp_in_prepared_intervals,
+    is_timestamp_occupied,
+    is_valid_state,
+    prepare_occupied_intervals,
+)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -133,3 +139,79 @@ class TestIsIntervalsEmpty:
         monkeypatch.setattr(db, "get_session", mock_session)
         result = is_intervals_empty(db)
         assert result is True  # Should return True as fallback
+
+
+class TestPreparedIntervalLookup:
+    """Tests for ``prepare_occupied_intervals`` + ``is_timestamp_in_prepared_intervals``.
+
+    Behaviour parity with the legacy O(N) ``is_timestamp_occupied`` helper
+    is the core invariant — the bisect-based lookup is only useful if it
+    answers the same questions for the inputs the analysis pipeline
+    produces (sorted, non-overlapping intervals).
+    """
+
+    def test_empty_inputs(self) -> None:
+        starts, ends = prepare_occupied_intervals([])
+        assert starts == [] and ends == []
+        assert (
+            is_timestamp_in_prepared_intervals(dt_util.utcnow(), starts, ends) is False
+        )
+
+    def test_membership_matches_legacy_helper(self) -> None:
+        """Every probe lands the same answer through both code paths.
+
+        Covers the boundary cases the legacy tests already enforce
+        (start inclusive, end exclusive, gap, before, after) plus a
+        deliberately-shuffled input order so the sort step inside
+        ``prepare_occupied_intervals`` is exercised.
+        """
+        now = dt_util.utcnow()
+        intervals = [
+            (now + timedelta(hours=2), now + timedelta(hours=3)),  # second
+            (now, now + timedelta(hours=1)),  # first
+            (now + timedelta(hours=5), now + timedelta(hours=6)),  # third
+        ]
+        starts, ends = prepare_occupied_intervals(intervals)
+        # Sort guarantee — bisect relies on it.
+        assert starts == sorted(starts)
+
+        probes = [
+            now - timedelta(seconds=1),
+            now,  # at start (inclusive)
+            now + timedelta(minutes=30),  # inside first
+            now + timedelta(hours=1),  # at end (exclusive)
+            now + timedelta(hours=1, minutes=30),  # in gap
+            now + timedelta(hours=2, minutes=30),  # inside second
+            now + timedelta(hours=4),  # in gap
+            now + timedelta(hours=5, minutes=30),  # inside third
+            now + timedelta(hours=10),  # past end
+        ]
+        for probe in probes:
+            assert is_timestamp_in_prepared_intervals(
+                probe, starts, ends
+            ) == is_timestamp_occupied(probe, intervals), probe
+
+    def test_naive_inputs_normalised_to_utc(self) -> None:
+        """Naive datetimes are interpreted as UTC, matching ``to_utc``.
+
+        The hot loop callers in ``analyze_correlation`` mostly pass
+        already-aware datetimes (``from_db_utc`` re-attaches UTC), but
+        this guards against a regression that breaks parity with the
+        legacy helper for ``tzinfo=None`` inputs.
+        """
+        naive_now = dt_util.utcnow().replace(tzinfo=None)
+        intervals = [(naive_now, naive_now + timedelta(hours=1))]
+        starts, ends = prepare_occupied_intervals(intervals)
+        # Endpoints are stored UTC-aware after normalisation.
+        assert starts[0].tzinfo is not None
+        assert ends[0].tzinfo is not None
+        # Probe with a non-UTC aware timestamp that converts to a UTC
+        # instant inside the interval — the helper must convert the
+        # probe to UTC before comparison, otherwise a Sydney clock at
+        # 12:30 wouldn't match a UTC interval covering ~04:30 UTC.
+        plus_two = timezone(timedelta(hours=2))
+        # naive_now + 30min, interpreted as UTC, then re-expressed as +02:00
+        probe = (
+            (naive_now + timedelta(minutes=30)).replace(tzinfo=UTC).astimezone(plus_two)
+        )
+        assert is_timestamp_in_prepared_intervals(probe, starts, ends) is True

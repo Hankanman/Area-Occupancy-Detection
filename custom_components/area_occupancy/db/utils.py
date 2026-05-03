@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 import logging
@@ -305,6 +306,63 @@ def is_timestamp_occupied(
         to_utc(start) <= timestamp_utc < to_utc(end)
         for start, end in occupied_intervals
     )
+
+
+def prepare_occupied_intervals(
+    intervals: list[tuple[datetime, datetime]],
+) -> tuple[list[datetime], list[datetime]]:
+    """Build an indexed view of occupied intervals for repeated lookups.
+
+    Pair with ``is_timestamp_in_prepared_intervals``. Each endpoint is
+    converted to UTC-aware *once* and the intervals are sorted by start
+    so a subsequent membership check is O(log N) instead of the O(N)
+    scan ``is_timestamp_occupied`` performs (with two ``astimezone``
+    calls per scanned element). Use this whenever the same interval set
+    is checked against many timestamps — see ``analyze_correlation``'s
+    per-chunk loop, where the unindexed path was issuing tens of
+    millions of ``astimezone`` calls per analysis cycle on an RPi.
+
+    Assumes intervals are non-overlapping; the occupied-intervals cache
+    populated by the analysis pipeline merges adjacent intervals before
+    persisting, so this holds for all in-tree callers. With overlapping
+    inputs ``bisect`` only sees the latest-starting interval per
+    timestamp, which is still a correct ``contains`` answer when intervals
+    overlap fully or nest, but loses coverage of points that lie inside
+    an earlier interval that ends after a later one's start. Callers that
+    cannot guarantee non-overlap should fall back to ``is_timestamp_occupied``.
+
+    Returns:
+        Parallel ``(starts, ends)`` arrays sorted by start time.
+    """
+    if not intervals:
+        return [], []
+    normalised = sorted(
+        ((to_utc(start), to_utc(end)) for start, end in intervals),
+        key=lambda iv: iv[0],
+    )
+    starts = [s for s, _ in normalised]
+    ends = [e for _, e in normalised]
+    return starts, ends
+
+
+def is_timestamp_in_prepared_intervals(
+    timestamp: datetime,
+    starts: list[datetime],
+    ends: list[datetime],
+) -> bool:
+    """O(log N) membership test against a prepared interval index.
+
+    Pair with ``prepare_occupied_intervals``. End times are exclusive,
+    matching ``is_timestamp_occupied``'s semantics so the two helpers are
+    interchangeable for non-overlapping interval sets.
+    """
+    if not starts:
+        return False
+    ts = to_utc(timestamp)
+    idx = bisect.bisect_right(starts, ts) - 1
+    if idx < 0:
+        return False
+    return ts < ends[idx]
 
 
 def validate_sample_count(

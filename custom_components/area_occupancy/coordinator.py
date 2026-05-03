@@ -10,7 +10,8 @@ from typing import Any
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -79,6 +80,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # data.analysis.run_full_analysis at the end of each pipeline run.
         # Read by HealthMonitor.check_pipeline_health to flag slow analysis.
         self._last_analysis_duration_ms: float | None = None
+        # Set to True by the EVENT_HOMEASSISTANT_STOP listener so the
+        # in-flight analysis pipeline (and the sync correlation work it
+        # dispatches to the executor) can bail at the next loop boundary
+        # instead of riding through HA's "final writes shutdown stage".
+        # Read by data.analysis.run_full_analysis and the per-area /
+        # per-entity loops in db.correlation.
+        self._stop_requested: bool = False
+        self._stop_listener_remove: CALLBACK_TYPE | None = None
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -307,6 +316,33 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the most recent full-analysis duration in milliseconds, if any."""
         return self._last_analysis_duration_ms
 
+    @property
+    def stop_requested(self) -> bool:
+        """Return whether HA has signalled shutdown.
+
+        The analysis pipeline and the sync correlation loops poll this so
+        they can bail at the next loop boundary instead of riding through
+        HA's "final writes shutdown stage" and tripping its
+        ``Thread … is still running at shutdown`` warning.
+        """
+        return self._stop_requested
+
+    def _on_homeassistant_stop(self, _event: Event) -> None:
+        """Handle HA's ``EVENT_HOMEASSISTANT_STOP``.
+
+        Setting the flag is enough — long-running pipeline work polls it
+        and unwinds. Cancelling timers here too means a stop event that
+        races a scheduled analysis tick can't kick off a fresh run while
+        ``async_shutdown`` is on its way.
+        """
+        self._stop_requested = True
+        if self._analysis_timer is not None:
+            self._analysis_timer()
+            self._analysis_timer = None
+        if self._global_decay_timer is not None:
+            self._global_decay_timer()
+            self._global_decay_timer = None
+
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
         """Validate that at least one area is configured.
@@ -410,6 +446,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
 
+            # Wire up an early shutdown signal so an in-flight analysis
+            # pipeline can bail before HA's "final writes shutdown stage"
+            # rather than after, which is what triggered the
+            # ``Task … was still running after final writes shutdown stage``
+            # warning users were seeing on restart.
+            if self._stop_listener_remove is None:
+                self._stop_listener_remove = self.hass.bus.async_listen_once(
+                    EVENT_HOMEASSISTANT_STOP, self._on_homeassistant_stop
+                )
+
             # Build floor-based aggregators from area floor assignments
             self._build_floor_aggregators()
 
@@ -466,6 +512,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Starting coordinator shutdown for areas: %s",
             format_area_names(self),
         )
+
+        # Mark stop requested so any analysis run that races shutdown bails
+        # at the next loop boundary. Idempotent with the EVENT_HOMEASSISTANT_STOP
+        # listener — config-entry unloads (e.g. options-flow reload) reach this
+        # path without ever firing the bus event.
+        self._stop_requested = True
+
+        # Step 0: Drop the EVENT_HOMEASSISTANT_STOP listener if it's still
+        # registered. ``async_listen_once`` self-removes when fired, so this
+        # is the unload-without-shutdown case (options reload, integration
+        # remove). Dropping it prevents a leaked listener after reload.
+        if self._stop_listener_remove is not None:
+            self._stop_listener_remove()
+            self._stop_listener_remove = None
 
         # Step 1: Cancel periodic save timer before cleanup and perform final save
         if self._save_timer is not None:
@@ -1078,6 +1138,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         if _now is None:
             _now = dt_util.utcnow()
+
+        # Don't start a new pipeline if HA is shutting down. The
+        # EVENT_HOMEASSISTANT_STOP listener already cancelled the timer,
+        # but a previously-fired timer's callback can still land here
+        # before the listener runs.
+        if self._stop_requested:
+            return
 
         # Prevent concurrent analysis runs
         if self._analysis_running:
