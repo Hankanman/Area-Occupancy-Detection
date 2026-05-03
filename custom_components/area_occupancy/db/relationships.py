@@ -3,6 +3,12 @@
 This module handles storage and retrieval of area relationships (adjacent areas,
 shared walls, etc.) and calculates influence weights for cross-area probability
 adjustments.
+
+Status: scaffolding only. The schema (``Areas.adjacent_areas`` column,
+``AreaRelationships`` table) and the storage helpers below are in place, but
+``calculate_adjacent_influence`` is not yet called from the Bayesian update
+path, no producer populates ``Areas.adjacent_areas``, and the config flow has
+no UI to set adjacent areas. Tracked by feat/adjacent-areas (discussion #431).
 """
 
 from __future__ import annotations

@@ -54,6 +54,9 @@ CONF_OPTION_PREFIX_AREA: Final = "area_"
 # CONF_NAME removed - use CONF_AREA_ID instead
 CONF_AREA_ID: Final = "area_id"
 CONF_PURPOSE: Final = "purpose"
+CONF_ADJACENT_AREAS: Final = (
+    "adjacent_areas"  # JSON list of adjacent area_ids; consumed by AreaRelationships
+)
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
 CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
