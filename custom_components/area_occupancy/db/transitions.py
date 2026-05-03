@@ -124,8 +124,8 @@ def _build_adjacency_index(db: AreaOccupancyDB, entry_id: str) -> dict[str, set[
             for row in rows:
                 index.setdefault(row.area_name, set()).add(row.related_area_name)
             return index
-    except SQLAlchemyError as err:
-        _LOGGER.error("Error reading adjacency index: %s", err)
+    except SQLAlchemyError:
+        _LOGGER.exception("Error reading adjacency index")
         return {}
 
 
@@ -539,8 +539,8 @@ def _query_pair_counts(
             if hour_of_week is not None:
                 q = q.filter(db.AreaTransitions.hour_of_week == hour_of_week)
             rows = q.all()
-    except SQLAlchemyError as err:
-        _LOGGER.error("Error querying transition counts: %s", err)
+    except SQLAlchemyError:
+        _LOGGER.exception("Error querying transition counts")
         return {}
 
     # SQLite has no integer modulo on a column expression that's clean
@@ -666,8 +666,17 @@ def summarize_transitions_for_diagnostics(
         "1_hop_count": 0,
         "2_hop_count": 0,
         "total_observations": 0.0,
-        "last_observed": _get_metadata(db, _watermark_key(entry_id)),
+        "last_observed": None,
     }
+    # Watermark read is independent of the count query — handle each
+    # separately so a single DB hiccup degrades the diagnostic gracefully
+    # instead of returning nothing. ``_get_metadata`` propagates errors
+    # by design (so the writer path can skip a cycle on read failure),
+    # but the diagnostics consumer should tolerate them.
+    try:
+        out["last_observed"] = _get_metadata(db, _watermark_key(entry_id))
+    except SQLAlchemyError:
+        _LOGGER.exception("Error reading transition watermark for diagnostics")
     try:
         with db.get_session() as session:
             rows = (
@@ -682,6 +691,6 @@ def summarize_transitions_for_diagnostics(
                 else:
                     out["1_hop_count"] += 1
                 out["total_observations"] += float(row.count or 0.0)
-    except SQLAlchemyError as err:
-        _LOGGER.error("Error summarising transitions: %s", err)
+    except SQLAlchemyError:
+        _LOGGER.exception("Error summarising transitions")
     return out

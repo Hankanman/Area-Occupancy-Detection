@@ -1823,7 +1823,9 @@ class TestNewHelperFunctions:
 
         The UI excludes self from the multi-select, but a hand-edited
         storage file or imported config could carry stray self-links.
-        The helper opportunistically cleans them on save.
+        The helper opportunistically cleans them on save in **both** the
+        target row and the partner row (i.e. the saved record never
+        carries the malformed value forward).
         """
         areas = [
             # Target row mistakenly lists itself as adjacent.
@@ -1833,9 +1835,29 @@ class TestNewHelperFunctions:
         ]
         result = _apply_symmetric_adjacency(areas, areas[0])
 
+        # Target's own self-reference is cleaned out of the saved row.
+        assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         # B picks up A (not "A,B" — A's self-ref was discarded before
         # set ops, so target_adjacents is just {"B"}).
         # B's own self-reference is cleaned out of the partner row.
+        assert result[1][CONF_ADJACENT_AREAS] == ["A"]
+
+    def test_apply_symmetric_adjacency_normalises_target_non_list_input(self):
+        """A bare-string adjacency on the target row is rewritten as a clean list.
+
+        Without the target-row sanitisation, the stored area would
+        keep the malformed string verbatim and the next round-trip
+        would silently misbehave.
+        """
+        areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
+        ]
+        result = _apply_symmetric_adjacency(areas, areas[0])
+
+        # Target row is rewritten as a proper list[str].
+        assert result[0][CONF_ADJACENT_AREAS] == ["B"]
+        # Partner picks up the symmetric link.
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
     def test_apply_symmetric_adjacency_idempotent_when_already_mutual(self):
@@ -1901,14 +1923,16 @@ class TestNewHelperFunctions:
         assert result[2][CONF_ADJACENT_AREAS] == []
 
         # _apply_symmetric_adjacency: target with bare-string adjacent should
-        # not iterate characters.
+        # not iterate characters. Target row is also sanitised on the way
+        # out so the saved record carries a proper list[str], not the
+        # original malformed value.
         symmetric_areas = [
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
         result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
-        # A's row is left as-is (caller is responsible for it)
-        assert result[0][CONF_ADJACENT_AREAS] == "B"
+        # Target row is rewritten as a clean list (single-element).
+        assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         # B picks up A as a single id, not as a list of characters from "B"
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 

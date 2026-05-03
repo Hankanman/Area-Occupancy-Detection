@@ -1706,10 +1706,18 @@ def _apply_symmetric_adjacency(
     target_adjacents.discard(target_area_id)
 
     result: list[dict[str, Any]] = []
+    sanitized_target_adjacents = sorted(target_adjacents)
     for area in areas:
         area_id = area.get(CONF_AREA_ID)
-        # The target area itself is already updated in place by the caller.
-        if not area_id or area_id == target_area_id:
+        # The target row was substituted in by the caller; rewrite its
+        # adjacents field to the normalised+self-stripped value so any
+        # malformed input (non-list, self-link) doesn't survive a save.
+        if area_id == target_area_id:
+            cleaned_target = dict(area)
+            cleaned_target[CONF_ADJACENT_AREAS] = list(sanitized_target_adjacents)
+            result.append(cleaned_target)
+            continue
+        if not area_id:
             result.append(area)
             continue
 
@@ -2165,9 +2173,13 @@ class BaseOccupancyFlow:
         editing_area_id = self._area_being_edited
         for area in self._get_wizard_areas():
             other_area_id = area.get(CONF_AREA_ID)
-            if not other_area_id or other_area_id == editing_area_id:
+            # Defensive: malformed persisted data could leave a non-string
+            # value here. Comparison still works but downstream
+            # ``_resolve_area_id_to_name`` and ``SelectOptionDict`` both
+            # expect str — skip rather than crash later.
+            if not isinstance(other_area_id, str) or not other_area_id:
                 continue
-            if other_area_id in seen:
+            if other_area_id == editing_area_id or other_area_id in seen:
                 continue
             seen.add(other_area_id)
             label = other_area_id
