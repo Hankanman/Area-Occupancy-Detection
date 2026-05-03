@@ -14,6 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     ANALYSIS_INTERVAL,
+    CONF_ADJACENT_AREAS,
     CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
@@ -452,6 +453,15 @@ class AreaConfig:
         self.purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
         # Get area_id from data
         self.area_id = data.get(CONF_AREA_ID)
+        # Adjacent area_ids (list of HA area_ids configured as neighbours).
+        # Symmetric write happens at the config-flow persistence layer; this
+        # field defaults to [] for entries that pre-date adjacency support.
+        raw_adjacent = data.get(CONF_ADJACENT_AREAS, [])
+        self.adjacent_areas: list[str] = (
+            [str(a) for a in raw_adjacent if a]
+            if isinstance(raw_adjacent, list)
+            else []
+        )
         if not self.area_id:
             _LOGGER.warning(
                 "Area config missing area_id for area '%s'.",

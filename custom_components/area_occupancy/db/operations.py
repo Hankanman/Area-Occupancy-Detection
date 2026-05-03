@@ -349,6 +349,7 @@ def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
                 "area_id": cfg.area_id,
                 "purpose": cfg.purpose,
                 "threshold": cfg.threshold,
+                "adjacent_areas": list(getattr(cfg, "adjacent_areas", []) or []),
                 "updated_at": to_db_utc(dt_util.utcnow()),
             }
 

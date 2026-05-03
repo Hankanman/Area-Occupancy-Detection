@@ -12,6 +12,7 @@ import pytest
 
 from custom_components.area_occupancy.const import (
     ANALYSIS_INTERVAL,
+    CONF_ADJACENT_AREAS,
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
@@ -260,6 +261,67 @@ class TestAreaConfigInitialization:
 
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.threshold == 0.75
+
+    def test_initialization_defaults_adjacent_areas_to_empty_list(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
+        """AreaConfig defaults adjacent_areas to [] when key is absent."""
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
+
+        config = AreaConfig(coordinator, area_name=area_name)
+        assert config.adjacent_areas == []
+
+    def test_initialization_loads_adjacent_areas_from_config(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
+        """AreaConfig loads adjacent_areas from data and coerces to list[str]."""
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_THRESHOLD: 50,
+                CONF_ADJACENT_AREAS: ["hall_id", "kitchen_id"],
+            },
+        )
+
+        config = AreaConfig(coordinator, area_name=area_name)
+        assert config.adjacent_areas == ["hall_id", "kitchen_id"]
+
+    def test_initialization_handles_invalid_adjacent_areas_gracefully(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
+        """AreaConfig drops falsy entries and rejects non-list values."""
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_THRESHOLD: 50,
+                CONF_ADJACENT_AREAS: ["hall_id", "", None, "kitchen_id"],
+            },
+        )
+
+        config = AreaConfig(coordinator, area_name=area_name)
+        assert config.adjacent_areas == ["hall_id", "kitchen_id"]
+
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_THRESHOLD: 50,
+                CONF_ADJACENT_AREAS: "not-a-list",  # type: ignore[arg-type]
+            },
+        )
+        config = AreaConfig(coordinator, area_name=area_name)
+        assert config.adjacent_areas == []
 
     def test_initialization_with_none_config_entry_raises_error(
         self, hass: HomeAssistant
