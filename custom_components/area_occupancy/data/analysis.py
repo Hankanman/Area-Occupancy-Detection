@@ -37,7 +37,7 @@ async def run_full_analysis(
 ) -> None:
     """Run the full analysis chain for all areas.
 
-    This function orchestrates the complete analysis process:
+    This function orchestrates the complete 13-step analysis process:
     1. Sync states from recorder
     2. Database health check and pruning
     3. Sensor health check (per-entity anomalies → repair issues)
@@ -46,10 +46,13 @@ async def run_full_analysis(
     6. Run numeric aggregation
     7. Recalculate priors for all areas
     8. Run correlation analysis
-    9. Pipeline health check (per-area calc anomalies → repair issues)
-    10. Save data (preserve decay state before refresh)
-    11. Refresh coordinator
-    12. Save data (persist all changes)
+    9. Transition learning (adjacent-areas Phase 3: count chain
+       observations into ``AreaTransitions`` for the Bayesian boost
+       and decay modifier)
+    10. Pipeline health check (per-area calc anomalies → repair issues)
+    11. Save data (preserve decay state before refresh)
+    12. Refresh coordinator
+    13. Save data (persist all changes)
 
     Args:
         coordinator: The coordinator instance containing areas and database
