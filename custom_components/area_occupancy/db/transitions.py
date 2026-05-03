@@ -38,6 +38,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    ADJACENCY_N_CHAIN,
+    ADJACENCY_N_HOUR,
+    ADJACENCY_N_PAIR,
+    ADJACENCY_N_SPECIFIC,
     ADJACENCY_RECENCY_HALF_LIFE_DAYS,
     ADJACENCY_TRAJECTORY_WINDOW_S,
     ADJACENCY_TRANSITION_WINDOW_S,
@@ -46,6 +50,7 @@ from ..const import (
 )
 from ..time_utils import from_db_utc, to_local
 from .queries import get_occupied_intervals
+from .relationships import DEFAULT_INFLUENCE_WEIGHTS
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
@@ -395,6 +400,178 @@ def record_transitions_for_entry(
         summary["areas_considered"],
     )
     return summary
+
+
+# ─── lookup: six-level smoothing fallback ────────────────────────────
+
+
+# Public level labels — surfaced in diagnostics so users can see which
+# fallback level decided their probability.
+LEVEL_2HOP_HOUR_OF_WEEK = "2hop_hour_of_week"
+LEVEL_2HOP_HOUR_OF_DAY = "2hop_hour_of_day"
+LEVEL_2HOP_UNBUCKETED = "2hop_unbucketed"
+LEVEL_1HOP_HOUR_OF_WEEK = "1hop_hour_of_week"
+LEVEL_1HOP_UNBUCKETED = "1hop_unbucketed"
+LEVEL_STATIC_DEFAULT = "static_default"
+
+
+@dataclass(frozen=True)
+class TransitionLookupResult:
+    """Result of a transition probability lookup.
+
+    ``probability`` is in [0, 1]. ``level`` is one of the ``LEVEL_*``
+    constants describing which fallback layer fired. ``observed_count``
+    is the count of the matching ``to_area`` observations at that
+    level (0 for the static default). ``total_count`` is the total
+    of the normalisation denominator at the level (count of all
+    observed destinations from the same source).
+    """
+
+    probability: float
+    level: str
+    observed_count: float
+    total_count: float
+
+
+def _query_pair_counts(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    from_area: str,
+    mid_area: str,
+    *,
+    hour_of_week: int | None = None,
+    hour_of_day: int | None = None,
+) -> dict[str, float]:
+    """Sum counts grouped by ``to_area`` for the requested chain scope.
+
+    ``hour_of_week`` filters to a specific (weekday, hour) bucket.
+    ``hour_of_day`` (0..23) collapses across weekdays at a given hour.
+    Pass neither to aggregate over the entire week.
+    """
+    try:
+        with db.get_session() as session:
+            q = session.query(
+                db.AreaTransitions.to_area,
+                db.AreaTransitions.count,
+                db.AreaTransitions.hour_of_week,
+            ).filter(
+                db.AreaTransitions.entry_id == entry_id,
+                db.AreaTransitions.from_area == from_area,
+                db.AreaTransitions.mid_area == mid_area,
+            )
+            if hour_of_week is not None:
+                q = q.filter(db.AreaTransitions.hour_of_week == hour_of_week)
+            rows = q.all()
+    except SQLAlchemyError as err:
+        _LOGGER.error("Error querying transition counts: %s", err)
+        return {}
+
+    # SQLite has no integer modulo on a column expression that's clean
+    # to filter on, so do hour_of_day collapsing in Python — the row
+    # count is bounded by neighbours × hours so this is fine.
+    sums: dict[str, float] = {}
+    for to_area, count, hour in rows:
+        if hour_of_day is not None and (hour % 24) != hour_of_day:
+            continue
+        sums[to_area] = sums.get(to_area, 0.0) + float(count or 0.0)
+    return sums
+
+
+def _try_level(
+    sums: dict[str, float], to_area: str, threshold: int
+) -> tuple[float, float, float] | None:
+    """Return (probability, observed, total) if ``total`` ≥ threshold.
+
+    The threshold is on the *total* observations at this level — once
+    we trust the level, an unobserved destination is a real zero, not
+    a "no data". Returns None to signal fall-through.
+    """
+    total = sum(sums.values())
+    if total < threshold:
+        return None
+    observed = sums.get(to_area, 0.0)
+    return (observed / total if total > 0 else 0.0, observed, total)
+
+
+def lookup_transition_probability(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    *,
+    from_area: str,
+    mid_area: str,
+    to_area: str,
+    hour_of_week: int,
+    static_default: float | None = None,
+) -> TransitionLookupResult:
+    """Look up ``P(to_area | from_area, mid_area, hour_of_week)`` with fallback.
+
+    Walks six levels of progressively-wider scope until one has enough
+    observations to trust:
+
+    1. Specific 2-hop chain at the exact hour-of-week
+    2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
+    3. Specific 2-hop chain un-bucketed
+    4. Equivalent 1-hop chain at the exact hour-of-week
+    5. Equivalent 1-hop chain un-bucketed
+    6. Static default (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless
+       overridden)
+
+    Caller should normally pass ``mid_area`` populated for the 2-hop
+    case. If only a 1-hop trajectory is available (no W known yet), pass
+    ``mid_area=""`` to skip levels 1-3 and start at level 4.
+
+    The thresholds come from ``ADJACENCY_N_*`` constants in ``const.py``.
+    """
+    if static_default is None:
+        static_default = DEFAULT_INFLUENCE_WEIGHTS["adjacent"]
+    hour_of_day = hour_of_week % 24
+
+    # When the caller already knows there's no 2-hop trajectory, skip
+    # straight to the 1-hop levels so we don't waste queries.
+    if mid_area:
+        # Level 1: specific chain at exact (weekday, hour)
+        sums = _query_pair_counts(
+            db, entry_id, from_area, mid_area, hour_of_week=hour_of_week
+        )
+        result = _try_level(sums, to_area, ADJACENCY_N_SPECIFIC)
+        if result is not None:
+            prob, observed, total = result
+            return TransitionLookupResult(
+                prob, LEVEL_2HOP_HOUR_OF_WEEK, observed, total
+            )
+
+        # Level 2: specific chain collapsed across weekdays
+        sums = _query_pair_counts(
+            db, entry_id, from_area, mid_area, hour_of_day=hour_of_day
+        )
+        result = _try_level(sums, to_area, ADJACENCY_N_HOUR)
+        if result is not None:
+            prob, observed, total = result
+            return TransitionLookupResult(prob, LEVEL_2HOP_HOUR_OF_DAY, observed, total)
+
+        # Level 3: specific chain un-bucketed
+        sums = _query_pair_counts(db, entry_id, from_area, mid_area)
+        result = _try_level(sums, to_area, ADJACENCY_N_CHAIN)
+        if result is not None:
+            prob, observed, total = result
+            return TransitionLookupResult(prob, LEVEL_2HOP_UNBUCKETED, observed, total)
+
+    # Level 4: 1-hop equivalent at exact hour-of-week
+    sums = _query_pair_counts(db, entry_id, from_area, "", hour_of_week=hour_of_week)
+    result = _try_level(sums, to_area, ADJACENCY_N_SPECIFIC)
+    if result is not None:
+        prob, observed, total = result
+        return TransitionLookupResult(prob, LEVEL_1HOP_HOUR_OF_WEEK, observed, total)
+
+    # Level 5: 1-hop equivalent un-bucketed
+    sums = _query_pair_counts(db, entry_id, from_area, "")
+    result = _try_level(sums, to_area, ADJACENCY_N_PAIR)
+    if result is not None:
+        prob, observed, total = result
+        return TransitionLookupResult(prob, LEVEL_1HOP_UNBUCKETED, observed, total)
+
+    # Level 6: static default. observed/total stay 0 to signal "no data".
+    return TransitionLookupResult(static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0)
 
 
 def summarize_transitions_for_diagnostics(

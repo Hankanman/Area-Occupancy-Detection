@@ -15,12 +15,19 @@ import pytest
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.transitions import (
+    LEVEL_1HOP_HOUR_OF_WEEK,
+    LEVEL_1HOP_UNBUCKETED,
+    LEVEL_2HOP_HOUR_OF_DAY,
+    LEVEL_2HOP_HOUR_OF_WEEK,
+    LEVEL_2HOP_UNBUCKETED,
+    LEVEL_STATIC_DEFAULT,
     _apply_recency_decay,
     _AreaEvent,
     _build_adjacency_index,
     _detect_transitions,
     _hour_of_week,
     _upsert_transition_counts,
+    lookup_transition_probability,
     record_transitions_for_entry,
     summarize_transitions_for_diagnostics,
 )
@@ -381,6 +388,237 @@ class TestRecordTransitionsForEntry:
                     .first()
                 )
                 assert row.count == pytest.approx(0.5, abs=1e-6)
+
+
+# ─── lookup with smoothing fallback ─────────────────────────────────
+
+
+def _seed(db, rows: list[tuple[str, str, str, int, float]]) -> None:
+    """Bulk-insert AreaTransitions test fixtures."""
+    with db.get_session() as session:
+        session.add_all(
+            db.AreaTransitions(
+                entry_id=db.coordinator.entry_id,
+                from_area=from_area,
+                mid_area=mid_area,
+                to_area=to_area,
+                hour_of_week=hour_of_week,
+                count=count,
+            )
+            for from_area, mid_area, to_area, hour_of_week, count in rows
+        )
+        session.commit()
+
+
+class TestLookupTransitionProbability:
+    """Six-level smoothing fallback exercised one level at a time."""
+
+    def test_level1_specific_two_hop_at_exact_hour(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Enough specific 2-hop data → ratio at the exact (weekday, hour)."""
+        db = coordinator.db
+        _seed(
+            db,
+            [
+                ("hall", "study", "bathroom", 42, 6.0),
+                ("hall", "study", "bedroom", 42, 4.0),
+            ],
+        )
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="study",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_2HOP_HOUR_OF_WEEK
+        assert result.probability == pytest.approx(0.6)
+        assert result.observed_count == pytest.approx(6.0)
+        assert result.total_count == pytest.approx(10.0)
+
+    def test_level2_collapses_across_weekdays_when_specific_is_thin(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Not enough at the exact hour-of-week → fall through to hour-of-day."""
+        db = coordinator.db
+        # hour_of_week 42 (Wed 18:00) too thin (< N_SPECIFIC=5);
+        # but spread across multiple weekdays at hour-of-day 18 we have
+        # enough (>= N_HOUR=20).
+        _seed(
+            db,
+            [
+                ("hall", "study", "bathroom", 42, 1.0),
+                ("hall", "study", "bedroom", 42, 1.0),
+                # 18 = same hour-of-day across other weekdays (mod 24)
+                ("hall", "study", "bathroom", 18, 6.0),
+                ("hall", "study", "bedroom", 18, 4.0),
+                ("hall", "study", "bathroom", 66, 5.0),
+                ("hall", "study", "bedroom", 66, 5.0),
+            ],
+        )
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="study",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_2HOP_HOUR_OF_DAY
+        # totals: 12 to bathroom, 10 to bedroom = 22 total at hour-of-day 18
+        assert result.total_count == pytest.approx(22.0)
+        assert result.observed_count == pytest.approx(12.0)
+        assert result.probability == pytest.approx(12 / 22)
+
+    def test_level3_falls_through_to_unbucketed_two_hop(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Neither hour-of-week nor hour-of-day has enough → un-bucketed 2-hop."""
+        db = coordinator.db
+        # Spread evenly so no single (hour) bucket reaches N_HOUR=20 — but
+        # all hours combined exceed N_CHAIN=50.
+        rows = []
+        for hour in range(0, 168, 12):
+            rows.append(("hall", "study", "bathroom", hour, 4.0))
+            rows.append(("hall", "study", "bedroom", hour, 1.0))
+        _seed(db, rows)
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="study",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_2HOP_UNBUCKETED
+        # 14 buckets × 4.0 = 56 to bathroom, 14 × 1.0 = 14 to bedroom
+        assert result.total_count == pytest.approx(70.0)
+        assert result.observed_count == pytest.approx(56.0)
+        assert result.probability == pytest.approx(56 / 70)
+
+    def test_level4_falls_through_to_one_hop_at_exact_hour(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """No 2-hop data at all → 1-hop at exact hour-of-week takes over."""
+        db = coordinator.db
+        _seed(
+            db,
+            [
+                # 1-hop: enough at exact hour for N_SPECIFIC=5
+                ("hall", "", "bathroom", 42, 4.0),
+                ("hall", "", "bedroom", 42, 2.0),
+            ],
+        )
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="study",  # there's no 2-hop with this mid yet
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_1HOP_HOUR_OF_WEEK
+        assert result.probability == pytest.approx(4 / 6)
+        assert result.observed_count == pytest.approx(4.0)
+        assert result.total_count == pytest.approx(6.0)
+
+    def test_level5_falls_through_to_one_hop_unbucketed(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """1-hop at exact hour too thin → 1-hop un-bucketed."""
+        db = coordinator.db
+        rows = []
+        for hour in range(0, 168, 8):
+            rows.append(("hall", "", "bathroom", hour, 1.0))
+            rows.append(("hall", "", "bedroom", hour, 1.0))
+        _seed(db, rows)
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="study",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_1HOP_UNBUCKETED
+        # 21 bucket-pairs × 1.0 each = 21 to each → 42 total
+        assert result.total_count == pytest.approx(42.0)
+        assert result.probability == pytest.approx(0.5)
+
+    def test_level6_static_default_when_no_data(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """No data at any level → static default."""
+        db = coordinator.db
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="study",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_STATIC_DEFAULT
+        assert result.probability == pytest.approx(0.3)
+        assert result.observed_count == 0.0
+        assert result.total_count == 0.0
+
+    def test_static_default_override_is_respected(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Caller-supplied static_default overrides the constants module value."""
+        db = coordinator.db
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="A",
+            mid_area="",
+            to_area="B",
+            hour_of_week=0,
+            static_default=0.123,
+        )
+        assert result.level == LEVEL_STATIC_DEFAULT
+        assert result.probability == pytest.approx(0.123)
+
+    def test_empty_mid_area_skips_two_hop_levels(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """``mid_area=""`` means no W known — skip levels 1-3.
+
+        Even if there's plenty of 2-hop data with some other mid, the
+        caller is asking the 1-hop question.
+        """
+        db = coordinator.db
+        # Plenty of 2-hop data — but caller signals 1-hop only.
+        _seed(
+            db,
+            [
+                ("hall", "study", "bathroom", 42, 99.0),
+                ("hall", "study", "bedroom", 42, 99.0),
+                # 1-hop also has data
+                ("hall", "", "bathroom", 42, 7.0),
+                ("hall", "", "bedroom", 42, 3.0),
+            ],
+        )
+
+        result = lookup_transition_probability(
+            db,
+            db.coordinator.entry_id,
+            from_area="hall",
+            mid_area="",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+        assert result.level == LEVEL_1HOP_HOUR_OF_WEEK
+        assert result.probability == pytest.approx(0.7)
 
 
 # ─── diagnostics summary ────────────────────────────────────────────
