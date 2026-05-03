@@ -690,6 +690,179 @@ class TestAreaOccupancyCoordinator:
             # Flag should be reset to False even after error (via finally block)
             assert coordinator._analysis_running is False
 
+    async def test_stop_requested_default_false(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Fresh coordinator should not be in stop-requested state.
+
+        Guards against a regression where the flag is mistakenly initialised
+        ``True`` and the analysis pipeline silently no-ops on every run.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        assert coordinator.stop_requested is False
+
+    async def test_on_homeassistant_stop_sets_flag_and_cancels_timers(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """The stop listener flips the flag and tears down scheduled work.
+
+        Without this the analysis timer can fire mid-shutdown and reach
+        ``run_analysis`` before the flag check kicks in — exactly the
+        race that produced the ``Task … was still running after final
+        writes shutdown stage`` warning users reported on issue #450.
+
+        Cancels all three scheduled-work slots: analysis, decay, and
+        save. The save slot was missed in the original wiring; without
+        cancelling it, an in-flight ``_handle_save_timer`` callback
+        would still fire ``db.save_data`` in the executor pool and
+        reproduce the same shutdown-warning pathway.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        analysis_cancel = Mock()
+        decay_cancel = Mock()
+        save_cancel = Mock()
+        coordinator._analysis_timer = analysis_cancel
+        coordinator._global_decay_timer = decay_cancel
+        coordinator._save_timer = save_cancel
+
+        coordinator._on_homeassistant_stop(Mock())
+
+        assert coordinator.stop_requested is True
+        analysis_cancel.assert_called_once()
+        decay_cancel.assert_called_once()
+        save_cancel.assert_called_once()
+        assert coordinator._analysis_timer is None
+        assert coordinator._global_decay_timer is None
+        assert coordinator._save_timer is None
+
+    async def test_handle_save_timer_skips_executor_work_when_stopped(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Save handler must not dispatch ``db.save_data`` after stop.
+
+        The cancellation in ``_on_homeassistant_stop`` covers the
+        scheduled-but-not-fired case. This guard covers the "callback
+        already in-flight when stop fires" race — without it, the
+        executor would still run ``db.save_data`` and trip the
+        ``Thread is still running at shutdown`` warning.
+        ``async_shutdown`` does its own final save, so this is safe.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.hass, "async_add_executor_job") as mock_executor,
+            patch.object(coordinator, "_start_save_timer") as mock_rearm,
+        ):
+            await coordinator._handle_save_timer(dt_util.utcnow())
+
+        mock_executor.assert_not_called()
+        mock_rearm.assert_not_called()
+
+    async def test_handle_decay_timer_skips_refresh_and_rearm_when_stopped(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Decay handler must not refresh listeners or rearm after stop.
+
+        ``async_refresh`` fans out to subscribed listeners that don't
+        expect to be called while the integration is unwinding;
+        rearming the timer leaks a callback that ``async_shutdown``
+        then has to clean up.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch.object(coordinator, "_start_decay_timer") as mock_rearm,
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+
+        mock_refresh.assert_not_called()
+        mock_rearm.assert_not_called()
+
+    async def test_run_analysis_skips_when_stop_requested(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """``run_analysis`` must no-op once shutdown is signalled.
+
+        Catches the timer-callback race: the EVENT_HOMEASSISTANT_STOP
+        listener cancels the timer, but a callback already in flight at
+        that moment can still land here. The check inside ``run_analysis``
+        is the second line of defence.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._stop_requested = True
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.run_full_analysis",
+            new=AsyncMock(),
+        ) as mock_full_analysis:
+            await coordinator.run_analysis()
+
+        mock_full_analysis.assert_not_called()
+        # No reschedule either — the timer reference must stay None so
+        # async_shutdown isn't asked to cancel a stale callback.
+        assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_does_not_rearm_timer_if_stop_during_run(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Mid-run shutdown must not cause the finally block to re-arm.
+
+        The race: ``run_analysis`` enters with ``stop_requested=False``,
+        starts the pipeline, and during the long ``await`` the
+        EVENT_HOMEASSISTANT_STOP listener flips the flag and clears the
+        timer slot. Without an extra guard the finally block calls
+        ``async_track_point_in_time`` again — registering a callback we
+        already know will hit the stop guard and no-op, leaking the
+        registration until ``async_shutdown`` cleans it up.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+
+        async def _fake_pipeline(*_args, **_kwargs):
+            # Simulate the EVENT_HOMEASSISTANT_STOP listener firing
+            # mid-await — flag flips while we're inside run_full_analysis.
+            coordinator._stop_requested = True
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.run_full_analysis",
+                side_effect=_fake_pipeline,
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=Mock(),
+            ) as mock_track_time,
+        ):
+            await coordinator.run_analysis()
+
+        mock_track_time.assert_not_called()
+        assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_concurrent_guard_does_not_rearm_when_stopped(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Concurrent-guard branch must also honour stop_requested.
+
+        If a timer callback fires WHILE another analysis is in-flight
+        AND shutdown has been signalled, the existing
+        ``self._analysis_running`` short-path used to schedule a
+        five-minute retry. With shutdown active that retry is just a
+        leak. Same reasoning as the main finally guard.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._analysis_running = True
+        coordinator._stop_requested = True
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track_time:
+            await coordinator.run_analysis()
+
+        mock_track_time.assert_not_called()
+
     async def test_track_entity_state_changes_with_existing_listener(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,6 +16,7 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.analysis import (
     PriorAnalyzer,
     ensure_occupied_intervals_cache,
+    run_full_analysis,
     run_interval_aggregation,
     run_numeric_aggregation,
     start_prior_analysis,
@@ -899,6 +900,105 @@ class TestOrchestrationFunctions:
             # Should not raise
             await start_prior_analysis(coordinator, area_name, area.prior)
             mock_logger.error.assert_called()
+
+
+class TestRunFullAnalysisCancellation:
+    """``run_full_analysis`` must respect ``coordinator.stop_requested``.
+
+    The stop signal is set by the EVENT_HOMEASSISTANT_STOP listener; the
+    pipeline polls between steps so an in-flight cycle can unwind before
+    HA's "final writes shutdown stage" — the bug behind issue #450's
+    ``Task … was still running after final writes shutdown stage``
+    warning.
+    """
+
+    async def test_no_steps_run_when_stop_requested_at_start(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Stop requested before the pipeline starts → nothing runs.
+
+        Patches the per-step DB calls so we can assert *none* of them
+        were invoked. ``run_full_analysis`` must also not raise — clean
+        cancellation isn't a failure that should trigger backoff.
+        """
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()) as mock_sync,
+            patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                new=AsyncMock(),
+            ) as mock_executor,
+        ):
+            # Pipeline raises only on step-level *failures*; cancellation
+            # is silent. Just await and verify no work happened.
+            await run_full_analysis(coordinator)
+
+        # Step 1 (``sync_states``) and step 2 (``periodic_health_check`` via
+        # executor) both gate behind ``_run_step``'s stop-requested check.
+        # If either fired, ``_run_step`` failed to honour the flag.
+        mock_sync.assert_not_called()
+        mock_executor.assert_not_called()
+
+    async def test_cancelled_run_does_not_pollute_last_analysis_duration(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Cancelled cycles must not write ``_last_analysis_duration_ms``.
+
+        Otherwise a fast-skip duration (microseconds, since no work runs)
+        masks a previously-slow successful cycle in
+        ``HealthMonitor.check_pipeline_health``'s slow-analysis check —
+        the user could have an actual 5-minute analysis problem hidden
+        behind a recent shutdown-cancelled cycle's near-zero duration.
+        """
+        # Seed a previously-recorded slow run so we can verify it survives.
+        coordinator._last_analysis_duration_ms = 250_000.0
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                new=AsyncMock(),
+            ),
+        ):
+            await run_full_analysis(coordinator)
+
+        # The seeded value must survive — cancelled runs are not
+        # comparable to real cycles.
+        assert coordinator._last_analysis_duration_ms == 250_000.0
+
+    async def test_cancelled_run_logs_cancellation_not_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Cancelled cycles log distinctly from a "12/12 succeeded" cycle.
+
+        Without this branching the operator sees ``Full analysis
+        completed: 12/12 steps succeeded`` on every shutdown-cancelled
+        cycle — it looks like the integration is healthy when it
+        actually did no work.
+        """
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                new=AsyncMock(),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis._LOGGER"
+            ) as mock_logger,
+        ):
+            await run_full_analysis(coordinator)
+
+        # Only the cancellation message, never a "12/12 succeeded".
+        info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
+        assert any("cancelled mid-run" in msg for msg in info_messages), info_messages
+        assert not any("succeeded" in msg for msg in info_messages), info_messages
 
 
 class TestMergeOverlappingIntervals:

@@ -10,7 +10,8 @@ from typing import Any
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -79,6 +80,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # data.analysis.run_full_analysis at the end of each pipeline run.
         # Read by HealthMonitor.check_pipeline_health to flag slow analysis.
         self._last_analysis_duration_ms: float | None = None
+        # Set to True by the EVENT_HOMEASSISTANT_STOP listener so the
+        # in-flight analysis pipeline (and the sync correlation work it
+        # dispatches to the executor) can bail at the next loop boundary
+        # instead of riding through HA's "final writes shutdown stage".
+        # Read by data.analysis.run_full_analysis and the per-area /
+        # per-entity loops in db.correlation.
+        self._stop_requested: bool = False
+        self._stop_listener_remove: CALLBACK_TYPE | None = None
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -307,6 +316,45 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the most recent full-analysis duration in milliseconds, if any."""
         return self._last_analysis_duration_ms
 
+    @property
+    def stop_requested(self) -> bool:
+        """Return whether HA has signalled shutdown.
+
+        The analysis pipeline and the sync correlation loops poll this so
+        they can bail at the next loop boundary instead of riding through
+        HA's "final writes shutdown stage" and tripping its
+        ``Thread … is still running at shutdown`` warning.
+        """
+        return self._stop_requested
+
+    def _on_homeassistant_stop(self, _event: Event) -> None:
+        """Handle HA's ``EVENT_HOMEASSISTANT_STOP``.
+
+        Setting the flag is enough for the analysis pipeline (which polls
+        it inside long-running sync work). Cancelling timers here too
+        prevents a fresh callback from kicking off DB / decay work after
+        HA has already entered shutdown but before ``async_shutdown``
+        runs. The ``_handle_*_timer`` handlers also poll the flag — that
+        catches the race where a callback is already in-flight when this
+        runs (we can't yank it from the loop, but we can stop it from
+        rearming and from starting new executor work).
+        """
+        self._stop_requested = True
+        if self._analysis_timer is not None:
+            self._analysis_timer()
+            self._analysis_timer = None
+        if self._global_decay_timer is not None:
+            self._global_decay_timer()
+            self._global_decay_timer = None
+        # ``_save_timer`` was missed in the original wiring. ``db.save_data``
+        # runs in the executor pool, so a save callback in flight during
+        # shutdown reproduces the "Thread is still running at shutdown"
+        # warning the analysis pipeline used to trigger. Cancel here AND
+        # have ``_handle_save_timer`` return early on the flag.
+        if self._save_timer is not None:
+            self._save_timer()
+            self._save_timer = None
+
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
         """Validate that at least one area is configured.
@@ -410,6 +458,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Analysis timer is async and runs in background
             await self._start_analysis_timer()
 
+            # Wire up an early shutdown signal so an in-flight analysis
+            # pipeline can bail before HA's "final writes shutdown stage"
+            # rather than after, which is what triggered the
+            # ``Task … was still running after final writes shutdown stage``
+            # warning users were seeing on restart.
+            if self._stop_listener_remove is None:
+                self._stop_listener_remove = self.hass.bus.async_listen_once(
+                    EVENT_HOMEASSISTANT_STOP, self._on_homeassistant_stop
+                )
+
             # Build floor-based aggregators from area floor assignments
             self._build_floor_aggregators()
 
@@ -466,6 +524,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Starting coordinator shutdown for areas: %s",
             format_area_names(self),
         )
+
+        # Mark stop requested so any analysis run that races shutdown bails
+        # at the next loop boundary. Idempotent with the EVENT_HOMEASSISTANT_STOP
+        # listener — config-entry unloads (e.g. options-flow reload) reach this
+        # path without ever firing the bus event.
+        self._stop_requested = True
+
+        # Step 0: Drop the EVENT_HOMEASSISTANT_STOP listener if it's still
+        # registered. ``async_listen_once`` self-removes when fired, so this
+        # is the unload-without-shutdown case (options reload, integration
+        # remove). Dropping it prevents a leaked listener after reload.
+        if self._stop_listener_remove is not None:
+            self._stop_listener_remove()
+            self._stop_listener_remove = None
 
         # Step 1: Cancel periodic save timer before cleanup and perform final save
         if self._save_timer is not None:
@@ -985,6 +1057,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle periodic save timer firing - save data and reschedule."""
         self._save_timer = None
 
+        # Bail before kicking off executor work if shutdown has been
+        # signalled. ``db.save_data`` runs in the executor pool and
+        # would otherwise reproduce the "Thread is still running at
+        # shutdown" warning. ``async_shutdown`` does its own final
+        # save, so skipping this tick is safe.
+        if self._stop_requested:
+            return
+
         try:
             await self.hass.async_add_executor_job(self.db.save_data)
             _LOGGER.debug(
@@ -998,7 +1078,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 err,
             )
 
-        # Reschedule the timer
+        # Reschedule the timer — but not if shutdown was signalled
+        # while ``save_data`` was running in the executor. Otherwise we
+        # leak a registered callback that ``async_shutdown`` will then
+        # have to clean up.
+        if self._stop_requested:
+            return
         self._start_save_timer()
 
     # --- Decay Timer Handling ---
@@ -1019,6 +1104,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle decay timer firing - refresh coordinator and always reschedule."""
         self._global_decay_timer = None
 
+        # Skip the tick + refresh if shutdown was signalled. The
+        # work itself is in-process and quick (no executor), but
+        # ``async_refresh`` can fan out to listeners that don't
+        # expect to be called once the integration is unwinding.
+        if self._stop_requested:
+            return
+
         # Tick decay for all areas to update state (e.g., stop decay when factor reaches zero)
         # This must be done before refresh to ensure state transitions happen
         for area in self.areas.values():
@@ -1030,7 +1122,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
 
-        # Reschedule the timer
+        # Reschedule the timer — but not if shutdown was signalled
+        # during ``async_refresh``. Same rearm-leak avoidance as the
+        # save and analysis timers.
+        if self._stop_requested:
+            return
         self._start_decay_timer()
 
     # --- Analysis Timer Handling ---
@@ -1079,6 +1175,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if _now is None:
             _now = dt_util.utcnow()
 
+        # Don't start a new pipeline if HA is shutting down. The
+        # EVENT_HOMEASSISTANT_STOP listener already cancelled the timer,
+        # but a previously-fired timer's callback can still land here
+        # before the listener runs.
+        if self._stop_requested:
+            return
+
         # Prevent concurrent analysis runs
         if self._analysis_running:
             _LOGGER.debug("Analysis already running, skipping this trigger")
@@ -1086,6 +1189,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._analysis_timer is not None:
                 self._analysis_timer()
                 self._analysis_timer = None
+            # Don't re-arm if shutdown has been signalled while another
+            # analysis is in flight — the EVENT_HOMEASSISTANT_STOP listener
+            # already cancelled the timer slot, and a callback we know
+            # will hit the stop_requested guard is just a registry leak
+            # until ``async_shutdown`` cleans it up.
+            if self._stop_requested:
+                return
             # Reschedule to try again later
             next_update = _now + timedelta(minutes=5)
             self._analysis_timer = async_track_point_in_time(
@@ -1111,6 +1221,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _failed = True
         finally:
             self._analysis_running = False
+            # If shutdown was signalled DURING the await above, the
+            # EVENT_HOMEASSISTANT_STOP listener has already cancelled
+            # the timer slot and set ``_stop_requested``. Re-arming
+            # here would register a fresh callback that immediately
+            # no-ops in the guard at the top of this method — and
+            # would only be cleaned up later by ``async_shutdown``.
+            # Skip the re-arm entirely.
+            if self._stop_requested:
+                return
             # Always reschedule — retry sooner on failure
             if _failed:
                 next_update = _now + timedelta(minutes=15)
