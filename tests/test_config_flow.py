@@ -12,6 +12,7 @@ from custom_components.area_occupancy.config_flow import (
     AreaOccupancyOptionsFlow,
     BaseOccupancyFlow,
     _apply_purpose_based_decay_default,
+    _apply_symmetric_adjacency,
     _build_area_description_placeholders,
     _create_area_selector_schema,
     _entity_contains_keyword,
@@ -25,10 +26,12 @@ from custom_components.area_occupancy.config_flow import (
     _handle_step_error,
     _is_weather_entity,
     _remove_area_from_list,
+    _strip_adjacency_references,
     _update_area_in_list,
     create_schema,
 )
 from custom_components.area_occupancy.const import (
+    CONF_ADJACENT_AREAS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
@@ -1748,6 +1751,108 @@ class TestNewHelperFunctions:
         result = _remove_area_from_list(areas, "living_room")
         assert len(result) == 1
         assert result[0][CONF_AREA_ID] == "kitchen"
+
+    def test_remove_area_from_list_strips_adjacency_references(self):
+        """Removing an area also clears its id from other areas' adjacents."""
+        areas = [
+            {
+                CONF_AREA_ID: "hall",
+                CONF_PURPOSE: "transit",
+                CONF_ADJACENT_AREAS: ["bedroom", "kitchen"],
+            },
+            {
+                CONF_AREA_ID: "bedroom",
+                CONF_PURPOSE: "sleep",
+                CONF_ADJACENT_AREAS: ["hall"],
+            },
+            {
+                CONF_AREA_ID: "kitchen",
+                CONF_PURPOSE: "work",
+                CONF_ADJACENT_AREAS: ["hall"],
+            },
+        ]
+        result = _remove_area_from_list(areas, "hall")
+
+        assert [a[CONF_AREA_ID] for a in result] == ["bedroom", "kitchen"]
+        assert result[0][CONF_ADJACENT_AREAS] == []
+        assert result[1][CONF_ADJACENT_AREAS] == []
+
+    def test_apply_symmetric_adjacency_adds_reverse_link(self):
+        """Adding 'B' to A's adjacents also adds A to B's adjacents."""
+        areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "C", CONF_ADJACENT_AREAS: []},
+        ]
+        result = _apply_symmetric_adjacency(areas, areas[0])
+
+        # A's list is unchanged (caller already wrote it)
+        assert result[0][CONF_ADJACENT_AREAS] == ["B"]
+        # B now contains A
+        assert result[1][CONF_ADJACENT_AREAS] == ["A"]
+        # C is untouched (not referenced in either direction)
+        assert result[2][CONF_ADJACENT_AREAS] == []
+
+    def test_apply_symmetric_adjacency_removes_stale_reverse_link(self):
+        """Removing 'B' from A's adjacents also removes A from B's."""
+        areas = [
+            # A used to be adjacent to B but the user removed B from its list
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["A"]},
+        ]
+        result = _apply_symmetric_adjacency(areas, areas[0])
+
+        assert result[0][CONF_ADJACENT_AREAS] == []
+        assert result[1][CONF_ADJACENT_AREAS] == []
+
+    def test_apply_symmetric_adjacency_preserves_unrelated_pairs(self):
+        """Editing A→B doesn't disturb pre-existing C→D adjacency."""
+        areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "C", CONF_ADJACENT_AREAS: ["D"]},
+            {CONF_AREA_ID: "D", CONF_ADJACENT_AREAS: ["C"]},
+        ]
+        result = _apply_symmetric_adjacency(areas, areas[0])
+
+        assert result[2][CONF_ADJACENT_AREAS] == ["D"]
+        assert result[3][CONF_ADJACENT_AREAS] == ["C"]
+
+    def test_apply_symmetric_adjacency_idempotent_when_already_mutual(self):
+        """Re-saving a mutually-adjacent pair is a no-op for the partner."""
+        areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["A"]},
+        ]
+        result = _apply_symmetric_adjacency(areas, areas[0])
+
+        # B's row is returned as-is (no spurious mutation)
+        assert result[1] is areas[1]
+
+    def test_strip_adjacency_references_only_removes_exact_id(self):
+        """Stripping 'hall' must not touch areas whose id contains 'hall'."""
+        areas = [
+            {CONF_AREA_ID: "hall", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "hallway_north", CONF_ADJACENT_AREAS: ["hall"]},
+            {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: ["hall"]},
+        ]
+        result = _strip_adjacency_references(areas, "hall")
+
+        assert result[0][CONF_AREA_ID] == "hall"
+        assert result[1][CONF_ADJACENT_AREAS] == []
+        assert result[2][CONF_ADJACENT_AREAS] == []
+
+    def test_update_area_in_list_invokes_symmetric_write(self):
+        """End-to-end: editing A's adjacents to add B mutates B's row too."""
+        areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
+        ]
+        updated_a = {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]}
+        result = _update_area_in_list(areas, updated_a, "A")
+
+        assert result[0][CONF_ADJACENT_AREAS] == ["B"]
+        assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
     @pytest.mark.parametrize(
         ("error_type", "error_message", "expected_result"),

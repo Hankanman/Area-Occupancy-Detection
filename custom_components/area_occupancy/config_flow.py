@@ -48,6 +48,7 @@ from .const import (
     CONF_ACTION_ADD_AREA,
     CONF_ACTION_GLOBAL_SETTINGS,
     CONF_ACTION_MANAGE_PEOPLE,
+    CONF_ADJACENT_AREAS,
     CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
@@ -1090,8 +1091,20 @@ def create_schema(
 # ── Wizard step schemas ──────────────────────────────────────────────
 
 
-def _create_basics_step_schema(*, is_editing: bool = False) -> dict[vol.Marker, Any]:
-    """Create schema for wizard step 1: area selection and purpose."""
+def _create_basics_step_schema(
+    *,
+    is_editing: bool = False,
+    adjacent_options: list[SelectOptionDict] | None = None,
+) -> dict[vol.Marker, Any]:
+    """Create schema for wizard step 1: area selection and purpose.
+
+    Args:
+        is_editing: True if editing an existing area (skips area selector).
+        adjacent_options: Other areas in this entry available as adjacency
+            choices. Each option is `{"value": area_id, "label": area_name}`.
+            When None or empty, the adjacency field is omitted (e.g. the
+            first area being added has no neighbours to pick from).
+    """
     fields: dict[vol.Marker, Any] = {}
     if not is_editing:
         fields[vol.Required(CONF_AREA_ID)] = AreaSelector()
@@ -1101,6 +1114,14 @@ def _create_basics_step_schema(*, is_editing: bool = False) -> dict[vol.Marker, 
             mode=SelectSelectorMode.DROPDOWN,
         )
     )
+    if adjacent_options:
+        fields[vol.Optional(CONF_ADJACENT_AREAS, default=[])] = SelectSelector(
+            SelectSelectorConfig(
+                options=adjacent_options,
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
     return fields
 
 
@@ -1627,12 +1648,81 @@ def _find_area_by_id(
     return None
 
 
+def _apply_symmetric_adjacency(
+    areas: list[dict[str, Any]], updated_area: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Mirror an area's adjacency edits across the paired areas.
+
+    The adjacency UI is per-area (a flat multi-select of neighbours), but
+    the underlying relation is mutual. When the user saves area A with
+    adjacents `[B, C]`:
+      * Add A to B's and C's adjacents (if not already there).
+      * Remove A from any other area X that previously listed A but
+        isn't in A's new list.
+
+    Returns a new list — does not mutate inputs.
+    """
+    target_area_id = updated_area.get(CONF_AREA_ID)
+    if not target_area_id:
+        return areas
+
+    raw_target_adj = updated_area.get(CONF_ADJACENT_AREAS, []) or []
+    target_adjacents = {a for a in raw_target_adj if a}
+
+    result: list[dict[str, Any]] = []
+    for area in areas:
+        area_id = area.get(CONF_AREA_ID)
+        # The target area itself is already updated in place by the caller.
+        if not area_id or area_id == target_area_id:
+            result.append(area)
+            continue
+
+        raw_current_adj = area.get(CONF_ADJACENT_AREAS, []) or []
+        current_adjacents = {a for a in raw_current_adj if a}
+
+        if area_id in target_adjacents:
+            new_adjacents = current_adjacents | {target_area_id}
+        else:
+            new_adjacents = current_adjacents - {target_area_id}
+
+        if new_adjacents != current_adjacents:
+            mirrored = dict(area)
+            mirrored[CONF_ADJACENT_AREAS] = sorted(new_adjacents)
+            result.append(mirrored)
+        else:
+            result.append(area)
+    return result
+
+
+def _strip_adjacency_references(
+    areas: list[dict[str, Any]], removed_area_id: str
+) -> list[dict[str, Any]]:
+    """Remove a deleted area_id from every other area's adjacents list."""
+    if not removed_area_id:
+        return areas
+    result: list[dict[str, Any]] = []
+    for area in areas:
+        raw_adj = area.get(CONF_ADJACENT_AREAS, []) or []
+        if removed_area_id in raw_adj:
+            cleaned = dict(area)
+            cleaned[CONF_ADJACENT_AREAS] = [
+                a for a in raw_adj if a and a != removed_area_id
+            ]
+            result.append(cleaned)
+        else:
+            result.append(area)
+    return result
+
+
 def _update_area_in_list(
     areas: list[dict[str, Any]],
     updated_area: dict[str, Any],
     area_id: str | None,
 ) -> list[dict[str, Any]]:
     """Update or add an area in a list of areas.
+
+    After the update or add, mirrors any adjacency changes across the
+    other areas (adjacency is mutual; the UI is per-area).
 
     Args:
         areas: List of area configuration dictionaries
@@ -1657,13 +1747,16 @@ def _update_area_in_list(
         # Add new area
         updated_areas.append(updated_area)
 
-    return updated_areas
+    return _apply_symmetric_adjacency(updated_areas, updated_area)
 
 
 def _remove_area_from_list(
     areas: list[dict[str, Any]], area_id: str
 ) -> list[dict[str, Any]]:
     """Remove an area from a list of areas.
+
+    Also strips the removed area_id from every surviving area's
+    adjacents list so we don't leave dangling references.
 
     Args:
         areas: List of area configuration dictionaries
@@ -1672,7 +1765,8 @@ def _remove_area_from_list(
     Returns:
         Updated list of areas with specified area removed
     """
-    return [area for area in areas if area.get(CONF_AREA_ID) != area_id]
+    surviving = [area for area in areas if area.get(CONF_AREA_ID) != area_id]
+    return _strip_adjacency_references(surviving, area_id)
 
 
 def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
@@ -2019,6 +2113,32 @@ class BaseOccupancyFlow:
         """Handle completion of the area config wizard. Overridden by subclasses."""
         raise NotImplementedError
 
+    def _build_adjacent_area_options(self) -> list[SelectOptionDict]:
+        """Build the multi-select options for the adjacency field.
+
+        Returns options for every area configured in this entry except the
+        one currently being edited (you can't be adjacent to yourself).
+        Labels resolve to the HA area registry name when possible, falling
+        back to the raw area_id.
+        """
+        options: list[SelectOptionDict] = []
+        seen: set[str] = set()
+        editing_area_id = self._area_being_edited
+        for area in self._get_wizard_areas():
+            other_area_id = area.get(CONF_AREA_ID)
+            if not other_area_id or other_area_id == editing_area_id:
+                continue
+            if other_area_id in seen:
+                continue
+            seen.add(other_area_id)
+            label = other_area_id
+            if self.hass:
+                with contextlib.suppress(ValueError):
+                    label = _resolve_area_id_to_name(self.hass, other_area_id)
+            options.append(SelectOptionDict(value=other_area_id, label=label))
+        options.sort(key=lambda opt: opt["label"].lower())
+        return options
+
     def _init_area_wizard(self) -> None:
         """Initialize the area config wizard draft."""
         if self._area_being_edited:
@@ -2071,8 +2191,10 @@ class BaseOccupancyFlow:
                 self._area_config_draft.update(user_input)
                 return await self.async_step_area_motion()
 
+        adjacent_options = self._build_adjacent_area_options()
         schema_dict = _create_basics_step_schema(
-            is_editing=self._area_being_edited is not None
+            is_editing=self._area_being_edited is not None,
+            adjacent_options=adjacent_options,
         )
         base_schema = vol.Schema(schema_dict)
 
@@ -2081,7 +2203,8 @@ class BaseOccupancyFlow:
             user_input
             if user_input is not None
             else _draft_to_suggested(
-                self._area_config_draft, {CONF_AREA_ID, CONF_PURPOSE}
+                self._area_config_draft,
+                {CONF_AREA_ID, CONF_PURPOSE, CONF_ADJACENT_AREAS},
             )
         )
         if suggested:
