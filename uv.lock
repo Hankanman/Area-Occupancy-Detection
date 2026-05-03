@@ -256,7 +256,7 @@ wheels = [
 
 [[package]]
 name = "area-occupancy-detection"
-version = "2026.5.1"
+version = "2026.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "ha-ffmpeg" },
