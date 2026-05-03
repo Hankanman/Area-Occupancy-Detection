@@ -710,20 +710,76 @@ class TestAreaOccupancyCoordinator:
         ``run_analysis`` before the flag check kicks in — exactly the
         race that produced the ``Task … was still running after final
         writes shutdown stage`` warning users reported on issue #450.
+
+        Cancels all three scheduled-work slots: analysis, decay, and
+        save. The save slot was missed in the original wiring; without
+        cancelling it, an in-flight ``_handle_save_timer`` callback
+        would still fire ``db.save_data`` in the executor pool and
+        reproduce the same shutdown-warning pathway.
         """
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         analysis_cancel = Mock()
         decay_cancel = Mock()
+        save_cancel = Mock()
         coordinator._analysis_timer = analysis_cancel
         coordinator._global_decay_timer = decay_cancel
+        coordinator._save_timer = save_cancel
 
         coordinator._on_homeassistant_stop(Mock())
 
         assert coordinator.stop_requested is True
         analysis_cancel.assert_called_once()
         decay_cancel.assert_called_once()
+        save_cancel.assert_called_once()
         assert coordinator._analysis_timer is None
         assert coordinator._global_decay_timer is None
+        assert coordinator._save_timer is None
+
+    async def test_handle_save_timer_skips_executor_work_when_stopped(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Save handler must not dispatch ``db.save_data`` after stop.
+
+        The cancellation in ``_on_homeassistant_stop`` covers the
+        scheduled-but-not-fired case. This guard covers the "callback
+        already in-flight when stop fires" race — without it, the
+        executor would still run ``db.save_data`` and trip the
+        ``Thread is still running at shutdown`` warning.
+        ``async_shutdown`` does its own final save, so this is safe.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.hass, "async_add_executor_job") as mock_executor,
+            patch.object(coordinator, "_start_save_timer") as mock_rearm,
+        ):
+            await coordinator._handle_save_timer(dt_util.utcnow())
+
+        mock_executor.assert_not_called()
+        mock_rearm.assert_not_called()
+
+    async def test_handle_decay_timer_skips_refresh_and_rearm_when_stopped(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Decay handler must not refresh listeners or rearm after stop.
+
+        ``async_refresh`` fans out to subscribed listeners that don't
+        expect to be called while the integration is unwinding;
+        rearming the timer leaks a callback that ``async_shutdown``
+        then has to clean up.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch.object(coordinator, "_start_decay_timer") as mock_rearm,
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+
+        mock_refresh.assert_not_called()
+        mock_rearm.assert_not_called()
 
     async def test_run_analysis_skips_when_stop_requested(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

@@ -330,10 +330,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _on_homeassistant_stop(self, _event: Event) -> None:
         """Handle HA's ``EVENT_HOMEASSISTANT_STOP``.
 
-        Setting the flag is enough — long-running pipeline work polls it
-        and unwinds. Cancelling timers here too means a stop event that
-        races a scheduled analysis tick can't kick off a fresh run while
-        ``async_shutdown`` is on its way.
+        Setting the flag is enough for the analysis pipeline (which polls
+        it inside long-running sync work). Cancelling timers here too
+        prevents a fresh callback from kicking off DB / decay work after
+        HA has already entered shutdown but before ``async_shutdown``
+        runs. The ``_handle_*_timer`` handlers also poll the flag — that
+        catches the race where a callback is already in-flight when this
+        runs (we can't yank it from the loop, but we can stop it from
+        rearming and from starting new executor work).
         """
         self._stop_requested = True
         if self._analysis_timer is not None:
@@ -342,6 +346,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._global_decay_timer is not None:
             self._global_decay_timer()
             self._global_decay_timer = None
+        # ``_save_timer`` was missed in the original wiring. ``db.save_data``
+        # runs in the executor pool, so a save callback in flight during
+        # shutdown reproduces the "Thread is still running at shutdown"
+        # warning the analysis pipeline used to trigger. Cancel here AND
+        # have ``_handle_save_timer`` return early on the flag.
+        if self._save_timer is not None:
+            self._save_timer()
+            self._save_timer = None
 
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
@@ -1045,6 +1057,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle periodic save timer firing - save data and reschedule."""
         self._save_timer = None
 
+        # Bail before kicking off executor work if shutdown has been
+        # signalled. ``db.save_data`` runs in the executor pool and
+        # would otherwise reproduce the "Thread is still running at
+        # shutdown" warning. ``async_shutdown`` does its own final
+        # save, so skipping this tick is safe.
+        if self._stop_requested:
+            return
+
         try:
             await self.hass.async_add_executor_job(self.db.save_data)
             _LOGGER.debug(
@@ -1058,7 +1078,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 err,
             )
 
-        # Reschedule the timer
+        # Reschedule the timer — but not if shutdown was signalled
+        # while ``save_data`` was running in the executor. Otherwise we
+        # leak a registered callback that ``async_shutdown`` will then
+        # have to clean up.
+        if self._stop_requested:
+            return
         self._start_save_timer()
 
     # --- Decay Timer Handling ---
@@ -1079,6 +1104,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle decay timer firing - refresh coordinator and always reschedule."""
         self._global_decay_timer = None
 
+        # Skip the tick + refresh if shutdown was signalled. The
+        # work itself is in-process and quick (no executor), but
+        # ``async_refresh`` can fan out to listeners that don't
+        # expect to be called once the integration is unwinding.
+        if self._stop_requested:
+            return
+
         # Tick decay for all areas to update state (e.g., stop decay when factor reaches zero)
         # This must be done before refresh to ensure state transitions happen
         for area in self.areas.values():
@@ -1090,7 +1122,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
 
-        # Reschedule the timer
+        # Reschedule the timer — but not if shutdown was signalled
+        # during ``async_refresh``. Same rearm-leak avoidance as the
+        # save and analysis timers.
+        if self._stop_requested:
+            return
         self._start_decay_timer()
 
     # --- Analysis Timer Handling ---
