@@ -1652,11 +1652,20 @@ def _normalize_adjacent_areas(value: Any) -> list[str]:
     """Coerce a `CONF_ADJACENT_AREAS` value to a clean list of area_id strings.
 
     The persistence layer normally writes a list, but config storage is JSON
-    and a hand-edited file (or an old import) can supply a bare string,
-    `None`, or some other iterable. The mirror/strip helpers do set ops over
-    the values, so a stray string would be iterated character-by-character
-    — silently corrupting the data. This helper folds every shape into the
-    expected `list[str]` (empty for unrecognised input).
+    and a hand-edited file (or an old import) can supply other shapes. The
+    mirror/strip helpers do set ops over the values, so a stray string would
+    be iterated character-by-character and silently corrupt the data. This
+    helper folds every shape into a `list[str]`:
+
+    - ``None`` → ``[]``
+    - empty string → ``[]``
+    - non-empty string → ``[value]`` (treated as a single area_id, not a
+      sequence of characters)
+    - list / tuple / set → list of non-empty stringified items (drops falsy
+      entries like ``""`` or ``None``)
+    - anything else → ``[str(value)]`` (best-effort preservation; the helper
+      never raises, so an unexpected scalar is kept as a single id rather
+      than silently dropped)
     """
     if value is None:
         return []
