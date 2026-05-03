@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.transitions import (
@@ -139,6 +140,27 @@ class TestDetectTransitions:
         adjacency = {"lounge": {"lounge"}}  # even if user mis-configured this
 
         assert _detect_transitions(events, adjacency) == []
+
+    def test_zero_gap_transition_is_detected(self):
+        """X ends at exactly the same instant Y starts → still a transition.
+
+        Regression: before the sort fix, starts came before ends at
+        identical timestamps, so Y's start saw an empty recent_ends
+        deque and the transition was silently dropped. End events must
+        sort BEFORE start events at the same timestamp.
+        """
+        same_instant = _utc(hour=10, minute=1)
+        events = [
+            _AreaEvent(_utc(hour=10, minute=0), "hall", is_start=True),
+            _AreaEvent(same_instant, "hall", is_start=False),
+            _AreaEvent(same_instant, "bedroom", is_start=True),
+            _AreaEvent(_utc(hour=10, minute=2), "bedroom", is_start=False),
+        ]
+        adjacency = {"hall": {"bedroom"}, "bedroom": {"hall"}}
+
+        out = _detect_transitions(events, adjacency)
+
+        assert out == [("hall", "", "bedroom", _hour_of_week(same_instant))]
 
     def test_hour_of_week_bucketing_uses_local_timezone(self):
         """The bucket follows local wall-clock, not UTC, by design."""
@@ -314,6 +336,94 @@ class TestRecordTransitionsForEntry:
         with db.get_session() as session:
             row = session.query(db.Metadata).filter_by(key=expected_key).first()
             assert row is not None
+
+    def test_atomic_write_failure_rolls_back_everything(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """A failure inside the write transaction must not move the watermark.
+
+        Otherwise the next cycle would skip past intervals that weren't
+        recorded, silently losing transitions. The whole decay + upsert +
+        watermark trio must be all-or-nothing.
+        """
+        db = coordinator.db
+        # Configure adjacency and seed an existing count we can verify
+        # is NOT decayed if the transaction rolls back.
+        with db.get_session() as session:
+            for a, b in [("hall", "bedroom"), ("bedroom", "hall")]:
+                session.add(
+                    db.AreaRelationships(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=a,
+                        related_area_name=b,
+                        relationship_type="adjacent",
+                        influence_weight=0.3,
+                    )
+                )
+            session.add(
+                db.AreaTransitions(
+                    entry_id=db.coordinator.entry_id,
+                    from_area="hall",
+                    mid_area="",
+                    to_area="bedroom",
+                    hour_of_week=10,
+                    count=8.0,
+                )
+            )
+            session.commit()
+
+        intervals_for = {
+            "hall": [(_utc(hour=10, minute=0), _utc(hour=10, minute=1))],
+            "bedroom": [(_utc(hour=10, minute=1, second=30), _utc(hour=10, minute=10))],
+        }
+
+        def _fake_get(db_arg, entry_id, area_name, **kwargs):
+            return intervals_for.get(area_name, [])
+
+        # Force the upsert step to blow up partway through. Patching the
+        # in_session helper preserves the surrounding transaction
+        # boundary so the rollback path is the one under test.
+        with (
+            patch(
+                "custom_components.area_occupancy.db.transitions.get_occupied_intervals",
+                side_effect=_fake_get,
+            ),
+            patch(
+                "custom_components.area_occupancy.db.transitions._upsert_transition_counts_in_session",
+                side_effect=SQLAlchemyError("simulated upsert failure"),
+            ),
+        ):
+            summary = record_transitions_for_entry(
+                db,
+                db.coordinator.entry_id,
+                now=_utc(hour=10, minute=15) + timedelta(days=30),
+            )
+
+        # Summary should reflect the rollback.
+        assert summary["transitions_recorded"] == 0
+
+        # Existing count must NOT have been decayed (transaction rolled back).
+        with db.get_session() as session:
+            row = (
+                session.query(db.AreaTransitions)
+                .filter_by(
+                    entry_id=db.coordinator.entry_id,
+                    from_area="hall",
+                    to_area="bedroom",
+                )
+                .first()
+            )
+            assert row.count == pytest.approx(8.0)
+
+            # Watermark must NOT have moved.
+            watermark = (
+                session.query(db.Metadata)
+                .filter_by(
+                    key=f"adjacency_last_observed_end_time__{db.coordinator.entry_id}"
+                )
+                .first()
+            )
+            assert watermark is None
 
     def test_pipeline_records_and_decays_across_runs(
         self, coordinator: AreaOccupancyCoordinator

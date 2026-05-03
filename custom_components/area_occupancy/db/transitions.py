@@ -160,7 +160,11 @@ def _collect_events_for_areas(
                 continue
             events.append(_AreaEvent(start_aware, area_name, is_start=True))
             events.append(_AreaEvent(end_aware, area_name, is_start=False))
-    events.sort(key=lambda e: (e.timestamp, 0 if e.is_start else 1))
+    # End events sort BEFORE start events at the same timestamp, so a
+    # zero-gap "X ended at t, Y started at t" is detected: X's end
+    # populates recent_ends first, then Y's start sees it and emits the
+    # transition. Reversing this would silently miss zero-gap moves.
+    events.sort(key=lambda e: (e.timestamp, 0 if not e.is_start else 1))
     return events
 
 
@@ -233,32 +237,99 @@ def _detect_transitions(
     return transitions
 
 
-def _apply_recency_decay(
-    db: AreaOccupancyDB, entry_id: str, hours_since_last_run: float
+def _apply_recency_decay_in_session(
+    session: Any,
+    db: AreaOccupancyDB,
+    entry_id: str,
+    hours_since_last_run: float,
 ) -> None:
-    """Multiply every count by ``0.5 ^ (hours / (24 * half_life_days))``.
+    """Apply recency decay inside an existing session.
 
+    Multiplies every count by ``0.5 ^ (hours / (24 * half_life_days))``.
     Done before adding new observations so the new tail is full-weight
     relative to the aged history.
+
+    No commit here — the caller controls transaction boundaries so the
+    decay, upsert, and watermark advance can fail or succeed atomically.
     """
     if hours_since_last_run <= 0:
         return
     factor = 0.5 ** (hours_since_last_run / (24 * ADJACENCY_RECENCY_HALF_LIFE_DAYS))
     if factor >= 1.0:
         return  # No-op
-    try:
-        with db.get_session() as session:
-            (
-                session.query(db.AreaTransitions)
-                .filter(db.AreaTransitions.entry_id == entry_id)
-                .update(
-                    {db.AreaTransitions.count: db.AreaTransitions.count * factor},
-                    synchronize_session=False,
+    (
+        session.query(db.AreaTransitions)
+        .filter(db.AreaTransitions.entry_id == entry_id)
+        .update(
+            {db.AreaTransitions.count: db.AreaTransitions.count * factor},
+            synchronize_session=False,
+        )
+    )
+
+
+def _upsert_transition_counts_in_session(
+    session: Any,
+    db: AreaOccupancyDB,
+    entry_id: str,
+    transitions: list[tuple[str, str, str, int]],
+) -> None:
+    """Upsert observed transition counts inside an existing session."""
+    if not transitions:
+        return
+    # Group by chain+hour so we issue at most one row per unique key.
+    grouped: dict[tuple[str, str, str, int], int] = {}
+    for chain in transitions:
+        grouped[chain] = grouped.get(chain, 0) + 1
+
+    existing_rows = (
+        session.query(db.AreaTransitions)
+        .filter(db.AreaTransitions.entry_id == entry_id)
+        .all()
+    )
+    existing_by_key = {
+        (r.from_area, r.mid_area, r.to_area, r.hour_of_week): r for r in existing_rows
+    }
+
+    for (from_area, mid_area, to_area, hour), increment in grouped.items():
+        row = existing_by_key.get((from_area, mid_area, to_area, hour))
+        if row is not None:
+            row.count = (row.count or 0.0) + float(increment)
+        else:
+            session.add(
+                db.AreaTransitions(
+                    entry_id=entry_id,
+                    from_area=from_area,
+                    mid_area=mid_area,
+                    to_area=to_area,
+                    hour_of_week=hour,
+                    count=float(increment),
                 )
             )
-            session.commit()
-    except SQLAlchemyError as err:
-        _LOGGER.error("Error applying recency decay: %s", err)
+
+
+def _set_metadata_in_session(
+    session: Any, db: AreaOccupancyDB, key: str, value: str
+) -> None:
+    """Upsert a Metadata row inside an existing session (no commit)."""
+    row = session.query(db.Metadata).filter_by(key=key).first()
+    if row:
+        row.value = value
+    else:
+        session.add(db.Metadata(key=key, value=value))
+
+
+# Standalone wrappers for read-only metadata access and for tests that
+# don't need transactional bundling. Errors propagate so callers can
+# decide whether to skip the cycle or fail the analysis step.
+
+
+def _apply_recency_decay(
+    db: AreaOccupancyDB, entry_id: str, hours_since_last_run: float
+) -> None:
+    """Standalone recency decay (commits its own session). Used by tests."""
+    with db.get_session() as session:
+        _apply_recency_decay_in_session(session, db, entry_id, hours_since_last_run)
+        session.commit()
 
 
 def _upsert_transition_counts(
@@ -266,66 +337,24 @@ def _upsert_transition_counts(
     entry_id: str,
     transitions: list[tuple[str, str, str, int]],
 ) -> None:
-    """Increment ``count`` by 1 for each observed transition, upserting rows."""
+    """Standalone upsert (commits its own session). Used by tests."""
     if not transitions:
         return
-    try:
-        with db.get_session() as session:
-            # Group by chain+hour so we issue at most one row per unique key.
-            grouped: dict[tuple[str, str, str, int], int] = {}
-            for chain in transitions:
-                grouped[chain] = grouped.get(chain, 0) + 1
-
-            existing_rows = (
-                session.query(db.AreaTransitions)
-                .filter(db.AreaTransitions.entry_id == entry_id)
-                .all()
-            )
-            existing_by_key = {
-                (r.from_area, r.mid_area, r.to_area, r.hour_of_week): r
-                for r in existing_rows
-            }
-
-            for (from_area, mid_area, to_area, hour), increment in grouped.items():
-                row = existing_by_key.get((from_area, mid_area, to_area, hour))
-                if row is not None:
-                    row.count = (row.count or 0.0) + float(increment)
-                else:
-                    session.add(
-                        db.AreaTransitions(
-                            entry_id=entry_id,
-                            from_area=from_area,
-                            mid_area=mid_area,
-                            to_area=to_area,
-                            hour_of_week=hour,
-                            count=float(increment),
-                        )
-                    )
-            session.commit()
-    except SQLAlchemyError as err:
-        _LOGGER.error("Error upserting transition counts: %s", err)
+    with db.get_session() as session:
+        _upsert_transition_counts_in_session(session, db, entry_id, transitions)
+        session.commit()
 
 
 def _get_metadata(db: AreaOccupancyDB, key: str) -> str | None:
-    try:
-        with db.get_session() as session:
-            row = session.query(db.Metadata).filter_by(key=key).first()
-            return row.value if row else None
-    except SQLAlchemyError:
-        return None
+    """Read a Metadata value. Returns None on missing row.
 
-
-def _set_metadata(db: AreaOccupancyDB, key: str, value: str) -> None:
-    try:
-        with db.get_session() as session:
-            row = session.query(db.Metadata).filter_by(key=key).first()
-            if row:
-                row.value = value
-            else:
-                session.add(db.Metadata(key=key, value=value))
-            session.commit()
-    except SQLAlchemyError as err:
-        _LOGGER.error("Error writing transition metadata: %s", err)
+    SQLAlchemyError is allowed to propagate so the caller can decide
+    whether the failure should skip the cycle (preventing double-counting
+    on a lost watermark read).
+    """
+    with db.get_session() as session:
+        row = session.query(db.Metadata).filter_by(key=key).first()
+        return row.value if row else None
 
 
 def record_transitions_for_entry(
@@ -337,14 +366,26 @@ def record_transitions_for_entry(
 ) -> dict[str, Any]:
     """Run one cycle of transition detection for an entry.
 
-    Steps:
-      1. Apply exponential recency decay to existing counts.
-      2. Read configured adjacency index.
-      3. Collect interval boundaries since the last cycle.
+    Reads phase (separate sessions, idempotent):
+      1. Read the prior watermark from ``Metadata``.
+      2. Read the configured adjacency index.
+      3. Collect interval boundaries since the watermark (separate
+         per-area read sessions inside ``get_occupied_intervals``).
       4. Walk the timeline, emitting 1-hop and 2-hop chain observations.
-      5. Upsert new counts and update the watermark.
 
-    Returns a small summary dict for logging/diagnostics.
+    Write phase (single transaction):
+      5. Apply exponential recency decay to existing counts.
+      6. Upsert new counts.
+      7. Advance the watermark.
+
+    Bundling 5–7 into one transaction means a failure mid-write rolls
+    everything back, so the next cycle re-walks the same window without
+    double-counting (the watermark didn't move). If the read phase
+    fails the cycle is skipped without side effects.
+
+    Returns a small summary dict for logging/diagnostics. SQL errors
+    propagate after a non-empty summary is logged, so the analysis
+    pipeline records the step as FAILED and the next cycle retries.
     """
     now = now or dt_util.utcnow()
     summary: dict[str, Any] = {
@@ -354,14 +395,21 @@ def record_transitions_for_entry(
         "adjacency_pairs": 0,
     }
 
-    last_observed_iso = _get_metadata(db, _watermark_key(entry_id))
+    try:
+        last_observed_iso = _get_metadata(db, _watermark_key(entry_id))
+    except SQLAlchemyError:
+        _LOGGER.exception(
+            "Skipping transition learning for entry %s: watermark read failed",
+            entry_id,
+        )
+        return summary
+
+    since: datetime | None = None
     if last_observed_iso:
         try:
             since = dt_util.parse_datetime(last_observed_iso)
         except (ValueError, TypeError):
             since = None
-    else:
-        since = None
 
     if since is not None:
         hours_since_last = (now - since).total_seconds() / 3600
@@ -370,14 +418,25 @@ def record_transitions_for_entry(
         # over the full window.
         hours_since_last = 0.0
 
-    _apply_recency_decay(db, entry_id, hours_since_last)
-
     adjacency_index = _build_adjacency_index(db, entry_id)
     summary["adjacency_pairs"] = sum(len(v) for v in adjacency_index.values())
+
     if not adjacency_index:
         # No configured adjacencies → nothing to learn. Still advance the
-        # watermark so the next cycle starts from `now`.
-        _set_metadata(db, _watermark_key(entry_id), now.isoformat())
+        # watermark so the next cycle starts from `now`. One small
+        # transaction; failure here is logged but doesn't crash the
+        # analysis step.
+        try:
+            with db.get_session() as session:
+                _set_metadata_in_session(
+                    session, db, _watermark_key(entry_id), now.isoformat()
+                )
+                session.commit()
+        except SQLAlchemyError:
+            _LOGGER.exception(
+                "Failed to advance watermark for entry %s (no adjacency)",
+                entry_id,
+            )
         return summary
 
     area_names = sorted(adjacency_index.keys())
@@ -387,10 +446,28 @@ def record_transitions_for_entry(
     summary["events_walked"] = len(events)
 
     transitions = _detect_transitions(events, adjacency_index)
-    _upsert_transition_counts(db, entry_id, transitions)
     summary["transitions_recorded"] = len(transitions)
 
-    _set_metadata(db, _watermark_key(entry_id), now.isoformat())
+    # Atomic write: decay + upsert + watermark in one transaction.
+    try:
+        with db.get_session() as session:
+            _apply_recency_decay_in_session(session, db, entry_id, hours_since_last)
+            _upsert_transition_counts_in_session(session, db, entry_id, transitions)
+            _set_metadata_in_session(
+                session, db, _watermark_key(entry_id), now.isoformat()
+            )
+            session.commit()
+    except SQLAlchemyError:
+        _LOGGER.exception(
+            "Atomic transition write failed for entry %s — rolling back; "
+            "next cycle will retry from the last successful watermark",
+            entry_id,
+        )
+        # Reset the summary's recorded count so the caller's diagnostics
+        # don't claim writes that were rolled back.
+        summary["transitions_recorded"] = 0
+        return summary
+
     _LOGGER.debug(
         "Transition learning for entry %s: %d transitions recorded across "
         "%d events from %d areas",
