@@ -941,6 +941,65 @@ class TestRunFullAnalysisCancellation:
         mock_sync.assert_not_called()
         mock_executor.assert_not_called()
 
+    async def test_cancelled_run_does_not_pollute_last_analysis_duration(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Cancelled cycles must not write ``_last_analysis_duration_ms``.
+
+        Otherwise a fast-skip duration (microseconds, since no work runs)
+        masks a previously-slow successful cycle in
+        ``HealthMonitor.check_pipeline_health``'s slow-analysis check —
+        the user could have an actual 5-minute analysis problem hidden
+        behind a recent shutdown-cancelled cycle's near-zero duration.
+        """
+        # Seed a previously-recorded slow run so we can verify it survives.
+        coordinator._last_analysis_duration_ms = 250_000.0
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                new=AsyncMock(),
+            ),
+        ):
+            await run_full_analysis(coordinator)
+
+        # The seeded value must survive — cancelled runs are not
+        # comparable to real cycles.
+        assert coordinator._last_analysis_duration_ms == 250_000.0
+
+    async def test_cancelled_run_logs_cancellation_not_success(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Cancelled cycles log distinctly from a "12/12 succeeded" cycle.
+
+        Without this branching the operator sees ``Full analysis
+        completed: 12/12 steps succeeded`` on every shutdown-cancelled
+        cycle — it looks like the integration is healthy when it
+        actually did no work.
+        """
+        coordinator._stop_requested = True
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                new=AsyncMock(),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis._LOGGER"
+            ) as mock_logger,
+        ):
+            await run_full_analysis(coordinator)
+
+        # Only the cancellation message, never a "12/12 succeeded".
+        info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
+        assert any("cancelled mid-run" in msg for msg in info_messages), info_messages
+        assert not any("succeeded" in msg for msg in info_messages), info_messages
+
 
 class TestMergeOverlappingIntervals:
     """Test merge_overlapping_intervals function."""

@@ -62,16 +62,23 @@ async def run_full_analysis(
 
     analysis_start_time = time.perf_counter()
     failed_steps: list[str] = []
+    cancelled = False
     total_steps = 12
 
     async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
+        nonlocal cancelled
         # Skip remaining steps once HA has signalled shutdown — the inner
         # awaitable would still create the coroutine object so we close it
         # to avoid a "coroutine was never awaited" warning. We don't append
         # to ``failed_steps`` because a clean cancellation isn't a failure
-        # the caller should back off on.
+        # the caller should back off on, but we *do* set ``cancelled`` so
+        # the summary path can suppress the misleading "12/12 succeeded"
+        # log line and skip writing ``_last_analysis_duration_ms`` (which
+        # otherwise pollutes the slow-analysis health threshold with a
+        # near-zero fast-skip duration).
         if coordinator.stop_requested:
+            cancelled = True
             coro.close()
             _LOGGER.debug(
                 "Step %d: %s skipped — shutdown in progress", step_num, step_name
@@ -174,7 +181,18 @@ async def run_full_analysis(
     finally:
         succeeded = total_steps - len(failed_steps)
         final_elapsed_ms = (time.perf_counter() - analysis_start_time) * 1000
-        if failed_steps:
+        if cancelled:
+            # Cancelled mid-run by EVENT_HOMEASSISTANT_STOP. Report the
+            # outcome distinctly (the per-step debug logs already record
+            # which steps were skipped) and skip both the success log
+            # line and the duration write — a fast-skip duration would
+            # mask a previously-slow successful cycle in the
+            # slow-analysis health check.
+            _LOGGER.info(
+                "Analysis cancelled mid-run after %.2f ms — shutdown in progress",
+                final_elapsed_ms,
+            )
+        elif failed_steps:
             _LOGGER.warning(
                 "Analysis completed: %d/%d steps succeeded (FAILED: %s) in %.2f ms",
                 succeeded,

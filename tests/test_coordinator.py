@@ -749,6 +749,64 @@ class TestAreaOccupancyCoordinator:
         # async_shutdown isn't asked to cancel a stale callback.
         assert coordinator._analysis_timer is None
 
+    async def test_run_analysis_does_not_rearm_timer_if_stop_during_run(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Mid-run shutdown must not cause the finally block to re-arm.
+
+        The race: ``run_analysis`` enters with ``stop_requested=False``,
+        starts the pipeline, and during the long ``await`` the
+        EVENT_HOMEASSISTANT_STOP listener flips the flag and clears the
+        timer slot. Without an extra guard the finally block calls
+        ``async_track_point_in_time`` again — registering a callback we
+        already know will hit the stop guard and no-op, leaking the
+        registration until ``async_shutdown`` cleans it up.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+
+        async def _fake_pipeline(*_args, **_kwargs):
+            # Simulate the EVENT_HOMEASSISTANT_STOP listener firing
+            # mid-await — flag flips while we're inside run_full_analysis.
+            coordinator._stop_requested = True
+
+        with (
+            patch(
+                "custom_components.area_occupancy.coordinator.run_full_analysis",
+                side_effect=_fake_pipeline,
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=Mock(),
+            ) as mock_track_time,
+        ):
+            await coordinator.run_analysis()
+
+        mock_track_time.assert_not_called()
+        assert coordinator._analysis_timer is None
+
+    async def test_run_analysis_concurrent_guard_does_not_rearm_when_stopped(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Concurrent-guard branch must also honour stop_requested.
+
+        If a timer callback fires WHILE another analysis is in-flight
+        AND shutdown has been signalled, the existing
+        ``self._analysis_running`` short-path used to schedule a
+        five-minute retry. With shutdown active that retry is just a
+        leak. Same reasoning as the main finally guard.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._analysis_running = True
+        coordinator._stop_requested = True
+
+        with patch(
+            "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+            return_value=Mock(),
+        ) as mock_track_time:
+            await coordinator.run_analysis()
+
+        mock_track_time.assert_not_called()
+
     async def test_track_entity_state_changes_with_existing_listener(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:

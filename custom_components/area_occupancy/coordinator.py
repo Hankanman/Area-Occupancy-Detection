@@ -1153,6 +1153,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._analysis_timer is not None:
                 self._analysis_timer()
                 self._analysis_timer = None
+            # Don't re-arm if shutdown has been signalled while another
+            # analysis is in flight — the EVENT_HOMEASSISTANT_STOP listener
+            # already cancelled the timer slot, and a callback we know
+            # will hit the stop_requested guard is just a registry leak
+            # until ``async_shutdown`` cleans it up.
+            if self._stop_requested:
+                return
             # Reschedule to try again later
             next_update = _now + timedelta(minutes=5)
             self._analysis_timer = async_track_point_in_time(
@@ -1178,6 +1185,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _failed = True
         finally:
             self._analysis_running = False
+            # If shutdown was signalled DURING the await above, the
+            # EVENT_HOMEASSISTANT_STOP listener has already cancelled
+            # the timer slot and set ``_stop_requested``. Re-arming
+            # here would register a fresh callback that immediately
+            # no-ops in the guard at the top of this method — and
+            # would only be cleaned up later by ``async_shutdown``.
+            # Skip the re-arm entirely.
+            if self._stop_requested:
+                return
             # Always reschedule — retry sooner on failure
             if _failed:
                 next_update = _now + timedelta(minutes=15)
