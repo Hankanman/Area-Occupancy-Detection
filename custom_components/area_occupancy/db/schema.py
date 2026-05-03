@@ -689,6 +689,63 @@ class AreaRelationships(Base):
     )
 
 
+class AreaTransitions(Base):
+    """Learned per-chain, per-hour transition counts between adjacent areas.
+
+    A row records how often a transition (``from_area`` → ``to_area``) was
+    observed in a given ``hour_of_week`` bucket (0–167, weekday × 24 + hour).
+    For 2-hop chains ``mid_area`` is the area that was occupied immediately
+    before ``from_area``; for 1-hop chains it is the empty string. Only
+    transitions between configured-adjacent pairs are recorded, so the table
+    stays sparse.
+
+    ``mid_area`` uses an empty-string sentinel rather than NULL so the
+    UniqueConstraint actually enforces chain+hour uniqueness — standard SQL
+    (and SQLite) treat NULL as not equal to NULL, which would silently
+    permit duplicate 1-hop rows.
+
+    ``count`` is float so the analysis pipeline can apply exponential
+    recency decay (multiplying by ``0.5 ^ (Δt / half_life)``) before adding
+    new observations. ``smoothed_prob`` caches the result of the smoothing
+    fallback so the Bayesian-update hot path doesn't recompute it per tick.
+    """
+
+    __tablename__ = "area_transitions"
+    id = Column(Integer, primary_key=True)
+    entry_id = Column(String, nullable=False, index=True)
+    from_area = Column(String, nullable=False)
+    mid_area = Column(String, nullable=False, default="")
+    to_area = Column(String, nullable=False)
+    hour_of_week = Column(Integer, nullable=False)  # 0..167
+    count = Column(Float, nullable=False, default=0.0)
+    smoothed_prob = Column(Float, nullable=True)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow_db,
+        onupdate=_utcnow_db,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "entry_id",
+            "from_area",
+            "mid_area",
+            "to_area",
+            "hour_of_week",
+            name="uq_area_transitions_chain_hour",
+        ),
+        Index(
+            "idx_area_transitions_lookup",
+            "entry_id",
+            "from_area",
+            "mid_area",
+            "to_area",
+            "hour_of_week",
+        ),
+    )
+
+
 class CrossAreaStats(Base):
     """A table to store aggregated statistics that span multiple areas."""
 

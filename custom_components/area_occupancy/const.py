@@ -30,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.5.2"
-CONF_VERSION: Final = 18
+CONF_VERSION: Final = 19
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -54,6 +54,9 @@ CONF_OPTION_PREFIX_AREA: Final = "area_"
 # CONF_NAME removed - use CONF_AREA_ID instead
 CONF_AREA_ID: Final = "area_id"
 CONF_PURPOSE: Final = "purpose"
+CONF_ADJACENT_AREAS: Final = (
+    "adjacent_areas"  # JSON list of adjacent area_ids; consumed by AreaRelationships
+)
 CONF_MOTION_SENSORS: Final = "motion_sensors"
 CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
 CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
@@ -180,6 +183,40 @@ PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 # Time Prior Bounds
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
+
+# Adjacent-areas / transition learning tunables (Phase 3 of feat/adjacent-areas).
+# First-pass values; tune from real data once Phase 3 is collecting transitions.
+
+# Max gap between an area's interval ending and the next area's starting
+# to count as a transition between them.
+ADJACENCY_TRANSITION_WINDOW_S: Final[int] = 60
+
+# Half-life for exponential recency decay applied to transition counts
+# each pipeline run (so the model adapts to changing household patterns).
+ADJACENCY_RECENCY_HALF_LIFE_DAYS: Final[int] = 30
+
+# How far back to look for the recent-history slots used to build the
+# two-step trajectory feeding the Bayesian boost.
+ADJACENCY_TRAJECTORY_WINDOW_S: Final[int] = 300
+
+# k - multiplier applied to the logit-space adjacency boost
+# (post-Bayesian, before decay).
+ADJACENCY_BOOST_GAIN: Final[float] = 0.5
+
+# alpha - multiplier on the silence-score that slows decay when adjacent
+# exit paths have been quiet since the area's last evidence.
+ADJACENCY_DECAY_MODIFIER_GAIN: Final[float] = 0.75
+
+# Cap on effective_half_life / base_half_life from the silence modifier -
+# silence can stretch decay but never invert it.
+ADJACENCY_DECAY_MODIFIER_MAX: Final[float] = 1.75
+
+# Smoothing fallback thresholds for the per-chain, per-time-bucket lookup.
+# Higher levels require more observations before they are trusted.
+ADJACENCY_N_SPECIFIC: Final[int] = 5  # specific 2-hop chain at exact hour-of-week
+ADJACENCY_N_HOUR: Final[int] = 20  # day-collapsed (just hour-of-day)
+ADJACENCY_N_CHAIN: Final[int] = 50  # chain un-bucketed
+ADJACENCY_N_PAIR: Final[int] = 20  # 1-hop pair un-bucketed
 
 # Default prior probabilities
 DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5

@@ -63,7 +63,7 @@ async def run_full_analysis(
     analysis_start_time = time.perf_counter()
     failed_steps: list[str] = []
     cancelled = False
-    total_steps = 12
+    total_steps = 13
 
     async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
@@ -142,6 +142,18 @@ async def run_full_analysis(
         await run_correlation_analysis(coordinator)
         await coordinator.async_refresh_correlations()
 
+    async def _run_transition_learning() -> None:
+        # Lazy import — db.transitions only matters when adjacency is in use.
+        from ..db.transitions import record_transitions_for_entry  # noqa: PLC0415
+
+        if coordinator.config_entry is None:
+            return
+        await coordinator.hass.async_add_executor_job(
+            record_transitions_for_entry,
+            coordinator.db,
+            coordinator.config_entry.entry_id,
+        )
+
     async def _pipeline_health_check() -> None:
         await _run_pipeline_health_check(coordinator)
 
@@ -168,10 +180,11 @@ async def run_full_analysis(
         )
         await _run_step(7, "recalculate_priors", _recalculate_priors())
         await _run_step(8, "correlation_analysis", _run_correlations())
-        await _run_step(9, "pipeline_health_check", _pipeline_health_check())
-        await _run_step(10, "save_data_before_refresh", _save_data())
-        await _run_step(11, "refresh_coordinator", _refresh())
-        await _run_step(12, "save_data_after_refresh", _save_data())
+        await _run_step(9, "transition_learning", _run_transition_learning())
+        await _run_step(10, "pipeline_health_check", _pipeline_health_check())
+        await _run_step(11, "save_data_before_refresh", _save_data())
+        await _run_step(12, "refresh_coordinator", _refresh())
+        await _run_step(13, "save_data_after_refresh", _save_data())
 
     except Exception as err:
         _LOGGER.error("Fatal error during analysis pipeline: %s", err)

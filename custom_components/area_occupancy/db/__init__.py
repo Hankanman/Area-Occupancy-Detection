@@ -14,6 +14,7 @@ from .core import AreaOccupancyDB
 from .schema import (
     AreaRelationships,
     Areas,
+    AreaTransitions,
     Base,
     Correlations,
     CrossAreaStats,
@@ -38,6 +39,7 @@ __all__ = [
     "INVALID_STATES",
     "AreaOccupancyDB",
     "AreaRelationships",
+    "AreaTransitions",
     "Areas",
     "Base",
     "Correlations",
