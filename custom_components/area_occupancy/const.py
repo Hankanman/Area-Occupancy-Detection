@@ -186,29 +186,30 @@ TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
 
 # Adjacent-areas / transition learning tunables (Phase 3 of feat/adjacent-areas).
 # First-pass values; tune from real data once Phase 3 is collecting transitions.
+
+# Max gap between an area's interval ending and the next area's starting
+# to count as a transition between them.
 ADJACENCY_TRANSITION_WINDOW_S: Final[int] = 60
-"""Max gap between an area's interval ending and the next area's starting
-to count as a transition between them."""
 
+# Half-life for exponential recency decay applied to transition counts
+# each pipeline run (so the model adapts to changing household patterns).
 ADJACENCY_RECENCY_HALF_LIFE_DAYS: Final[int] = 30
-"""Half-life for exponential recency decay applied to transition counts
-each pipeline run (so the model adapts to changing household patterns)."""
 
+# How far back to look for the recent-history slots used to build the
+# two-step trajectory feeding the Bayesian boost.
 ADJACENCY_TRAJECTORY_WINDOW_S: Final[int] = 300
-"""How far back to look for the recent-history slots used to build the
-two-step trajectory feeding the Bayesian boost."""
 
+# k - multiplier applied to the logit-space adjacency boost
+# (post-Bayesian, before decay).
 ADJACENCY_BOOST_GAIN: Final[float] = 0.5
-"""``k`` — multiplier applied to the logit-space adjacency boost
-(post-Bayesian, before decay)."""
 
+# alpha - multiplier on the silence-score that slows decay when adjacent
+# exit paths have been quiet since the area's last evidence.
 ADJACENCY_DECAY_MODIFIER_GAIN: Final[float] = 0.75
-"""``α`` — multiplier on the silence-score that slows decay when adjacent
-exit paths have been quiet since the area's last evidence."""
 
+# Cap on effective_half_life / base_half_life from the silence modifier -
+# silence can stretch decay but never invert it.
 ADJACENCY_DECAY_MODIFIER_MAX: Final[float] = 1.75
-"""Cap on ``effective_half_life / base_half_life`` from the silence
-modifier — silence can stretch decay but never invert it."""
 
 # Smoothing fallback thresholds for the per-chain, per-time-bucket lookup.
 # Higher levels require more observations before they are trusted.

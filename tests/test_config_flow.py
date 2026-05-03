@@ -1818,6 +1818,26 @@ class TestNewHelperFunctions:
         assert result[2][CONF_ADJACENT_AREAS] == ["D"]
         assert result[3][CONF_ADJACENT_AREAS] == ["C"]
 
+    def test_apply_symmetric_adjacency_strips_self_references(self):
+        """Malformed self-references (A→A) must be discarded before set ops.
+
+        The UI excludes self from the multi-select, but a hand-edited
+        storage file or imported config could carry stray self-links.
+        The helper opportunistically cleans them on save.
+        """
+        areas = [
+            # Target row mistakenly lists itself as adjacent.
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["A", "B"]},
+            # Partner row mistakenly lists itself, no link to A.
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["B"]},
+        ]
+        result = _apply_symmetric_adjacency(areas, areas[0])
+
+        # B picks up A (not "A,B" — A's self-ref was discarded before
+        # set ops, so target_adjacents is just {"B"}).
+        # B's own self-reference is cleaned out of the partner row.
+        assert result[1][CONF_ADJACENT_AREAS] == ["A"]
+
     def test_apply_symmetric_adjacency_idempotent_when_already_mutual(self):
         """Re-saving a mutually-adjacent pair is a no-op for the partner."""
         areas = [

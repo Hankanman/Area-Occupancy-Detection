@@ -1699,6 +1699,11 @@ def _apply_symmetric_adjacency(
     target_adjacents = set(
         _normalize_adjacent_areas(updated_area.get(CONF_ADJACENT_AREAS))
     )
+    # Defensive: the UI excludes self from the multi-select, but a
+    # hand-edited storage file or imported config could carry a stray
+    # self-reference. Drop it before any set ops so downstream callers
+    # never see an area listed as adjacent to itself.
+    target_adjacents.discard(target_area_id)
 
     result: list[dict[str, Any]] = []
     for area in areas:
@@ -1711,6 +1716,8 @@ def _apply_symmetric_adjacency(
         current_adjacents = set(
             _normalize_adjacent_areas(area.get(CONF_ADJACENT_AREAS))
         )
+        # Same defensive guard for the partner row.
+        current_adjacents.discard(area_id)
 
         if area_id in target_adjacents:
             new_adjacents = current_adjacents | {target_area_id}
