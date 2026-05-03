@@ -1854,6 +1854,80 @@ class TestNewHelperFunctions:
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
+    def test_adjacency_helpers_handle_non_list_adjacent(self):
+        """Malformed adjacency values must not be iterated character-by-character.
+
+        Storage is JSON: a hand-edited file or stale import could supply a
+        bare string instead of a list. Without normalisation, the set/list
+        ops would treat ``"hall"`` as ``["h", "a", "l", "l"]`` and silently
+        corrupt the data. None and other scalars must also be handled.
+        """
+        # _strip_adjacency_references with a bare-string adjacent must not
+        # substring-match (removed_id="hall" inside "hallway_north" → false
+        # positive without normalisation).
+        areas = [
+            {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: "hallway_north"},
+            {CONF_AREA_ID: "study", CONF_ADJACENT_AREAS: None},
+            {CONF_AREA_ID: "lounge", CONF_ADJACENT_AREAS: ("hall",)},
+        ]
+        result = _strip_adjacency_references(areas, "hall")
+        # kitchen's bare "hallway_north" must NOT match "hall" (the
+        # substring-on-string trap). Helper is non-destructive when
+        # nothing matches → row identity preserved.
+        assert result[0] is areas[0]
+        # study's None: also no match → row preserved as-is.
+        assert result[1] is areas[1]
+        # lounge had "hall" in a tuple → stripped, leaving [].
+        assert result[2][CONF_ADJACENT_AREAS] == []
+
+        # _apply_symmetric_adjacency: target with bare-string adjacent should
+        # not iterate characters.
+        symmetric_areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
+        ]
+        result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
+        # A's row is left as-is (caller is responsible for it)
+        assert result[0][CONF_ADJACENT_AREAS] == "B"
+        # B picks up A as a single id, not as a list of characters from "B"
+        assert result[1][CONF_ADJACENT_AREAS] == ["A"]
+
+        # _apply_symmetric_adjacency: existing adjacents on a partner area
+        # are also tolerated as a non-list.
+        symmetric_areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: "A"},  # malformed
+        ]
+        result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
+        # Already mutual after normalisation → B's row unchanged
+        assert result[1] is symmetric_areas[1]
+
+        # _update_area_in_list end-to-end with a malformed sibling row.
+        areas = [
+            {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: None},
+        ]
+        updated_a = {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]}
+        result = _update_area_in_list(areas, updated_a, "A")
+        assert result[0][CONF_ADJACENT_AREAS] == ["B"]
+        # B's None is replaced with the normalised single-element list,
+        # not a list of None plus A.
+        assert result[1][CONF_ADJACENT_AREAS] == ["A"]
+
+        # _remove_area_from_list: remove an area, surviving rows with
+        # malformed adjacents must not crash.
+        areas = [
+            {CONF_AREA_ID: "hall", CONF_ADJACENT_AREAS: []},
+            {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: "hall"},  # malformed
+            {CONF_AREA_ID: "lounge", CONF_ADJACENT_AREAS: ["hall", "kitchen"]},
+        ]
+        result = _remove_area_from_list(areas, "hall")
+        assert [a[CONF_AREA_ID] for a in result] == ["kitchen", "lounge"]
+        # kitchen's "hall" is treated as the single removed id → cleared
+        assert result[0][CONF_ADJACENT_AREAS] == []
+        # lounge keeps kitchen, drops hall
+        assert result[1][CONF_ADJACENT_AREAS] == ["kitchen"]
+
     @pytest.mark.parametrize(
         ("error_type", "error_message", "expected_result"),
         [

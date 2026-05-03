@@ -1648,6 +1648,27 @@ def _find_area_by_id(
     return None
 
 
+def _normalize_adjacent_areas(value: Any) -> list[str]:
+    """Coerce a `CONF_ADJACENT_AREAS` value to a clean list of area_id strings.
+
+    The persistence layer normally writes a list, but config storage is JSON
+    and a hand-edited file (or an old import) can supply a bare string,
+    `None`, or some other iterable. The mirror/strip helpers do set ops over
+    the values, so a stray string would be iterated character-by-character
+    — silently corrupting the data. This helper folds every shape into the
+    expected `list[str]` (empty for unrecognised input).
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        # A bare string is a single area_id, not a sequence to iterate.
+        return [value] if value else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in value if v]
+    # Best-effort: keep the value as a single entry rather than crashing.
+    return [str(value)]
+
+
 def _apply_symmetric_adjacency(
     areas: list[dict[str, Any]], updated_area: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -1666,8 +1687,9 @@ def _apply_symmetric_adjacency(
     if not target_area_id:
         return areas
 
-    raw_target_adj = updated_area.get(CONF_ADJACENT_AREAS, []) or []
-    target_adjacents = {a for a in raw_target_adj if a}
+    target_adjacents = set(
+        _normalize_adjacent_areas(updated_area.get(CONF_ADJACENT_AREAS))
+    )
 
     result: list[dict[str, Any]] = []
     for area in areas:
@@ -1677,8 +1699,9 @@ def _apply_symmetric_adjacency(
             result.append(area)
             continue
 
-        raw_current_adj = area.get(CONF_ADJACENT_AREAS, []) or []
-        current_adjacents = {a for a in raw_current_adj if a}
+        current_adjacents = set(
+            _normalize_adjacent_areas(area.get(CONF_ADJACENT_AREAS))
+        )
 
         if area_id in target_adjacents:
             new_adjacents = current_adjacents | {target_area_id}
@@ -1702,11 +1725,11 @@ def _strip_adjacency_references(
         return areas
     result: list[dict[str, Any]] = []
     for area in areas:
-        raw_adj = area.get(CONF_ADJACENT_AREAS, []) or []
-        if removed_area_id in raw_adj:
+        normalized = _normalize_adjacent_areas(area.get(CONF_ADJACENT_AREAS))
+        if removed_area_id in normalized:
             cleaned = dict(area)
             cleaned[CONF_ADJACENT_AREAS] = [
-                a for a in raw_adj if a and a != removed_area_id
+                a for a in normalized if a != removed_area_id
             ]
             result.append(cleaned)
         else:

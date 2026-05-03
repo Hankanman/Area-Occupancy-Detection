@@ -212,7 +212,7 @@
                 "data_description": {
                     "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
                     "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time.",
-                    "adjacent_areas": "Other configured areas that physically connect to this one (e.g. a hallway connected to a bedroom). Selections are mutual — adding an area here also adds this one to its neighbour list. The integration learns transition patterns between adjacent areas to improve occupancy detection."
+                    "adjacent_areas": "Other configured areas that physically connect to this one (e.g. a hallway connected to a bedroom). Selections are mutual — adding an area here also adds this one to its neighbour list. Transition learning between adjacent areas is planned for a future release; for now this just records the connections."
                 }
             },
             "area_motion": {
@@ -610,7 +610,7 @@
                 "data_description": {
                     "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
                     "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time.",
-                    "adjacent_areas": "Other configured areas that physically connect to this one (e.g. a hallway connected to a bedroom). Selections are mutual — adding an area here also adds this one to its neighbour list. The integration learns transition patterns between adjacent areas to improve occupancy detection."
+                    "adjacent_areas": "Other configured areas that physically connect to this one (e.g. a hallway connected to a bedroom). Selections are mutual — adding an area here also adds this one to its neighbour list. Transition learning between adjacent areas is planned for a future release; for now this just records the connections."
                 }
             },
             "area_motion": {
