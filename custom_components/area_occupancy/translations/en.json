@@ -37,6 +37,7 @@
                 "description": "Choose an action for this area.",
                 "menu_options": {
                     "edit_area": "Edit Area",
+                    "reset_learning_confirm": "Reset Learning",
                     "remove_area_confirm": "Remove Area",
                     "cancel_area_action": "Cancel"
                 }
@@ -400,7 +401,8 @@
     },
     "options": {
         "abort": {
-            "cannot_remove_last_area": "Cannot remove the last area. At least one area must remain configured."
+            "cannot_remove_last_area": "Cannot remove the last area. At least one area must remain configured.",
+            "reset_learning_failed": "Failed to reset the area's learned history. Check the Home Assistant log for details."
         },
         "step": {
             "init": {
@@ -431,6 +433,7 @@
                 "description": "Choose an action for this area.",
                 "menu_options": {
                     "edit_area": "Edit Area",
+                    "reset_learning_confirm": "Reset Learning",
                     "remove_area_confirm": "Remove Area",
                     "cancel_area_action": "Cancel"
                 }
@@ -765,6 +768,14 @@
                 "menu_options": {
                     "confirm_remove_area": "Yes, remove area",
                     "cancel_remove_area": "Cancel"
+                }
+            },
+            "reset_learning": {
+                "title": "Reset learned history?",
+                "description": "This wipes the area's learned occupancy history (priors, correlations, intervals, and caches) without removing the area or any of its sensor configuration. The next analysis cycle will start rebuilding from current Home Assistant recorder data.\n\nUse this if the area's behavior has gone stale (e.g. the room's usage pattern changed, or you reconfigured sensors and the old learning is interfering).",
+                "menu_options": {
+                    "confirm_reset_learning": "Yes, reset learning",
+                    "cancel_reset_learning": "Cancel"
                 }
             },
             "global_settings": {

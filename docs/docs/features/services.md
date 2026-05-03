@@ -112,3 +112,7 @@ data:
 
 !!! tip "Resetting everything"
     To wipe learned history for *every* area, remove the integration entirely (which now also deletes the database file — see the [2026.4.1 release notes](https://github.com/Hankanman/Area-Occupancy-Detection/releases/tag/2026.4.1)) and reinstall. Use `purge_area_history` when you only want to reset one area.
+
+### Resetting from the UI
+
+The same purge is available without writing a service call. Open the integration's options (**Settings → Devices & Services → Area Occupancy Detection → Configure**), pick **Manage Areas**, choose the area, and click **Reset Learning**. A yes/no confirmation appears before anything is deleted, and you'll land back on the area's management menu when it's done. Same destructive behaviour — same trade-offs as the service call above.

@@ -18,6 +18,7 @@ from .utils import get_coordinator
 
 if TYPE_CHECKING:
     from .area.area import Area
+    from .coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -236,31 +237,29 @@ def _find_area_by_area_id(
     return None, None
 
 
-async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Purge learned history for a single configured area.
+async def async_purge_area_data(
+    hass: HomeAssistant,
+    coordinator: "AreaOccupancyCoordinator",
+    area_name: str,
+    area: "Area",
+) -> dict[str, Any]:
+    """Purge DB rows + in-memory state for a single configured area.
 
     Deletes all database rows for the area (intervals, priors, correlations,
     caches, etc.) without removing the area from configuration. The area's
     in-memory prior cache is cleared and a coordinator refresh is requested so
     the UI immediately reflects the purge.
+
+    Shared by the public ``purge_area_history`` service and the options-flow
+    "Reset learning" action — both want the same effect (data wiped, area
+    config preserved). Caller is responsible for the area-id → name lookup
+    and any user-facing validation messaging; this helper assumes the area
+    exists in the coordinator.
+
+    Returns the same result dict the service handler exposes:
+    ``{"area_id", "area_name", "entities_deleted", "shell_repersisted",
+    "purged_at"}``. Raises ``HomeAssistantError`` on hard DB failure.
     """
-    coordinator = get_coordinator(hass)
-    area_id = call.data[CONF_AREA_ID]
-
-    area_name, area = _find_area_by_area_id(coordinator, area_id)
-    if area_name is None or area is None:
-        known = sorted(a.config.area_id for a in coordinator.areas.values())
-        raise ServiceValidationError(
-            f"No configured area found for area_id '{area_id}'. "
-            f"Known area_ids: {', '.join(known) if known else '(none)'}"
-        )
-
-    _LOGGER.info(
-        "Purging learned history for area '%s' (area_id=%s) on user request",
-        area_name,
-        area_id,
-    )
-
     try:
         deleted = await hass.async_add_executor_job(
             coordinator.db.delete_area_data, area_name
@@ -313,12 +312,44 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
         )
 
     return {
-        "area_id": area_id,
+        "area_id": area.config.area_id,
         "area_name": area_name,
         "entities_deleted": int(deleted),
         "shell_repersisted": shell_repersisted,
         "purged_at": dt_util.utcnow().isoformat(),
     }
+
+
+async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Service handler: purge learned history for a single configured area.
+
+    Resolves the caller-supplied ``area_id`` and delegates to
+    ``async_purge_area_data``. The service-call layer owns the user-facing
+    validation messaging; the helper is kept ServiceCall-free so the
+    options-flow "Reset learning" action can reuse it.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data[CONF_AREA_ID]
+
+    area_name, area = _find_area_by_area_id(coordinator, area_id)
+    if area_name is None or area is None:
+        known = sorted(
+            a.config.area_id
+            for a in coordinator.areas.values()
+            if isinstance(a.config.area_id, str)
+        )
+        raise ServiceValidationError(
+            f"No configured area found for area_id '{area_id}'. "
+            f"Known area_ids: {', '.join(known) if known else '(none)'}"
+        )
+
+    _LOGGER.info(
+        "Purging learned history for area '%s' (area_id=%s) on user request",
+        area_name,
+        area_id,
+    )
+
+    return await async_purge_area_data(hass, coordinator, area_name, area)
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
