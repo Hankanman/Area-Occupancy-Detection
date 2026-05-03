@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release-zip:
+    name: Build and upload HACS release asset
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Verify integration manifest version matches release tag
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('custom_components/area_occupancy/manifest.json'))['version'])")
+          if [ "$MANIFEST_VERSION" != "$TAG" ]; then
+            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release tag ($TAG)"
+            exit 1
+          fi
+          echo "Version $MANIFEST_VERSION matches tag $TAG"
+
+      - name: Build release zip
+        run: |
+          set -euo pipefail
+          cd custom_components/area_occupancy
+          zip -r "${GITHUB_WORKSPACE}/area_occupancy.zip" . -x '__pycache__/*' '*.pyc'
+          ls -la "${GITHUB_WORKSPACE}/area_occupancy.zip"
+
+      - name: Upload zip to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" area_occupancy.zip --clobber
