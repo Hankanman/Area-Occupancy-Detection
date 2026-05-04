@@ -198,6 +198,13 @@ class HealthMonitor:
         self._issues: list[HealthIssue] = []
         self._checked_count: int = 0
         self._last_check: datetime | None = None
+        # In-memory record of when each entity *first* appeared unavailable
+        # in the current HA session. Used instead of ``entity.last_updated``
+        # (which is persisted and reflects the last evidence transition,
+        # often days old) so a sensor whose source integration loads slowly
+        # at startup doesn't instantly cross the 1h threshold. Cleared on
+        # recovery; not persisted, so a restart resets the clock.
+        self._unavailable_since: dict[str, datetime] = {}
         # Seed active issue IDs from the persisted issue registry so that
         # resolved issues can be cleaned up even after a restart.
         self._active_issue_ids: set[str] = self._load_existing_issue_ids()
@@ -330,6 +337,7 @@ class HealthMonitor:
             )
         self._active_issue_ids.clear()
         self._issues.clear()
+        self._unavailable_since.clear()
 
     def check_pipeline_health(
         self,
@@ -380,7 +388,10 @@ class HealthMonitor:
             new_issues.append(issue)
 
         issue = self._check_correlation_failures(
-            correlation_failure_count, correlatable_entity_count, now
+            correlation_failure_count,
+            correlatable_entity_count,
+            area_age_hours,
+            now,
         )
         if issue:
             new_issues.append(issue)
@@ -439,14 +450,30 @@ class HealthMonitor:
         return None
 
     def _check_unavailable(self, entity: Entity, now: datetime) -> HealthIssue | None:
-        """Check if a sensor has been unavailable for too long."""
+        """Check if a sensor has been unavailable for too long.
+
+        Duration is measured from the first time *this* health monitor saw
+        the sensor unavailable in the current HA session, not from
+        ``entity.last_updated``. ``last_updated`` is persisted in the DB
+        and tracks the last evidence transition, so a sensor that's been
+        functioning for weeks will have an ancient timestamp — feeding
+        that into the duration calc would instantly cross the 1h
+        threshold the moment the source integration (Z2M, ESPHome, etc.)
+        is slow to load on HA startup, producing a false-positive repair
+        for every sensor in the area.
+        """
         if entity.available:
+            # Recovered (or never was unavailable in this session) — clear
+            # any tracked start so the next outage starts a fresh clock.
+            self._unavailable_since.pop(entity.entity_id, None)
             return None
 
-        if entity.last_updated is None:
-            return None
+        unavailable_since = self._unavailable_since.get(entity.entity_id)
+        if unavailable_since is None:
+            unavailable_since = now
+            self._unavailable_since[entity.entity_id] = unavailable_since
 
-        duration = now - entity.last_updated
+        duration = now - unavailable_since
         if duration < UNAVAILABLE_THRESHOLD:
             return None
 
@@ -455,7 +482,7 @@ class HealthMonitor:
             entity_id=entity.entity_id,
             issue_type=HealthIssueType.UNAVAILABLE,
             input_type=entity.type.input_type,
-            since=entity.last_updated,
+            since=unavailable_since,
             duration_hours=round(hours, 1),
             details=(
                 f"Sensor has been unavailable for {hours:.0f}h "
@@ -623,10 +650,23 @@ class HealthMonitor:
         self,
         failure_count: int,
         total_count: int,
+        area_age_hours: float | None,
         now: datetime,
     ) -> HealthIssue | None:
-        """Flag when too many correlatable entities have failed correlation analysis."""
+        """Flag when too many correlatable entities have failed correlation analysis.
+
+        Suppressed during the warm-up window: ``CORRELATION_FAILURE_ERRORS``
+        includes soft "not enough data yet" states (``no_occupied_intervals``,
+        ``too_few_samples``, ``no_occupied_time``, etc.) that are the
+        *expected* outcome on a fresh install or when a non-motion sensor is
+        first added. Firing during warm-up produces a repair the user can't
+        action — the same grace period used for ``insufficient_priors`` and
+        ``stale_intervals_cache`` applies here.
+        """
         if total_count <= 0:
+            return None
+        grace_hours = PRIORS_TRAINING_GRACE_PERIOD.total_seconds() / 3600
+        if area_age_hours is None or area_age_hours < grace_hours:
             return None
         ratio = failure_count / total_count
         if ratio < CORRELATION_FAILURE_RATIO:
@@ -712,10 +752,27 @@ class HealthMonitor:
                 for i in self._issues
                 if _issue_id(self._area_id, i.entity_id, i.issue_type) in new_issue_ids
             ]
-            _LOGGER.warning(
-                "New sensor health issues in area '%s': %s",
-                self._area_name,
-                ", ".join(f"{i.entity_id} ({i.issue_type})" for i in new_issues),
-            )
+            sensor_descriptions = [
+                f"{i.entity_id} ({i.issue_type})"
+                for i in new_issues
+                if i.issue_type not in _PIPELINE_ISSUE_TYPES
+            ]
+            pipeline_descriptions = [
+                str(i.issue_type)
+                for i in new_issues
+                if i.issue_type in _PIPELINE_ISSUE_TYPES
+            ]
+            if sensor_descriptions:
+                _LOGGER.warning(
+                    "New sensor health issues in area '%s': %s",
+                    self._area_name,
+                    ", ".join(sensor_descriptions),
+                )
+            if pipeline_descriptions:
+                _LOGGER.warning(
+                    "New pipeline health issues in area '%s': %s",
+                    self._area_name,
+                    ", ".join(pipeline_descriptions),
+                )
 
         self._active_issue_ids = current_issue_ids
