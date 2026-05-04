@@ -87,7 +87,11 @@ PRIORS_TRAINING_GRACE_PERIOD: timedelta = timedelta(days=7)
 STALE_CACHE_THRESHOLD: timedelta = timedelta(hours=25)
 
 # Last full analysis cycle is flagged as "slow" if it took longer than this.
-SLOW_ANALYSIS_THRESHOLD_MS: float = 30_000.0
+# Set conservatively to 3 minutes for now — large installations with many
+# correlatable sensors and long recorder histories can legitimately exceed
+# 30s on the first warm cycle. Tighten once we have a baseline distribution
+# from real installations.
+SLOW_ANALYSIS_THRESHOLD_MS: float = 180_000.0
 
 # Fraction of correlatable entities whose ``analysis_error`` indicates a real
 # failure (not a designed exclusion) before we flag the area's correlation
@@ -733,15 +737,34 @@ class HealthMonitor:
                 translation_placeholders=placeholders,
             )
 
-        # Delete resolved issues
+        # Delete resolved issues. Split the announce log by scope so a run
+        # that only clears pipeline issues doesn't read as "Resolved N
+        # sensor health issue(s)" — same scope-namespace pattern used for
+        # the new-issue path below. The repair_id prefix is the source of
+        # truth (``_issue_id`` chooses ``pipeline_health_*`` for any issue
+        # type in ``_PIPELINE_ISSUE_TYPES``).
         resolved_ids = self._active_issue_ids - current_issue_ids
         for resolved_id in resolved_ids:
             ir.async_delete_issue(self._hass, DOMAIN, resolved_id)
 
-        if resolved_ids:
+        pipeline_prefix = f"pipeline_health_{self._area_id}_"
+        resolved_pipeline_ids = {
+            issue_id
+            for issue_id in resolved_ids
+            if issue_id.startswith(pipeline_prefix)
+        }
+        resolved_sensor_ids = resolved_ids - resolved_pipeline_ids
+
+        if resolved_sensor_ids:
             _LOGGER.info(
                 "Resolved %d sensor health issue(s) in area '%s'",
-                len(resolved_ids),
+                len(resolved_sensor_ids),
+                self._area_name,
+            )
+        if resolved_pipeline_ids:
+            _LOGGER.info(
+                "Resolved %d pipeline health issue(s) in area '%s'",
+                len(resolved_pipeline_ids),
                 self._area_name,
             )
 

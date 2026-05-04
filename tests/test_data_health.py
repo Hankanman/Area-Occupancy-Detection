@@ -868,7 +868,21 @@ class TestPipelineHealth:
         assert issues == []
 
     def test_slow_analysis_above_threshold(self, monitor: HealthMonitor) -> None:
-        """Last analysis > 30s triggers slow_analysis."""
+        """Last analysis past the 3-minute threshold triggers slow_analysis."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=240_000.0,  # 4 minutes
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.SLOW_ANALYSIS in types
+
+    def test_slow_analysis_below_threshold(self, monitor: HealthMonitor) -> None:
+        """A 45s analysis cycle no longer trips the (now 3-minute) threshold."""
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_pipeline_health(
                 area_age_hours=24 * 30,
@@ -878,8 +892,7 @@ class TestPipelineHealth:
                 correlation_failure_count=0,
                 correlatable_entity_count=0,
             )
-        types = {i.issue_type for i in issues}
-        assert HealthIssueType.SLOW_ANALYSIS in types
+        assert HealthIssueType.SLOW_ANALYSIS not in {i.issue_type for i in issues}
 
     def test_correlation_failures_above_ratio(self, monitor: HealthMonitor) -> None:
         """≥50% correlatable entities failed → correlation_failures."""
