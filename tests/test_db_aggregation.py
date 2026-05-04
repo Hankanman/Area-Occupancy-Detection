@@ -122,9 +122,15 @@ class TestAggregateRawToDaily:
         # A plain ``utcnow()`` anchor straddles midnight PDT in the
         # ~07:00–12:00 UTC CI window; a UTC-midnight anchor is robust for
         # US/Pacific but still splits buckets in UTC-1..UTC-4 timezones.
-        old_date = dt_util.as_local(
-            _get_old_date(RETENTION_RAW_INTERVALS_DAYS)
-        ).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Convert back to UTC before persisting: SQLite's
+        # ``DateTime(timezone=True)`` silently strips tzinfo and stores the
+        # wall-clock value, so a tz-aware-local insert would round-trip as
+        # the wrong UTC instant via ``from_db_utc``.
+        old_date = (
+            dt_util.as_local(_get_old_date(RETENTION_RAW_INTERVALS_DAYS))
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .astimezone(dt_util.UTC)
+        )
 
         # Ensure area and entity exist first (foreign key requirements)
         _setup_area_and_entity(db, area_name, "binary_sensor.motion1", "motion")
