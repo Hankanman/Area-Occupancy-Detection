@@ -297,6 +297,53 @@ class TestUnavailable:
 
         assert entity_id not in monitor._unavailable_since
 
+    def test_unavailable_clock_pruned_when_entity_vanishes(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """An entity removed from the area drops out of the outage map.
+
+        Otherwise, if the same ``entity_id`` is later re-added (config
+        edit, or the same sensor reclassified as no-longer-excluded), the
+        first re-observation as unavailable would inherit the old outage
+        start and instantly trip the threshold even though it's a brand
+        new outage window.
+        """
+        entity_id = "binary_sensor.removed"
+        monitor._unavailable_since[entity_id] = dt_util.utcnow() - timedelta(hours=10)
+
+        # The next health-check pass sees a *different* entity — the
+        # removed one is no longer in the area's entities map.
+        replacement = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"motion_1": replacement})
+
+        assert entity_id not in monitor._unavailable_since
+
+    def test_unavailable_clock_pruned_when_entity_excluded(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Adding an entity to ``excluded_entity_ids`` clears its outage clock."""
+        entity_id = "binary_sensor.wasp"
+        monitor._unavailable_since[entity_id] = dt_util.utcnow() - timedelta(hours=10)
+
+        entity = _make_entity(
+            entity_id,
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=10),
+            evidence=None,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"wasp": entity}, excluded_entity_ids={entity_id})
+
+        assert entity_id not in monitor._unavailable_since
+
 
 # --- Environmental Exclusion Tests ---
 

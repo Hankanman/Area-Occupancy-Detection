@@ -297,6 +297,24 @@ class HealthMonitor:
         issues: list[HealthIssue] = []
         checked = 0
 
+        # Prune the unavailable-clock map of entity_ids that are no longer
+        # being checked (removed from area config, reclassified as excluded,
+        # or filtered out via ``excluded_entity_ids``). Without this, an
+        # entity that vanishes and later returns under the same entity_id
+        # would inherit the old outage start and instantly trip the
+        # threshold on its first re-observation as unavailable.
+        checkable_ids = {
+            entity.entity_id
+            for entity in entities.values()
+            if entity.entity_id not in excluded
+            and entity.type.input_type not in _EXCLUDED_TYPES
+        }
+        self._unavailable_since = {
+            entity_id: since
+            for entity_id, since in self._unavailable_since.items()
+            if entity_id in checkable_ids
+        }
+
         for entity in entities.values():
             if entity.entity_id in excluded:
                 continue
