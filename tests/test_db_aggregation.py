@@ -115,14 +115,16 @@ class TestAggregateRawToDaily:
         """Test successful aggregation from raw to daily."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
-        # Use date older than retention period. Anchor to UTC midnight so the
-        # 0..4h offsets below all land on the same *local* day regardless of
-        # HA's configured timezone — the hass fixture sets US/Pacific, and a
-        # plain ``utcnow()`` anchor splits the intervals across two PDT days
-        # whenever CI runs between ~07:00 and ~12:00 UTC.
-        old_date = _get_old_date(RETENTION_RAW_INTERVALS_DAYS).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        # Use date older than retention period. Anchor to *local* midnight
+        # (HA's default timezone, which the hass fixture sets to US/Pacific)
+        # so the 0..4h offsets below all land in the same local-day bucket —
+        # ``aggregate_raw_to_daily`` groups by ``to_local(...).date()``.
+        # A plain ``utcnow()`` anchor straddles midnight PDT in the
+        # ~07:00–12:00 UTC CI window; a UTC-midnight anchor is robust for
+        # US/Pacific but still splits buckets in UTC-1..UTC-4 timezones.
+        old_date = dt_util.as_local(
+            _get_old_date(RETENTION_RAW_INTERVALS_DAYS)
+        ).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Ensure area and entity exist first (foreign key requirements)
         _setup_area_and_entity(db, area_name, "binary_sensor.motion1", "motion")
