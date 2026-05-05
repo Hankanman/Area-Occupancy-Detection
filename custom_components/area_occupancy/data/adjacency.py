@@ -261,7 +261,11 @@ def compute_decay_modifier(
 
     silence_score = 0.0
     silent_breakdown: list[tuple[str, float, float]] = []
-    mid = trajectory.prev_prev_area or ""
+    # The 2-hop chain we're querying is ``prev_area → target_area → neighbour``,
+    # so the mid hop (immediate predecessor of target_area) is prev_area, not
+    # prev_prev_area. Falls back to "" — and thus the 1-hop levels — when no
+    # trajectory is known.
+    mid = trajectory.prev_area or ""
 
     for neighbour in sorted(neighbours):
         # Bound to [0, 1] but don't apply the MIN/MAX_PROBABILITY clamp

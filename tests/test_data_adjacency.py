@@ -263,6 +263,42 @@ class TestComputeDecayModifier:
         assert out.decay_modifier == pytest.approx(1.375)
         assert out.effective_half_life_seconds == pytest.approx(412.5)
 
+    def test_trajectory_prev_area_is_used_as_mid_hop(self):
+        """The 2-hop chain is ``prev_area → target → neighbour``.
+
+        Regression: the mid_area passed to the lookup must be the
+        immediate predecessor of ``target_area`` (i.e. ``prev_area``),
+        not ``prev_prev_area``. Without this, the lookup queries the
+        wrong 2-hop chain and silently drops to a 1-hop fallback.
+        """
+        captured: list[dict] = []
+
+        def _fn(*, from_area, mid_area, to_area, hour_of_week):
+            captured.append(
+                {"from_area": from_area, "mid_area": mid_area, "to_area": to_area}
+            )
+            return TransitionLookupResult(
+                probability=0.5,
+                level=LEVEL_2HOP_HOUR_OF_WEEK,
+                observed_count=10.0,
+                total_count=20.0,
+            )
+
+        out = compute_decay_modifier(
+            target_area="bedroom",
+            adjacency_index={"bedroom": {"hall"}},
+            lagged_probabilities={"hall": 0.0},
+            trajectory=Trajectory(
+                prev_area="hall", prev_prev_area="study", hour_of_week=10
+            ),
+            lookup=_fn,
+            base_half_life_seconds=300.0,
+        )
+        assert captured == [
+            {"from_area": "bedroom", "mid_area": "hall", "to_area": "hall"}
+        ]
+        assert out.fired is True
+
     def test_silent_neighbour_breakdown_reflects_lookup_inputs(self):
         """The diagnostic breakdown carries each neighbour's contributions."""
         out = compute_decay_modifier(
