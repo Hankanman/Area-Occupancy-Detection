@@ -156,12 +156,19 @@ def compute_adjacency_boost(
     if trajectory.prev_area is None:
         return out  # No trajectory → no boost
 
-    # Pass mid_area="" if we don't have a 2-hop trajectory yet; the
-    # lookup helper will skip the 2-hop fallback levels for us.
-    mid = trajectory.prev_prev_area or ""
+    # Storage convention (see ``db/transitions.py`` module docstring): the
+    # chain ``W → X → Y`` is stored with ``from_area=W, mid_area=X, to_area=Y``
+    # — i.e. ``from`` is the OLDEST hop and ``to`` is the prediction target.
+    # Mapping the trajectory: prev_prev_area → prev_area → target_area.
+    # When no 2-hop trajectory exists, pass ``mid_area=""`` so the lookup
+    # skips levels 1–3 and starts at the 1-hop fallback levels.
+    if trajectory.prev_prev_area is not None:
+        from_area, mid_area = trajectory.prev_prev_area, trajectory.prev_area
+    else:
+        from_area, mid_area = trajectory.prev_area, ""
     result = lookup(
-        from_area=trajectory.prev_area,
-        mid_area=mid,
+        from_area=from_area,
+        mid_area=mid_area,
         to_area=target_area,
         hour_of_week=trajectory.hour_of_week,
     )
@@ -261,11 +268,15 @@ def compute_decay_modifier(
 
     silence_score = 0.0
     silent_breakdown: list[tuple[str, float, float]] = []
-    # The 2-hop chain we're querying is ``prev_area → target_area → neighbour``,
-    # so the mid hop (immediate predecessor of target_area) is prev_area, not
-    # prev_prev_area. Falls back to "" — and thus the 1-hop levels — when no
-    # trajectory is known.
-    mid = trajectory.prev_area or ""
+    # 2-hop chain we're predicting is ``prev_area → target_area → neighbour``.
+    # Storage convention (see ``db/transitions.py``) puts the OLDEST hop in
+    # ``from_area`` and the prediction target in ``to_area``, so we map
+    # W=prev_area, X=target_area, Y=neighbour. With no trajectory we fall to
+    # the 1-hop chain ``target_area → neighbour`` via ``mid_area=""``.
+    if trajectory.prev_area is not None:
+        from_area, mid_area = trajectory.prev_area, target_area
+    else:
+        from_area, mid_area = target_area, ""
 
     for neighbour in sorted(neighbours):
         # Bound to [0, 1] but don't apply the MIN/MAX_PROBABILITY clamp
@@ -278,8 +289,8 @@ def compute_decay_modifier(
         # P(target → neighbour | trajectory, hour). The 1-hop fallback
         # is fine when the trajectory hasn't yet built up to 2 hops.
         result = lookup(
-            from_area=target_area,
-            mid_area=mid if trajectory.prev_area else "",
+            from_area=from_area,
+            mid_area=mid_area,
             to_area=neighbour,
             hour_of_week=trajectory.hour_of_week,
         )

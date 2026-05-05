@@ -67,8 +67,15 @@ class TestComputeAdjacencyBoost:
         assert out.fired is False
         assert out.logit_contribution == 0.0
 
-    def test_two_hop_trajectory_uses_mid_area(self):
-        """When prev_prev is set, lookup is called with that mid_area."""
+    def test_two_hop_trajectory_maps_chain_to_storage_slots(self):
+        """2-hop chain ``prev_prev → prev → target`` maps to ``from→mid→to``.
+
+        Storage convention (``db/transitions.py``) puts the oldest hop in
+        ``from_area`` and the prediction target in ``to_area``. So for the
+        user journey ``study → hall → bathroom`` we look up
+        ``from=study, mid=hall, to=bathroom`` — matching what
+        ``_detect_transitions`` emits.
+        """
         captured: dict = {}
 
         def _fn(*, from_area, mid_area, to_area, hour_of_week):
@@ -84,15 +91,15 @@ class TestComputeAdjacencyBoost:
         out = compute_adjacency_boost(
             target_area="bathroom", trajectory=traj, lookup=_fn
         )
-        assert captured["from_area"] == "hall"
-        assert captured["mid_area"] == "study"
+        assert captured["from_area"] == "study"
+        assert captured["mid_area"] == "hall"
         assert captured["to_area"] == "bathroom"
         assert captured["hour_of_week"] == 42
         assert out.fired is True
         assert out.fallback_level == LEVEL_2HOP_HOUR_OF_WEEK
 
-    def test_one_hop_trajectory_passes_empty_mid(self):
-        """No prev_prev → mid_area="" so the lookup falls to 1-hop levels."""
+    def test_one_hop_trajectory_uses_prev_as_from_with_empty_mid(self):
+        """No prev_prev → from=prev_area, mid="" (falls to 1-hop levels)."""
         captured: dict = {}
 
         def _fn(*, from_area, mid_area, to_area, hour_of_week):
@@ -108,7 +115,9 @@ class TestComputeAdjacencyBoost:
         out = compute_adjacency_boost(
             target_area="bedroom", trajectory=traj, lookup=_fn
         )
+        assert captured["from_area"] == "hall"
         assert captured["mid_area"] == ""
+        assert captured["to_area"] == "bedroom"
         assert out.fired is True
 
     def test_logit_contribution_positive_when_prob_above_half(self):
@@ -263,13 +272,15 @@ class TestComputeDecayModifier:
         assert out.decay_modifier == pytest.approx(1.375)
         assert out.effective_half_life_seconds == pytest.approx(412.5)
 
-    def test_trajectory_prev_area_is_used_as_mid_hop(self):
-        """The 2-hop chain is ``prev_area → target → neighbour``.
+    def test_trajectory_maps_chain_to_storage_slots(self):
+        """2-hop chain ``prev → target → neighbour`` maps to ``from→mid→to``.
 
-        Regression: the mid_area passed to the lookup must be the
-        immediate predecessor of ``target_area`` (i.e. ``prev_area``),
-        not ``prev_prev_area``. Without this, the lookup queries the
-        wrong 2-hop chain and silently drops to a 1-hop fallback.
+        Storage convention (``db/transitions.py``) puts the oldest hop in
+        ``from_area`` and the prediction target in ``to_area``. So when the
+        user is currently in ``bedroom`` having come from ``hall``, the
+        ``hall → bedroom → neighbour`` chain looks up
+        ``from=hall, mid=bedroom, to=neighbour`` — matching what
+        ``_detect_transitions`` emits.
         """
         captured: list[dict] = []
 
@@ -295,7 +306,7 @@ class TestComputeDecayModifier:
             base_half_life_seconds=300.0,
         )
         assert captured == [
-            {"from_area": "bedroom", "mid_area": "hall", "to_area": "hall"}
+            {"from_area": "hall", "mid_area": "bedroom", "to_area": "hall"}
         ]
         assert out.fired is True
 
