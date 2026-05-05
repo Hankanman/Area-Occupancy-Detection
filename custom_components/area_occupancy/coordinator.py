@@ -30,11 +30,12 @@ from homeassistant.util import dt as dt_util
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
-from .data.adjacency import Trajectory
+from .data.adjacency import BoostContribution, Trajectory, compute_adjacency_boost
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
+from .db.transitions import lookup_transition_probability
 from .time_utils import to_local
 from .utils import format_area_names
 
@@ -101,6 +102,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # feed back on this tick's own outputs.
         self._trajectory_tracker = TrajectoryTracker()
         self._lagged_probabilities: dict[str, float] = {}
+        # Adjacency boosts precomputed once per tick in the executor
+        # (since ``lookup_transition_probability`` issues SQL queries),
+        # then read synchronously by ``Area.probability``.
+        self._adjacency_boosts: dict[str, BoostContribution] = {}
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -523,6 +528,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         now = dt_util.utcnow()
+        # Precompute adjacency boosts in the executor pool (one trip
+        # per tick) so the SQL lookups don't block the event loop, then
+        # let ``Area.probability`` read its area's boost back out.
+        self._adjacency_boosts = await self.hass.async_add_executor_job(
+            self._compute_adjacency_boosts, now
+        )
+
         result = {}
         for area_name, area in self.areas.items():
             probability = area.probability()
@@ -553,6 +565,48 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         being recomputed in the current tick.
         """
         return self._lagged_probabilities
+
+    def adjacency_boost_for(self, area_name: str) -> BoostContribution | None:
+        """Return the cached adjacency boost for ``area_name`` this tick.
+
+        Returns ``None`` when no boost has been computed this tick (e.g.
+        called outside an active ``update``) or the area isn't in the
+        cache yet. ``Area.probability`` calls this and falls through
+        unmodified when ``None``.
+        """
+        return self._adjacency_boosts.get(area_name)
+
+    def _compute_adjacency_boosts(self, now: datetime) -> dict[str, BoostContribution]:
+        """Compute adjacency boosts for every area in one executor trip.
+
+        Runs in the thread-pool executor since
+        ``lookup_transition_probability`` issues synchronous SQL queries.
+        """
+        out: dict[str, BoostContribution] = {}
+
+        def _lookup(*, from_area, mid_area, to_area, hour_of_week):
+            return lookup_transition_probability(
+                self.db,
+                self.entry_id,
+                from_area=from_area,
+                mid_area=mid_area,
+                to_area=to_area,
+                hour_of_week=hour_of_week,
+            )
+
+        for area_name in self.areas:
+            trajectory = self.trajectory_for(area_name, now=now)
+            if trajectory.prev_area is None:
+                # Skip the lookup entirely when there's no trajectory —
+                # ``compute_adjacency_boost`` would short-circuit anyway,
+                # this just avoids the no-op call overhead.
+                continue
+            out[area_name] = compute_adjacency_boost(
+                target_area=area_name,
+                trajectory=trajectory,
+                lookup=_lookup,
+            )
+        return out
 
     def trajectory_for(self, target_area: str, *, now: datetime) -> Trajectory:
         """Return the trajectory describing recent ends excluding target.
