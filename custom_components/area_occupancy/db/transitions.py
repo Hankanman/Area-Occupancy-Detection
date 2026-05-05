@@ -104,7 +104,7 @@ def _is_pair_adjacent(
     return to_area in adjacency_index.get(from_area, set())
 
 
-def _build_adjacency_index(db: AreaOccupancyDB, entry_id: str) -> dict[str, set[str]]:
+def build_adjacency_index(db: AreaOccupancyDB, entry_id: str) -> dict[str, set[str]]:
     """Read the ``AreaRelationships`` rows once per cycle.
 
     Returns ``{area_name: {neighbour_area_name, ...}}`` for the given entry.
@@ -418,7 +418,7 @@ def record_transitions_for_entry(
         # over the full window.
         hours_since_last = 0.0
 
-    adjacency_index = _build_adjacency_index(db, entry_id)
+    adjacency_index = build_adjacency_index(db, entry_id)
     summary["adjacency_pairs"] = sum(len(v) for v in adjacency_index.values())
 
     if not adjacency_index:

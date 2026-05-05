@@ -30,12 +30,18 @@ from homeassistant.util import dt as dt_util
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
-from .data.adjacency import BoostContribution, Trajectory, compute_adjacency_boost
+from .data.adjacency import (
+    BoostContribution,
+    DecayModifierContribution,
+    Trajectory,
+    compute_adjacency_boost,
+    compute_decay_modifier,
+)
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
-from .db.transitions import lookup_transition_probability
+from .db.transitions import build_adjacency_index, lookup_transition_probability
 from .time_utils import to_local
 from .utils import format_area_names
 
@@ -106,6 +112,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # (since ``lookup_transition_probability`` issues SQL queries),
         # then read synchronously by ``Area.probability``.
         self._adjacency_boosts: dict[str, BoostContribution] = {}
+        # Decay modifiers (Option 3a) precomputed alongside the boosts
+        # and applied to each entity's ``Decay.modifier_factor``.
+        self._adjacency_decay_modifiers: dict[str, DecayModifierContribution] = {}
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -528,12 +537,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         now = dt_util.utcnow()
-        # Precompute adjacency boosts in the executor pool (one trip
-        # per tick) so the SQL lookups don't block the event loop, then
-        # let ``Area.probability`` read its area's boost back out.
-        self._adjacency_boosts = await self.hass.async_add_executor_job(
-            self._compute_adjacency_boosts, now
-        )
+        # Precompute adjacency boosts and decay modifiers in the
+        # executor pool (one trip per tick) so the SQL lookups don't
+        # block the event loop. ``Area.probability`` reads boosts via
+        # the cached dict; entity ``Decay`` instances pick up the
+        # modifier through ``set_modifier_factor`` below.
+        (
+            self._adjacency_boosts,
+            self._adjacency_decay_modifiers,
+        ) = await self.hass.async_add_executor_job(self._compute_adjacency_state, now)
+        for area_name, modifier in self._adjacency_decay_modifiers.items():
+            area = self.areas.get(area_name)
+            if area is None:
+                continue
+            for entity in area.entities.entities.values():
+                entity.decay.set_modifier_factor(modifier.decay_modifier)
 
         result = {}
         for area_name, area in self.areas.items():
@@ -576,13 +594,26 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         return self._adjacency_boosts.get(area_name)
 
-    def _compute_adjacency_boosts(self, now: datetime) -> dict[str, BoostContribution]:
-        """Compute adjacency boosts for every area in one executor trip.
+    def adjacency_decay_modifier_for(
+        self, area_name: str
+    ) -> DecayModifierContribution | None:
+        """Return the cached decay modifier for ``area_name`` this tick."""
+        return self._adjacency_decay_modifiers.get(area_name)
+
+    def _compute_adjacency_state(
+        self, now: datetime
+    ) -> tuple[dict[str, BoostContribution], dict[str, DecayModifierContribution]]:
+        """Compute boosts and decay modifiers for every area, single executor trip.
 
         Runs in the thread-pool executor since
         ``lookup_transition_probability`` issues synchronous SQL queries.
+        Reads the household adjacency index once and reuses it for every
+        per-area lookup.
         """
-        out: dict[str, BoostContribution] = {}
+        boosts: dict[str, BoostContribution] = {}
+        modifiers: dict[str, DecayModifierContribution] = {}
+        adjacency_index = build_adjacency_index(self.db, self.entry_id)
+        lagged = self._lagged_probabilities
 
         def _lookup(*, from_area, mid_area, to_area, hour_of_week):
             return lookup_transition_probability(
@@ -596,17 +627,29 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         for area_name in self.areas:
             trajectory = self.trajectory_for(area_name, now=now)
-            if trajectory.prev_area is None:
-                # Skip the lookup entirely when there's no trajectory —
-                # ``compute_adjacency_boost`` would short-circuit anyway,
-                # this just avoids the no-op call overhead.
-                continue
-            out[area_name] = compute_adjacency_boost(
-                target_area=area_name,
-                trajectory=trajectory,
-                lookup=_lookup,
-            )
-        return out
+            if trajectory.prev_area is not None:
+                boosts[area_name] = compute_adjacency_boost(
+                    target_area=area_name,
+                    trajectory=trajectory,
+                    lookup=_lookup,
+                )
+            # Decay modifier still fires even with no trajectory — the
+            # 1-hop fallback ``P(target → neighbour)`` is meaningful when
+            # adjacent neighbours are silent. ``base_half_life_seconds=1.0``
+            # makes the diagnostic ``effective_half_life_seconds`` field
+            # carry the unit-less modifier value; the actual per-entity
+            # stretch is applied via ``Decay.set_modifier_factor`` after
+            # this returns.
+            if adjacency_index.get(area_name):
+                modifiers[area_name] = compute_decay_modifier(
+                    target_area=area_name,
+                    adjacency_index=adjacency_index,
+                    lagged_probabilities=lagged,
+                    trajectory=trajectory,
+                    lookup=_lookup,
+                    base_half_life_seconds=1.0,
+                )
+        return boosts, modifiers
 
     def trajectory_for(self, target_area: str, *, now: datetime) -> Trajectory:
         """Return the trajectory describing recent ends excluding target.

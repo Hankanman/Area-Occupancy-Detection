@@ -24,10 +24,10 @@ from custom_components.area_occupancy.db.transitions import (
     LEVEL_STATIC_DEFAULT,
     _apply_recency_decay,
     _AreaEvent,
-    _build_adjacency_index,
     _detect_transitions,
     _hour_of_week,
     _upsert_transition_counts,
+    build_adjacency_index,
     lookup_transition_probability,
     record_transitions_for_entry,
     summarize_transitions_for_diagnostics,
@@ -315,7 +315,7 @@ class TestAdjacencyIndex:
             )
             session.commit()
 
-        index = _build_adjacency_index(db, db.coordinator.entry_id)
+        index = build_adjacency_index(db, db.coordinator.entry_id)
         assert index == {"A": {"B", "C"}, "B": {"A", "D"}}
 
 
