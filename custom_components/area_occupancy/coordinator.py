@@ -30,9 +30,12 @@ from homeassistant.util import dt as dt_util
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .data.adjacency import Trajectory
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
+from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
+from .time_utils import to_local
 from .utils import format_area_names
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,6 +91,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # per-entity loops in db.correlation.
         self._stop_requested: bool = False
         self._stop_listener_remove: CALLBACK_TYPE | None = None
+
+        # Adjacent-areas Phase 4 runtime state. The trajectory tracker
+        # records area-end edges across the household so the per-area
+        # boost / decay-modifier paths can read a consistent snapshot.
+        # ``_lagged_probabilities`` holds the *previous* tick's
+        # probability per area — captured at the start of ``update``
+        # so the decay modifier and any future per-tick reader can't
+        # feed back on this tick's own outputs.
+        self._trajectory_tracker = TrajectoryTracker()
+        self._lagged_probabilities: dict[str, float] = {}
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -496,18 +509,63 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Returns:
             Dictionary with area data keyed by area name
         """
-        # Return current state data for all areas (all calculations are in-memory)
+        # Snapshot the previous tick's probabilities and occupancy
+        # state BEFORE this tick recomputes, so the adjacency boost and
+        # decay modifier read lagged values rather than feeding back on
+        # the in-progress recompute.
+        previous = self.data or {}
+        self._lagged_probabilities = {
+            name: float(entry.get("probability") or 0.0)
+            for name, entry in previous.items()
+        }
+        was_occupied = {
+            name: bool(entry.get("occupied")) for name, entry in previous.items()
+        }
+
+        now = dt_util.utcnow()
         result = {}
         for area_name, area in self.areas.items():
+            probability = area.probability()
+            is_occupied = probability >= area.threshold()
+            self._trajectory_tracker.observe(
+                area_name,
+                was_occupied=was_occupied.get(area_name, False),
+                is_occupied=is_occupied,
+                now=now,
+            )
             result[area_name] = {
-                "probability": area.probability(),
-                "occupied": area.occupied(),
+                "probability": probability,
+                "occupied": is_occupied,
                 "threshold": area.threshold(),
                 "prior": area.area_prior(),
                 "decay": area.decay(),
-                "last_updated": dt_util.utcnow(),
+                "last_updated": now,
             }
         return result
+
+    # --- Adjacent-areas (Phase 4) accessors ---
+    @property
+    def lagged_probabilities(self) -> dict[str, float]:
+        """Return the previous tick's per-area probability snapshot.
+
+        Read by the decay modifier so its silence-score is computed
+        against last-tick occupancy of adjacent areas, not the values
+        being recomputed in the current tick.
+        """
+        return self._lagged_probabilities
+
+    def trajectory_for(self, target_area: str, *, now: datetime) -> Trajectory:
+        """Return the trajectory describing recent ends excluding target.
+
+        Hour-of-week is computed from ``now`` in the user's local
+        timezone — matches the bucketing convention in
+        ``db.transitions._hour_of_week``.
+        """
+        local = to_local(now)
+        hour_of_week = local.weekday() * 24 + local.hour
+        return self._trajectory_tracker.trajectory_for(
+            target_area, hour_of_week=hour_of_week, now=now
+        )
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator.
