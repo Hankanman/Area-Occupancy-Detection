@@ -369,16 +369,19 @@ class HealthMonitor:
         in-memory ``_unavailable_since`` clock is left intact so re-enabling
         the toggle later doesn't make every currently-unavailable sensor
         instantly trip the threshold.
+
+        ``_issues`` is cleared unconditionally so any in-memory state that
+        isn't (yet) mirrored to ``_active_issue_ids`` doesn't linger after
+        a toggle-off.
         """
-        if not self._active_issue_ids:
-            return
         for issue_id in self._active_issue_ids:
             ir.async_delete_issue(self._hass, DOMAIN, issue_id)
-        _LOGGER.debug(
-            "Cleared %d repair issue(s) for area '%s' (health monitoring disabled)",
-            len(self._active_issue_ids),
-            self._area_name,
-        )
+        if self._active_issue_ids:
+            _LOGGER.debug(
+                "Cleared %d repair issue(s) for area '%s' (health monitoring disabled)",
+                len(self._active_issue_ids),
+                self._area_name,
+            )
         self._active_issue_ids.clear()
         self._issues.clear()
 
