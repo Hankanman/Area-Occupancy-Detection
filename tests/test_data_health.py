@@ -12,10 +12,13 @@ from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.health import (
+    STUCK_ACTIVE_THRESHOLDS,
     HealthIssueType,
     HealthMonitor,
     _format_duration_human,
+    _stuck_active_threshold,
 )
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -77,12 +80,12 @@ class TestStuckActive:
     """Tests for stuck active sensor detection."""
 
     def test_motion_stuck_active_above_threshold(self, monitor: HealthMonitor) -> None:
-        """Motion sensor stuck 'on' for 3h should trigger stuck_active."""
+        """Motion sensor stuck 'on' for 9h should trigger stuck_active (threshold 8h)."""
         entity = _make_entity(
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
             evidence=True,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -94,12 +97,12 @@ class TestStuckActive:
         assert issues[0].input_type == InputType.MOTION
 
     def test_motion_stuck_active_below_threshold(self, monitor: HealthMonitor) -> None:
-        """Motion sensor stuck 'on' for 1h should NOT trigger (below 2h threshold)."""
+        """Motion sensor stuck 'on' for 4h should NOT trigger (below 8h threshold)."""
         entity = _make_entity(
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=1),
+            last_updated=dt_util.utcnow() - timedelta(hours=4),
             evidence=True,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -702,7 +705,7 @@ class TestProperties:
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            last_updated=dt_util.utcnow() - timedelta(hours=10),
             evidence=True,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -772,7 +775,7 @@ class TestNaiveLastUpdatedRegression:
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            last_updated=dt_util.utcnow() - timedelta(hours=10),
             naive_last_updated=True,
             evidence=True,
         )
@@ -1362,3 +1365,144 @@ class TestStickyIgnore:
             warning_messages
         )
         assert issue_id in monitor._active_issue_ids
+
+
+class TestSanerDefaults:
+    """Regression guards on the tightened defaults shipped for #463 / #468."""
+
+    def test_motion_default_is_eight_hours(self) -> None:
+        """Motion stuck-active default must stay at 8h to silence #465/#468."""
+        assert STUCK_ACTIVE_THRESHOLDS[InputType.MOTION] == timedelta(hours=8)
+
+    def test_stuck_active_threshold_unmultiplied_for_social(self) -> None:
+        """SOCIAL areas use the base threshold (multiplier 1.0)."""
+        assert _stuck_active_threshold(InputType.MOTION, AreaPurpose.SOCIAL) == (
+            timedelta(hours=8)
+        )
+
+    def test_stuck_active_threshold_unmultiplied_for_none(self) -> None:
+        """An unset purpose also yields the base threshold."""
+        assert _stuck_active_threshold(InputType.MOTION, None) == timedelta(hours=8)
+
+    @pytest.mark.parametrize(
+        ("purpose", "expected_hours"),
+        [
+            (AreaPurpose.SLEEPING, 48),  # 8h × 6
+            (AreaPurpose.RELAXING, 32),  # 8h × 4
+            (AreaPurpose.WORKING, 24),  # 8h × 3
+        ],
+    )
+    def test_purpose_multipliers_extend_motion_threshold(
+        self, purpose: AreaPurpose, expected_hours: int
+    ) -> None:
+        """Purposes where long active periods are normal get longer thresholds."""
+        assert _stuck_active_threshold(InputType.MOTION, purpose) == timedelta(
+            hours=expected_hours
+        )
+
+
+class TestPurposeAwareStuckActive:
+    """End-to-end check: a sleeping-area monitor doesn't trip on 12h of motion."""
+
+    def test_sleeping_area_skips_stuck_active_at_twelve_hours(
+        self, mock_hass: Mock
+    ) -> None:
+        """12h is past the base 8h threshold but inside the 48h SLEEPING window."""
+        monitor = HealthMonitor(
+            "bedroom", "bedroom_id", mock_hass, purpose=AreaPurpose.SLEEPING
+        )
+        entity = _make_entity(
+            "binary_sensor.bedroom_mmwave",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=12),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"mmwave": entity})
+
+        assert issues == []
+
+    def test_sleeping_area_still_trips_above_multiplied_threshold(
+        self, mock_hass: Mock
+    ) -> None:
+        """49h crosses the 48h SLEEPING threshold and still flags."""
+        monitor = HealthMonitor(
+            "bedroom", "bedroom_id", mock_hass, purpose=AreaPurpose.SLEEPING
+        )
+        entity = _make_entity(
+            "binary_sensor.bedroom_mmwave",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=49),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"mmwave": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
+    def test_social_area_trips_at_nine_hours(self, mock_hass: Mock) -> None:
+        """SOCIAL uses the base 8h threshold so 9h still trips (regression guard)."""
+        monitor = HealthMonitor(
+            "lounge", "lounge_id", mock_hass, purpose=AreaPurpose.SOCIAL
+        )
+        entity = _make_entity(
+            "binary_sensor.lounge_motion",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"lounge_motion": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
+
+class TestMediaPlayerUnavailableExempt:
+    """`media_player.*` unavailable is normal (TV off); skip the repair (#466)."""
+
+    def test_media_player_unavailable_two_hours_is_not_flagged(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A TV unavailable for 2h must not generate an UNAVAILABLE issue."""
+        entity = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=2),
+            evidence=None,
+        )
+        # Even if some prior cycle had marked it unavailable, the exempt
+        # path must clear that tracking and return no issue.
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=2
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"tv": entity})
+
+        assert issues == []
+        assert "media_player.tv" not in monitor._unavailable_since
+
+    def test_non_media_player_unavailable_still_flagged(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A regular binary_sensor unavailable for 2h still flags (regression guard)."""
+        entity = _make_entity(
+            "binary_sensor.contact",
+            InputType.DOOR,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=2),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=2
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"contact": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.UNAVAILABLE
