@@ -361,6 +361,27 @@ class HealthMonitor:
         self._issues.clear()
         self._unavailable_since.clear()
 
+    def clear_all_issues(self) -> None:
+        """Delete every active repair issue without resetting runtime state.
+
+        Used when the integration-level ``health_enabled`` toggle is turned
+        off: existing repairs should disappear immediately, but the
+        in-memory ``_unavailable_since`` clock is left intact so re-enabling
+        the toggle later doesn't make every currently-unavailable sensor
+        instantly trip the threshold.
+        """
+        if not self._active_issue_ids:
+            return
+        for issue_id in self._active_issue_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        _LOGGER.debug(
+            "Cleared %d repair issue(s) for area '%s' (health monitoring disabled)",
+            len(self._active_issue_ids),
+            self._area_name,
+        )
+        self._active_issue_ids.clear()
+        self._issues.clear()
+
     def check_pipeline_health(
         self,
         *,

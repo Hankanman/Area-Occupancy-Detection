@@ -1158,3 +1158,52 @@ class TestPipelinePlaceholderFormatting:
             "translation_placeholders"
         ]
         assert placeholders["duration"] == "14d"
+
+
+class TestClearAllIssues:
+    """``clear_all_issues`` removes every active issue without losing context.
+
+    Used by the integration-level ``health_enabled`` toggle: when the user
+    disables health monitoring, existing repairs disappear immediately but
+    in-memory state needed if they re-enable (the ``_unavailable_since``
+    clock) is preserved so we don't instantly re-trip.
+    """
+
+    def test_clear_deletes_all_active_issues(self, monitor: HealthMonitor) -> None:
+        """Every tracked issue id is deleted from the HA registry."""
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
+        )
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            monitor.check_health({"motion_1": entity})
+            assert monitor._active_issue_ids  # sanity
+            monitor.clear_all_issues()
+
+        assert mock_ir.async_delete_issue.call_count == 1
+        assert monitor._active_issue_ids == set()
+        assert monitor.issues == []
+
+    def test_clear_is_no_op_when_no_active_issues(self, monitor: HealthMonitor) -> None:
+        """No registry calls when there's nothing to clear."""
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            monitor.clear_all_issues()
+        mock_ir.async_delete_issue.assert_not_called()
+
+    def test_clear_preserves_unavailable_clock(self, monitor: HealthMonitor) -> None:
+        """``_unavailable_since`` is intentionally not reset (vs. ``cleanup``).
+
+        This is what differentiates ``clear_all_issues`` from ``cleanup``:
+        toggling health monitoring off and back on must not make
+        currently-unavailable sensors instantly trip the threshold.
+        """
+        monitor._unavailable_since["sensor.foo"] = dt_util.utcnow()
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.clear_all_issues()
+        assert "sensor.foo" in monitor._unavailable_since

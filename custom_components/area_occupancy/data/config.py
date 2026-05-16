@@ -28,6 +28,7 @@ from ..const import (
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_EXCLUDE_FROM_ALL_AREAS,
+    CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -77,6 +78,7 @@ from ..const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
+    DEFAULT_HEALTH_ENABLED,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -179,6 +181,18 @@ class IntegrationConfig:
     def sleep_end(self) -> str:
         """Get sleep end time from config entry options."""
         return self.config_entry.options.get(CONF_SLEEP_END, DEFAULT_SLEEP_END)
+
+    @property
+    def health_enabled(self) -> bool:
+        """Whether sensor and pipeline health repair issues are emitted.
+
+        When False, ``HealthMonitor.check_health`` and
+        ``check_pipeline_health`` are short-circuited at the analysis-pipeline
+        call sites and any previously-created repair issues are cleared.
+        """
+        return bool(
+            self.config_entry.options.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED)
+        )
 
     @property
     def people(self) -> list[PersonConfig]:

@@ -15,6 +15,7 @@ from custom_components.area_occupancy.const import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import (
     PriorAnalyzer,
+    _run_pipeline_health_check,
     ensure_occupied_intervals_cache,
     run_full_analysis,
     run_interval_aggregation,
@@ -999,6 +1000,62 @@ class TestRunFullAnalysisCancellation:
         info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
         assert any("cancelled mid-run" in msg for msg in info_messages), info_messages
         assert not any("succeeded" in msg for msg in info_messages), info_messages
+
+
+class TestHealthEnabledToggle:
+    """Pipeline gates on ``integration_config.health_enabled``.
+
+    When the user disables the global toggle, the analysis pipeline must
+    not run health checks and must clear any previously-raised repairs so
+    the Repairs UI empties immediately rather than waiting for the
+    condition itself to clear.
+    """
+
+    async def test_pipeline_health_check_short_circuits_when_disabled(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Disabling the toggle skips per-area work and calls clear instead."""
+        with patch.object(
+            type(coordinator.integration_config),
+            "health_enabled",
+            new=False,
+        ):
+            for area in coordinator.areas.values():
+                area._health_monitor = Mock()
+
+            await _run_pipeline_health_check(coordinator)
+
+            for area in coordinator.areas.values():
+                area.health_monitor.clear_all_issues.assert_called_once()
+                area.health_monitor.check_pipeline_health.assert_not_called()
+
+    async def test_pipeline_health_check_runs_when_enabled(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """With the toggle on, ``check_pipeline_health`` is invoked normally."""
+        with (
+            patch.object(
+                type(coordinator.integration_config),
+                "health_enabled",
+                new=True,
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.get_area_created_at",
+                return_value=dt_util.utcnow() - timedelta(days=30),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.get_occupied_intervals_cache_age_hours",
+                return_value=1.0,
+            ),
+        ):
+            for area in coordinator.areas.values():
+                area._health_monitor = Mock()
+
+            await _run_pipeline_health_check(coordinator)
+
+            for area in coordinator.areas.values():
+                area.health_monitor.check_pipeline_health.assert_called_once()
+                area.health_monitor.clear_all_issues.assert_not_called()
 
 
 class TestMergeOverlappingIntervals:
