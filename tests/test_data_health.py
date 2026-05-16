@@ -1207,3 +1207,158 @@ class TestClearAllIssues:
         with patch("custom_components.area_occupancy.data.health.ir"):
             monitor.clear_all_issues()
         assert "sensor.foo" in monitor._unavailable_since
+
+
+class TestStickyIgnore:
+    """User-ignored repair issues must survive condition flaps.
+
+    Regression for #463: deleting an issue when its condition cleared
+    also wiped HA's ``dismissed_version`` (the field
+    ``IssueRegistry.async_ignore`` sets to the current HA version when
+    the user clicks Ignore), so when the condition recurred — TV
+    unavailable again the next night — a fresh issue appeared and the
+    Ignore was silently forgotten.
+    """
+
+    @staticmethod
+    def _patch_ir(ignored: bool):
+        """Return a context-manager-style mock for the ``ir`` module.
+
+        Sets ``dismissed_version`` to a fake version string when
+        ``ignored`` is ``True`` (matching what ``IssueRegistry.async_ignore``
+        does at runtime) and ``None`` otherwise.
+        """
+        mock_ir = Mock()
+        mock_entry = Mock()
+        mock_entry.dismissed_version = "2026.5.0" if ignored else None
+        mock_ir.async_get.return_value.async_get_issue.return_value = mock_entry
+        return mock_ir
+
+    def _seed_unavailable_issue(self, monitor: HealthMonitor) -> str:
+        """Run one check that raises an unavailable issue; return its id."""
+        entity = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"tv": entity})
+        assert monitor._active_issue_ids, "seed step must register an issue"
+        return next(iter(monitor._active_issue_ids))
+
+    def test_ignored_issue_is_not_deleted_when_condition_clears(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """If HA marks the issue ignored, condition-clear must not delete."""
+        self._seed_unavailable_issue(monitor)
+
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        mock_ir = self._patch_ir(ignored=True)
+        with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
+            monitor.check_health({"tv": entity_ok})
+
+        mock_ir.async_delete_issue.assert_not_called()
+
+    def test_ignored_issue_stays_in_active_set(self, monitor: HealthMonitor) -> None:
+        """Tracking the ignored id forward avoids spurious 'new' logs on recurrence."""
+        issue_id = self._seed_unavailable_issue(monitor)
+
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        mock_ir = self._patch_ir(ignored=True)
+        with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
+            monitor.check_health({"tv": entity_ok})
+
+        assert issue_id in monitor._active_issue_ids
+
+    def test_non_ignored_resolved_issue_is_deleted(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Sanity: behavior is unchanged for issues the user never ignored."""
+        self._seed_unavailable_issue(monitor)
+
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        mock_ir = self._patch_ir(ignored=False)
+        with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
+            monitor.check_health({"tv": entity_ok})
+
+        mock_ir.async_delete_issue.assert_called_once()
+        assert monitor._active_issue_ids == set()
+
+    def test_recurring_condition_is_idempotent_for_ignored_issue(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """When the condition recurs after an ignored flap, no 'new issue' fires.
+
+        Without keeping the ignored id in ``_active_issue_ids``, the next
+        cycle that re-triggers the condition would compute the id as a
+        member of ``current - active`` and emit a fresh warning log even
+        though HA already silenced it. This guards the log behavior so
+        the integration stays quiet in ignored-issue steady state.
+        """
+        issue_id = self._seed_unavailable_issue(monitor)
+
+        # Flap: clear with the ignore flag present.
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        with patch(
+            "custom_components.area_occupancy.data.health.ir",
+            self._patch_ir(ignored=True),
+        ):
+            monitor.check_health({"tv": entity_ok})
+
+        # Recurrence: condition is back, ignore flag still set.
+        entity_unavail = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity_unavail.entity_id] = (
+            dt_util.utcnow() - timedelta(hours=5)
+        )
+        with (
+            patch(
+                "custom_components.area_occupancy.data.health.ir",
+                self._patch_ir(ignored=True),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.health._LOGGER"
+            ) as mock_logger,
+        ):
+            monitor.check_health({"tv": entity_unavail})
+
+        # No "New sensor health issues" warning — the id was already tracked.
+        warning_messages = [c.args[0] for c in mock_logger.warning.call_args_list]
+        assert not any("New sensor health issues" in msg for msg in warning_messages), (
+            warning_messages
+        )
+        assert issue_id in monitor._active_issue_ids
