@@ -62,6 +62,7 @@ from .const import (
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_EXCLUDE_FROM_ALL_AREAS,
+    CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -112,6 +113,7 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
+    DEFAULT_HEALTH_ENABLED,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -1824,6 +1826,10 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_SLEEP_END,
                 default=defaults.get(CONF_SLEEP_END, DEFAULT_SLEEP_END),
             ): TimeSelector(),
+            vol.Required(
+                CONF_HEALTH_ENABLED,
+                default=defaults.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED),
+            ): BooleanSelector(),
         }
     )
 
@@ -2858,6 +2864,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             ),
             CONF_SLEEP_END: self.config_entry.options.get(
                 CONF_SLEEP_END, DEFAULT_SLEEP_END
+            ),
+            CONF_HEALTH_ENABLED: self.config_entry.options.get(
+                CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED
             ),
         }
 

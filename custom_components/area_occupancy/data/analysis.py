@@ -118,6 +118,10 @@ async def run_full_analysis(
         )
 
     async def _sensor_health_check() -> None:
+        if not coordinator.integration_config.health_enabled:
+            for area in coordinator.areas.values():
+                area.health_monitor.clear_all_issues()
+            return
         for area in coordinator.areas.values():
             excluded = set()
             if area.wasp_entity_id:
@@ -234,6 +238,11 @@ async def _run_pipeline_health_check(
     HA repair registry in one pass. Extracted from ``run_full_analysis``
     to keep the orchestrator's complexity inside ruff's threshold.
     """
+    if not coordinator.integration_config.health_enabled:
+        for area in coordinator.areas.values():
+            area.health_monitor.clear_all_issues()
+        return
+
     now_aware = dt_util.utcnow()
     # Canonical correlatable set per area — defined by the same helper
     # the correlation runner uses, so the denominator matches what the

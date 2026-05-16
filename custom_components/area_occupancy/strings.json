@@ -782,11 +782,13 @@
                 "description": "Configure global settings that apply to all areas",
                 "data": {
                     "sleep_start": "Sleep Start Time",
-                    "sleep_end": "Sleep End Time"
+                    "sleep_end": "Sleep End Time",
+                    "health_enabled": "Sensor health monitoring"
                 },
                 "data_description": {
                     "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
-                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours."
+                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours.",
+                    "health_enabled": "When enabled, the integration raises Home Assistant repair issues for stuck, unavailable, or never-triggered sensors and for slow or failing analysis cycles. Turn off to silence all repairs from this integration; previously raised issues will be cleared on the next analysis cycle."
                 }
             },
             "manage_people": {

@@ -90,6 +90,7 @@ CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
+CONF_HEALTH_ENABLED: Final = "health_enabled"
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"
@@ -134,6 +135,7 @@ DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 DEFAULT_EXCLUDE_FROM_ALL_AREAS: Final = False
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
+DEFAULT_HEALTH_ENABLED: Final = True
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
 DEFAULT_SLEEP_WEIGHT: Final = 0.9
 SLEEP_PRESENCE_HALF_LIFE: Final = (
