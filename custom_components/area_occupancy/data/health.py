@@ -241,6 +241,38 @@ class HealthMonitor:
             )
             return set()
 
+    def _is_ignored(self, issue_id: str) -> bool:
+        """Whether the user has marked this repair issue as Ignored in HA.
+
+        Without this guard the next ``_update_repair_issues`` call deletes
+        any issue whose condition has cleared. That delete also wipes HA's
+        ignore state, so when the condition recurs (TV unavailable again
+        the following evening) a fresh issue is created and the user's
+        prior "Ignore" is silently forgotten. Treating an ignored issue as
+        if it had already been deleted lets the registry's own suppression
+        survive these flap cycles.
+
+        HA represents the ignore state on ``IssueEntry`` via
+        ``dismissed_version: str | None`` — populated with the HA version
+        at the moment the user clicked Ignore (see
+        ``IssueRegistry.async_ignore`` in homeassistant/helpers/issue_registry.py).
+        It is preserved across restart even for non-persistent issues, so a
+        plain ``is not None`` test is the canonical "is ignored" check.
+
+        We require ``isinstance(..., str)`` rather than ``is not None`` so a
+        bare ``unittest.mock.Mock()`` standing in for the ``ir`` module
+        (used by older tests) — whose attribute access yields another
+        Mock, which is itself ``not None`` — doesn't accidentally suppress
+        deletion. The real registry only stores string versions.
+        """
+        try:
+            entry = ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id)
+        except (AttributeError, KeyError, TypeError):
+            return False
+        if entry is None:
+            return False
+        return isinstance(getattr(entry, "dismissed_version", None), str)
+
     @property
     def issues(self) -> list[HealthIssue]:
         """Current health issues."""
@@ -785,9 +817,27 @@ class HealthMonitor:
         # the new-issue path below. The repair_id prefix is the source of
         # truth (``_issue_id`` chooses ``pipeline_health_*`` for any issue
         # type in ``_PIPELINE_ISSUE_TYPES``).
-        resolved_ids = self._active_issue_ids - current_issue_ids
+        #
+        # Issues the user has explicitly Ignored in HA's Repairs UI are
+        # left in place: deleting would also wipe HA's ignore state, so
+        # the next time the condition recurs (e.g. TV unavailable again
+        # tomorrow night) a fresh issue would appear and the user's
+        # Ignore would be silently forgotten. Drop them from our active
+        # set instead so we don't re-create them on the next cycle
+        # (HA will keep them suppressed; if the user un-ignores, the
+        # condition either resolves or persists naturally).
+        candidate_ids = self._active_issue_ids - current_issue_ids
+        ignored_ids = {i for i in candidate_ids if self._is_ignored(i)}
+        resolved_ids = candidate_ids - ignored_ids
         for resolved_id in resolved_ids:
             ir.async_delete_issue(self._hass, DOMAIN, resolved_id)
+        if ignored_ids:
+            _LOGGER.debug(
+                "Preserved %d user-ignored repair issue(s) in area '%s' "
+                "despite condition clearing",
+                len(ignored_ids),
+                self._area_name,
+            )
 
         pipeline_prefix = f"pipeline_health_{self._area_id}_"
         resolved_pipeline_ids = {
@@ -840,4 +890,8 @@ class HealthMonitor:
                     ", ".join(pipeline_descriptions),
                 )
 
-        self._active_issue_ids = current_issue_ids
+        # Keep ignored-but-resolved ids in the tracked active set so a
+        # later recurrence of the same condition isn't logged as a "new"
+        # issue. ``async_create_issue`` is idempotent and preserves HA's
+        # ``dismissed_version`` on existing entries.
+        self._active_issue_ids = current_issue_ids | ignored_ids
