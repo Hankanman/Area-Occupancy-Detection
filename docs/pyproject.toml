@@ -12,7 +12,7 @@ dependencies = [
     # pymdown-extensions 10.21.2 adds the compatibility fix. Pinned as a
     # direct dep so the lock cannot regress below that version even though
     # it is otherwise transitive via mkdocs-material.
-    "pymdown-extensions>=10.21.2",
+    "pymdown-extensions>=10.21.3",
 ]
 
 [build-system]
