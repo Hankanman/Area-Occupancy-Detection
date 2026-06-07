@@ -1347,6 +1347,7 @@ class TestAreaOccupancyOptionsFlow:
         from custom_components.area_occupancy.const import (
             CONF_SLEEP_END,
             CONF_SLEEP_START,
+            CONF_SENSOR_PRECISION,
         )
 
         flow = config_flow_options_flow
@@ -1356,12 +1357,14 @@ class TestAreaOccupancyOptionsFlow:
         flow.config_entry.options = {
             CONF_SLEEP_START: "22:00:00",
             CONF_SLEEP_END: "07:00:00",
+            CONF_SENSOR_PRECISION: 2,
         }
 
         # Update global settings
         user_input = {
             CONF_SLEEP_START: "23:00:00",
             CONF_SLEEP_END: "08:00:00",
+            CONF_SENSOR_PRECISION: 1.0,  # Float value to test vol.Coerce(int)
         }
 
         result = await flow.async_step_global_settings(user_input)
@@ -1371,6 +1374,8 @@ class TestAreaOccupancyOptionsFlow:
         result_data = result["data"]
         assert result_data[CONF_SLEEP_START] == "23:00:00"
         assert result_data[CONF_SLEEP_END] == "08:00:00"
+        assert result_data[CONF_SENSOR_PRECISION] == 1
+        assert isinstance(result_data[CONF_SENSOR_PRECISION], int)
 
     async def test_options_flow_area_action_menu_includes_reset_learning(
         self,

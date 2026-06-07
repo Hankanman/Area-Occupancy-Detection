@@ -229,6 +229,8 @@ SLEEP_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
+CONF_SENSOR_PRECISION: Final = "sensor_precision"
+DEFAULT_SENSOR_PRECISION: Final = ROUNDING_PRECISION
 
 # Performance optimization constants
 DEFAULT_LOOKBACK_DAYS: Final = 60  # Days of interval data to load for analysis

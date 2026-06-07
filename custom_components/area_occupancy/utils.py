@@ -20,9 +20,9 @@ if TYPE_CHECKING:
     from .data.entity import Entity
 
 
-def format_float(value: float) -> float:
+def format_float(value: float, precision: int = ROUNDING_PRECISION) -> float:
     """Format float value."""
-    return round(float(value), ROUNDING_PRECISION)
+    return round(float(value), precision)
 
 
 def format_percentage(value: float) -> str:

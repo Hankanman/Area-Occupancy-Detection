@@ -40,6 +40,9 @@ You can override the resulting half-life in the Detection Behavior step if neede
 **Global Sleep Schedule:**
 For areas with the `Bedroom` purpose, the half-life dynamically adjusts based on your configured sleep schedule. You can set your household’s `Sleep Start` and `Sleep End` times in the **Global Settings** menu (accessible via the main integration options). Outside of sleep hours, `Bedroom` areas behave like `Living Room` areas.
 
+**Sensor State Precision:**
+To reduce database writes and storage consumption in the Home Assistant recorder, you can configure the global `Sensor state precision (decimals)` setting (0-2 decimals, default: 2) in the **Global Settings** menu. Lowering this value rounds the state of numeric diagnostic sensors (like probability, prior, decay, and confidence sensors), significantly reducing the volume of database updates.
+
 ### Step 2: Motion Sensors
 
 Configure motion and presence sensors for the area. At least one motion sensor is required. You can also adjust:

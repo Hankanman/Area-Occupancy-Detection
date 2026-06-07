@@ -32,6 +32,7 @@ from custom_components.area_occupancy.const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
     CONF_SOUND_PRESSURE_SENSORS,
@@ -48,6 +49,7 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_WINDOW,
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
+    DEFAULT_SENSOR_PRECISION,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
@@ -1070,6 +1072,7 @@ class TestIntegrationConfig:
         [
             ("sleep_start", CONF_SLEEP_START, DEFAULT_SLEEP_START, "22:00:00"),
             ("sleep_end", CONF_SLEEP_END, DEFAULT_SLEEP_END, "08:00:00"),
+            ("sensor_precision", CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION, 1),
         ],
     )
     def test_sleep_properties(
@@ -1081,7 +1084,7 @@ class TestIntegrationConfig:
         default_value: str,
         custom_value: str,
     ) -> None:
-        """Test sleep_start and sleep_end properties read from config entry options."""
+        """Test sleep_start, sleep_end, and sensor_precision properties read from config entry options."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
 
@@ -1092,6 +1095,22 @@ class TestIntegrationConfig:
         mock_realistic_config_entry.options = {config_key: custom_value}
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
         assert getattr(integration_config, property_name) == custom_value
+
+    @pytest.mark.parametrize(
+        "invalid_value",
+        ["invalid", None, [], {}, "1.5"],
+    )
+    def test_sensor_precision_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+        invalid_value: Any,
+    ) -> None:
+        """Test that sensor_precision falls back to default on ValueError or TypeError."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        mock_realistic_config_entry.options = {CONF_SENSOR_PRECISION: invalid_value}
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.sensor_precision == DEFAULT_SENSOR_PRECISION
 
     def test_integration_name_from_config_entry(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
