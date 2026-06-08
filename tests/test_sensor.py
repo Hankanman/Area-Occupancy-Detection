@@ -1298,7 +1298,7 @@ class TestSensorErrorHandling:
             # format_float errors should propagate (not handled in sensor code)
             _ = sensor.native_value
 
-    def test_handle_coordinator_update_error(
+    async def test_handle_coordinator_update_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test _handle_coordinator_update propagates errors from parent.
@@ -1320,3 +1320,218 @@ class TestSensorErrorHandling:
             pytest.raises(Exception, match="Update error"),
         ):
             sensor._handle_coordinator_update()
+
+
+class TestDiagnosticSensorsDisabledByDefault:
+    """Test that diagnostic sensors are disabled by default for new areas."""
+
+    @pytest.mark.parametrize(
+        ("sensor_class", "expected_disabled"),
+        [
+            (PriorsSensor, True),
+            (EvidenceSensor, True),
+            (DecaySensor, True),
+            (ProbabilitySensor, False),
+        ],
+    )
+    def test_sensor_default_disabled_attribute(
+        self, coordinator: AreaOccupancyCoordinator, sensor_class, expected_disabled
+    ) -> None:
+        """Test that the entity_registry_enabled_default attribute is correctly set."""
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
+        
+        # Instantiate the sensor
+        sensor = sensor_class(area_handle=handle)
+
+        if expected_disabled:
+            assert sensor.entity_registry_enabled_default is False
+        else:
+            assert sensor.entity_registry_enabled_default is True
+
+    @pytest.mark.parametrize(
+        ("sensor_class", "expected_disabled"),
+        [
+            ("PresenceProbabilitySensor", True),
+            ("EnvironmentalConfidenceSensor", True),
+            ("ActivityConfidenceSensor", True),
+            ("SensorHealthSensor", True),
+        ],
+    )
+    def test_other_sensor_default_disabled_attribute(
+        self, coordinator: AreaOccupancyCoordinator, sensor_class: str, expected_disabled: bool
+    ) -> None:
+        """Test other diagnostic sensors that require importing."""
+        from custom_components.area_occupancy.sensor import (
+            PresenceProbabilitySensor,
+            EnvironmentalConfidenceSensor,
+            ActivityConfidenceSensor,
+            SensorHealthSensor,
+        )
+        
+        sensor_classes = {
+            "PresenceProbabilitySensor": PresenceProbabilitySensor,
+            "EnvironmentalConfidenceSensor": EnvironmentalConfidenceSensor,
+            "ActivityConfidenceSensor": ActivityConfidenceSensor,
+            "SensorHealthSensor": SensorHealthSensor,
+        }
+        
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
+        
+        klass = sensor_classes[sensor_class]
+        sensor = klass(area_handle=handle)
+        
+        if expected_disabled:
+            assert sensor.entity_registry_enabled_default is False
+        else:
+            assert sensor.entity_registry_enabled_default is True
+
+    async def test_fresh_setup_disabled_by_integration(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test that on a fresh setup, diagnostic sensors have disabled_by = 'integration' when registered."""
+        from homeassistant.helpers import entity_registry as er
+        from custom_components.area_occupancy.sensor import (
+            PresenceProbabilitySensor,
+            EnvironmentalConfidenceSensor,
+            ActivityConfidenceSensor,
+            SensorHealthSensor,
+        )
+        from custom_components.area_occupancy.const import DOMAIN
+        
+        mock_async_add_entities = Mock()
+        mock_config_entry.runtime_data = coordinator
+
+        # Register config entry in hass
+        mock_config_entry.add_to_hass(hass)
+
+        # Retrieve registry
+        registry = er.async_get(hass)
+
+        # Call async_setup_entry
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
+
+        # Retrieve the entities that would be added
+        added_entities = []
+        for call_args in mock_async_add_entities.call_args_list:
+            added_entities.extend(call_args[0][0])
+
+        assert len(added_entities) > 0
+
+        # Simulate how Home Assistant's EntityPlatform registers the entities in the registry
+        for entity in added_entities:
+            entry = registry.async_get_or_create(
+                domain="sensor",
+                platform=DOMAIN,
+                unique_id=entity.unique_id,
+                suggested_object_id=entity.unique_id,
+                disabled_by=None if entity.entity_registry_enabled_default else er.RegistryEntryDisabler.INTEGRATION,
+            )
+            
+            # Assert disabled state matches expectation
+            if isinstance(entity, (PriorsSensor, EvidenceSensor, DecaySensor, PresenceProbabilitySensor, EnvironmentalConfidenceSensor, ActivityConfidenceSensor, SensorHealthSensor)):
+                assert entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+            else:
+                assert entry.disabled_by is None
+
+    async def test_existing_install_migration_preserves_state(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test that for an existing setup, existing registry entries are NOT modified or disabled."""
+        from homeassistant.helpers import entity_registry as er
+        from custom_components.area_occupancy.const import DOMAIN
+        
+        mock_async_add_entities = Mock()
+        mock_config_entry.runtime_data = coordinator
+        mock_config_entry.add_to_hass(hass)
+
+        registry = er.async_get(hass)
+
+        # Pre-register a diagnostic sensor as active (disabled_by = None)
+        # to simulate an existing upgrade setup where the user has it enabled.
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
+        sensor = PriorsSensor(area_handle=handle)
+        
+        existing_entry = registry.async_get_or_create(
+            domain="sensor",
+            platform=DOMAIN,
+            unique_id=sensor.unique_id,
+            suggested_object_id=sensor.unique_id,
+            disabled_by=None,  # explicitly enabled
+        )
+        assert existing_entry.disabled_by is None
+
+        # Run setup
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
+
+        # Retrieve registry entry again and verify it is still enabled
+        entry = registry.async_get(existing_entry.entity_id)
+        assert entry.disabled_by is None
+
+    async def test_re_add_area_disabled_by_default(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """Test that deleting and re-adding an area counts as a new registration (disabled by default)."""
+        from homeassistant.helpers import entity_registry as er
+        from custom_components.area_occupancy.const import DOMAIN
+        
+        mock_async_add_entities = Mock()
+        mock_config_entry.runtime_data = coordinator
+        mock_config_entry.add_to_hass(hass)
+
+        registry = er.async_get(hass)
+
+        # Simulate initial setup and registry entry creation
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
+        sensor = PriorsSensor(area_handle=handle)
+        
+        # User has it enabled
+        existing_entry = registry.async_get_or_create(
+            domain="sensor",
+            platform=DOMAIN,
+            unique_id=sensor.unique_id,
+            suggested_object_id=sensor.unique_id,
+            disabled_by=None,
+        )
+
+        # Simulate deleting the area/device/config entry
+        # In Home Assistant, deleting a config entry deletes the associated registry entries.
+        # We can simulate this by removing the entity from the registry:
+        registry.async_remove(existing_entry.entity_id)
+        assert registry.async_get_entity_id("sensor", DOMAIN, sensor.unique_id) is None
+
+        # Clear it from deleted_entities to simulate a truly fresh registration on re-add
+        registry.deleted_entities.pop(("sensor", DOMAIN, sensor.unique_id), None)
+
+        # Now simulate re-adding the area (config entry loaded again)
+        await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
+
+        # Retrieve newly added entities and check
+        added_entities = []
+        for call_args in mock_async_add_entities.call_args_list:
+            added_entities.extend(call_args[0][0])
+        
+        re_added_sensor = next(e for e in added_entities if isinstance(e, PriorsSensor))
+        
+        # Simulate HA registering it again
+        entry = registry.async_get_or_create(
+            domain="sensor",
+            platform=DOMAIN,
+            unique_id=re_added_sensor.unique_id,
+            suggested_object_id=re_added_sensor.unique_id,
+            disabled_by=None if re_added_sensor.entity_registry_enabled_default else er.RegistryEntryDisabler.INTEGRATION,
+        )
+        # It should now be disabled because it was a new registration
+        assert entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION

@@ -119,6 +119,7 @@ class PriorsSensor(AreaOccupancySensorBase):
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> float | None:
@@ -249,6 +250,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
             NAME_EVIDENCE_SENSOR,
         )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> int | None:
@@ -338,6 +340,7 @@ class DecaySensor(AreaOccupancySensorBase):
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> float | None:
@@ -408,6 +411,7 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> float | None:
@@ -440,6 +444,7 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> float | None:
@@ -520,6 +525,7 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_translation_key = "activity_confidence"
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> float | None:
@@ -549,6 +555,7 @@ class SensorHealthSensor(AreaOccupancySensorBase):
         )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self.set_enabled_default(False)
 
     @property
     def native_value(self) -> int | None:

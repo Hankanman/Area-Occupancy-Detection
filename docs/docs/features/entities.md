@@ -66,6 +66,13 @@ This integration creates several entities in Home Assistant to expose the calcul
 
 ## Diagnostic Entities
 
+!!! info "Disabled by default for new areas"
+    To reduce database size and recorder load, all diagnostic entities are disabled by default when an area is newly registered. You can easily enable them individually via the Home Assistant UI by going to **Settings -> Devices & Services -> Area Occupancy Detection -> Devices -> Click your Area -> Click the disabled entity under Diagnostic -> Click Settings icon -> Enable**. 
+    
+    Existing installations are not affected; their enabled diagnostic entities remain enabled after upgrading the integration.
+    
+    Note: If you delete an area and re-add it, it counts as a new registration, and its diagnostic entities will start disabled.
+
 These entities provide insight into the internal calculations and are useful for tuning and debugging.
 
 *   **`sensor.area_prior_probability_<area_name>` (Prior Probability)**
