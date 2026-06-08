@@ -1098,7 +1098,7 @@ class TestIntegrationConfig:
 
     @pytest.mark.parametrize(
         "invalid_value",
-        ["invalid", None, [], {}, "1.5"],
+        ["invalid", None, [], {}, "1.5", float("inf"), float("nan")],
     )
     def test_sensor_precision_fallback(
         self,
@@ -1106,11 +1106,33 @@ class TestIntegrationConfig:
         mock_realistic_config_entry: Mock,
         invalid_value: Any,
     ) -> None:
-        """Test that sensor_precision falls back to default on ValueError or TypeError."""
+        """Test that sensor_precision falls back to default on ValueError, TypeError or OverflowError."""
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
         mock_realistic_config_entry.options = {CONF_SENSOR_PRECISION: invalid_value}
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
         assert integration_config.sensor_precision == DEFAULT_SENSOR_PRECISION
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (-1, 0),
+            (3, 2),
+            (5, 2),
+            (-10, 0),
+        ],
+    )
+    def test_sensor_precision_clamping(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+        value: int,
+        expected: int,
+    ) -> None:
+        """Test that sensor_precision correctly clamps out-of-range integers."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        mock_realistic_config_entry.options = {CONF_SENSOR_PRECISION: value}
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.sensor_precision == expected
 
     def test_integration_name_from_config_entry(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

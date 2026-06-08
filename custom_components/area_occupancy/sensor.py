@@ -97,6 +97,13 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
             return None
         return self._area_handle.resolve()
 
+    def _get_sensor_precision(self) -> int:
+        """Return configured sensor precision with safe fallback."""
+        try:
+            return self.coordinator.integration_config.sensor_precision
+        except AttributeError:
+            return DEFAULT_SENSOR_PRECISION
+
 
 class PriorsSensor(AreaOccupancySensorBase):
     """Combined sensor for all priors."""
@@ -123,10 +130,7 @@ class PriorsSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the overall occupancy prior as the state."""
-        try:
-            precision = self.coordinator.integration_config.sensor_precision
-        except AttributeError:
-            precision = DEFAULT_SENSOR_PRECISION
+        precision = self._get_sensor_precision()
 
         if self._all_areas is not None:
             return format_float(self._all_areas.area_prior() * 100, precision)
@@ -192,10 +196,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the current occupancy probability as a percentage."""
-        try:
-            precision = self.coordinator.integration_config.sensor_precision
-        except AttributeError:
-            precision = DEFAULT_SENSOR_PRECISION
+        precision = self._get_sensor_precision()
 
         if self._all_areas is not None:
             return format_float(self._all_areas.probability() * 100, precision)
@@ -352,10 +353,7 @@ class DecaySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the decay status as a percentage."""
-        try:
-            precision = self.coordinator.integration_config.sensor_precision
-        except AttributeError:
-            precision = DEFAULT_SENSOR_PRECISION
+        precision = self._get_sensor_precision()
 
         if self._all_areas is not None:
             decay_value = self._all_areas.decay()
@@ -427,10 +425,7 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the presence probability as a percentage."""
-        try:
-            precision = self.coordinator.integration_config.sensor_precision
-        except AttributeError:
-            precision = DEFAULT_SENSOR_PRECISION
+        precision = self._get_sensor_precision()
 
         if self._all_areas is not None:
             return format_float(self._all_areas.presence_probability() * 100, precision)
@@ -469,13 +464,12 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
         >50% means environmental data supports occupancy.
         <50% means environmental data opposes occupancy.
         """
-        try:
-            precision = self.coordinator.integration_config.sensor_precision
-        except AttributeError:
-            precision = DEFAULT_SENSOR_PRECISION
+        precision = self._get_sensor_precision()
 
         if self._all_areas is not None:
-            return format_float(self._all_areas.environmental_confidence() * 100, precision)
+            return format_float(
+                self._all_areas.environmental_confidence() * 100, precision
+            )
         area = self._get_area()
         if area is None:
             return None
@@ -549,10 +543,7 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
     @property
     def native_value(self) -> float | None:
         """Return the activity confidence as a percentage."""
-        try:
-            precision = self.coordinator.integration_config.sensor_precision
-        except AttributeError:
-            precision = DEFAULT_SENSOR_PRECISION
+        precision = self._get_sensor_precision()
 
         area = self._get_area()
         if area is None:

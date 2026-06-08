@@ -50,9 +50,9 @@ from ..const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
-    CONF_SENSOR_PRECISION,
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -198,16 +198,16 @@ class IntegrationConfig:
 
     @property
     def sensor_precision(self) -> int:
-        """Get global sensor state precision from config entry options."""
+        """Get global sensor state precision (clamped to 0-2) from config entry options."""
         try:
-            return int(
+            precision = int(
                 self.config_entry.options.get(
                     CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
                 )
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return DEFAULT_SENSOR_PRECISION
-
+        return max(0, min(2, precision))
 
     @property
     def people(self) -> list[PersonConfig]:
