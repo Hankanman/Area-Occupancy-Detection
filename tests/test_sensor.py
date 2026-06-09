@@ -1340,14 +1340,14 @@ class TestDiagnosticSensorsDisabledByDefault:
         """Test that the entity_registry_enabled_default attribute is correctly set."""
         area_name = coordinator.get_area_names()[0]
         handle = coordinator.get_area_handle(area_name)
-        
+
         # Instantiate the sensor
         sensor = sensor_class(area_handle=handle)
 
         if expected_disabled:
-            assert sensor.entity_registry_enabled_default is False
+            assert not sensor.entity_registry_enabled_default
         else:
-            assert sensor.entity_registry_enabled_default is True
+            assert sensor.entity_registry_enabled_default
 
     @pytest.mark.parametrize(
         ("sensor_class", "expected_disabled"),
@@ -1356,36 +1356,42 @@ class TestDiagnosticSensorsDisabledByDefault:
             ("EnvironmentalConfidenceSensor", True),
             ("ActivityConfidenceSensor", True),
             ("SensorHealthSensor", True),
+            ("ProbabilitySensor", False),
         ],
     )
     def test_other_sensor_default_disabled_attribute(
-        self, coordinator: AreaOccupancyCoordinator, sensor_class: str, expected_disabled: bool
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        sensor_class: str,
+        expected_disabled: bool,
     ) -> None:
         """Test other diagnostic sensors that require importing."""
         from custom_components.area_occupancy.sensor import (
-            PresenceProbabilitySensor,
-            EnvironmentalConfidenceSensor,
             ActivityConfidenceSensor,
+            EnvironmentalConfidenceSensor,
+            PresenceProbabilitySensor,
+            ProbabilitySensor,
             SensorHealthSensor,
         )
-        
+
         sensor_classes = {
             "PresenceProbabilitySensor": PresenceProbabilitySensor,
             "EnvironmentalConfidenceSensor": EnvironmentalConfidenceSensor,
             "ActivityConfidenceSensor": ActivityConfidenceSensor,
             "SensorHealthSensor": SensorHealthSensor,
+            "ProbabilitySensor": ProbabilitySensor,
         }
-        
+
         area_name = coordinator.get_area_names()[0]
         handle = coordinator.get_area_handle(area_name)
-        
+
         klass = sensor_classes[sensor_class]
         sensor = klass(area_handle=handle)
-        
+
         if expected_disabled:
-            assert sensor.entity_registry_enabled_default is False
+            assert not sensor.entity_registry_enabled_default
         else:
-            assert sensor.entity_registry_enabled_default is True
+            assert sensor.entity_registry_enabled_default
 
     async def test_fresh_setup_disabled_by_integration(
         self,
@@ -1394,15 +1400,15 @@ class TestDiagnosticSensorsDisabledByDefault:
         coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test that on a fresh setup, diagnostic sensors have disabled_by = 'integration' when registered."""
-        from homeassistant.helpers import entity_registry as er
+        from custom_components.area_occupancy.const import DOMAIN
         from custom_components.area_occupancy.sensor import (
-            PresenceProbabilitySensor,
-            EnvironmentalConfidenceSensor,
             ActivityConfidenceSensor,
+            EnvironmentalConfidenceSensor,
+            PresenceProbabilitySensor,
             SensorHealthSensor,
         )
-        from custom_components.area_occupancy.const import DOMAIN
-        
+        from homeassistant.helpers import entity_registry as er
+
         mock_async_add_entities = Mock()
         mock_config_entry.runtime_data = coordinator
 
@@ -1429,11 +1435,24 @@ class TestDiagnosticSensorsDisabledByDefault:
                 platform=DOMAIN,
                 unique_id=entity.unique_id,
                 suggested_object_id=entity.unique_id,
-                disabled_by=None if entity.entity_registry_enabled_default else er.RegistryEntryDisabler.INTEGRATION,
+                disabled_by=None
+                if entity.entity_registry_enabled_default
+                else er.RegistryEntryDisabler.INTEGRATION,
             )
-            
+
             # Assert disabled state matches expectation
-            if isinstance(entity, (PriorsSensor, EvidenceSensor, DecaySensor, PresenceProbabilitySensor, EnvironmentalConfidenceSensor, ActivityConfidenceSensor, SensorHealthSensor)):
+            if isinstance(
+                entity,
+                (
+                    PriorsSensor,
+                    EvidenceSensor,
+                    DecaySensor,
+                    PresenceProbabilitySensor,
+                    EnvironmentalConfidenceSensor,
+                    ActivityConfidenceSensor,
+                    SensorHealthSensor,
+                ),
+            ):
                 assert entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
             else:
                 assert entry.disabled_by is None
@@ -1445,9 +1464,9 @@ class TestDiagnosticSensorsDisabledByDefault:
         coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test that for an existing setup, existing registry entries are NOT modified or disabled."""
-        from homeassistant.helpers import entity_registry as er
         from custom_components.area_occupancy.const import DOMAIN
-        
+        from homeassistant.helpers import entity_registry as er
+
         mock_async_add_entities = Mock()
         mock_config_entry.runtime_data = coordinator
         mock_config_entry.add_to_hass(hass)
@@ -1459,7 +1478,7 @@ class TestDiagnosticSensorsDisabledByDefault:
         area_name = coordinator.get_area_names()[0]
         handle = coordinator.get_area_handle(area_name)
         sensor = PriorsSensor(area_handle=handle)
-        
+
         existing_entry = registry.async_get_or_create(
             domain="sensor",
             platform=DOMAIN,
@@ -1483,9 +1502,9 @@ class TestDiagnosticSensorsDisabledByDefault:
         coordinator: AreaOccupancyCoordinator,
     ) -> None:
         """Test that deleting and re-adding an area counts as a new registration (disabled by default)."""
-        from homeassistant.helpers import entity_registry as er
         from custom_components.area_occupancy.const import DOMAIN
-        
+        from homeassistant.helpers import entity_registry as er
+
         mock_async_add_entities = Mock()
         mock_config_entry.runtime_data = coordinator
         mock_config_entry.add_to_hass(hass)
@@ -1496,7 +1515,7 @@ class TestDiagnosticSensorsDisabledByDefault:
         area_name = coordinator.get_area_names()[0]
         handle = coordinator.get_area_handle(area_name)
         sensor = PriorsSensor(area_handle=handle)
-        
+
         # User has it enabled
         existing_entry = registry.async_get_or_create(
             domain="sensor",
@@ -1522,16 +1541,18 @@ class TestDiagnosticSensorsDisabledByDefault:
         added_entities = []
         for call_args in mock_async_add_entities.call_args_list:
             added_entities.extend(call_args[0][0])
-        
+
         re_added_sensor = next(e for e in added_entities if isinstance(e, PriorsSensor))
-        
+
         # Simulate HA registering it again
         entry = registry.async_get_or_create(
             domain="sensor",
             platform=DOMAIN,
             unique_id=re_added_sensor.unique_id,
             suggested_object_id=re_added_sensor.unique_id,
-            disabled_by=None if re_added_sensor.entity_registry_enabled_default else er.RegistryEntryDisabler.INTEGRATION,
+            disabled_by=None
+            if re_added_sensor.entity_registry_enabled_default
+            else er.RegistryEntryDisabler.INTEGRATION,
         )
         # It should now be disabled because it was a new registration
         assert entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
