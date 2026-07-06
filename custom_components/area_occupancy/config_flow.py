@@ -85,6 +85,7 @@ from .const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
     CONF_SOUND_PRESSURE_SENSORS,
@@ -120,6 +121,7 @@ from .const import (
     DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SENSOR_PRECISION,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
@@ -1830,6 +1832,20 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_HEALTH_ENABLED,
                 default=defaults.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED),
             ): BooleanSelector(),
+            vol.Required(
+                CONF_SENSOR_PRECISION,
+                default=defaults.get(CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION),
+            ): vol.All(
+                NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=2,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Coerce(int),
+            ),
         }
     )
 
@@ -2851,6 +2867,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     ) -> ConfigFlowResult:
         """Manage global settings."""
         if user_input is not None:
+            # Validate and coerce using the schema
+            schema = _create_global_settings_schema(self.config_entry.options)
+            user_input = schema(user_input)
+
             # Update the config entry options directly
             new_options = dict(self.config_entry.options)
             new_options.update(user_input)
@@ -2867,6 +2887,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             ),
             CONF_HEALTH_ENABLED: self.config_entry.options.get(
                 CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED
+            ),
+            CONF_SENSOR_PRECISION: self.config_entry.options.get(
+                CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
             ),
         }
 

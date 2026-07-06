@@ -50,6 +50,7 @@ from ..const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
     CONF_SOUND_PRESSURE_SENSORS,
@@ -85,6 +86,7 @@ from ..const import (
     DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SENSOR_PRECISION,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
@@ -193,6 +195,19 @@ class IntegrationConfig:
         return bool(
             self.config_entry.options.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED)
         )
+
+    @property
+    def sensor_precision(self) -> int:
+        """Get global sensor state precision (clamped to 0-2) from config entry options."""
+        try:
+            precision = int(
+                self.config_entry.options.get(
+                    CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
+                )
+            )
+        except (ValueError, TypeError, OverflowError):
+            return DEFAULT_SENSOR_PRECISION
+        return max(0, min(2, precision))
 
     @property
     def people(self) -> list[PersonConfig]:
