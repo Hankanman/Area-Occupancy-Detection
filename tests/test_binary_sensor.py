@@ -7,11 +7,12 @@ import pytest
 
 from custom_components.area_occupancy.binary_sensor import (
     Occupancy,
+    SleepPresenceSensor,
     WaspInBoxSensor,
     async_setup_entry,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.config import Sensors
+from custom_components.area_occupancy.data.config import PersonConfig, Sensors
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -2303,3 +2304,145 @@ class TestOccupancyEntityEdgeCases:
         # Test when all_areas is None
         entity._all_areas = None
         assert entity.is_on is False
+
+
+class TestSleepPresenceSensor:
+    """Test SleepPresenceSensor presence gating and sleep evaluation."""
+
+    @staticmethod
+    def _make_sensor(
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        person: PersonConfig,
+    ) -> SleepPresenceSensor:
+        area_name = coordinator.get_area_names()[0]
+        handle = coordinator.get_area_handle(area_name)
+        sensor = SleepPresenceSensor(
+            area_handle=handle, config_entry=Mock(), people=[person]
+        )
+        sensor.hass = hass
+        return sensor
+
+    @pytest.mark.parametrize(
+        ("person_state", "sleep_state", "expected"),
+        [
+            # Person home + sleep sensor on → sleeping
+            ("home", STATE_ON, True),
+            # Person home + sleep sensor off → not sleeping
+            ("home", STATE_OFF, False),
+            # Person definitively away → not sleeping even with sensor on
+            ("not_home", STATE_ON, False),
+            # Person in a named zone (away) → not sleeping
+            ("work", STATE_ON, False),
+            # Regression #464: person entity without device trackers reports
+            # "unknown" — presence indeterminable, trust the sleep sensor
+            ("unknown", STATE_ON, True),
+            ("unknown", STATE_OFF, False),
+            ("unavailable", STATE_ON, True),
+        ],
+    )
+    def test_evaluate_sleep_state_person_entity(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        person_state: str,
+        sleep_state: str,
+        expected: bool,
+    ) -> None:
+        """Test sleep evaluation against person entity states (no device tracker)."""
+        person = PersonConfig(
+            person_entity="person.test",
+            sleep_sensors=["binary_sensor.in_bed"],
+            sleep_area_id="bedroom",
+        )
+        sensor = self._make_sensor(hass, coordinator, person)
+
+        hass.states.async_set("person.test", person_state)
+        hass.states.async_set("binary_sensor.in_bed", sleep_state)
+
+        assert sensor._evaluate_sleep_state() is expected
+
+    def test_evaluate_sleep_state_missing_person_entity(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that a missing person entity does not block sleep detection."""
+        person = PersonConfig(
+            person_entity="person.missing",
+            sleep_sensors=["binary_sensor.in_bed"],
+            sleep_area_id="bedroom",
+        )
+        sensor = self._make_sensor(hass, coordinator, person)
+
+        hass.states.async_set("binary_sensor.in_bed", STATE_ON)
+
+        assert sensor._evaluate_sleep_state() is True
+
+    @pytest.mark.parametrize(
+        ("tracker_state", "expected"),
+        [
+            ("home", True),
+            ("not_home", False),
+            # Tracker unavailable → presence unknown, trust sleep sensor
+            ("unavailable", True),
+        ],
+    )
+    def test_evaluate_sleep_state_device_tracker_precedence(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        tracker_state: str,
+        expected: bool,
+    ) -> None:
+        """Test that a configured device tracker takes precedence over the person entity."""
+        person = PersonConfig(
+            person_entity="person.test",
+            sleep_sensors=["binary_sensor.in_bed"],
+            sleep_area_id="bedroom",
+            device_tracker="device_tracker.phone",
+        )
+        sensor = self._make_sensor(hass, coordinator, person)
+
+        # Person entity says not_home; tracker must win
+        hass.states.async_set("person.test", "not_home")
+        hass.states.async_set("device_tracker.phone", tracker_state)
+        hass.states.async_set("binary_sensor.in_bed", STATE_ON)
+
+        assert sensor._evaluate_sleep_state() is expected
+
+    def test_evaluate_sleep_state_numeric_sensor_unknown_presence(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test numeric confidence threshold still applies when presence is unknown."""
+        person = PersonConfig(
+            person_entity="person.test",
+            sleep_sensors=["sensor.sleep_confidence"],
+            sleep_area_id="bedroom",
+            confidence_threshold=80,
+        )
+        sensor = self._make_sensor(hass, coordinator, person)
+
+        hass.states.async_set("person.test", "unknown")
+
+        hass.states.async_set("sensor.sleep_confidence", "85")
+        assert sensor._evaluate_sleep_state() is True
+
+        hass.states.async_set("sensor.sleep_confidence", "40")
+        assert sensor._evaluate_sleep_state() is False
+
+    def test_extra_state_attributes_unknown_presence(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test attributes report sleeping when presence is unknown and sensor active."""
+        person = PersonConfig(
+            person_entity="person.test",
+            sleep_sensors=["binary_sensor.in_bed"],
+            sleep_area_id="bedroom",
+        )
+        sensor = self._make_sensor(hass, coordinator, person)
+
+        hass.states.async_set("person.test", "unknown")
+        hass.states.async_set("binary_sensor.in_bed", STATE_ON)
+
+        attributes = sensor.extra_state_attributes
+        assert attributes["people"][0]["sleeping"] is True
+        assert attributes["people_sleeping"] == ["person.test"]
