@@ -1,4 +1,5 @@
 """Tests for sensor health monitoring."""
+# ruff: noqa: SLF001
 
 from __future__ import annotations
 
@@ -11,10 +12,13 @@ from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.health import (
+    STUCK_ACTIVE_THRESHOLDS,
     HealthIssueType,
     HealthMonitor,
     _format_duration_human,
+    _stuck_active_threshold,
 )
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -76,12 +80,12 @@ class TestStuckActive:
     """Tests for stuck active sensor detection."""
 
     def test_motion_stuck_active_above_threshold(self, monitor: HealthMonitor) -> None:
-        """Motion sensor stuck 'on' for 3h should trigger stuck_active."""
+        """Motion sensor stuck 'on' for 9h should trigger stuck_active (threshold 8h)."""
         entity = _make_entity(
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
             evidence=True,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -93,12 +97,12 @@ class TestStuckActive:
         assert issues[0].input_type == InputType.MOTION
 
     def test_motion_stuck_active_below_threshold(self, monitor: HealthMonitor) -> None:
-        """Motion sensor stuck 'on' for 1h should NOT trigger (below 2h threshold)."""
+        """Motion sensor stuck 'on' for 4h should NOT trigger (below 8h threshold)."""
         entity = _make_entity(
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=1),
+            last_updated=dt_util.utcnow() - timedelta(hours=4),
             evidence=True,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -202,6 +206,14 @@ class TestUnavailable:
             last_updated=dt_util.utcnow() - timedelta(hours=2),
             evidence=None,
         )
+        # Simulate the monitor having first seen this entity unavailable 2h
+        # ago. ``_check_unavailable`` measures duration from the in-memory
+        # mark, not ``entity.last_updated`` — that's the whole point of the
+        # startup-race fix. See ``test_unavailable_first_seen_starts_clock``
+        # below for the cold-start path.
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=2
+        )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"motion_1": entity})
 
@@ -217,6 +229,9 @@ class TestUnavailable:
             last_updated=dt_util.utcnow() - timedelta(minutes=30),
             evidence=None,
         )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            minutes=30
+        )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"motion_1": entity})
 
@@ -231,11 +246,106 @@ class TestUnavailable:
             last_updated=dt_util.utcnow() - timedelta(hours=3),
             evidence=None,
         )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=3
+        )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"temp_1": entity})
 
         assert len(issues) == 1
         assert issues[0].issue_type == HealthIssueType.UNAVAILABLE
+
+    def test_unavailable_first_seen_starts_clock(self, monitor: HealthMonitor) -> None:
+        """A freshly-unavailable entity must NOT fire on first observation.
+
+        Regression test for the startup race in issue #455: source
+        integrations (Zigbee2MQTT, ESPHome) sometimes load *after* the
+        first analysis cycle. ``entity.last_updated`` is persisted from
+        the previous session and would be ancient — feeding it into the
+        duration calc instantly tripped the 1h threshold, producing a
+        flood of false-positive ``sensor_health_unavailable`` repairs.
+        """
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(days=14),
+            evidence=None,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"motion_1": entity})
+
+        # The 14-day-old ``last_updated`` may legitimately produce a
+        # ``never_triggered`` issue — that path is unrelated to the
+        # startup race. The regression we're guarding here is specifically
+        # that ``UNAVAILABLE`` does not fire on first observation.
+        assert HealthIssueType.UNAVAILABLE not in {i.issue_type for i in issues}
+        assert entity.entity_id in monitor._unavailable_since
+
+    def test_unavailable_clock_resets_on_recovery(self, monitor: HealthMonitor) -> None:
+        """Recovery clears the in-memory mark so the next outage starts fresh."""
+        entity_id = "binary_sensor.motion_1"
+        # Seed an old unavailability mark.
+        monitor._unavailable_since[entity_id] = dt_util.utcnow() - timedelta(hours=10)
+
+        entity_ok = _make_entity(
+            entity_id,
+            InputType.MOTION,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"motion_1": entity_ok})
+
+        assert entity_id not in monitor._unavailable_since
+
+    def test_unavailable_clock_pruned_when_entity_vanishes(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """An entity removed from the area drops out of the outage map.
+
+        Otherwise, if the same ``entity_id`` is later re-added (config
+        edit, or the same sensor reclassified as no-longer-excluded), the
+        first re-observation as unavailable would inherit the old outage
+        start and instantly trip the threshold even though it's a brand
+        new outage window.
+        """
+        entity_id = "binary_sensor.removed"
+        monitor._unavailable_since[entity_id] = dt_util.utcnow() - timedelta(hours=10)
+
+        # The next health-check pass sees a *different* entity — the
+        # removed one is no longer in the area's entities map.
+        replacement = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"motion_1": replacement})
+
+        assert entity_id not in monitor._unavailable_since
+
+    def test_unavailable_clock_pruned_when_entity_excluded(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Adding an entity to ``excluded_entity_ids`` clears its outage clock."""
+        entity_id = "binary_sensor.wasp"
+        monitor._unavailable_since[entity_id] = dt_util.utcnow() - timedelta(hours=10)
+
+        entity = _make_entity(
+            entity_id,
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=10),
+            evidence=None,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"wasp": entity}, excluded_entity_ids={entity_id})
+
+        assert entity_id not in monitor._unavailable_since
 
 
 # --- Environmental Exclusion Tests ---
@@ -373,13 +483,16 @@ class TestIssueResolution:
 
     def test_issues_clear_when_resolved(self, monitor: HealthMonitor) -> None:
         """Issues should clear when sensors come back to normal."""
-        # First check - sensor unavailable
+        # First check - sensor unavailable (already 5h into the outage)
         entity_unavail = _make_entity(
             "binary_sensor.motion_1",
             InputType.MOTION,
             state=None,
             last_updated=dt_util.utcnow() - timedelta(hours=5),
             evidence=None,
+        )
+        monitor._unavailable_since[entity_unavail.entity_id] = (
+            dt_util.utcnow() - timedelta(hours=5)
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"motion_1": entity_unavail})
@@ -413,6 +526,9 @@ class TestRepairIssues:
             last_updated=dt_util.utcnow() - timedelta(hours=5),
             evidence=None,
         )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
+        )
         with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
             monitor.check_health({"motion_1": entity})
 
@@ -434,6 +550,9 @@ class TestRepairIssues:
             state=None,
             last_updated=dt_util.utcnow() - timedelta(hours=5),
             evidence=None,
+        )
+        monitor._unavailable_since[entity_bad.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
             monitor.check_health({"motion_1": entity_bad})
@@ -459,6 +578,9 @@ class TestRepairIssues:
             state=None,
             last_updated=dt_util.utcnow() - timedelta(hours=5),
             evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
         )
         with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
             monitor.check_health({"motion_1": entity})
@@ -494,6 +616,9 @@ class TestMultipleIssues:
                 evidence=True,
             ),
         }
+        monitor._unavailable_since["binary_sensor.motion_1"] = (
+            dt_util.utcnow() - timedelta(hours=5)
+        )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health(entities)
 
@@ -542,6 +667,9 @@ class TestGetIssueForEntity:
             last_updated=dt_util.utcnow() - timedelta(hours=5),
             evidence=None,
         )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
+        )
         with patch("custom_components.area_occupancy.data.health.ir"):
             monitor.check_health({"motion_1": entity})
 
@@ -577,7 +705,7 @@ class TestProperties:
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            last_updated=dt_util.utcnow() - timedelta(hours=10),
             evidence=True,
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
@@ -647,7 +775,7 @@ class TestNaiveLastUpdatedRegression:
             "binary_sensor.motion_1",
             InputType.MOTION,
             state="on",
-            last_updated=dt_util.utcnow() - timedelta(hours=3),
+            last_updated=dt_util.utcnow() - timedelta(hours=10),
             naive_last_updated=True,
             evidence=True,
         )
@@ -666,6 +794,9 @@ class TestNaiveLastUpdatedRegression:
             last_updated=dt_util.utcnow() - timedelta(hours=3),
             naive_last_updated=True,
             evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=3
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_health({"motion_1": entity})
@@ -787,7 +918,21 @@ class TestPipelineHealth:
         assert issues == []
 
     def test_slow_analysis_above_threshold(self, monitor: HealthMonitor) -> None:
-        """Last analysis > 30s triggers slow_analysis."""
+        """Last analysis past the 3-minute threshold triggers slow_analysis."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=240_000.0,  # 4 minutes
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        types = {i.issue_type for i in issues}
+        assert HealthIssueType.SLOW_ANALYSIS in types
+
+    def test_slow_analysis_below_threshold(self, monitor: HealthMonitor) -> None:
+        """A 45s analysis cycle no longer trips the (now 3-minute) threshold."""
         with patch("custom_components.area_occupancy.data.health.ir"):
             issues = monitor.check_pipeline_health(
                 area_age_hours=24 * 30,
@@ -797,8 +942,7 @@ class TestPipelineHealth:
                 correlation_failure_count=0,
                 correlatable_entity_count=0,
             )
-        types = {i.issue_type for i in issues}
-        assert HealthIssueType.SLOW_ANALYSIS in types
+        assert HealthIssueType.SLOW_ANALYSIS not in {i.issue_type for i in issues}
 
     def test_correlation_failures_above_ratio(self, monitor: HealthMonitor) -> None:
         """≥50% correlatable entities failed → correlation_failures."""
@@ -842,6 +986,43 @@ class TestPipelineHealth:
             )
         assert issues == []
 
+    def test_correlation_failures_within_grace_period(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Warm-up window suppresses correlation_failures (issue #455).
+
+        ``CORRELATION_FAILURE_ERRORS`` includes soft "not enough data yet"
+        states like ``no_occupied_intervals`` and ``too_few_samples`` that
+        are the *expected* outcome on a fresh install. Firing during warm-up
+        produces a repair the user can't action — gate on the same grace
+        period used for ``insufficient_priors``.
+        """
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 3,  # 3 days — inside 7d grace
+                has_global_prior=False,
+                cache_age_hours=None,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=8,
+                correlatable_entity_count=10,
+            )
+        assert issues == []
+
+    def test_correlation_failures_unknown_age(self, monitor: HealthMonitor) -> None:
+        """Unknown area age (e.g. DB read failed) suppresses the issue."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=None,
+                has_global_prior=False,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=8,
+                correlatable_entity_count=10,
+            )
+        assert HealthIssueType.CORRELATION_FAILURES not in {
+            i.issue_type for i in issues
+        }
+
     def test_pipeline_issues_use_distinct_repair_id_namespace(
         self, monitor: HealthMonitor
     ) -> None:
@@ -872,6 +1053,9 @@ class TestPipelineHealth:
             state=None,
             last_updated=dt_util.utcnow() - timedelta(hours=3),
             evidence=None,
+        )
+        monitor._unavailable_since[sensor_entity.entity_id] = (
+            dt_util.utcnow() - timedelta(hours=3)
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
             monitor.check_health({"motion_1": sensor_entity})
@@ -977,3 +1161,348 @@ class TestPipelinePlaceholderFormatting:
             "translation_placeholders"
         ]
         assert placeholders["duration"] == "14d"
+
+
+class TestClearAllIssues:
+    """``clear_all_issues`` removes every active issue without losing context.
+
+    Used by the integration-level ``health_enabled`` toggle: when the user
+    disables health monitoring, existing repairs disappear immediately but
+    in-memory state needed if they re-enable (the ``_unavailable_since``
+    clock) is preserved so we don't instantly re-trip.
+    """
+
+    def test_clear_deletes_all_active_issues(self, monitor: HealthMonitor) -> None:
+        """Every tracked issue id is deleted from the HA registry."""
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
+        )
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            monitor.check_health({"motion_1": entity})
+            assert monitor._active_issue_ids  # sanity
+            monitor.clear_all_issues()
+
+        assert mock_ir.async_delete_issue.call_count == 1
+        assert monitor._active_issue_ids == set()
+        assert monitor.issues == []
+
+    def test_clear_is_no_op_when_no_active_issues(self, monitor: HealthMonitor) -> None:
+        """No registry calls when there's nothing to clear."""
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            monitor.clear_all_issues()
+        mock_ir.async_delete_issue.assert_not_called()
+
+    def test_clear_preserves_unavailable_clock(self, monitor: HealthMonitor) -> None:
+        """``_unavailable_since`` is intentionally not reset (vs. ``cleanup``).
+
+        This is what differentiates ``clear_all_issues`` from ``cleanup``:
+        toggling health monitoring off and back on must not make
+        currently-unavailable sensors instantly trip the threshold.
+        """
+        monitor._unavailable_since["sensor.foo"] = dt_util.utcnow()
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.clear_all_issues()
+        assert "sensor.foo" in monitor._unavailable_since
+
+
+class TestStickyIgnore:
+    """User-ignored repair issues must survive condition flaps.
+
+    Regression for #463: deleting an issue when its condition cleared
+    also wiped HA's ``dismissed_version`` (the field
+    ``IssueRegistry.async_ignore`` sets to the current HA version when
+    the user clicks Ignore), so when the condition recurred — TV
+    unavailable again the next night — a fresh issue appeared and the
+    Ignore was silently forgotten.
+    """
+
+    @staticmethod
+    def _patch_ir(ignored: bool):
+        """Return a context-manager-style mock for the ``ir`` module.
+
+        Sets ``dismissed_version`` to a fake version string when
+        ``ignored`` is ``True`` (matching what ``IssueRegistry.async_ignore``
+        does at runtime) and ``None`` otherwise.
+        """
+        mock_ir = Mock()
+        mock_entry = Mock()
+        mock_entry.dismissed_version = "2026.5.0" if ignored else None
+        mock_ir.async_get.return_value.async_get_issue.return_value = mock_entry
+        return mock_ir
+
+    def _seed_unavailable_issue(self, monitor: HealthMonitor) -> str:
+        """Run one check that raises an unavailable issue; return its id."""
+        entity = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=5
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            monitor.check_health({"tv": entity})
+        assert monitor._active_issue_ids, "seed step must register an issue"
+        return next(iter(monitor._active_issue_ids))
+
+    def test_ignored_issue_is_not_deleted_when_condition_clears(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """If HA marks the issue ignored, condition-clear must not delete."""
+        self._seed_unavailable_issue(monitor)
+
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        mock_ir = self._patch_ir(ignored=True)
+        with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
+            monitor.check_health({"tv": entity_ok})
+
+        mock_ir.async_delete_issue.assert_not_called()
+
+    def test_ignored_issue_stays_in_active_set(self, monitor: HealthMonitor) -> None:
+        """Tracking the ignored id forward avoids spurious 'new' logs on recurrence."""
+        issue_id = self._seed_unavailable_issue(monitor)
+
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        mock_ir = self._patch_ir(ignored=True)
+        with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
+            monitor.check_health({"tv": entity_ok})
+
+        assert issue_id in monitor._active_issue_ids
+
+    def test_non_ignored_resolved_issue_is_deleted(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Sanity: behavior is unchanged for issues the user never ignored."""
+        self._seed_unavailable_issue(monitor)
+
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        mock_ir = self._patch_ir(ignored=False)
+        with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
+            monitor.check_health({"tv": entity_ok})
+
+        mock_ir.async_delete_issue.assert_called_once()
+        assert monitor._active_issue_ids == set()
+
+    def test_recurring_condition_is_idempotent_for_ignored_issue(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """When the condition recurs after an ignored flap, no 'new issue' fires.
+
+        Without keeping the ignored id in ``_active_issue_ids``, the next
+        cycle that re-triggers the condition would compute the id as a
+        member of ``current - active`` and emit a fresh warning log even
+        though HA already silenced it. This guards the log behavior so
+        the integration stays quiet in ignored-issue steady state.
+        """
+        issue_id = self._seed_unavailable_issue(monitor)
+
+        # Flap: clear with the ignore flag present.
+        entity_ok = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state="off",
+            last_updated=dt_util.utcnow(),
+            evidence=False,
+        )
+        with patch(
+            "custom_components.area_occupancy.data.health.ir",
+            self._patch_ir(ignored=True),
+        ):
+            monitor.check_health({"tv": entity_ok})
+
+        # Recurrence: condition is back, ignore flag still set.
+        entity_unavail = _make_entity(
+            "binary_sensor.tv",
+            InputType.MEDIA,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=5),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity_unavail.entity_id] = (
+            dt_util.utcnow() - timedelta(hours=5)
+        )
+        with (
+            patch(
+                "custom_components.area_occupancy.data.health.ir",
+                self._patch_ir(ignored=True),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.health._LOGGER"
+            ) as mock_logger,
+        ):
+            monitor.check_health({"tv": entity_unavail})
+
+        # No "New sensor health issues" warning — the id was already tracked.
+        warning_messages = [c.args[0] for c in mock_logger.warning.call_args_list]
+        assert not any("New sensor health issues" in msg for msg in warning_messages), (
+            warning_messages
+        )
+        assert issue_id in monitor._active_issue_ids
+
+
+class TestSanerDefaults:
+    """Regression guards on the tightened defaults shipped for #463 / #468."""
+
+    def test_motion_default_is_eight_hours(self) -> None:
+        """Motion stuck-active default must stay at 8h to silence #465/#468."""
+        assert STUCK_ACTIVE_THRESHOLDS[InputType.MOTION] == timedelta(hours=8)
+
+    def test_stuck_active_threshold_unmultiplied_for_social(self) -> None:
+        """SOCIAL areas use the base threshold (multiplier 1.0)."""
+        assert _stuck_active_threshold(InputType.MOTION, AreaPurpose.SOCIAL) == (
+            timedelta(hours=8)
+        )
+
+    def test_stuck_active_threshold_unmultiplied_for_none(self) -> None:
+        """An unset purpose also yields the base threshold."""
+        assert _stuck_active_threshold(InputType.MOTION, None) == timedelta(hours=8)
+
+    @pytest.mark.parametrize(
+        ("purpose", "expected_hours"),
+        [
+            (AreaPurpose.SLEEPING, 48),  # 8h × 6
+            (AreaPurpose.RELAXING, 32),  # 8h × 4
+            (AreaPurpose.WORKING, 24),  # 8h × 3
+        ],
+    )
+    def test_purpose_multipliers_extend_motion_threshold(
+        self, purpose: AreaPurpose, expected_hours: int
+    ) -> None:
+        """Purposes where long active periods are normal get longer thresholds."""
+        assert _stuck_active_threshold(InputType.MOTION, purpose) == timedelta(
+            hours=expected_hours
+        )
+
+
+class TestPurposeAwareStuckActive:
+    """End-to-end check: a sleeping-area monitor doesn't trip on 12h of motion."""
+
+    def test_sleeping_area_skips_stuck_active_at_twelve_hours(
+        self, mock_hass: Mock
+    ) -> None:
+        """12h is past the base 8h threshold but inside the 48h SLEEPING window."""
+        monitor = HealthMonitor(
+            "bedroom", "bedroom_id", mock_hass, purpose=AreaPurpose.SLEEPING
+        )
+        entity = _make_entity(
+            "binary_sensor.bedroom_mmwave",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=12),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"mmwave": entity})
+
+        assert issues == []
+
+    def test_sleeping_area_still_trips_above_multiplied_threshold(
+        self, mock_hass: Mock
+    ) -> None:
+        """49h crosses the 48h SLEEPING threshold and still flags."""
+        monitor = HealthMonitor(
+            "bedroom", "bedroom_id", mock_hass, purpose=AreaPurpose.SLEEPING
+        )
+        entity = _make_entity(
+            "binary_sensor.bedroom_mmwave",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=49),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"mmwave": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
+    def test_social_area_trips_at_nine_hours(self, mock_hass: Mock) -> None:
+        """SOCIAL uses the base 8h threshold so 9h still trips (regression guard)."""
+        monitor = HealthMonitor(
+            "lounge", "lounge_id", mock_hass, purpose=AreaPurpose.SOCIAL
+        )
+        entity = _make_entity(
+            "binary_sensor.lounge_motion",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"lounge_motion": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
+
+class TestMediaPlayerUnavailableExempt:
+    """`media_player.*` unavailable is normal (TV off); skip the repair (#466)."""
+
+    def test_media_player_unavailable_two_hours_is_not_flagged(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A TV unavailable for 2h must not generate an UNAVAILABLE issue."""
+        entity = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=2),
+            evidence=None,
+        )
+        # Even if some prior cycle had marked it unavailable, the exempt
+        # path must clear that tracking and return no issue.
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=2
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"tv": entity})
+
+        assert issues == []
+        assert "media_player.tv" not in monitor._unavailable_since
+
+    def test_non_media_player_unavailable_still_flagged(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A regular binary_sensor unavailable for 2h still flags (regression guard)."""
+        entity = _make_entity(
+            "binary_sensor.contact",
+            InputType.DOOR,
+            state=None,
+            last_updated=dt_util.utcnow() - timedelta(hours=2),
+            evidence=None,
+        )
+        monitor._unavailable_since[entity.entity_id] = dt_util.utcnow() - timedelta(
+            hours=2
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"contact": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.UNAVAILABLE

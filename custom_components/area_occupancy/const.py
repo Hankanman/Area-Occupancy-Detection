@@ -29,7 +29,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.5.2"
+DEVICE_SW_VERSION: Final = "2026.5.17"
 CONF_VERSION: Final = 18
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
@@ -93,6 +93,7 @@ CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
+CONF_HEALTH_ENABLED: Final = "health_enabled"
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"
@@ -137,6 +138,7 @@ DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
 DEFAULT_EXCLUDE_FROM_ALL_AREAS: Final = False
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
+DEFAULT_HEALTH_ENABLED: Final = True
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
 DEFAULT_SLEEP_WEIGHT: Final = 0.9
 SLEEP_PRESENCE_HALF_LIFE: Final = (
@@ -264,6 +266,8 @@ SLEEP_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
+CONF_SENSOR_PRECISION: Final = "sensor_precision"
+DEFAULT_SENSOR_PRECISION: Final = ROUNDING_PRECISION
 
 # Performance optimization constants
 DEFAULT_LOOKBACK_DAYS: Final = 60  # Days of interval data to load for analysis

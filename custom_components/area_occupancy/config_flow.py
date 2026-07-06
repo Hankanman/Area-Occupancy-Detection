@@ -63,6 +63,7 @@ from .const import (
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_EXCLUDE_FROM_ALL_AREAS,
+    CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -85,6 +86,7 @@ from .const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
     CONF_SOUND_PRESSURE_SENSORS,
@@ -113,12 +115,14 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
+    DEFAULT_HEALTH_ENABLED,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
     DEFAULT_MOTION_PROB_GIVEN_TRUE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PURPOSE,
+    DEFAULT_SENSOR_PRECISION,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
@@ -463,8 +467,6 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
 def _create_motion_section_schema(
     defaults: dict[str, Any],
     motion_entities: list[str],
-    *,
-    show_advanced: bool = False,
 ) -> vol.Schema:
     """Create schema for the motion section."""
     fields: dict[vol.Marker, Any] = {
@@ -494,39 +496,33 @@ def _create_motion_section_schema(
                 defaults.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)
             ),
         ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-    }
-
-    if show_advanced:
-        fields[
-            vol.Optional(
-                CONF_MOTION_PROB_GIVEN_TRUE,
-                default=defaults.get(
-                    CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
-                ),
-            )
-        ] = NumberSelector(
+        vol.Optional(
+            CONF_MOTION_PROB_GIVEN_TRUE,
+            default=defaults.get(
+                CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
+            ),
+        ): NumberSelector(
             NumberSelectorConfig(
                 min=MIN_PROBABILITY,
                 max=MAX_PROBABILITY,
                 step=0.01,
                 mode=NumberSelectorMode.BOX,
             )
-        )
-        fields[
-            vol.Optional(
-                CONF_MOTION_PROB_GIVEN_FALSE,
-                default=defaults.get(
-                    CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
-                ),
-            )
-        ] = NumberSelector(
+        ),
+        vol.Optional(
+            CONF_MOTION_PROB_GIVEN_FALSE,
+            default=defaults.get(
+                CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
+            ),
+        ): NumberSelector(
             NumberSelectorConfig(
                 min=0.001,
                 max=MAX_PROBABILITY,
                 step=0.001,
                 mode=NumberSelectorMode.BOX,
             )
-        )
+        ),
+    }
 
     return vol.Schema(fields)
 
@@ -879,8 +875,6 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 def _create_parameters_section_schema(
     defaults: dict[str, Any],
-    *,
-    show_advanced: bool = False,
 ) -> vol.Schema:
     """Create schema for the parameters section."""
     # Default decay half-life to 0 (use purpose value)
@@ -903,23 +897,14 @@ def _create_parameters_section_schema(
             CONF_DECAY_ENABLED,
             default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
         ): BooleanSelector(),
-    }
-
-    if show_advanced:
-        fields[
-            vol.Optional(
-                CONF_DECAY_HALF_LIFE,
-                default=_seconds_to_duration(decay_half_life_default),
-            )
-        ] = DurationSelector(DurationSelectorConfig(enable_day=False))
-        fields[
-            vol.Optional(
-                CONF_MIN_PRIOR_OVERRIDE,
-                default=defaults.get(
-                    CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE
-                ),
-            )
-        ] = NumberSelector(
+        vol.Optional(
+            CONF_DECAY_HALF_LIFE,
+            default=_seconds_to_duration(decay_half_life_default),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+        vol.Optional(
+            CONF_MIN_PRIOR_OVERRIDE,
+            default=defaults.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE),
+        ): NumberSelector(
             NumberSelectorConfig(
                 min=0.0,
                 max=1.0,
@@ -927,7 +912,8 @@ def _create_parameters_section_schema(
                 mode=NumberSelectorMode.SLIDER,
                 unit_of_measurement="probability",
             )
-        )
+        ),
+    }
 
     return vol.Schema(fields)
 
@@ -980,8 +966,6 @@ def create_schema(
     defaults: dict[str, Any] | None = None,
     is_options: bool = False,
     include_entities: dict[str, list[str]] | None = None,
-    *,
-    show_advanced: bool = False,
 ) -> dict:
     """Create a schema with optional default values, using helper functions.
 
@@ -991,7 +975,6 @@ def create_schema(
         is_options: Whether this is for options flow (vs initial config flow)
         include_entities: Optional pre-computed entity lists. If not provided,
             will be computed from hass.
-        show_advanced: Whether to show advanced options (motion probs, decay half-life, min prior)
 
     Returns:
         Schema dictionary for form
@@ -1030,9 +1013,7 @@ def create_schema(
 
     # Add sections by assigning keys directly to the dictionary
     schema_dict[vol.Required("motion")] = section(
-        _create_motion_section_schema(
-            defaults, include_entities["motion"], show_advanced=show_advanced
-        ),
+        _create_motion_section_schema(defaults, include_entities["motion"]),
         {"collapsed": True},
     )
     schema_dict[vol.Required("windows_and_doors")] = section(
@@ -1080,7 +1061,7 @@ def create_schema(
         _create_wasp_in_box_section_schema(defaults), {"collapsed": True}
     )
     schema_dict[vol.Required("parameters")] = section(
-        _create_parameters_section_schema(defaults, show_advanced=show_advanced),
+        _create_parameters_section_schema(defaults),
         {"collapsed": True},
     )
 
@@ -1128,8 +1109,6 @@ def _create_basics_step_schema(
 def _create_motion_step_schema(
     hass: HomeAssistant,
     include_entities: dict[str, list[str]] | None = None,
-    *,
-    show_advanced: bool = False,
 ) -> dict[vol.Marker, Any]:
     """Create schema for wizard step 2: motion sensor configuration."""
     if include_entities is None:
@@ -1155,35 +1134,29 @@ def _create_motion_step_schema(
             CONF_MOTION_TIMEOUT,
             default=_seconds_to_duration(DEFAULT_MOTION_TIMEOUT),
         ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-    }
-
-    if show_advanced:
-        fields[
-            vol.Optional(
-                CONF_MOTION_PROB_GIVEN_TRUE,
-                default=DEFAULT_MOTION_PROB_GIVEN_TRUE,
-            )
-        ] = NumberSelector(
+        vol.Optional(
+            CONF_MOTION_PROB_GIVEN_TRUE,
+            default=DEFAULT_MOTION_PROB_GIVEN_TRUE,
+        ): NumberSelector(
             NumberSelectorConfig(
                 min=MIN_PROBABILITY,
                 max=MAX_PROBABILITY,
                 step=0.01,
                 mode=NumberSelectorMode.BOX,
             )
-        )
-        fields[
-            vol.Optional(
-                CONF_MOTION_PROB_GIVEN_FALSE,
-                default=DEFAULT_MOTION_PROB_GIVEN_FALSE,
-            )
-        ] = NumberSelector(
+        ),
+        vol.Optional(
+            CONF_MOTION_PROB_GIVEN_FALSE,
+            default=DEFAULT_MOTION_PROB_GIVEN_FALSE,
+        ): NumberSelector(
             NumberSelectorConfig(
                 min=0.001,
                 max=MAX_PROBABILITY,
                 step=0.001,
                 mode=NumberSelectorMode.BOX,
             )
-        )
+        ),
+    }
 
     return fields
 
@@ -1250,8 +1223,6 @@ def _create_sensors_step_schema(
 
 def _create_behavior_step_schema(
     defaults: dict[str, Any] | None = None,
-    *,
-    show_advanced: bool = False,
 ) -> dict[vol.Marker, Any]:
     """Create schema for wizard step 4: thresholds, decay, and wasp-in-box."""
     defaults = defaults or {}
@@ -1271,21 +1242,14 @@ def _create_behavior_step_schema(
         vol.Optional(
             CONF_EXCLUDE_FROM_ALL_AREAS, default=DEFAULT_EXCLUDE_FROM_ALL_AREAS
         ): BooleanSelector(),
-    }
-
-    if show_advanced:
-        fields[
-            vol.Optional(
-                CONF_DECAY_HALF_LIFE,
-                default=_seconds_to_duration(DEFAULT_DECAY_HALF_LIFE),
-            )
-        ] = DurationSelector(DurationSelectorConfig(enable_day=False))
-        fields[
-            vol.Optional(
-                CONF_MIN_PRIOR_OVERRIDE,
-                default=DEFAULT_MIN_PRIOR_OVERRIDE,
-            )
-        ] = NumberSelector(
+        vol.Optional(
+            CONF_DECAY_HALF_LIFE,
+            default=_seconds_to_duration(DEFAULT_DECAY_HALF_LIFE),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+        vol.Optional(
+            CONF_MIN_PRIOR_OVERRIDE,
+            default=DEFAULT_MIN_PRIOR_OVERRIDE,
+        ): NumberSelector(
             NumberSelectorConfig(
                 min=0.0,
                 max=1.0,
@@ -1293,13 +1257,12 @@ def _create_behavior_step_schema(
                 mode=NumberSelectorMode.SLIDER,
                 unit_of_measurement="probability",
             )
-        )
-
-    # Wasp-in-box fields in collapsible section
-    fields[vol.Required("wasp_in_box")] = section(
-        _create_wasp_in_box_section_schema(defaults),
-        {"collapsed": True},
-    )
+        ),
+        vol.Required("wasp_in_box"): section(
+            _create_wasp_in_box_section_schema(defaults),
+            {"collapsed": True},
+        ),
+    }
 
     return fields
 
@@ -1965,6 +1928,24 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_SLEEP_END,
                 default=defaults.get(CONF_SLEEP_END, DEFAULT_SLEEP_END),
             ): TimeSelector(),
+            vol.Required(
+                CONF_HEALTH_ENABLED,
+                default=defaults.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED),
+            ): BooleanSelector(),
+            vol.Required(
+                CONF_SENSOR_PRECISION,
+                default=defaults.get(CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION),
+            ): vol.All(
+                NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=2,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Coerce(int),
+            ),
         }
     )
 
@@ -2307,9 +2288,7 @@ class BaseOccupancyFlow:
                 self._area_config_draft.update(flattened)
                 return await self.async_step_area_sensors()
 
-        schema_dict = _create_motion_step_schema(
-            self.hass, show_advanced=self.show_advanced_options
-        )
+        schema_dict = _create_motion_step_schema(self.hass)
         base_schema = vol.Schema(schema_dict)
 
         # Suggested values
@@ -2432,10 +2411,7 @@ class BaseOccupancyFlow:
 
             errors.update(validation_errors)
 
-        schema_dict = _create_behavior_step_schema(
-            self._area_config_draft,
-            show_advanced=self.show_advanced_options,
-        )
+        schema_dict = _create_behavior_step_schema(self._area_config_draft)
         base_schema = vol.Schema(schema_dict)
 
         # Suggested values - top-level behavior + nested wasp section
@@ -3019,6 +2995,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     ) -> ConfigFlowResult:
         """Manage global settings."""
         if user_input is not None:
+            # Validate and coerce using the schema
+            schema = _create_global_settings_schema(self.config_entry.options)
+            user_input = schema(user_input)
+
             # Update the config entry options directly
             new_options = dict(self.config_entry.options)
             new_options.update(user_input)
@@ -3032,6 +3012,12 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             ),
             CONF_SLEEP_END: self.config_entry.options.get(
                 CONF_SLEEP_END, DEFAULT_SLEEP_END
+            ),
+            CONF_HEALTH_ENABLED: self.config_entry.options.get(
+                CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED
+            ),
+            CONF_SENSOR_PRECISION: self.config_entry.options.get(
+                CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
             ),
         }
 
