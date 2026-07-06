@@ -232,12 +232,43 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
 
         # Period calculation:
         # - first_interval_start = occupied_start (now - 8h)
-        # - last_interval_end = occupied_end (now - 6h)
-        # - Since (now - last_interval_end) = 6h > 1h, actual_period_end = last_interval_end
-        # - actual_period_duration = (now - 6h) - (now - 8h) = 2 hours
+        # - actual_period_end = now (quiet tail stays in the denominator, #483)
+        # - actual_period_duration = 8 hours
         # - occupied_duration = 2 hours
-        # - prior = 2h / 2h = 1.0, clamped to 0.99 max
-        assert area.prior.global_prior == 0.99
+        # - prior = 2h / 8h = 0.25
+        assert area.prior.global_prior == 0.25
+
+    def test_quiet_tail_included_in_denominator(
+        self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
+    ) -> None:
+        """Test that a long quiet tail does not inflate the prior (#483).
+
+        Regression test: the period previously ended at last_interval_end
+        whenever the area had been quiet for >1h, which dropped the
+        known-unoccupied tail from the denominator and inflated the prior
+        on every overnight recalculation.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        analyzer = PriorAnalyzer(coordinator, area_name)
+
+        # 6 hours occupied, ending 18 hours ago (e.g. overnight quiet period)
+        now = freeze_time
+        occupied_start = now - timedelta(hours=24)
+        occupied_end = now - timedelta(hours=18)
+        intervals = [(occupied_start, occupied_end)]
+
+        with (
+            patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch(
+                "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
+                return_value=now,
+            ),
+        ):
+            analyzer.calculate_and_update_prior()
+
+        # prior = 6h occupied / 24h period = 0.25, NOT 6h / 6h = 0.99
+        assert area.prior.global_prior == 0.25
 
     def test_prior_bounds_clamping_min(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
