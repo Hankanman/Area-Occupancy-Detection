@@ -125,6 +125,7 @@ class TestAreaOccupancyDBInitialization:
             "Correlations",
             "EntityStatistics",
             "AreaRelationships",
+            "AreaTransitions",
             "CrossAreaStats",
         ]
 

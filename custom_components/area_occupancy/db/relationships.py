@@ -3,6 +3,14 @@
 This module handles storage and retrieval of area relationships (adjacent areas,
 shared walls, etc.) and calculates influence weights for cross-area probability
 adjustments.
+
+Status (feat/adjacent-areas, discussion #431): the config flow writes
+adjacent area_ids into ``Areas.adjacent_areas`` and the area-save path now
+calls ``sync_adjacent_areas_from_config`` to reconcile the
+``AreaRelationships`` table. The Bayesian / decay consumers
+(``calculate_adjacent_influence`` and friends) are still uncalled — they're
+the Phase 4 work, gated on transition learning landing in
+``db.transitions`` (Phase 3 in progress).
 """
 
 from __future__ import annotations
@@ -233,6 +241,14 @@ def calculate_adjacent_influence(
 def sync_adjacent_areas_from_config(db: AreaOccupancyDB, area_name: str) -> bool:
     """Sync adjacent areas from area configuration to AreaRelationships table.
 
+    Reads the canonical ``Areas.adjacent_areas`` JSON column for the given
+    area and reconciles the ``AreaRelationships`` rows of type ``adjacent``
+    so they exactly match: rows for neighbours that have been removed are
+    deleted, missing rows are inserted, weights/types are preserved on
+    existing rows. Performs the read, delete, and merge in a single
+    session so partial failures don't leave the table in an inconsistent
+    state.
+
     Args:
         db: Database instance
         area_name: Area name
@@ -243,31 +259,63 @@ def sync_adjacent_areas_from_config(db: AreaOccupancyDB, area_name: str) -> bool
     _LOGGER.debug("Syncing adjacent areas from config for area: %s", area_name)
 
     try:
-        # Get adjacent areas from area configuration (stored in Areas table)
         with db.get_session() as session:
             area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
-
             if not area_record:
                 _LOGGER.warning("Area record not found in database: %s", area_name)
                 return False
 
-            adjacent_areas_list = area_record.adjacent_areas or []
+            target_neighbours: set[str] = {
+                str(a) for a in (area_record.adjacent_areas or []) if a
+            }
 
-            # Create relationships for each adjacent area
-            success_count = 0
-            for adj_area_name in adjacent_areas_list:
-                if save_area_relationship(
-                    db, area_name, adj_area_name, relationship_type="adjacent"
-                ):
-                    success_count += 1
-
-            _LOGGER.info(
-                "Synced %d adjacent areas for area %s",
-                success_count,
-                area_name,
+            existing_rows = (
+                session.query(db.AreaRelationships)
+                .filter(
+                    db.AreaRelationships.area_name == area_name,
+                    db.AreaRelationships.relationship_type == "adjacent",
+                )
+                .all()
             )
+            existing_by_neighbour = {
+                row.related_area_name: row for row in existing_rows
+            }
 
-            return success_count == len(adjacent_areas_list)
+            # Delete rows for neighbours no longer in the config.
+            removed = 0
+            for neighbour, row in existing_by_neighbour.items():
+                if neighbour not in target_neighbours:
+                    session.delete(row)
+                    removed += 1
+
+            # Add rows for new neighbours.
+            default_weight = DEFAULT_INFLUENCE_WEIGHTS["adjacent"]
+            added = 0
+            for neighbour in target_neighbours:
+                if neighbour in existing_by_neighbour:
+                    continue
+                session.add(
+                    db.AreaRelationships(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        related_area_name=neighbour,
+                        relationship_type="adjacent",
+                        influence_weight=default_weight,
+                    )
+                )
+                added += 1
+
+            session.commit()
+
+            if added or removed:
+                _LOGGER.info(
+                    "Synced adjacency for %s: %d added, %d removed (%d total now)",
+                    area_name,
+                    added,
+                    removed,
+                    len(target_neighbours),
+                )
+            return True
 
     except (ValueError, TypeError, RuntimeError, AttributeError, SQLAlchemyError) as e:
         _LOGGER.error("Error syncing adjacent areas: %s", e)

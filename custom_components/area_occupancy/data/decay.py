@@ -46,15 +46,40 @@ class Decay:
         self._purpose = Purpose(purpose) if purpose is not None else None
         self.sleep_start = sleep_start
         self.sleep_end = sleep_end
+        # Adjacent-areas Phase 4 multiplier — coordinator sets it per
+        # tick to stretch the effective half-life when this entity's
+        # area has silent adjacent neighbours. Defaults to 1.0 (no
+        # change). Multiplies the purpose/sleep-resolved half-life.
+        self._modifier_factor: float = 1.0
 
     @property
     def purpose(self) -> Purpose | None:
         """Return the resolved Purpose instance, or None."""
         return self._purpose
 
+    def set_modifier_factor(self, factor: float) -> None:
+        """Set the adjacent-areas decay-stretch factor.
+
+        Coordinator calls this each tick with the value computed from
+        ``compute_decay_modifier``. Clamped to ``[1.0, +inf)`` since the
+        modifier is only ever a slowdown — a factor < 1 would speed
+        decay and is never the desired behaviour.
+        """
+        self._modifier_factor = max(1.0, float(factor))
+
+    @property
+    def modifier_factor(self) -> float:
+        """Current decay-modifier multiplier (1.0 = no change)."""
+        return self._modifier_factor
+
     @property
     def half_life(self) -> float:
-        """Return the effective half-life based on purpose and time of day."""
+        """Return the effective half-life based on purpose, sleep window, and modifier."""
+        base = self._resolve_purpose_half_life()
+        return base * self._modifier_factor
+
+    def _resolve_purpose_half_life(self) -> float:
+        """Return the half-life before the adjacency modifier is applied."""
         # If no purpose or purpose has no awake_half_life, use base half-life
         if self._purpose is None or self._purpose.awake_half_life is None:
             return self._base_half_life

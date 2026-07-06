@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from custom_components.area_occupancy.db.schema import (
     AreaRelationships,
     Areas,
+    AreaTransitions,
     Correlations,
     CrossAreaStats,
     Entities,
@@ -699,6 +700,59 @@ class TestOtherModels:
 
         assert relationship.relationship_type == "adjacent"
         assert relationship.influence_weight == 0.5
+
+    def test_area_transitions_creation(self, db_session: Session):
+        """AreaTransitions row insertion + uniqueness contract.
+
+        Single 1-hop chain (mid_area=""), single 2-hop chain
+        (mid_area set), and the unique constraint preventing a duplicate
+        (entry_id, from, mid, to, hour) row.
+        """
+        # 1-hop chain
+        row_1hop = AreaTransitions(
+            entry_id="test",
+            from_area="hall",
+            mid_area="",
+            to_area="bedroom",
+            hour_of_week=42,
+            count=3.0,
+            smoothed_prob=0.5,
+        )
+        db_session.add(row_1hop)
+        db_session.commit()
+
+        assert row_1hop.id is not None
+        assert row_1hop.mid_area == ""
+        assert row_1hop.count == 3.0
+
+        # 2-hop chain — different mid_area so uniqueness is satisfied
+        row_2hop = AreaTransitions(
+            entry_id="test",
+            from_area="hall",
+            mid_area="study",
+            to_area="bedroom",
+            hour_of_week=42,
+            count=1.0,
+        )
+        db_session.add(row_2hop)
+        db_session.commit()
+        assert row_2hop.id != row_1hop.id
+
+        # Duplicate of the 1-hop row must violate the unique constraint.
+        # This proves the empty-string sentinel for mid_area produces real
+        # uniqueness (NULLs would not, since SQL treats NULL ≠ NULL).
+        duplicate = AreaTransitions(
+            entry_id="test",
+            from_area="hall",
+            mid_area="",
+            to_area="bedroom",
+            hour_of_week=42,
+            count=99.0,
+        )
+        db_session.add(duplicate)
+        with pytest.raises(IntegrityError):
+            db_session.commit()
+        db_session.rollback()
 
     def test_cross_area_stats_creation(self, db_session: Session):
         """Test creating CrossAreaStats instance."""

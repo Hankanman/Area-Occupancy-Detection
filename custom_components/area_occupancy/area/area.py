@@ -20,6 +20,7 @@ from ..const import (
     MIN_PROBABILITY,
 )
 from ..data.activity import ActivityId, DetectedActivity, detect_activity
+from ..data.adjacency import apply_logit_boost
 from ..data.analysis import start_prior_analysis
 from ..data.health import HealthMonitor
 from ..utils import (
@@ -242,12 +243,15 @@ class Area:
         return calc_combined(presence, env)
 
     def probability(self) -> float:
-        """Calculate occupancy probability with activity-based boost.
+        """Calculate occupancy probability with activity- and adjacency-based boosts.
 
-        Two-phase calculation:
-        1. _base_probability() computes sensor-only probability.
-        2. Activity detection runs against the base probability.
-        3. If a strong activity is detected, boost probability in logit space.
+        Three-phase calculation:
+        1. ``_base_probability()`` computes sensor-only probability.
+        2. Activity detection runs against the base probability;
+           a strong activity boosts in logit space.
+        3. The adjacency boost (Phase 4) bends the result toward what
+           the household's learned transitions suggest comes next given
+           the recent trajectory.
 
         Returns:
             Probability value (0.0-1.0)
@@ -258,9 +262,16 @@ class Area:
         activity = detect_activity(self, base_probability=base, is_occupied=is_occupied)
 
         if activity.activity_id in (ActivityId.UNOCCUPIED, ActivityId.IDLE):
-            return base
+            result = base
+        else:
+            result = apply_activity_boost(
+                base, activity.occupancy_boost, activity.confidence
+            )
 
-        return apply_activity_boost(base, activity.occupancy_boost, activity.confidence)
+        boost = self.coordinator.adjacency_boost_for(self.area_name)
+        if boost is not None:
+            result = apply_logit_boost(result, boost)
+        return result
 
     def presence_probability(self) -> float:
         """Calculate presence probability from strong binary indicators.

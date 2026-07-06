@@ -123,6 +123,7 @@ def _get_required_tables() -> set[str]:
         "correlations",
         "entity_statistics",
         "area_relationships",
+        "area_transitions",
         "cross_area_stats",
     }
 

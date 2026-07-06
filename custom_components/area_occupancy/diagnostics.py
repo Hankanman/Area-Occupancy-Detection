@@ -167,6 +167,51 @@ def _health_snapshot(area: Area) -> dict[str, Any]:
     }
 
 
+def _adjacency_snapshot(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> dict[str, Any]:
+    """Capture this tick's adjacency boost + decay modifier for the area.
+
+    Returns an empty dict (omitted from the diagnostic) when neither has
+    fired yet — for example before the first ``update`` tick or when
+    the area has no configured neighbours.
+    """
+    out: dict[str, Any] = {}
+
+    boost = coordinator.adjacency_boost_for(area_name)
+    if boost is not None:
+        out["boost"] = {
+            "fired": boost.fired,
+            "trajectory_prev": boost.trajectory_prev,
+            "trajectory_prev_prev": boost.trajectory_prev_prev,
+            "hour_of_week": boost.hour_of_week,
+            "raw_probability": boost.raw_probability,
+            "fallback_level": boost.fallback_level,
+            "observed_count": boost.observed_count,
+            "total_count": boost.total_count,
+            "logit_contribution": boost.logit_contribution,
+        }
+
+    modifier = coordinator.adjacency_decay_modifier_for(area_name)
+    if modifier is not None:
+        out["decay_modifier"] = {
+            "fired": modifier.fired,
+            "silence_score": modifier.silence_score,
+            "decay_modifier": modifier.decay_modifier,
+            # Per-neighbour breakdown: each entry is
+            # ``(neighbour, P_neighbour_lagged, P(target → neighbour | trajectory))``.
+            "silent_neighbours": [
+                {
+                    "neighbour": neighbour,
+                    "lagged_probability": lagged_p,
+                    "transition_probability": transition_p,
+                }
+                for neighbour, lagged_p, transition_p in modifier.silent_neighbours
+            ],
+        }
+    return out
+
+
 def _area_snapshot(
     coordinator: AreaOccupancyCoordinator, area_name: str, area: Area
 ) -> dict[str, Any]:
@@ -196,7 +241,7 @@ def _area_snapshot(
         snapshot["config_error"] = repr(err)
 
     try:
-        snapshot["current"] = {
+        current: dict[str, Any] = {
             "probability": area.probability(),
             "occupied": area.occupied(),
             "decay_factor": area.decay(),
@@ -204,6 +249,10 @@ def _area_snapshot(
             "decaying_entity_count": len(area.entities.decaying_entities),
             "entity_count": len(area.entities.entities),
         }
+        adjacency = _adjacency_snapshot(coordinator, area_name)
+        if adjacency:
+            current["adjacency"] = adjacency
+        snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
         _LOGGER.warning(
             "Diagnostics: failed to compute current state for '%s': %s",

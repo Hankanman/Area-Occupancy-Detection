@@ -472,10 +472,17 @@ class TestSyncAdjacentAreasFromConfig:
         assert len(adjacent) == 1
         assert adjacent[0]["related_area_name"] == "Kitchen"
 
-    def test_sync_adjacent_areas_from_config_does_not_remove_old(
+    def test_sync_adjacent_areas_from_config_reconciles_stale_rows(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test that syncing does NOT remove old relationships not in config."""
+        """sync_adjacent_areas_from_config now reconciles to match config.
+
+        Previously the function only inserted; stale rows leaked when an
+        adjacent was removed in config. The reconciliation contract:
+        existing rows whose ``related_area_name`` is not in the canonical
+        ``Areas.adjacent_areas`` JSON are deleted, missing rows are added,
+        rows that match are kept untouched (preserving custom weights).
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
@@ -486,12 +493,12 @@ class TestSyncAdjacentAreasFromConfig:
         create_test_area(coordinator, area_name="Old Area")
         db.save_area_data("Old Area")
 
-        # Create relationship manually (not from config)
+        # Create relationship manually (not yet present in config)
         save_area_relationship(
             db, area_name, "Old Area", "adjacent", influence_weight=0.8
         )
 
-        # Verify old relationship exists
+        # Verify old relationship exists and has its custom weight
         adjacent_before = get_adjacent_areas(db, area_name)
         assert len(adjacent_before) == 1
         assert adjacent_before[0]["related_area_name"] == "Old Area"
@@ -506,19 +513,45 @@ class TestSyncAdjacentAreasFromConfig:
                 area_record.adjacent_areas = ["New Area"]  # Only new area in config
             session.commit()
 
-        # Sync with new config (should add New Area but NOT remove Old Area)
+        # Sync should remove "Old Area" (no longer in config) and add "New Area".
         result = sync_adjacent_areas_from_config(db, area_name)
         assert result is True
 
-        # Verify both relationships exist (old one remains, new one added)
         adjacent = get_adjacent_areas(db, area_name)
-        assert len(adjacent) == 2
         adjacent_names = {a["related_area_name"] for a in adjacent}
-        assert adjacent_names == {"Old Area", "New Area"}
+        assert adjacent_names == {"New Area"}
 
-        # Verify old relationship's custom weight is preserved
-        old_rel = next(r for r in adjacent if r["related_area_name"] == "Old Area")
-        assert old_rel["influence_weight"] == 0.8
+    def test_sync_adjacent_areas_from_config_preserves_unchanged_rows(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Sync must not touch rows whose neighbour is still in config.
+
+        A custom influence_weight set out-of-band on an existing
+        relationship is preserved across a sync that doesn't change the
+        membership for that neighbour.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        create_test_area(coordinator, area_name="Hall")
+        db.save_area_data("Hall")
+
+        # Out-of-band write of a custom weight, then put Hall in config.
+        save_area_relationship(db, area_name, "Hall", "adjacent", influence_weight=0.42)
+        with db.get_session() as session:
+            area_record = session.query(db.Areas).filter_by(area_name=area_name).first()
+            if area_record:
+                area_record.adjacent_areas = ["Hall"]
+            session.commit()
+
+        result = sync_adjacent_areas_from_config(db, area_name)
+        assert result is True
+
+        adjacent = get_adjacent_areas(db, area_name)
+        assert len(adjacent) == 1
+        assert adjacent[0]["related_area_name"] == "Hall"
+        assert adjacent[0]["influence_weight"] == 0.42
 
     @pytest.mark.parametrize(
         ("adjacent_areas_value", "expected_count"),

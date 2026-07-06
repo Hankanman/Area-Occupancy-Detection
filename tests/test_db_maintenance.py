@@ -120,6 +120,50 @@ class TestEnsureDbExists:
             result = session.query(db.Metadata).filter_by(key="test_key").first()
             assert result is None
 
+    def test_ensure_db_exists_adds_missing_table_without_wiping_data(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        """Adding a new required table on upgrade must preserve existing data.
+
+        Regression for the adjacent-areas upgrade path (Phase 3): adding
+        a new table to ``_get_required_tables()`` must trigger only the
+        additive ``init_db`` (which is ``Base.metadata.create_all`` with
+        ``checkfirst=True``), not the destructive
+        ``_ensure_schema_up_to_date`` delete-and-recreate. Bumping
+        ``CONF_VERSION`` would trigger the destructive path; we
+        deliberately don't bump it for additive-only schema changes.
+        """
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "test_additive_upgrade.db")
+
+        # Establish a "previous version" install: create every required
+        # table EXCEPT area_transitions, then write the current version
+        # marker so the up-to-date check passes.
+        init_db(db)
+        with db.engine.connect() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS area_transitions"))
+            conn.commit()
+        _set_db_version(db)
+
+        # Seed historical data — this must survive the upgrade.
+        with db.get_session() as session:
+            session.add(db.Metadata(key="seeded_marker", value="precious"))
+            session.commit()
+
+        # Sanity: area_transitions is currently missing.
+        inspector = sa.inspect(db.engine)
+        assert "area_transitions" not in inspector.get_table_names()
+
+        # Run the upgrade path.
+        ensure_db_exists(db)
+
+        # area_transitions now present, AND the seeded data survived.
+        inspector = sa.inspect(db.engine)
+        assert "area_transitions" in inspector.get_table_names()
+        with db.get_session() as session:
+            row = session.query(db.Metadata).filter_by(key="seeded_marker").first()
+            assert row is not None and row.value == "precious"
+
 
 class TestCheckDatabaseIntegrity:
     """Test _check_database_integrity function."""

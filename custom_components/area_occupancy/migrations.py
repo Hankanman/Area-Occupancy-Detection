@@ -580,6 +580,15 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 config_entry.entry_id,
             )
 
+        # Note: adjacent_areas (introduced by feat/adjacent-areas) does NOT
+        # bump CONF_VERSION. Bumping the version triggers the destructive
+        # _ensure_schema_up_to_date path (delete + recreate the DB), wiping
+        # all learned priors and history. Since the change is purely
+        # additive (new Areas.adjacent_areas JSON column with default-on-
+        # missing in the loader, plus a new AreaTransitions table created
+        # by Base.metadata.create_all(checkfirst=True) once the table is
+        # listed as required), users upgrade without losing data.
+
         # If entry is already at current version or higher, no migration needed
         if config_entry.version >= CONF_VERSION:
             # Check if we were deleted while waiting for lock

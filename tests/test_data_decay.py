@@ -612,3 +612,34 @@ class TestDecayHalfLife:
         # Social purpose has no awake_half_life, so should always use base
         assert decay.purpose.awake_half_life is None
         assert decay.half_life == 520.0
+
+
+class TestDecayModifierFactor:
+    """Tests for the adjacent-areas Phase 4 decay-modifier hook."""
+
+    def test_default_factor_is_unity(self) -> None:
+        """A fresh Decay applies no modifier (factor = 1.0)."""
+        decay = Decay(half_life=100.0)
+        assert decay.modifier_factor == 1.0
+        assert decay.half_life == 100.0
+
+    def test_setting_factor_stretches_half_life(self) -> None:
+        """Setting modifier=1.75 yields half_life = base × 1.75."""
+        decay = Decay(half_life=200.0)
+        decay.set_modifier_factor(1.75)
+        assert decay.modifier_factor == 1.75
+        assert decay.half_life == 350.0
+
+    def test_factor_below_one_is_clamped(self) -> None:
+        """Modifier < 1.0 clamps to 1.0 — modifier is only ever a slowdown."""
+        decay = Decay(half_life=100.0)
+        decay.set_modifier_factor(0.5)
+        assert decay.modifier_factor == 1.0
+        assert decay.half_life == 100.0
+
+    def test_factor_compounds_with_purpose_half_life(self) -> None:
+        """Modifier multiplies the purpose-resolved half-life, not the raw base."""
+        # With no purpose, half_life resolves to base 100, then × modifier.
+        decay = Decay(half_life=100.0)
+        decay.set_modifier_factor(1.5)
+        assert decay.half_life == 150.0
