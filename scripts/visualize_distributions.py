@@ -158,7 +158,7 @@ def visualize_sensor_distribution(
         for sample in samples:
             try:
                 value = float(sample.value)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 continue
 
             sample_ts = ensure_timezone_aware(sample.timestamp)

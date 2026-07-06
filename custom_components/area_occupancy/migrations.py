@@ -756,7 +756,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 )
                 return False  # noqa: TRY300
 
-            except (KeyError, ValueError, TypeError, OSError, RuntimeError):
+            except KeyError, ValueError, TypeError, OSError, RuntimeError:
                 _LOGGER.exception("Unexpected error during migration")
                 return False
 

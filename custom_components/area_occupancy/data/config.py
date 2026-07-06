@@ -142,7 +142,7 @@ class IntegrationConfig:
 
     def __init__(
         self,
-        coordinator: "AreaOccupancyCoordinator",
+        coordinator: AreaOccupancyCoordinator,
         config_entry: ConfigEntry,
     ) -> None:
         """Initialize the integration configuration.
@@ -206,7 +206,7 @@ class IntegrationConfig:
                     CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
                 )
             )
-        except (ValueError, TypeError, OverflowError):
+        except ValueError, TypeError, OverflowError:
             return DEFAULT_SENSOR_PRECISION
         return max(0, min(2, precision))
 
@@ -246,7 +246,7 @@ class IntegrationConfig:
                         DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
                     )
                 )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 _LOGGER.warning(
                     "Invalid confidence threshold for %s, using default",
                     person_entity,
@@ -298,9 +298,9 @@ class Sensors:
     door: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
     cover: list[str] = field(default_factory=list)
-    _parent_config: "AreaConfig | None" = field(default=None, repr=False, compare=False)
+    _parent_config: AreaConfig | None = field(default=None, repr=False, compare=False)
 
-    def get_motion_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
+    def get_motion_sensors(self, coordinator: AreaOccupancyCoordinator) -> list[str]:
         """Get motion sensors including wasp sensor if enabled and available.
 
         Args:
@@ -343,7 +343,7 @@ class Sensors:
 
         return motion_sensors
 
-    def get_sleep_sensors(self, coordinator: "AreaOccupancyCoordinator") -> list[str]:
+    def get_sleep_sensors(self, coordinator: AreaOccupancyCoordinator) -> list[str]:
         """Get sleep presence sensors assigned to this area.
 
         Args:
@@ -423,7 +423,7 @@ class AreaConfig:
 
     def __init__(
         self,
-        coordinator: "AreaOccupancyCoordinator",
+        coordinator: AreaOccupancyCoordinator,
         area_name: str | None = None,
         area_data: dict[str, Any] | None = None,
     ):
