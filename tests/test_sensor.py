@@ -1325,73 +1325,38 @@ class TestSensorErrorHandling:
 class TestDiagnosticSensorsDisabledByDefault:
     """Test that diagnostic sensors are disabled by default for new areas."""
 
-    @pytest.mark.parametrize(
-        ("sensor_class", "expected_disabled"),
-        [
-            (PriorsSensor, True),
-            (EvidenceSensor, True),
-            (DecaySensor, True),
-            (ProbabilitySensor, False),
-        ],
-    )
-    def test_sensor_default_disabled_attribute(
-        self, coordinator: AreaOccupancyCoordinator, sensor_class, expected_disabled
+    def test_enabled_default_matches_entity_category(
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test that the entity_registry_enabled_default attribute is correctly set."""
-        area_name = coordinator.get_area_names()[0]
-        handle = coordinator.get_area_handle(area_name)
+        """Test that every diagnostic sensor is disabled by default and every primary sensor is enabled.
 
-        # Instantiate the sensor
-        sensor = sensor_class(area_handle=handle)
-
-        if expected_disabled:
-            assert not sensor.entity_registry_enabled_default
-        else:
-            assert sensor.entity_registry_enabled_default
-
-    @pytest.mark.parametrize(
-        ("sensor_class", "expected_disabled"),
-        [
-            ("PresenceProbabilitySensor", True),
-            ("EnvironmentalConfidenceSensor", True),
-            ("ActivityConfidenceSensor", True),
-            ("SensorHealthSensor", True),
-            ("ProbabilitySensor", False),
-        ],
-    )
-    def test_other_sensor_default_disabled_attribute(
-        self,
-        coordinator: AreaOccupancyCoordinator,
-        sensor_class: str,
-        expected_disabled: bool,
-    ) -> None:
-        """Test other diagnostic sensors that require importing."""
-        from custom_components.area_occupancy.sensor import (
-            ActivityConfidenceSensor,
-            EnvironmentalConfidenceSensor,
-            PresenceProbabilitySensor,
-            ProbabilitySensor,
-            SensorHealthSensor,
-        )
-
-        sensor_classes = {
-            "PresenceProbabilitySensor": PresenceProbabilitySensor,
-            "EnvironmentalConfidenceSensor": EnvironmentalConfidenceSensor,
-            "ActivityConfidenceSensor": ActivityConfidenceSensor,
-            "SensorHealthSensor": SensorHealthSensor,
-            "ProbabilitySensor": ProbabilitySensor,
-        }
+        Derived from the class hierarchy rather than a hardcoded list so that new
+        sensor classes are covered automatically.
+        """
+        from custom_components.area_occupancy import sensor as sensor_module
 
         area_name = coordinator.get_area_names()[0]
         handle = coordinator.get_area_handle(area_name)
 
-        klass = sensor_classes[sensor_class]
-        sensor = klass(area_handle=handle)
+        sensor_classes = [
+            cls
+            for cls in vars(sensor_module).values()
+            if isinstance(cls, type)
+            and issubclass(cls, sensor_module.AreaOccupancySensorBase)
+            and cls is not sensor_module.AreaOccupancySensorBase
+        ]
+        # PriorsSensor, ProbabilitySensor, EvidenceSensor, DecaySensor,
+        # PresenceProbabilitySensor, EnvironmentalConfidenceSensor,
+        # DetectedActivitySensor, ActivityConfidenceSensor, SensorHealthSensor
+        assert len(sensor_classes) >= 9
 
-        if expected_disabled:
-            assert not sensor.entity_registry_enabled_default
-        else:
-            assert sensor.entity_registry_enabled_default
+        for sensor_class in sensor_classes:
+            sensor = sensor_class(area_handle=handle)
+            is_diagnostic = sensor.entity_category == EntityCategory.DIAGNOSTIC
+            assert sensor.entity_registry_enabled_default == (not is_diagnostic), (
+                f"{sensor_class.__name__}: expected enabled_default="
+                f"{not is_diagnostic} for entity_category={sensor.entity_category}"
+            )
 
     async def test_fresh_setup_disabled_by_integration(
         self,
@@ -1495,13 +1460,19 @@ class TestDiagnosticSensorsDisabledByDefault:
         entry = registry.async_get(existing_entry.entity_id)
         assert entry.disabled_by is None
 
-    async def test_re_add_area_disabled_by_default(
+    async def test_re_add_area_restores_previous_enabled_state(
         self,
         hass: HomeAssistant,
         mock_config_entry: Mock,
         coordinator: AreaOccupancyCoordinator,
     ) -> None:
-        """Test that deleting and re-adding an area counts as a new registration (disabled by default)."""
+        """Test that deleting and re-adding an area restores the previous enabled state.
+
+        Home Assistant keeps removed entities in the registry's deleted_entities
+        store and restores their disabled_by when the same unique_id is
+        re-created. So enabled_default does NOT apply on re-add: a diagnostic
+        sensor the user had enabled comes back enabled.
+        """
         from custom_components.area_occupancy.const import DOMAIN
         from homeassistant.helpers import entity_registry as er
 
@@ -1511,12 +1482,11 @@ class TestDiagnosticSensorsDisabledByDefault:
 
         registry = er.async_get(hass)
 
-        # Simulate initial setup and registry entry creation
+        # Simulate initial setup where the user has the diagnostic sensor enabled
         area_name = coordinator.get_area_names()[0]
         handle = coordinator.get_area_handle(area_name)
         sensor = PriorsSensor(area_handle=handle)
 
-        # User has it enabled
         existing_entry = registry.async_get_or_create(
             domain="sensor",
             platform=DOMAIN,
@@ -1525,34 +1495,30 @@ class TestDiagnosticSensorsDisabledByDefault:
             disabled_by=None,
         )
 
-        # Simulate deleting the area/device/config entry
-        # In Home Assistant, deleting a config entry deletes the associated registry entries.
-        # We can simulate this by removing the entity from the registry:
+        # Simulate deleting the area: HA moves the entity into deleted_entities,
+        # preserving its disabled_by state.
         registry.async_remove(existing_entry.entity_id)
         assert registry.async_get_entity_id("sensor", DOMAIN, sensor.unique_id) is None
-
-        # Clear it from deleted_entities to simulate a truly fresh registration on re-add
-        registry.deleted_entities.pop(("sensor", DOMAIN, sensor.unique_id), None)
 
         # Now simulate re-adding the area (config entry loaded again)
         await async_setup_entry(hass, mock_config_entry, mock_async_add_entities)
 
-        # Retrieve newly added entities and check
         added_entities = []
         for call_args in mock_async_add_entities.call_args_list:
             added_entities.extend(call_args[0][0])
 
         re_added_sensor = next(e for e in added_entities if isinstance(e, PriorsSensor))
+        assert not re_added_sensor.entity_registry_enabled_default
 
-        # Simulate HA registering it again
+        # Simulate HA registering it again: EntityPlatform passes the
+        # INTEGRATION disabler (per enabled_default=False), but the registry
+        # restores the previous state from deleted_entities.
         entry = registry.async_get_or_create(
             domain="sensor",
             platform=DOMAIN,
             unique_id=re_added_sensor.unique_id,
             suggested_object_id=re_added_sensor.unique_id,
-            disabled_by=None
-            if re_added_sensor.entity_registry_enabled_default
-            else er.RegistryEntryDisabler.INTEGRATION,
+            disabled_by=er.RegistryEntryDisabler.INTEGRATION,
         )
-        # It should now be disabled because it was a new registration
-        assert entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+        # The previous (enabled) state wins over enabled_default.
+        assert entry.disabled_by is None
