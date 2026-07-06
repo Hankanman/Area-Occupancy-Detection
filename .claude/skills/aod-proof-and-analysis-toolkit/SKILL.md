@@ -32,21 +32,22 @@ period that actually reflects reality, not a truncated window.
 **Steps**:
 1. Find every occupied interval `(start, end)` for the area in the lookback window.
 2. Compute `occupied_duration = Σ (end - start)` in seconds.
-3. Compute the observation period as `(first_interval_start, actual_period_end)`. As of
-   2026-07-06, `actual_period_end` on `main` is picked with a bug (see worked example below);
-   the correct definition is always `actual_period_end = now`.
+3. Compute the observation period as `(first_interval_start, actual_period_end)`. As of PR #491
+   (merged 2026-07-06), `actual_period_end` on `main` is always `now` (see worked example below
+   for the bug this replaced).
 4. `prior = clamp(occupied_duration / actual_period_duration, 0.01, 0.99)`.
 5. Sanity-check against the reporter's real-world estimate. If the computed prior is pinned at
    0.99 (or 0.01) while a human says "this room is occupied ~30% of the time," the period
    window is wrong — go straight to Recipe 6.
 
-**Worked example — issue #483 / PR #491** (`custom_components/area_occupancy/data/analysis.py:513-520`,
+**Worked example — issue #483, fixed by PR #491 (merged 2026-07-06)**
+(`custom_components/area_occupancy/data/analysis.py:513-520`,
 test `tests/test_data_analysis.py::test_valid_calculation_sets_correct_prior`):
 
 Fixture: one occupied interval `(now - 8h, now - 6h)` — 2 hours occupied, and the area has been
 quiet for 6 hours since.
 
-| Quantity | Buggy (current `main`, PR #491 still open) | Correct (PR #491's fix) |
+| Quantity | Buggy (pre-fix, before PR #491) | Correct (current `main`, PR #491's fix) |
 |---|---|---|
 | `first_interval_start` | now − 8h | now − 8h |
 | `actual_period_end` | `last_interval_end` = now − 6h (because `(now - last_interval_end) > 3600s` triggers a truncation branch) | `now` |
@@ -106,9 +107,9 @@ near `p=0.5` than near `p=0.9`.
    `BoostContribution` dataclass) if you have a live diagnostics dump.
 
 **Worked example — adjacent-areas Bayesian boost** (`custom_components/area_occupancy/data/adjacency.py:122-204`,
-constant `ADJACENCY_BOOST_GAIN = 0.5` at `const.py:206`). **This feature is on the `feat/adjacent-areas`
-branch / PR #454, merging as of 2026-07-06 — verify current status with `gh pr view 454` before
-relying on file paths; it is not on `main` yet.**
+constant `ADJACENCY_BOOST_GAIN = 0.5` at `const.py:206`). **This feature (PR #454, merged to `main`
+2026-07-06) is now on `main` — the adjacency feature remains unvalidated on real homes, so treat
+its constants as candidates, not settled tuning.**
 
 The formula is `logit_contribution = gain × (logit(P) − logit(0.5))`. Since `logit(0.5) = 0`,
 this reduces to `gain × logit(P)` (the centring term is documented as a deliberate no-op, kept
@@ -202,8 +203,10 @@ in under half a second); sleep-presence virtual entities use `SLEEP_PRESENCE_HAL
 resolved half-life by an adjacency `_modifier_factor` (clamped ≥ 1.0, cap `ADJACENCY_DECAY_MODIFIER_MAX
 = 1.75` — see Recipe 7) — when auditing a *reported* half-life against the *configured* one,
 check `Decay.half_life` (the multiplied, effective value) vs `Decay._base_half_life` (what the
-user actually set), since PR #493 (open as of 2026-07-06, fixing issue #481) exists precisely
-because this distinction was collapsed for Bedroom areas outside the sleep window.
+user actually set), since PR #493 (merged 2026-07-06, fixed issue #481) exists precisely
+because this distinction was collapsed for Bedroom areas outside the sleep window — `main` now
+carries the `_resolve_purpose_half_life()` guard (`!= purpose default → return base`) plus the
+adjacency `modifier_factor` multiplying on top.
 
 **When to run this**: whenever a user reports a room "clearing" (occupancy flipping to
 unoccupied) faster or slower than expected; before changing any purpose's default half-life in
@@ -311,8 +314,7 @@ integration hard-codes that floor in **two structurally identical places**:
 
 **B. Adjacency transition smoothing — the same idea, four thresholds gating six fallback levels**
 (`custom_components/area_occupancy/db/transitions.py:487-651`, constants at `const.py:216-221`
-— **on `feat/adjacent-areas` / PR #454, merging as of 2026-07-06, not yet on `main`; verify with
-`gh pr view 454`**): `lookup_transition_probability()` walks from most-specific to least-specific,
+— **PR #454, merged to `main` 2026-07-06**): `lookup_transition_probability()` walks from most-specific to least-specific,
 using the first level whose **total observation count** clears its threshold:
 
 | Level | Scope | Threshold constant | Value |
@@ -419,9 +421,10 @@ tell of a window mismatch, not randomness; as a mandatory step when reviewing an
 **What it proves**: that a new coupling between areas (or between an area and its own history)
 cannot amplify itself into a runaway loop within a single computation tick.
 
-**Why this matters here specifically**: the adjacency feature (PR #454, merging as of 2026-07-06,
-not yet on `main` — verify with `gh pr view 454`) is the first place this integration lets one
-area's probability influence another's. Any coupling of this shape is a feedback-loop risk by
+**Why this matters here specifically**: the adjacency feature (PR #454, merged to `main`
+2026-07-06) is the first place this integration lets one area's probability influence another's —
+it remains unvalidated on real homes, so treat it as a candidate feature under active scrutiny,
+not settled behavior. Any coupling of this shape is a feedback-loop risk by
 construction: if area A's boost depends on area B's *current* probability, and area B's boost
 depends on area A's *current* probability, a single tick could see both areas inflate each other
 before either settles — worse, over multiple ticks this could compound instead of converge.
@@ -478,19 +481,20 @@ design-review step for any future extension of the adjacency feature (multi-hop 
 ## Provenance and maintenance
 
 Date-stamped: 2026-07-06, integration version 2026.5.17 (`custom_components/area_occupancy/manifest.json:20`,
-`pyproject.toml:7`, `const.py:32` as `DEVICE_SW_VERSION`). All facts in this skill were verified
-directly against the repository at this commit (`704c89e`, branch `feat/adjacent-areas` — a
-28-commit-ahead-of-`main` superset per PR #454) unless marked "unverified."
+`pyproject.toml:7`, `const.py:32` as `DEVICE_SW_VERSION` — no tagged release yet carries today's
+merge wave; this is still main's HEAD version). All facts in this skill were verified directly
+against the repository at `main` HEAD (`17b71d2`, post-merge-wave of 2026-07-06) unless marked
+"unverified."
 
-Adjacency-feature facts (Recipes 2, 5-table-B, 7) describe code that lives on `feat/adjacent-areas`
-/ PR #454 and is **not yet on `main`** as of 2026-07-06. Re-verify merge status before relying on
-exact file paths:
+Adjacency-feature facts (Recipes 2, 5-table-B, 7) describe code that merged to `main` via PR #454
+on 2026-07-06 (#456 closed as merged into it). The feature is complete on `main` but remains
+**unvalidated on real homes** — still a candidate for future tuning, not settled behavior.
+Re-verify current state before relying on exact file paths:
 ```bash
-gh pr view 454 --json state,mergeable,statusCheckRollup
-git show main:custom_components/area_occupancy/const.py | grep -c ADJACENCY_   # 0 = still unmerged
+git show main:custom_components/area_occupancy/const.py | grep -c ADJACENCY_   # >0 = merged, present
 ```
 
-Prior quiet-tail fix (Recipe 1, 6) is PR #491, also open as of 2026-07-06:
+Prior quiet-tail fix (Recipe 1, 6) is PR #491, merged 2026-07-06 (closed issue #483):
 ```bash
 gh pr view 491 --json state,mergeable,title
 ```
@@ -505,9 +509,9 @@ Re-verification commands for this skill's volatile facts:
 | Decay floor / formula | `sed -n '140,155p' custom_components/area_occupancy/data/decay.py` |
 | Prior period-truncation bug | `sed -n '510,525p' custom_components/area_occupancy/data/analysis.py` |
 | Decay-curve test table | `grep -n "60.0" tests/test_data_decay.py` |
-| PR #454 (adjacency) status | `gh pr view 454 --json state,mergeable` |
-| PR #491 (prior fix) status | `gh pr view 491 --json state,mergeable` |
-| PR #493 (bedroom half-life) status | `gh pr view 493 --json state,mergeable` |
+| PR #454 (adjacency) merge confirmation | `gh pr view 454 --json state,mergeable` |
+| PR #491 (prior fix) merge confirmation | `gh pr view 491 --json state,mergeable` |
+| PR #493 (bedroom half-life) merge confirmation | `gh pr view 493 --json state,mergeable` |
 | Timezone policy doc | `sed -n '1,10p' custom_components/area_occupancy/time_utils.py` |
 | Six-level transition fallback | `sed -n '573,652p' custom_components/area_occupancy/db/transitions.py` |
 | Issue #301 (timezone precedent) | `gh issue view 301 --json state,comments` |

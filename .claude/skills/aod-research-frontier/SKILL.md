@@ -41,17 +41,17 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 | Integration version | 2026.5.17 | `cat custom_components/area_occupancy/manifest.json \| grep version` |
 | Quality scale (HA manifest) | `silver` | `grep quality_scale custom_components/area_occupancy/manifest.json` |
 | Runtime pip requirements | `[]` (none) | `grep -A2 '"requirements"' custom_components/area_occupancy/manifest.json` |
-| Test coverage gate | `fail_under = 85` in pyproject (the adjacent comment says "90%" — comment is stale, the enforced number is 85) | `grep -n fail_under pyproject.toml` |
+| Test coverage gate | `fail_under = 85` in pyproject, comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules" — the old stale-comment mismatch was fixed by #495 (CI hygiene) | `grep -n fail_under pyproject.toml` |
 | Live probability engine | sigmoid/logit pipeline in `utils.py` (`sigmoid_probability`, `presence_probability`, `environmental_confidence`, `combined_probability`), driven from `area/area.py::Area._base_probability/probability` | `grep -n "def sigmoid_probability\|def presence_probability\|def combined_probability" custom_components/area_occupancy/utils.py` |
-| Dead legacy engine | `utils.py::bayesian_probability()` (classic log-odds accumulator) has **zero production call sites** — only ~25 unit tests in `tests/test_utils.py` still exercise it. CLAUDE.md's "Modifying Bayesian Calculation" workflow points at this function first — that pointer is stale; start from `sigmoid_probability`/`presence_probability` instead. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (only the `def` line should show) |
-| Adjacent-areas feature (frontier #2 asset) | Implemented on branch `feat/adjacent-areas`, **PR #454, OPEN, CI-green, mergeStateStatus=CLEAN — not yet on main** | `gh pr view 454 --json state,mergeStateStatus,mergeable` |
-| Prior/decay/sleep accuracy fixes | PRs #491 (prior quiet-tail), #492 (sleep unknown-presence), #493 (bedroom half-life), #494 (README link) — **all CI-green, awaiting merge, not on main as of 2026-07-06** | `gh pr view 491` / `492` / `493` / `494` |
+| Dead legacy engine | `utils.py::bayesian_probability()` (classic log-odds accumulator) has **zero production call sites** — only unit tests in `tests/test_utils.py` still exercise it. CLAUDE.md's "Modifying Bayesian Calculation" workflow points at this function first — that pointer is stale; start from `sigmoid_probability`/`presence_probability` instead. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (only the `def` line should show) |
+| Adjacent-areas feature (frontier #2 asset) | **Merged 2026-07-06** — PR #454 merged into `main` (squash), superseding PR #456 which was closed as merged into it. `data/adjacency.py`, `data/trajectory.py`, `db/transitions.py`, the `AreaTransitions` table, and all `ADJACENCY_*` constants are on `main` now. Still **unvalidated on real homes** — candidate/open labeling for the research question stays even though the code shipped. | `gh pr view 454 --json state,mergeStateStatus` |
+| Prior/decay/sleep accuracy fixes | PRs #491 (prior quiet-tail), #492 (sleep unknown-presence), #493 (bedroom half-life), #494 (README link) — **all merged 2026-07-06, on `main`** | `gh pr view 491` / `492` / `493` / `494` |
 
-If you are reading this in a session checked out on `main`, none of the
-`data/adjacency.py`, `data/trajectory.py`, `db/transitions.py` code paths
-described under Frontier #2 exist yet — confirm with
+`main` HEAD is now `17b71d2`. The `data/adjacency.py`, `data/trajectory.py`,
+`db/transitions.py` code paths described under Frontier #2 exist on `main`
+today — confirm with
 `git show main:custom_components/area_occupancy/const.py | grep -c ADJACENCY_`
-(returns `0` on main as of this writing).
+(returns `10` on main as of this writing, not `0`).
 
 ---
 
@@ -123,8 +123,8 @@ than others (a hallway→bedroom transition at 11pm is very different signal
 than the same pair at 2pm).
 
 **This project's specific asset:** the `AreaTransitions` table
-(`db/schema.py`, class defined around line 692 — **only present on branch
-`feat/adjacent-areas`, PR #454, not yet merged**) is a genuinely novel local
+(`db/schema.py`, class defined around line 692 — **merged to `main` 2026-07-06
+via PR #454**) is a genuinely novel local
 dataset: it records observed `(from_area, mid_area, to_area, hour_of_week)`
 transition counts with exponential recency decay
 (`ADJACENCY_RECENCY_HALF_LIFE_DAYS = 30`), supporting both 1-hop
@@ -149,11 +149,12 @@ the documented "no data" signal). That means every home with *some* areas
 configured with neighbors and some without already has a natural,
 per-area, config-driven control group — no separate feature flag needed.
 
-**First three concrete steps in this repo (once #454 is merged — check
-`gh pr view 454` first):**
-1. Confirm merge status and pull the full test suite for the feature:
+**First three concrete steps in this repo (#454 merged 2026-07-06, code is
+live on `main`):**
+1. Pull the full test suite for the feature:
    `uv run pytest tests/test_data_adjacency.py tests/test_data_trajectory.py
-   tests/test_coordinator_adjacency.py tests/test_db_relationships.py -v`.
+   tests/test_coordinator_adjacency.py tests/test_db_relationships.py -v`
+   (all four files exist on `main` and pass as of this writing).
 2. Instrument a calibration comparison: for areas with adjacency configured,
    compare predicted-probability calibration (e.g. reliability diagram —
    see **bayesian-occupancy-reference** for how probability outputs are
@@ -191,18 +192,20 @@ home's own learned movement history.
 **This project's specific asset:** the same two learned structures as
 Frontier 1 and 2 — the 168-bucket time-priors (`data/prior.py`,
 `Priors` table in `db/schema.py`) already encode "how likely is this area
-occupied at this day/hour," and (once PR #454 lands) the 1-hop/2-hop
-`AreaTransitions` chains encode "given the last one or two areas occupied,
-where does the person go next." Combined, these are exactly the inputs a
-next-area predictor needs, and they are **already being learned today** —
-no new data collection is required to start the offline evaluation.
+occupied at this day/hour," and (merged 2026-07-06 via PR #454) the
+1-hop/2-hop `AreaTransitions` chains encode "given the last one or two areas
+occupied, where does the person go next." Combined, these are exactly the
+inputs a next-area predictor needs, and they are **already being learned
+today** — no new data collection is required to start the offline
+evaluation.
 
 **First three concrete steps in this repo:**
 1. Do this **entirely offline against existing DB history first** — do not
    create a new entity or sensor yet. Write an evaluation script that, for
-   each historical occupied-interval transition in `AreaTransitions` (or,
-   pre-merge, reconstructed directly from `get_occupied_intervals` across
-   all areas in an entry), checks whether the time-prior + transition-chain
+   each historical occupied-interval transition in `AreaTransitions`
+   (now populated directly on `main`; cross-check against
+   `get_occupied_intervals` across all areas in an entry), checks whether
+   the time-prior + transition-chain
    combination would have predicted the *next* area correctly within N
    minutes, using a held-out time split (train on weeks 1–3, evaluate on
    week 4 — never randomly shuffled, since the whole premise is temporal).
@@ -244,17 +247,18 @@ target.
   core's strong preference against adding new third-party packages.
 - Google-style docstrings enforced by ruff's `pydocstyle` convention
   (`pyproject.toml`, `[tool.ruff.lint.pydocstyle] convention = "google"`).
-- Full type annotations required per CLAUDE.md, Python 3.13+ (`pyproject.toml`
-  `requires-python = ">=3.13.2"`).
+- Full type annotations required per CLAUDE.md, Python 3.14+ (`pyproject.toml`
+  `requires-python = ">=3.14.2"`, bumped via #496 2026-07-06 alongside the
+  HA 2026.7.1 dependency refresh).
 
 **Concrete gaps to verify and close (check current state before acting —
 these move over time):**
 | Gap | How to check | Owning skill for the fix itself |
 |---|---|---|
 | No `quality_scale.yaml` rule-by-rule justification file (core integrations at gold/platinum carry one) | `find custom_components/area_occupancy -iname '*quality_scale*'` (empty as of this writing) | aod-config-and-flags / aod-architecture-contract |
-| Coverage gate says 85% but a stale comment in the same line claims "90%" | `grep -n fail_under pyproject.toml` | aod-validation-and-qa |
-| No `mypy`/`pyright` static-type gate found in `pyproject.toml` or `scripts/` (only ruff) — core increasingly expects strict typing enforcement, not just annotations-present | `grep -n 'mypy\|pyright' pyproject.toml scripts/*` | aod-build-and-env |
-| Branch strategy documented in CLAUDE.md (`dev`→`preview`/`rc`→`main`) is stale — every merged PR from #446 onward targets `main` directly, and `dev`/`preview`/`rc` branches no longer exist on the remote | `git ls-remote --heads origin \| grep -E 'dev$\|preview$\|rc$'` (expect empty) | aod-change-control |
+| Coverage gate stale-comment mismatch — **fixed by #495 (merged 2026-07-06)**; comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules", matching the enforced `fail_under = 85` | `grep -n fail_under pyproject.toml` | aod-validation-and-qa |
+| No `mypy`/`pyright` static-type gate found in `pyproject.toml` or `scripts/` (only ruff) — core increasingly expects strict typing enforcement, not just annotations-present. Still an open gap as of 2026-07-06. | `grep -n 'mypy\|pyright' pyproject.toml scripts/*` | aod-build-and-env |
+| Branch strategy documented in CLAUDE.md (`dev`→`preview`/`rc`→`main`) is stale — CI now triggers lint/test/validate on `main` only (rc/dev removed, per #495), and `dev`/`preview`/`rc` branches no longer exist on the remote; CLAUDE.md itself has not been corrected yet | `git ls-remote --heads origin \| grep -E 'dev$\|preview$\|rc$'` (expect empty) | aod-change-control |
 
 **First three concrete steps in this repo:**
 1. Pull HA's current Integration Quality Scale rubric (it is versioned and
@@ -294,11 +298,14 @@ Re-check labels/state before acting — `gh issue view <n> --json state,labels,t
 ## Provenance and maintenance
 
 Compiled 2026-07-06, integration version 2026.5.17 (per
-`custom_components/area_occupancy/manifest.json`). Session was checked out
-on branch `feat/adjacent-areas` (PR #454, open, 28 commits ahead of `main`,
-0 behind) — Frontier 2's code paths (`data/adjacency.py`, `data/trajectory.py`,
+`custom_components/area_occupancy/manifest.json` — no tagged release has
+shipped today's merge wave yet, so "shipped in release" language should
+still say "on `main`, not yet released"). Swept post-merge-wave 2026-07-06:
+`feat/adjacent-areas` (PR #454) has merged into `main`; `main` HEAD is now
+`17b71d2`. Frontier 2's code paths (`data/adjacency.py`, `data/trajectory.py`,
 `db/transitions.py`, the `AreaTransitions` table, all `ADJACENCY_*`
-constants) exist only on that branch until merged.
+constants) are live on `main` today — the *research question* (is adjacency
+actually helping) remains open/unvalidated even though the code shipped.
 
 Re-verification commands, by volatile fact category:
 

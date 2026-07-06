@@ -84,10 +84,10 @@ The live snapshot at the moment the diagnostic ran.
 | `active_entity_count` / `decaying_entity_count` / `entity_count` | Sensor counts |
 | `adjacency` | Present only if the adjacent-areas feature has fired this tick — see below |
 
-**`adjacency` sub-block** (only appears once **PR #454 merges** — merging as
-of 2026-07-06, verify with `gh pr view 454`. Omitted entirely, not a null
-field, when there's no boost/modifier yet — e.g. before the first `update()`
-tick, or the area has no configured neighbours):
+**`adjacency` sub-block** (shipped in PR #454, merged 2026-07-06 — now on
+`main`. Omitted entirely, not a null field, when there's no boost/modifier
+yet — e.g. before the first `update()` tick, or the area has no configured
+neighbours):
 
 | Field | Meaning |
 |---|---|
@@ -281,17 +281,13 @@ or, with failures: `Analysis completed: 11/12 steps succeeded (FAILED: correlati
 `Analysis cancelled mid-run after ... ms — shutdown in progress` instead —
 deliberately not counted toward the slow-analysis health threshold.
 
-On `main` at 2026.5.17 the pipeline is **12 steps**, in order: `sync_states`,
-`health_check_and_prune` (pruning + integrity), `sensor_health_check`,
-`populate_occupied_intervals_cache`, `interval_aggregation`,
-`numeric_aggregation`, `recalculate_priors`, `correlation_analysis`,
-`pipeline_health_check`, `save_data_before_refresh`, `refresh_coordinator`,
-`save_data_after_refresh`.
-
-**Pending (PR #454, unmerged as of 2026-07-06):** adds a 13th step,
-`transition_learning`, between `correlation_analysis` and
-`pipeline_health_check` — the totals become `13/13`. Do not assume it exists
-until #454 merges. Re-verify:
+On `main` (post PR #454, merged 2026-07-06) the pipeline is **13 steps**, in
+order: `sync_states`, `health_check_and_prune` (pruning + integrity),
+`sensor_health_check`, `populate_occupied_intervals_cache`,
+`interval_aggregation`, `numeric_aggregation`, `recalculate_priors`,
+`correlation_analysis`, `transition_learning`, `pipeline_health_check`,
+`save_data_before_refresh`, `refresh_coordinator`, `save_data_after_refresh`.
+Totals log as `13/13`. Re-verify:
 `grep -n "total_steps" custom_components/area_occupancy/data/analysis.py`.
 
 ### Prior calculation — the "Period calculation" line
@@ -307,10 +303,14 @@ This is exactly the line that would have exposed **issue #483** (global
 prior inflating during quiet periods) before it was diagnosed from code —
 if `last_interval_end` is far in the past relative to `now` and the stored
 prior still looks too high, check which formula produced it (see script #2
-below). PR #491 (merging as of 2026-07-06, verify with `gh pr view 491`)
-changes the period-end logic so this line's `now` argument is always what
-actually bounds the calculation — pre-fix, watch for
-`actual_period_end = last_interval_end` silently truncating the quiet tail.
+below). **SETTLED**: PR #491, merged 2026-07-06, changed the period-end
+logic so `actual_period_end` is now always `now` — it no longer silently
+truncates to `last_interval_end` and the quiet-tail inflation bug (#483) is
+closed. Verified on `main`: `actual_period_end = now` unconditionally
+(`data/analysis.py`); the old `actual_period_end = last_interval_end`
+behavior is gone. Kept here as dated history because the "Period
+calculation" line is still the right first place to look if a similar
+quiet-period discrepancy ever resurfaces.
 
 Companion debug lines in the same function: `Prior calculation for area %s:
 %d merged intervals, %.1f hours total duration` (logged early, before period
@@ -380,7 +380,7 @@ they run in any Python 3.10+ environment.
 |---|---|---|
 | `dump_priors.py <db> <area>` | What did the area learn — global prior + all 168 time-of-week buckets? | `global_priors`, `priors` tables (present on `main` today) |
 | `prior_quiet_tail_diff.py <db> <area> [--now ISO]` | Is this area's stored prior exhibiting the #483 quiet-tail-inflation pattern? Recomputes both the pre-#491 and post-#491 formulas by hand and diffs against what's stored | `intervals`, `entities`, `global_priors` tables (present on `main` today) |
-| `transitions_summary.py <db> [--top N]` | How much has adjacency learning actually observed — which chains, how recent, do they clear the smoothing-fallback thresholds? | `area_transitions` table — **only exists once PR #454 merges** (merging as of 2026-07-06); the script detects a missing table and says so rather than crashing |
+| `transitions_summary.py <db> [--top N]` | How much has adjacency learning actually observed — which chains, how recent, do they clear the smoothing-fallback thresholds? | `area_transitions` table — shipped with PR #454, merged 2026-07-06, present on `main` today; the script still detects a missing table and says so rather than crashing (useful against older DBs created pre-migration) |
 
 Each script's own docstring has a full usage line, example output, and an
 interpretation guide — read the script header before running it. Run
@@ -399,19 +399,22 @@ file if you want a stable snapshot to diff against a second run.
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (`pyproject.toml`
-line 7 / `manifest.json` line 20 / `const.py` `DEVICE_SW_VERSION`). Working
-tree at authoring time was `feat/adjacent-areas` (PR #454) — the
-`AreaTransitions` table, `adjacency` diagnostics sub-block, and the six-level
-transition-lookup smoothing described in §1/§5 are **not on `main` yet**;
-verify before treating them as generally available.
+Re-verified 2026-07-06 against `main` at `17b71d2` (post merge-wave; integration
+release version is still 2026.5.17 in `pyproject.toml` line 7 /
+`manifest.json` line 20 / `const.py` `DEVICE_SW_VERSION` — none of this
+wave's merges are in a tagged release yet). `feat/adjacent-areas` (PR #454)
+merged into `main` 2026-07-06 — the `AreaTransitions` table, `adjacency`
+diagnostics sub-block, and the six-level transition-lookup smoothing
+described in §1/§5 are now on `main` and generally available; the feature
+remains unvalidated on real homes (still worth treating as a candidate
+signal, not ground truth, until it's watched running for a while).
 
 Re-verification commands, by volatile fact category:
 
 - **Diagnostics export shape**: `sed -n '1,410p' custom_components/area_occupancy/diagnostics.py` (re-read `_area_snapshot`, `_entity_snapshot`, `_adjacency_snapshot`)
 - **Health thresholds**: `grep -n "THRESHOLD\|MULTIPLIER" custom_components/area_occupancy/data/health.py`
-- **Adjacent-areas / PR #454 merge state**: `gh pr view 454 --json state,mergeStateStatus,mergeable`
-- **Prior quiet-tail fix / PR #491 merge state**: `gh pr view 491 --json state,mergeable`
+- **Adjacent-areas / PR #454 merge state**: `gh pr view 454 --json state,mergeStateStatus,mergeable` (confirmed MERGED 2026-07-06)
+- **Prior quiet-tail fix / PR #491 merge state**: `gh pr view 491 --json state,mergeable` (confirmed MERGED 2026-07-06; `actual_period_end = now` unconditionally on `main`)
 - **`AnalysisStatus` exact values**: `grep -n "NOT_ANALYZED\|MOTION_EXCLUDED\|ANALYZED =" custom_components/area_occupancy/data/entity_type.py`
 - **Correlation failure-error set**: `grep -n "CORRELATION_FAILURE_ERRORS" -A 20 custom_components/area_occupancy/db/correlation.py`
 - **Adjacency constants**: `grep -n "ADJACENCY_" custom_components/area_occupancy/const.py`

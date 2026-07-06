@@ -7,7 +7,7 @@ description: Executable, decision-gated campaign for making learned priors and l
 
 The end-to-end loop for diagnosing and fixing bad learned values on a **real** Home Assistant install: pull ground truth, hand-verify the stored math, diagnose which stage is wrong (interval detection, denominator/period selection, bucketing, likelihood estimation, or decay half-life resolution), pick a fix from a theory-obligated menu, and validate before it ever reaches `main`. It exists because this project has shipped the same class of bug — a denominator or comparison subtly excluding data it shouldn't — at least five times (see Phase 2 and Provenance).
 
-**When NOT to use this**: for the underlying formulas themselves (sigmoid/logit math, clamps, combine_priors derivation) use `bayesian-occupancy-reference`. For pulling a diagnostics export or DB copy off a real install, use `aod-diagnostics-and-tooling` (this skill assumes you already have both, see Phase 0). For the actual PR/merge process once a fix is validated, use `aod-change-control` — this skill never merges anything itself. For known-closed war stories (not open investigations), use `aod-failure-archaeology`. For the adjacent-areas / transition-learning subsystem specifically (currently unmerged, PR #454), that is out of scope here — it consumes learned priors but doesn't produce them.
+**When NOT to use this**: for the underlying formulas themselves (sigmoid/logit math, clamps, combine_priors derivation) use `bayesian-occupancy-reference`. For pulling a diagnostics export or DB copy off a real install, use `aod-diagnostics-and-tooling` (this skill assumes you already have both, see Phase 0). For the actual PR/merge process once a fix is validated, use `aod-change-control` — this skill never merges anything itself. For known-closed war stories (not open investigations), use `aod-failure-archaeology`. For the adjacent-areas / transition-learning subsystem specifically (merged 2026-07-06, PR #454), that is out of scope here — it consumes learned priors but doesn't produce them.
 
 ---
 
@@ -42,7 +42,7 @@ The end-to-end loop for diagnosing and fixing bad learned values on a **real** H
    SQL
    ```
 
-   Then compare `latest_cached` to `global_priors.data_period_end` for that area. **They should be very close to "now" at analysis time** — if `data_period_end` is stuck hours or days behind `latest_cached`/the current wall clock while the area has been quiet, you have re-found the #483 pattern (period truncated at `last_interval_end` instead of running to `now`). See `custom_components/area_occupancy/data/analysis.py` around the `calculate_and_update_prior` period-selection block — as of 2026-07-06 the correct behavior (period always ends at `now`) is only on PR #491, not yet on `main`; verify current `main` behavior with `git show main:custom_components/area_occupancy/data/analysis.py | grep -n "actual_period_end"` before assuming either version.
+   Then compare `latest_cached` to `global_priors.data_period_end` for that area. **They should be very close to "now" at analysis time** — if `data_period_end` is stuck hours or days behind `latest_cached`/the current wall clock while the area has been quiet, you have re-found the #483 pattern (period truncated at `last_interval_end` instead of running to `now`). See `custom_components/area_occupancy/data/analysis.py` around the `calculate_and_update_prior` period-selection block — the correct behavior (period always ends at `now`, via `actual_period_end = now`) landed on `main` via PR #491, merged 2026-07-06 (fixes #483); re-verify with `git show main:custom_components/area_occupancy/data/analysis.py | grep -n "actual_period_end"` if you suspect a regression.
 
 3. **Hand-recompute one time-prior bucket.** Time priors are bucketed by *local* wall-clock day-of-week/hour, 168 buckets per area, in `custom_components/area_occupancy/db/schema.py`'s `priors` table (`day_of_week`, `time_slot`, `prior_value`, `data_points`). You need the HA instance's configured timezone (Settings → System → General → Time Zone on the source install — it is **not** stored per-area in the DB). Recompute bucket `(dow, hour)` by hand:
 
@@ -113,9 +113,10 @@ Is the DENOMINATOR/period wrong (the #483 bug class)?
 ├─ Query: compare global_priors.data_period_end to "now" at the time of the last analysis run
 │  (coordinator.py's hourly analysis timer, ANALYSIS_INTERVAL=3600s, const.py:343).
 │  → If data_period_end lags "now" by more than one analysis cycle while the area has valid
-│    recent cache entries: this IS the #483 pattern. Check whether the fix in PR #491 (period
-│    always ends at `now`, verify: `gh pr view 491`) has landed on the branch you're working
-│    from — it was NOT yet merged to main as of 2026-07-06.
+│    recent cache entries: this IS the #483 pattern re-emerging on a branch that predates or
+│    regressed the fix. The fix itself (period always ends at `now`) is on `main` via PR #491,
+│    merged 2026-07-06 — if you're seeing this on current `main`, treat it as a regression, not
+│    the original bug, and re-verify with `gh pr view 491`.
 │
 Is the BUCKETING wrong (time priors only)?
 ├─ Query: pick one bucket, redo Phase 0 step 3 by hand. If the stored value only diverges for
@@ -137,9 +138,9 @@ Is the BUCKETING wrong (time priors only)?
 ### If decay looks wrong (clears too fast/slow, or ignores a custom half-life)
 
 1. Trace `Decay.half_life` → `Decay._resolve_purpose_half_life()` (`custom_components/area_occupancy/data/decay.py`). Only `AreaPurpose.SLEEPING` has an `awake_half_life` (620s, `data/purpose.py`) — every other purpose returns `self._base_half_life` unconditionally, so this branch only matters for Bedroom/Sleeping-purpose areas with configured `sleep_start`/`sleep_end`.
-2. **Known open bug (as of 2026-07-06, not yet merged)**: outside the configured sleep window, `_resolve_purpose_half_life()` unconditionally returns `self._purpose.awake_half_life` (620s) even when the user configured a custom half-life for that area — silently discarding it (issue #481). Fix is on PR #493 ("mirrors the custom-vs-default semantics established for #440") — verify merge status with `gh pr view 493` before assuming either behavior is live.
+2. **Settled bug (#481, fixed via PR #493, merged 2026-07-06)**: outside the configured sleep window, `_resolve_purpose_half_life()` used to unconditionally return `self._purpose.awake_half_life` (620s) even when the user had configured a custom half-life for that area — silently discarding it. The fix ("mirrors the custom-vs-default semantics established for #440") added a guard *before* the sleep-window check: `if self._base_half_life != self._purpose.half_life: return self._base_half_life` — i.e. if the configured half-life isn't the purpose's own default, the sleep/awake split never overrides it. This is live on `main`; re-verify with `gh pr view 493 --json state,mergedAt` if you suspect a regression.
 3. If you hit this bug class again elsewhere: the general pattern (see Saga 2 in `aod-failure-archaeology`) is "is-this-value-a-user-override-or-a-coincidentally-matching-default" — `Purpose.is_purpose_half_life()` in `data/purpose.py` is the load-bearing comparison; it was already burned once (#439/#440) by comparing against *any* purpose's default instead of only the *selected* purpose's default. Any new decay/half-life logic must re-check which comparison it's making.
-4. Also check `Decay.modifier_factor` (adjacency Phase 4 decay-stretch, only relevant if the area has adjacent-area config — currently only exists on the unmerged `feat/adjacent-areas` branch, out of scope for `main`-only investigations).
+4. Also check `Decay.modifier_factor` (adjacency Phase 4 decay-stretch, only relevant if the area has adjacent-area config — merged to `main` via PR #454, 2026-07-06; still out of scope for a *learning-accuracy* investigation per this skill's "When NOT to use this" note, since it consumes decay rather than producing learned values, but it is no longer branch-gated).
 
 ---
 
@@ -182,12 +183,12 @@ No fix from Phase 3 goes anywhere near `main` without all of the following, in o
 
 ## Provenance and maintenance
 
-Date-stamped: 2026-07-06, integration version 2026.5.17 (`custom_components/area_occupancy/manifest.json`, `pyproject.toml`, `const.py::DEVICE_SW_VERSION`).
+Date-stamped: 2026-07-06 (post-merge sweep, `main` HEAD `17b71d2`), integration version still 2026.5.17 (`custom_components/area_occupancy/manifest.json`, `pyproject.toml`, `const.py::DEVICE_SW_VERSION`) — none of the fixes below have shipped in a tagged release yet.
 
-Pending at time of writing — **not yet on `main`**, re-verify before relying on their behavior:
-- PR #491 (fix: quiet-tail global-prior denominator, fixes #483) — re-verify: `gh pr view 491 --json state,mergedAt`
-- PR #493 (fix: bedroom custom half-life outside sleep window, fixes #481) — re-verify: `gh pr view 493 --json state,mergedAt`
-- PR #454 (feat: adjacent-areas) — out of scope for this skill but shares the coordinator tick; re-verify: `gh pr view 454 --json state,mergedAt`
+Merged since the prior sweep, all confirmed on `main` as of 2026-07-06:
+- PR #491 (fix: quiet-tail global-prior denominator, fixes #483) — merged 2026-07-06; re-verify: `gh pr view 491 --json state,mergedAt`
+- PR #493 (fix: bedroom custom half-life outside sleep window, fixes #481) — merged 2026-07-06; re-verify: `gh pr view 493 --json state,mergedAt`
+- PR #454 (feat: adjacent-areas) — merged 2026-07-06; out of scope for this skill but shares the coordinator tick; re-verify: `gh pr view 454 --json state,mergedAt`
 
 Re-verification commands for every volatile fact category in this skill:
 - Clamp/threshold constants (`MIN_PROBABILITY`, `MIN_PRIOR`, `TIME_PRIOR_MIN_BOUND`, `MIN_CORRELATION_SAMPLES`, etc.): `grep -n "MIN_PROBABILITY\|MAX_PROBABILITY\|MIN_PRIOR\|MAX_PRIOR\|TIME_PRIOR_MIN_BOUND\|TIME_PRIOR_MAX_BOUND\|MIN_CORRELATION_SAMPLES\|PRIOR_FLOOR_THRESHOLD_MARGIN\|DEFAULT_MOTION_TIMEOUT" custom_components/area_occupancy/const.py`

@@ -11,7 +11,8 @@ Example:
     python prior_quiet_tail_diff.py config/.storage/area_occupancy.db "Kitchen"
     python prior_quiet_tail_diff.py config/.storage/area_occupancy.db "Kitchen" --now 2026-07-06T12:00:00
 
-Background (verified 2026-07-06 against data/analysis.py and PR #491):
+Background (re-verified 2026-07-06 against data/analysis.py at main HEAD
+17b71d2, post-merge):
 
 Production computes, in PriorAnalyzer.calculate_and_update_prior()
 (custom_components/area_occupancy/data/analysis.py):
@@ -20,14 +21,17 @@ Production computes, in PriorAnalyzer.calculate_and_update_prior()
     actual_period_duration = actual_period_end - first_interval_start
     global_prior = clamp(occupied_duration / actual_period_duration, 0.01, 0.99)
 
-Before PR #491 (merging as of 2026-07-06 -- verify with `gh pr view 491`),
-`actual_period_end` was `last_interval_end` whenever the area had been quiet
-for more than 1 hour, which silently dropped the known-unoccupied quiet tail
-from the denominator and inflated the prior every hourly recalculation that
-ran during a quiet stretch (overnight, weekends, vacations) -- this is
-issue #483, and it could pin a prior at the 0.99 ceiling for an area with a
-true occupancy rate of ~30%. PR #491's fix makes `actual_period_end` always
-`now`.
+SETTLED HISTORY: before PR #491 (merged 2026-07-06), `actual_period_end` was
+`last_interval_end` whenever the area had been quiet for more than 1 hour,
+which silently dropped the known-unoccupied quiet tail from the denominator
+and inflated the prior every hourly recalculation that ran during a quiet
+stretch (overnight, weekends, vacations) -- this was issue #483 (auto-closed
+by #491's merge), and it could pin a prior at the 0.99 ceiling for an area
+with a true occupancy rate of ~30%. PR #491's fix makes `actual_period_end`
+always `now`, and that fix is on `main` as of 2026-07-06 -- it has not yet
+reached a tagged release (integration version is still 2026.5.17), so the
+"buggy vs. fixed" comparison below still matters for any database running an
+older release.
 
 This script recomputes BOTH formulas from the raw `intervals` table and
 diffs them against whatever is actually stored in `global_priors`, so you
@@ -46,9 +50,11 @@ inflation are still valid.
 Interpretation guide:
   - `stored` ~= `buggy_formula` AND `buggy_formula` >> `fixed_formula`
     -> this database is exhibiting the #483 pattern. Check the integration
-    version (`aod-change-control`) -- if it's older than the #491 fix,
-    upgrading resolves it; the stored prior will self-correct on the next
-    hourly analysis cycle after upgrade (no manual DB surgery needed).
+    version (`aod-change-control`) -- if it predates the #491 fix (merged to
+    `main` 2026-07-06, not yet in a tagged release as of this writing),
+    upgrading once it ships resolves it; the stored prior will self-correct
+    on the next hourly analysis cycle after upgrade (no manual DB surgery
+    needed).
   - `stored` ~= `fixed_formula` -> already running the fixed logic, or the
     area has no long quiet gaps in its interval history so both formulas
     agree.

@@ -28,17 +28,22 @@ CodeRabbit convention.
 
 ---
 
-## 0. Orientation trap — read this first
+## 0. Orientation trap — read this first (SETTLED 2026-07-06)
 
 The environment banner and CLAUDE.md may both claim you're on `main` with a
 clean tree. **Verify, don't trust**: `git status` and `git branch
---show-current`. At time of writing this repo was checked out on
-`feat/adjacent-areas` (PR #454), not `main` — an entire feature's worth of
-code (adjacency boost/decay-modifier, `db/transitions.py`,
-`data/adjacency.py`, ~10 `ADJACENCY_*` constants in `const.py`) exists only on
-that branch and is invisible if you assume the banner is correct. Before
-citing any file content as "what's in main," run `git show
-main:<path>` or `git diff main...HEAD -- <path>` to check.
+--show-current`. This was a live trap through 2026-07-06: the repo was
+checked out on `feat/adjacent-areas` (PR #454) for an extended period, and an
+entire feature's worth of code (adjacency boost/decay-modifier,
+`db/transitions.py`, `data/adjacency.py`, ~10 `ADJACENCY_*` constants in
+`const.py`) existed only on that branch and was invisible if you assumed the
+banner was correct. **PR #454 merged to `main` on 2026-07-06** (main HEAD is
+now `17b71d2`, "feat: adjacent-areas — learned next-door room influence
+(#454)"); the working tree is on `main` and the adjacency code is now part
+of it. The general lesson still applies for the *next* long-lived feature
+branch — before citing any file content as "what's in main," run `git show
+main:<path>` or `git diff main...HEAD -- <path>` to check rather than trust
+the banner.
 
 ---
 
@@ -59,7 +64,7 @@ do, then run it, then compare.
 
 **Incidents**:
 
-- **Prior inflation (issue #483 → PR #491, open as of 2026-07-06)**:
+- **Prior inflation (issue #483 → PR #491, merged 2026-07-06, SETTLED)**:
   `PriorAnalyzer.calculate_and_update_prior()` (`data/analysis.py`) truncated
   the observation window at `last_interval_end` whenever an area had been
   quiet more than an hour — dropping the known-unoccupied tail from the
@@ -69,20 +74,29 @@ do, then run it, then compare.
   occupancy ~28–35% pinned at 0.99. The existing test
   (`test_valid_calculation_sets_correct_prior`) had **encoded the bug** —
   asserting 0.99 was correct — and had to be corrected to assert the true
-  0.25 as part of the fix. Verify current status: `gh pr view 491 --json
-  state,body`.
-- **Half-life override silently discarded (issue #481 → PR #493, open)**:
-  `Decay._resolve_purpose_half_life()` (`data/decay.py`) has a sleep/awake
-  split for the Bedroom/SLEEPING purpose (uses the area's half-life during
-  the sleep window, switches to the purpose's fixed `awake_half_life`=620s
-  outside it). The switch applied **unconditionally**, so a user's custom
-  10s half-life silently became a 620s (~10 minute) clear-out during waking
-  hours. This is the *same bug class* recurring in a different code path:
-  issue #439/PR #440 already fixed an identical "custom value gets silently
-  normalized to a purpose default" bug for the general half-life field
-  months earlier; #481 was the sleep/awake switch not respecting that
-  established custom-vs-default semantics. Verify: `gh pr view 493 --json
-  state,body`.
+  0.25 as part of the fix. Fix on main: `actual_period_end` is now
+  unconditionally `now` (the old conditional truncation is gone; the
+  degenerate-period-after-startup case it was guarding is already covered by
+  the `actual_period_duration <= 0` check), and a regression test for the
+  overnight quiet-tail case was added. Verify: `gh pr view 491 --json
+  state,mergedAt`.
+- **Half-life override silently discarded (issue #481 → PR #493, merged
+  2026-07-06, SETTLED)**: `Decay._resolve_purpose_half_life()`
+  (`data/decay.py`) has a sleep/awake split for the Bedroom/SLEEPING purpose
+  (uses the area's half-life during the sleep window, switches to the
+  purpose's fixed `awake_half_life`=620s outside it). The switch applied
+  **unconditionally**, so a user's custom 10s half-life silently became a
+  620s (~10 minute) clear-out during waking hours. This is the *same bug
+  class* recurring in a different code path: issue #439/PR #440 already
+  fixed an identical "custom value gets silently normalized to a purpose
+  default" bug for the general half-life field months earlier; #481 was the
+  sleep/awake switch not respecting that established custom-vs-default
+  semantics. Fix on main: `_resolve_purpose_half_life()` now carries an
+  explicit "if the resolved value != the purpose default, return the base
+  (custom) value" guard before the sleep/awake switch applies, with the
+  adjacency modifier_factor still multiplying on top of whichever half-life
+  (custom or default) that guard resolves to. Verify: `gh pr view 493 --json
+  state,mergedAt`.
 
 **Takeaway**: a test that encodes buggy output (asserts the bug's number) is
 not evidence a math change is safe — it's evidence nobody predicted the
@@ -109,15 +123,17 @@ for a schema change you don't actually need to gate is a real way to wipe
 every user's learned history on upgrade.
 
 **Precedent for additive-only schema changes**: the `AreaTransitions` table
-and `Areas.adjacent_areas` column (feat/adjacent-areas, PR #454 — **still
-open/unmerged as of 2026-07-06**, verify with `gh pr view 454`) deliberately
-does **not** bump `CONF_VERSION`, because the change is purely additive: a
-new JSON column with a default-on-missing value in the loader, plus a new
-table created via `Base.metadata.create_all(checkfirst=True)`. The
-`migrations.py` comment on this branch states the rationale explicitly: bump
-the version and every user's DB gets wiped for no reason, since
+and `Areas.adjacent_areas` column (feat/adjacent-areas, PR #454 — **merged to
+main 2026-07-06**, verify with `gh pr view 454 --json state,mergedAt`)
+deliberately does **not** bump `CONF_VERSION`, because the change is purely
+additive: a new JSON column with a default-on-missing value in the loader,
+plus a new table created via `Base.metadata.create_all(checkfirst=True)`.
+The `migrations.py` comment states the rationale explicitly: bump the
+version and every user's DB gets wiped for no reason, since
 `checkfirst=True` on `create_all` only adds what's missing without touching
-existing tables. **Use `create_all(checkfirst=True)` for additive schema
+existing tables. `db/schema.py` on main now has 15 tables including
+`AreaTransitions`, and `CONF_VERSION` was **not** bumped for this change
+(still 18 — see §4). **Use `create_all(checkfirst=True)` for additive schema
 changes; reserve a `CONF_VERSION` bump for changes that genuinely require the
 nuclear wipe.**
 
@@ -222,9 +238,9 @@ Five GitHub Actions workflows in `.github/workflows/`:
 
 | Workflow | Trigger | What it checks |
 |---|---|---|
-| `test.yml` ("CI: Test") | push to `main`, PR to `main`/`rc`/`dev` | `uv run pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing`. Coverage gate: `pyproject.toml` `[tool.coverage.report] fail_under = 85` (the inline comment says "Enforce 90% coverage minimum" — that comment is stale/wrong; the enforced number is 85) |
-| `lint.yml` ("Ruff") | same triggers | `uv run ruff check .` (no `--fix`) then `uv run ruff format . --check` (no mutation) — CI never auto-fixes; run `scripts/lint` locally first |
-| `validate.yml` | push to `main`, PR to `main`/`rc`/`dev`, daily cron, manual dispatch | Hassfest validation (`home-assistant/actions/hassfest@master`) and HACS validation (`hacs/action@main`) — both pinned to floating `@master`/`@main` refs, so occasional failures are upstream flakiness (e.g. observed Cloudflare 525 from `brands.home-assistant.io` crashing HACS's brands validator), not necessarily your PR's fault — check the failure log before assuming your change broke it |
+| `test.yml` ("CI: Test") | push to `main`, PR to `main` (rc/dev triggers removed 2026-07-06 — see §5) | `uv run pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing`. Coverage gate: `pyproject.toml` `[tool.coverage.report] fail_under = 85` (the inline comment says "Enforce 90% coverage minimum" — that comment is stale/wrong; the enforced number is 85, treated as the floor with 90 as an aspiration) |
+| `lint.yml` ("Ruff") | push to `main`, PR to `main` | `uv run ruff check .` (no `--fix`) then `uv run ruff format . --check` (no mutation) — CI never auto-fixes; run `scripts/lint` locally first |
+| `validate.yml` | push to `main`, PR to `main`, daily cron, manual dispatch | Hassfest validation (`home-assistant/actions/hassfest@master`) and HACS validation (`hacs/action@main`) — both pinned to floating `@master`/`@main` refs, so occasional failures are upstream flakiness (e.g. observed Cloudflare 525 from `brands.home-assistant.io` crashing HACS's brands validator), not necessarily your PR's fault — check the failure log before assuming your change broke it |
 | `release.yml` | on `release: published` | Hard-fails if `manifest.json`'s version doesn't equal the GitHub release's tag name; then zips `custom_components/area_occupancy` and uploads it as the HACS-installable asset via `gh release upload` |
 | `docs.yml` | push to `main` only | Builds and deploys `docs/` via `mkdocs gh-deploy --force` to the `gh-pages` branch |
 
@@ -291,12 +307,22 @@ narrative summary + linked originating issues, then the auto-generated
 per-PR bullet list.
 
 **CHANGELOG.md is STALE — do not trust or update-in-place expecting
-continuity**: the last real entry is `[2026.3.3] - 2026-03-09`. Every release
-since (`2026.3.4` through `2026.5.17`, i.e. the entire second quarter of
-this project's 2026 history) has no CHANGELOG.md entry — release notes live
-only in GitHub Releases (`gh release view <tag>`), not in this file. If
-asked to "update the changelog," clarify whether that means CHANGELOG.md
-(dead convention) or a new GitHub Release body (the actual live convention).
+continuity**: the last real entry is `[2026.3.3] - 2026-03-09`, and the file
+now carries an explicit deprecation banner at the top saying so and pointing
+to GitHub Releases as the changelog of record. Every release since
+(`2026.3.4` through `2026.5.17`, i.e. the entire second quarter of this
+project's 2026 history) has no CHANGELOG.md entry — release notes live only
+in GitHub Releases (`gh release view <tag>`), not in this file. If asked to
+"update the changelog," clarify whether that means CHANGELOG.md (dead
+convention, now self-documenting its own deprecation) or a new GitHub
+Release body (the actual live convention).
+
+**Note on today's merge wave (2026-07-06)**: PRs #489, #488, #486, #491,
+#492, #493, #494, #495, #496, and #454 all merged to `main` on 2026-07-06,
+but the integration release version is **still `2026.5.17`** — none of
+these changes are in a tagged release yet. Don't describe them as "shipped
+in release 2026.5.x" until a new version is actually cut; they're merged to
+`main` but pre-release.
 
 ---
 
@@ -315,18 +341,20 @@ asked to "update the changelog," clarify whether that means CHANGELOG.md
   2026-01-30 — the dev→preview/rc→main pipeline was real practice through
   roughly January 2026, then abandoned in favor of direct feature-branch →
   `main` PRs from February 2026 onward.
-- **Stale CI artifact corroborating this**: `.github/workflows/lint.yml`
-  and `test.yml` and `validate.yml` still list `pull_request: branches:
-  ["main", "rc", "dev"]` — triggering on PRs targeting branches that no
-  longer exist. This is dead config, not evidence the old flow is still
-  live.
+- **CI trigger cleanup (PR #495, "CI hygiene," merged 2026-07-06,
+  SETTLED)**: `.github/workflows/lint.yml`, `test.yml`, and `validate.yml`
+  used to still list `pull_request: branches: ["main", "rc", "dev"]` —
+  triggering on PRs targeting branches that no longer existed. That dead
+  config has been removed; all three workflows now trigger only on `push`/
+  `pull_request` to `main` (see §3). This was a stale-config smell, not
+  evidence the old flow was still live, and it's now cleaned up.
 
 **Practical instruction**: open PRs directly against `main` from a
 feature/fix branch (e.g. `feat/<name>`, `fix/<name>`, `chore/<name>`). Ignore
 CLAUDE.md's dev/preview/rc branching section — it describes a workflow this
 project stopped using about five months before this skill was written.
-CONTRIBUTING.md, if present, should be treated with the same suspicion until
-separately verified.
+`CONTRIBUTING.md` is consistent with this: it explicitly says to "Fork the
+repo and create your branch from `main`."
 
 ---
 
@@ -366,26 +394,28 @@ should almost never be silently dismissed without a written reason on the PR.
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (`pyproject.toml`
-line 7 / `manifest.json` line 20 / `const.py` `DEVICE_SW_VERSION`). Repo was
-checked out on branch `feat/adjacent-areas` (PR #454) at time of writing, not
-`main` — see §0. PRs #491, #492, #493, #494, #454 were open/CI-green/awaiting
-merge as of this date — do not describe their content as shipped on `main`
-without re-checking.
+Date-stamped 2026-07-06 (post-merge-wave), integration release version still
+2026.5.17 (`pyproject.toml` line 7 / `manifest.json` line 20 / `const.py`
+`DEVICE_SW_VERSION` — see §4's note on the merge wave not being released
+yet). Repo is checked out on `main`, HEAD `17b71d2` ("feat: adjacent-areas —
+learned next-door room influence (#454)") — see §0 for the now-settled
+history of that branch trap. PRs #489, #488, #486, #491, #492, #493, #494,
+#495, #496, and #454 all **merged to `main` on 2026-07-06** — their content
+above is now described as shipped-on-main, not pending.
 
 Re-verification commands, by volatile fact category:
 
-- **Which branch you're actually on**: `git status && git branch --show-current`
+- **Which branch you're actually on**: `git status && git branch --show-current` (expect `main`, HEAD at or descended from `17b71d2`)
 - **Branch protection state on main**: `gh api repos/Hankanman/Area-Occupancy-Detection/branches/main/protection`
 - **Merge-strategy settings**: `gh api repos/Hankanman/Area-Occupancy-Detection --jq '{squash:.allow_squash_merge, merge_commit:.allow_merge_commit, rebase:.allow_rebase_merge}'`
-- **PR #454/#491/#492/#493/#494 merge state**: `gh pr view <number> --json state,mergeable,statusCheckRollup` (one number per call)
+- **PR #454/#491/#492/#493/#494/#495/#496 merge state**: `gh pr view <number> --json state,mergedAt,statusCheckRollup` (one number per call) — all should show `state: MERGED` as of 2026-07-06
 - **Coverage gate**: `grep -n "fail_under" pyproject.toml`; confirm live number via `scripts/test`
-- **CI workflow trigger branches (stale dev/rc reference)**: `grep -n "branches" .github/workflows/*.yml`
+- **CI workflow trigger branches (rc/dev cleanup from PR #495)**: `grep -n "branches" .github/workflows/*.yml` — should show `main` only, no `rc`/`dev`
 - **Version triple in sync**: `grep -n version pyproject.toml custom_components/area_occupancy/manifest.json; grep -n DEVICE_SW_VERSION custom_components/area_occupancy/const.py`
 - **CONF_VERSION / migration ladder**: `grep -n "CONF_VERSION\b" custom_components/area_occupancy/const.py`; read `custom_components/area_occupancy/migrations.py::async_migrate_entry`
-- **CHANGELOG.md staleness**: `head -15 CHANGELOG.md` vs `gh release list --limit 5`
+- **CHANGELOG.md staleness/deprecation banner**: `head -15 CHANGELOG.md` vs `gh release list --limit 5`
 - **Remote branch existence (dev/preview/rc)**: `git ls-remote --heads origin`
 - **Issue #159 / #466 maintainer responses**: `gh issue view 159 --json comments`; `gh issue view 466 --json comments`
 - **PR #438 CodeRabbit-reply example**: `gh api repos/Hankanman/Area-Occupancy-Detection/issues/438/comments --jq '.[] | select(.user.login=="Hankanman")'`
 - **PR #488 entity-registry restore test**: `grep -n "test_re_add_area_restores_previous_enabled_state" tests/test_sensor.py`
-- **AreaTransitions create_all precedent (only on feat/adjacent-areas branch)**: `git show feat/adjacent-areas:custom_components/area_occupancy/migrations.py | grep -n "create_all\|CONF_VERSION"` (or `main` once #454 merges)
+- **AreaTransitions create_all precedent (now on `main` post-#454)**: `git show main:custom_components/area_occupancy/migrations.py | grep -n "create_all\|CONF_VERSION"`

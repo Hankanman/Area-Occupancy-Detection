@@ -9,13 +9,12 @@ Example:
 
 Requires the `area_transitions` table, which only exists once the
 adjacent-areas feature (PR #454) is on the running branch/release --
-merging as of 2026-07-06, NOT yet on `main`. Verify current state with
-`gh pr view 454 --json state,mergeStateStatus`. Running this script against
-a database from a release that predates the merge will just report
-"table not found".
+merged into `main` 2026-07-06 (HEAD 17b71d2). Running this script against
+a database from a release that predates the merge (e.g. the 2026.5.17
+release) will just report "table not found".
 
 Schema reference (custom_components/area_occupancy/db/schema.py::AreaTransitions,
-verified 2026-07-06): from_area, mid_area, to_area, hour_of_week (0-167),
+verified 2026-07-06 against main HEAD 17b71d2): from_area, mid_area, to_area, hour_of_week (0-167),
 count (float, recency-decayed), smoothed_prob, updated_at. A row is a "chain":
 2-hop when mid_area is non-empty (mid_area -> from_area -> to_area was the
 observed path), 1-hop when mid_area == '' (empty-string sentinel, not NULL,
@@ -75,8 +74,8 @@ def summarize(db_path: str, top_n: int = 10) -> None:
     except sqlite3.OperationalError as err:
         print(f"area_transitions table not found ({err}).")
         print(
-            "This DB predates the adjacent-areas feature (PR #454), or it hasn't "
-            "merged in this build. Verify with: gh pr view 454"
+            "This DB predates the adjacent-areas feature (PR #454, merged "
+            "2026-07-06). Verify the running build includes it with: gh pr view 454"
         )
         conn.close()
         return

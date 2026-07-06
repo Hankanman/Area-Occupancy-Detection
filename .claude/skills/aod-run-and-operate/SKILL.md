@@ -20,7 +20,7 @@ Command anatomy and artifact conventions for actually operating this project: st
 
 ## 1. Devcontainer Home Assistant instance
 
-The devcontainer config is `.devcontainer.json` at repo root (not a `.devcontainer/` folder — easy to look in the wrong place). It builds `mcr.microsoft.com/devcontainers/python:3.13`, forwards port 8123, and runs `scripts/setup` (→ `scripts/bootstrap`) on create.
+The devcontainer config is `.devcontainer.json` at repo root (not a `.devcontainer/` folder — easy to look in the wrong place). It builds `mcr.microsoft.com/devcontainers/python:3.14` (bumped from 3.13 in #496, merged 2026-07-06, alongside the `requires-python >=3.14.2` toolchain refresh — see `aod-build-and-env` for the full skew story), forwards port 8123, and runs `scripts/setup` (→ `scripts/bootstrap`) on create.
 
 **Start Home Assistant:**
 
@@ -79,7 +79,7 @@ Verified: `custom_components/area_occupancy/const.py:265`; `custom_components/ar
 
 ## 4. The analysis pipeline as an operational process
 
-`run_full_analysis()` in `data/analysis.py` runs on an hourly timer (see below) and orchestrates the whole learning loop. **On `main` at HEAD (2026.5.17) it is 12 steps.** Each step is wrapped by an inner `_run_step()` that times it, logs on success/failure, and — critically — **swallows the exception and continues to the next step** rather than aborting the whole run:
+`run_full_analysis()` in `data/analysis.py` runs on an hourly timer (see below) and orchestrates the whole learning loop. **On `main` at HEAD (2026.5.17, commit `17b71d2`) it is 13 steps** — PR #454 ("adjacent-areas", merged 2026-07-06) inserted a `transition_learning` step between correlation analysis and pipeline health check. Each step is wrapped by an inner `_run_step()` that times it, logs on success/failure, and — critically — **swallows the exception and continues to the next step** rather than aborting the whole run:
 
 | # | Step name (as logged) | What it does |
 |---|---|---|
@@ -91,10 +91,11 @@ Verified: `custom_components/area_occupancy/const.py:265`; `custom_components/ar
 | 6 | `numeric_aggregation` | Raw numeric samples → hourly/weekly rollups (feeds Gaussian correlation) |
 | 7 | `recalculate_priors` | Per-area `PriorAnalyzer`: global prior + 168 (day-of-week × hour) time-priors |
 | 8 | `correlation_analysis` | `db/correlation.py`: statistical sensor↔occupancy correlation, needs ≥`MIN_CORRELATION_SAMPLES` (50) |
-| 9 | `pipeline_health_check` | Area-scope anomalies (no global prior after grace period, stale cache, slow analysis, high correlation-failure rate) → repair issues |
-| 10 | `save_data_before_refresh` | Persist DB (preserves decay state ahead of the refresh) |
-| 11 | `refresh_coordinator` | Recompute `probability()` for every area |
-| 12 | `save_data_after_refresh` | Persist DB again |
+| 9 | `transition_learning` | Adjacent-areas Phase 3: count room-to-room transition observations into `AreaTransitions`, feeding the Bayesian boost and decay modifier (§ adjacency remains unvalidated on real homes — see below) |
+| 10 | `pipeline_health_check` | Area-scope anomalies (no global prior after grace period, stale cache, slow analysis, high correlation-failure rate) → repair issues |
+| 11 | `save_data_before_refresh` | Persist DB (preserves decay state ahead of the refresh) |
+| 12 | `refresh_coordinator` | Recompute `probability()` for every area |
+| 13 | `save_data_after_refresh` | Persist DB again |
 
 Each step logs one of:
 
@@ -106,19 +107,19 @@ Step N: <step_name> FAILED in X.XX ms          # ERROR (via _LOGGER.exception, i
 **What "Step N FAILED" means operationally:** that one step raised (any `Exception`), the pipeline logged it and moved on to step N+1 — a failure in `correlation_analysis` does not stop `pipeline_health_check` or the refresh from running. At the end of the run you get one summary line:
 
 ```
-Analysis completed: S/12 steps succeeded (FAILED: step_a, step_b) in X.XX ms   # WARNING, if any step failed
-Full analysis completed: 12/12 steps succeeded in X.XX ms                      # INFO, if all succeeded
+Analysis completed: S/13 steps succeeded (FAILED: step_a, step_b) in X.XX ms   # WARNING, if any step failed
+Full analysis completed: 13/13 steps succeeded in X.XX ms                      # INFO, if all succeeded
 ```
 
-If *any* step failed, `run_full_analysis` raises `HomeAssistantError` after the finally-block summary, which the coordinator's timer handler (`coordinator.run_analysis`) catches. **Backoff on failure: retry in 15 minutes** instead of the normal hourly cadence (`coordinator.py`, `run_analysis`: `next_update = _now + timedelta(minutes=15)` when `_failed`). On a clean run it reschedules for `analysis_interval` seconds later (`ANALYSIS_INTERVAL = 3600`, not currently exposed as a config-flow option — it's a fixed constant, not per-area).
+If *any* step failed, `run_full_analysis` raises `HomeAssistantError` after the finally-block summary, which the coordinator's timer handler (`coordinator.run_analysis`) catches. **Backoff on failure: retry in 15 minutes** instead of the normal hourly cadence (`coordinator.py`, `run_analysis`: `next_update = _now + timedelta(minutes=15)` when `_failed`). On a clean run it reschedules for `analysis_interval` seconds later (`ANALYSIS_INTERVAL = 3600`, not currently exposed as a config-flow option — it's a fixed constant, not per-area). Note: the analysis-timer re-arm logic was moved out of the `finally` block in this same merge wave (Python 3.14 `SyntaxWarning` fix) — functionally identical, but if you're diffing `coordinator.run_analysis` against an older read of this code, that's why the shape changed.
 
 Two shutdown-safety details worth knowing when reading logs: if HA starts shutting down mid-pipeline, remaining steps log `Step N: <name> skipped — shutdown in progress` (DEBUG) rather than FAILED, and the run's duration is deliberately **not** persisted (a fast, aborted run must not mask a previously-slow one in the health check's slow-analysis threshold). The **first** analysis run after HA (re)starts is deferred via `async_at_started` plus an additional fixed 5-minute delay, specifically so analysis never blocks HA's own bootstrap.
 
-**Note on PR #454 (unmerged as of 2026-07-06 — verify with `gh pr view 454`):** the still-open "adjacent-areas" feature branch adds a 13th step, `transition_learning` (between correlation analysis and pipeline health check), for learning room-to-room transition probabilities. Do not describe a 13-step pipeline as current until that PR merges.
+**Adjacent-areas feature status:** PR #454 is merged and `transition_learning` runs on every pipeline cycle now, but the feature itself remains an **unvalidated candidate** — it hasn't been proven out against real-home data yet, only tested (the 4 adjacency test files landed with #454). Treat boost/decay-modifier behavior from adjacency as something to watch, not a settled result.
 
-Verified directly: `custom_components/area_occupancy/data/analysis.py` (`git show main:...`) lines 35–235 (`run_full_analysis`, `_run_step`, docstring listing all 12 steps, the `total_steps = 12` literal, and every `_LOGGER` call); `custom_components/area_occupancy/coordinator.py` (`git show main:...`) `_start_analysis_timer`/`run_analysis` (5-minute post-boot defer, 15-minute failure backoff, `ANALYSIS_INTERVAL`); `custom_components/area_occupancy/const.py:286,306` (`MIN_CORRELATION_SAMPLES=50`, `ANALYSIS_INTERVAL=3600`); `gh pr view 454` (state OPEN as of 2026-07-06).
+Verified directly: `custom_components/area_occupancy/data/analysis.py` (`git show main:...`) lines 35–235 (`run_full_analysis`, `_run_step`, docstring listing all 13 steps, the `total_steps = 13` literal, and every `_LOGGER` call); `custom_components/area_occupancy/coordinator.py` (`git show main:...`) `_start_analysis_timer`/`run_analysis` (5-minute post-boot defer, 15-minute failure backoff re-armed outside `finally`, `ANALYSIS_INTERVAL`); `custom_components/area_occupancy/const.py:323,343` (`MIN_CORRELATION_SAMPLES=50`, `ANALYSIS_INTERVAL=3600`); `gh pr view 454 --json state,mergedAt` (state MERGED, `mergedAt` 2026-07-06T16:50:40Z).
 
-Two other always-on timers worth knowing about while reading logs: a **decay timer** (`DECAY_INTERVAL=10s`, `const.py:305`) ticks every area's decay and triggers a coordinator refresh if any area has decay enabled, and a **save timer** (`SAVE_INTERVAL=600s`, `const.py:307`) persists the DB every 10 minutes independent of the analysis pipeline.
+Two other always-on timers worth knowing about while reading logs: a **decay timer** (`DECAY_INTERVAL=10s`, `const.py:342`) ticks every area's decay and triggers a coordinator refresh if any area has decay enabled, and a **save timer** (`SAVE_INTERVAL=600s`, `const.py:344`) persists the DB every 10 minutes independent of the analysis pipeline.
 
 ---
 
@@ -179,15 +180,15 @@ Verified: `simulator/app.py` lines 1–45 (imports, `bayesian_probability` impor
 
 **`gh release list` / `gh release view <tag>` is the changelog of record** — read it before assuming a fix isn't shipped. Releases use CalVer `YYYY.M.N` (e.g. `2026.5.17`), **not** the `MAJOR.MINOR.PATCH` semver CLAUDE.md's "Branch and Release Strategy" section claims — that section is stale on this point (verified: `gh release list --limit 8` shows `2026.5.17, 2026.5.2, 2026.5.1, 2026.4.1, 2026.3.4, ...`, clearly calendar-versioned, not semver). Release bodies are hand-edited on top of GitHub's auto-generated "What's Changed" PR list — expect prose explaining the *why*, tables for structured changes (e.g. purpose→threshold mappings), and links back to originating issues.
 
-**CLAUDE.md's `dev → preview → main` release-branch flow is also stale.** `git ls-remote --heads origin` currently shows only `main`, `gh-pages`, and feature/fix/chore/dependabot branches — no `dev`, `preview`, or `rc` branch exists on the remote. Spot-checking the 10 most recently merged PRs (#489 down to #452) shows all but one (#456, merged into the then-active `feat/adjacent-areas` branch) targeted `main` directly. The historical `dev`/`preview`/`rc` pipeline was real practice through roughly January 2026 and was abandoned in favor of direct feature-branch → `main` PRs some time after. One stale artifact remains: `.github/workflows/lint.yml` still lists `rc`/`dev` in its `pull_request.branches` trigger even though those branches no longer exist — harmless (the trigger just never fires for those bases), but don't use it as evidence the branches are still real.
+**CLAUDE.md's `dev → preview → main` release-branch flow is also stale.** `git ls-remote --heads origin` currently shows only `main`, `gh-pages`, and feature/fix/chore branches — no `dev`, `preview`, or `rc` branch exists on the remote. Spot-checking recently merged PRs shows all but one (#456, merged into the then-active `feat/adjacent-areas` branch, itself merged into `main` as part of #454) targeted `main` directly. The historical `dev`/`preview`/`rc` pipeline was real practice through roughly January 2026 and was abandoned in favor of direct feature-branch → `main` PRs some time after; `CONTRIBUTING.md` now says to branch from `main`. As of the 2026-07-06 CI-hygiene pass (#495), the stale artifact this section used to flag is **gone**: `.github/workflows/lint.yml` and `.github/workflows/validate.yml` both now trigger only on `main` (push and PR) — the old `rc`/`dev` entries in `pull_request.branches` were removed, not just dead weight.
 
 **Version bump:** three files must change together (`manifest.json`, `pyproject.toml`, `const.py::DEVICE_SW_VERSION`). The versioning *policy* — the full three-file table, the CalVer scheme, and the `DEVICE_SW_VERSION`-vs-`CONF_VERSION` distinction — is owned by `aod-change-control` §4; consult it before any bump. Operationally: edit all three to the identical `YYYY.M.N` string, merge, then create the GitHub release with the tag exactly equal to `manifest.json`'s version (release.yml hard-fails otherwise, next paragraph).
 
-**HACS distribution:** `.github/workflows/release.yml` triggers on `release: types: [published]`. It hard-fails (`::error::` + exit 1) if `manifest.json`'s `version` doesn't exactly equal the release tag, then zips `custom_components/area_occupancy/` (excluding `__pycache__`/`*.pyc`) into `area_occupancy.zip` and uploads it via `gh release upload "$TAG" area_occupancy.zip --clobber`. `hacs.json` sets `"zip_release": true` and `"filename": "area_occupancy.zip"` to match — HACS installs users on the uploaded zip, not a raw source checkout. Note `hacs.json` declares minimum HA version `2024.8.0`, nearly 1.5 years older than the `homeassistant==2026.2.2` pin actually used for local dev/CI testing — HACS will let a user on a much older HA install this integration.
+**HACS distribution:** `.github/workflows/release.yml` triggers on `release: types: [published]`. It hard-fails (`::error::` + exit 1) if `manifest.json`'s `version` doesn't exactly equal the release tag, then zips `custom_components/area_occupancy/` (excluding `__pycache__`/`*.pyc`) into `area_occupancy.zip` and uploads it via `gh release upload "$TAG" area_occupancy.zip --clobber`. `hacs.json` sets `"zip_release": true` and `"filename": "area_occupancy.zip"` to match — HACS installs users on the uploaded zip, not a raw source checkout. Note `hacs.json` declares minimum HA version `2024.8.0`. The dependency refresh in #496 (merged 2026-07-06) bumped the actual pin to `homeassistant==2026.7.1` (from 2026.2.2) plus `pytest-homeassistant-custom-component==0.13.345` — so the gap between "minimum HA HACS will allow" and "HA version actually tested against locally/in CI" is now nearly **2 years**, wider than before this merge wave, not narrower. HACS will let a user on a much older HA install this integration.
 
-**`.github/workflows/validate.yml`** ("Validate") runs two independent jobs — `hassfest` (`home-assistant/actions/hassfest@master`) and `hacs` (`hacs/action@main`, `category: integration`) — on `workflow_dispatch`, a **daily cron (`0 0 * * *`)**, push to `main`, and PRs targeting `main`/`rc`/`dev`. Both actions are pinned to floating refs (`@master`/`@main`), so a break in either upstream action can fail this workflow without any change in this repo. The `hacs` job specifically has a known transient-failure mode: it validates the presence of a local brand icon by calling out to `https://brands.home-assistant.io/domains.json`, and an upstream Cloudflare 525 there crashes the job with an uncaught `aiohttp.client_exceptions.ContentTypeError` — a repo-external flake, not a real validation failure, if you see that exact traceback.
+**`.github/workflows/validate.yml`** ("Validate") runs two independent jobs — `hassfest` (`home-assistant/actions/hassfest@master`) and `hacs` (`hacs/action@main`, `category: integration`) — on `workflow_dispatch`, a **daily cron (`0 0 * * *`)**, push to `main`, and PRs targeting `main` (the `rc`/`dev` PR triggers were removed in the 2026-07-06 CI-hygiene pass, #495 — see above). Both actions are pinned to floating refs (`@master`/`@main`), so a break in either upstream action can fail this workflow without any change in this repo. The `hacs` job specifically has a known transient-failure mode: it validates the presence of a local brand icon by calling out to `https://brands.home-assistant.io/domains.json`, and an upstream Cloudflare 525 there crashes the job with an uncaught `aiohttp.client_exceptions.ContentTypeError` — a repo-external flake, not a real validation failure, if you see that exact traceback.
 
-Verified: `gh release list --limit 8`; `gh release view 2026.5.17 --json body`; `git ls-remote --heads origin`; `gh pr list --state merged --limit 10 --json number,baseRefName`; `.github/workflows/lint.yml` lines 3–11; `.github/workflows/release.yml` (full file); `.github/workflows/validate.yml` (full file); `hacs.json` (full file); `custom_components/area_occupancy/manifest.json:20`; `pyproject.toml:7`; `custom_components/area_occupancy/const.py:32-34`.
+Verified: `gh release list --limit 8`; `gh release view 2026.5.17 --json body`; `git ls-remote --heads origin`; `gh pr list --state merged --limit 15 --json number,baseRefName,mergedAt`; `.github/workflows/lint.yml` (full file, `branches: ["main"]` on both triggers); `.github/workflows/release.yml` (full file); `.github/workflows/validate.yml` (full file, `branches: ["main"]` on both triggers); `hacs.json` (full file); `pyproject.toml` lines 25 (`homeassistant==2026.7.1`), 42 (`pytest-homeassistant-custom-component==0.13.345`); `custom_components/area_occupancy/manifest.json:20`; `custom_components/area_occupancy/const.py:32`.
 
 ---
 
@@ -203,13 +204,13 @@ Verified: `.github/workflows/docs.yml` (full file); `docs/MIGRATION.md`.
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (main branch, commit `704c89e`). Everything above marked "Verified" was checked directly against the repo or `gh` at that commit — nothing here was taken from a dossier/summary without a direct read.
+Date-stamped 2026-07-06 (post-merge sweep), integration version 2026.5.17 (main branch, commit `17b71d2`) — note the release version itself has **not** bumped since the merge wave; none of the day's PRs are in a tagged release yet, so "merged" here means "on `main`," not "shipped in a release." Everything above marked "Verified" was checked directly against the repo or `gh` at that commit — nothing here was taken from a dossier/summary without a direct read.
 
 Re-verification commands for volatile facts:
 
 | Fact category | Re-check with |
 |---|---|
-| Current version / step count / whether PR #454 has merged | `git log -1 --format=%H main`; `grep '"version"' custom_components/area_occupancy/manifest.json`; `grep -n 'total_steps' custom_components/area_occupancy/data/analysis.py`; `gh pr view 454 --json state` |
+| Current version / step count / whether PR #454 has merged | `git log -1 --format=%H main`; `grep '"version"' custom_components/area_occupancy/manifest.json`; `grep -n 'total_steps' custom_components/area_occupancy/data/analysis.py`; `gh pr view 454 --json state,mergedAt` |
 | Analysis pipeline step list/order | `grep -n '_run_step(' custom_components/area_occupancy/data/analysis.py` |
 | Analysis timer intervals / backoff | `grep -n 'ANALYSIS_INTERVAL\|DECAY_INTERVAL\|SAVE_INTERVAL' custom_components/area_occupancy/const.py`; `grep -n 'timedelta(minutes=15)\|timedelta(minutes=5)' custom_components/area_occupancy/coordinator.py` |
 | Recorder sync watermark constants | `grep -n 'timedelta(days=10)\|timedelta(hours=1)' custom_components/area_occupancy/db/queries.py` |
@@ -219,4 +220,5 @@ Re-verification commands for volatile facts:
 | Release list / changelog | `gh release list --limit 10` |
 | Branch strategy reality (dev/preview/rc dead?) | `git ls-remote --heads origin`; `gh pr list --state merged --limit 15 --json number,baseRefName` |
 | HACS / validate.yml cron and floating refs | `cat .github/workflows/validate.yml` |
-| Pending PRs mentioned here (#491–494, #454) | `gh pr view <n> --json state,mergeable` |
+| HA version pin vs. HACS minimum | `grep -n 'homeassistant==' pyproject.toml`; `grep -n 'homeassistant' hacs.json` |
+| PRs referenced here (#489–496, #454) — all merged 2026-07-06, so this row is about catching the *next* wave, not re-litigating this one | `gh pr view <n> --json state,mergedAt` |

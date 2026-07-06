@@ -15,7 +15,7 @@ The complete configuration surface of Area Occupancy Detection: every `CONF_*`/`
 - New sensor *type* end-to-end wiring beyond the config keys (InputType enum, EntityFactory, likelihood defaults) → still start here for the config-key steps, but cross-check `aod-architecture-contract` for the entity/type pipeline.
 - Whether a change is safe to ship / needs a version bump philosophy and review process → `aod-change-control`.
 - Debugging a *running* instance's config (inspecting a live DB/entry) → `aod-diagnostics-and-tooling` or `aod-debugging-playbook`.
-- Adjacent-areas' Bayesian boost/decay-modifier math itself (not the config keys) → `aod-research-frontier` (it is unmerged, PR #454).
+- Adjacent-areas' Bayesian boost/decay-modifier math itself (not the config keys) → `aod-research-frontier` (feature merged 2026-07-06, PR #454; still unvalidated on real homes).
 
 ## The IntegrationConfig vs AreaConfig split
 
@@ -95,7 +95,7 @@ Prior floor mechanism (issue #435, fixed): `Prior.value` (`data/prior.py:78-140`
 | CONF_* key | Default | Range | Stability |
 |---|---|---|---|
 | `CONF_DECAY_ENABLED` | `DEFAULT_DECAY_ENABLED`=True | bool | production |
-| `CONF_DECAY_HALF_LIFE` | `DEFAULT_DECAY_HALF_LIFE`=0 (sentinel, see below) | 0, or 10-3600s (`_validate_config`, `invalid_decay_half_life`) | production, but see open bug PR #493 below |
+| `CONF_DECAY_HALF_LIFE` | `DEFAULT_DECAY_HALF_LIFE`=0 (sentinel, see below) | 0, or 10-3600s (`_validate_config`, `invalid_decay_half_life`) | production — see PR #493 below, merged 2026-07-06, for the settled #481 bug history |
 
 See "The sentinels" section below — this is the highest-blast-radius axis in this catalog per the maintainer's stated costliest-failure list (decay half-life config bugs).
 
@@ -115,7 +115,7 @@ See "The sentinels" section below — this is the highest-blast-radius axis in t
 |---|---|---|---|
 | `CONF_PURPOSE` | `DEFAULT_PURPOSE`="social" | 12 `AreaPurpose` values (`data/purpose.py` `PURPOSE_DEFINITIONS`) | production |
 
-Purpose drives the decay half-life default (45s Passageway → 1200s Sleeping) and, for `SLEEPING` only, an `awake_half_life`=620s used outside the configured sleep window — see the sentinel section, and PR #493 below for the open bug in that switch.
+Purpose drives the decay half-life default (45s Passageway → 1200s Sleeping) and, for `SLEEPING` only, an `awake_half_life`=620s used outside the configured sleep window — see the sentinel section, and PR #493 below (merged 2026-07-06) for the now-fixed bug in that switch.
 
 ### Health
 
@@ -125,11 +125,11 @@ Purpose drives the decay half-life default (45s Passageway → 1200s Sleeping) a
 
 When False, `data/analysis.py` short-circuits both sensor-health and pipeline-health checks and calls `area.health_monitor.clear_all_issues()`, but leaves the in-memory `_unavailable_since` clock intact so re-enabling doesn't instantly trip every currently-unavailable sensor.
 
-### Adjacency — experimental, unmerged as of 2026-07-06
+### Adjacency — merged 2026-07-06 (PR #454), still experimental pending real-home validation
 
 | Key | Default | Stability |
 |---|---|---|
-| `CONF_ADJACENT_AREAS` ("adjacent_areas") | `[]` | **experimental** — only exists on branch `feat/adjacent-areas` (PR #454). Confirmed absent from `main`: `git show main:custom_components/area_occupancy/const.py \| grep -c ADJACENT_AREAS` → 0 as of 2026-07-06. Verify current status with `gh pr view 454` before describing as shipped. |
+| `CONF_ADJACENT_AREAS` ("adjacent_areas") | `[]` | **merged to `main` 2026-07-06** (PR #454). Confirmed present: `grep -c CONF_ADJACENT_AREAS custom_components/area_occupancy/const.py` → 1. Behavior itself is still a candidate — unvalidated on real homes, not just unmerged code. |
 | `ADJACENCY_TRANSITION_WINDOW_S` | 60 | experimental, hardcoded (not a `CONF_*`, no UI) |
 | `ADJACENCY_RECENCY_HALF_LIFE_DAYS` | 30 | experimental, hardcoded |
 | `ADJACENCY_TRAJECTORY_WINDOW_S` | 300 | experimental, hardcoded |
@@ -138,9 +138,9 @@ When False, `data/analysis.py` short-circuits both sensor-health and pipeline-he
 | `ADJACENCY_DECAY_MODIFIER_MAX` | 1.75 | experimental, hardcoded |
 | `ADJACENCY_N_SPECIFIC` / `ADJACENCY_N_HOUR` / `ADJACENCY_N_CHAIN` / `ADJACENCY_N_PAIR` | 5 / 20 / 50 / 20 | experimental, hardcoded (min-observation thresholds for a 6-level smoothing fallback) |
 
-All ten `ADJACENCY_*` constants carry the in-code comment "First-pass values; tune from real data once Phase 3 is collecting transitions" (`const.py:189-190` on the feature branch) — there is no real-recorder validation yet. None are user-configurable; only `CONF_ADJACENT_AREAS` (the neighbour list itself) has a config-flow UI. Treat any specific numeric claim about adjacency behavior as provisional and re-check `gh pr view 454` for merge status before citing it as current.
+All ten `ADJACENCY_*` constants carry the in-code comment "First-pass values; tune from real data once Phase 3 is collecting transitions" (`const.py:189-221` on `main`) — there is still no real-recorder validation. None are user-configurable; only `CONF_ADJACENT_AREAS` (the neighbour list itself) has a config-flow UI. Treat any specific numeric claim about adjacency behavior as provisional — the code is now on `main`, but the tuning is not validated — see `aod-research-frontier` for the candidate-status tracking.
 
-**adjacent_areas symmetric-write**: the config flow enforces mutual adjacency as a pure-function transform over the flat `CONF_AREAS` list (`config_flow.py:1614-1780`, unmerged branch only). `_normalize_adjacent_areas()` coerces any stored shape (None/str/list/tuple/set/other) to `list[str]`, defensively handling hand-edited storage JSON. `_apply_symmetric_adjacency(areas, updated_area)`: when area A saves neighbours `[B, C]`, it rewrites A's own row (self-reference stripped, sorted), adds A to B's and C's lists if missing, and removes A from any other area that used to list A but no longer should. `_strip_adjacency_references()` removes a deleted area's id from every surviving area when that area is removed. This mirroring is pure Python at config-flow save time — `AreaConfig._load_config` (`data/config.py:485-493`) just reads and string-filters the list; it does **not** itself enforce symmetry, so any other write path (e.g. a future service call) that touches `adjacent_areas` directly must replicate the mirror logic or symmetry will silently drift.
+**adjacent_areas symmetric-write**: the config flow enforces mutual adjacency as a pure-function transform over the flat `CONF_AREAS` list (`config_flow.py:1614-1780`, on `main` since PR #454). `_normalize_adjacent_areas()` coerces any stored shape (None/str/list/tuple/set/other) to `list[str]`, defensively handling hand-edited storage JSON. `_apply_symmetric_adjacency(areas, updated_area)`: when area A saves neighbours `[B, C]`, it rewrites A's own row (self-reference stripped, sorted), adds A to B's and C's lists if missing, and removes A from any other area that used to list A but no longer should. `_strip_adjacency_references()` removes a deleted area's id from every surviving area when that area is removed. This mirroring is pure Python at config-flow save time — `AreaConfig._load_config` (`data/config.py:485-493`) just reads and string-filters the list; it does **not** itself enforce symmetry, so any other write path (e.g. a future service call) that touches `adjacent_areas` directly must replicate the mirror logic or symmetry will silently drift.
 
 ### Global settings (`IntegrationConfig`, entry-wide)
 
@@ -202,7 +202,7 @@ def is_purpose_half_life(value: float, purpose: str | None = None) -> bool:
 
 This is called from `config_flow.py::_apply_purpose_based_decay_default` (`config_flow.py:1545-1565`) at save time: **if the user's entered value equals the selected purpose's own default (or is empty), normalise to 0** so the value stays purpose-driven across a later purpose change; any other custom value is preserved untouched. **Rule for anyone touching this code: always pass the currently-selected purpose, never compare against all purposes' defaults.**
 
-This exact bug class recurred in a different code path: issue #481 (a Bedroom/SLEEPING area's custom 10s half-life was overridden by the purpose's `awake_half_life`=620s outside the sleep window, because the sleep/awake switch in `Decay._resolve_purpose_half_life()` — `data/decay.py:81-116` — applied unconditionally instead of only when the half-life still equalled the purpose default). Fix is PR #493, **CI-green, awaiting merge as of 2026-07-06** — verify current state with `gh pr view 493` before telling a user it's fixed. Its body explicitly says it "mirrors the custom-vs-default semantics established for #440."
+This exact bug class recurred in a different code path: issue #481 (a Bedroom/SLEEPING area's custom 10s half-life was overridden by the purpose's `awake_half_life`=620s outside the sleep window, because the sleep/awake switch in `Decay._resolve_purpose_half_life()` — `data/decay.py:81-124` — applied unconditionally instead of only when the half-life still equalled the purpose default). **Settled**: PR #493 merged 2026-07-06, closing #481. `_resolve_purpose_half_life()` now has an explicit guard (`if self._base_half_life != self._purpose.half_life: return self._base_half_life`) before the sleep/awake switch runs, plus the separate adjacency `modifier_factor` multiplying on top of the resolved base in `half_life` (`data/decay.py:76-79`). Its PR body explicitly says it "mirrors the custom-vs-default semantics established for #440." Verify current code with `sed -n '81,124p' custom_components/area_occupancy/data/decay.py`.
 
 ## How missing keys default, and why no CONF_VERSION bump is needed for additive keys
 
@@ -213,7 +213,7 @@ Two real precedents, both confirmed in the repo:
 1. **PR #486** (`CONF_SENSOR_PRECISION`, merged 2026-07-06, commit `7e3a856`) added a brand-new global option with zero `CONF_VERSION` involvement — it lives in `config_entry.options`, read live via `.get()` with a clamped default. No migration, no version touch. `git show 7e3a856 -- custom_components/area_occupancy/const.py | grep CONF_VERSION` → no output.
 2. **v17→v18** (`CONF_EXCLUDE_FROM_ALL_AREAS`, `migrations.py:571-581`) *did* bump `CONF_VERSION`, but the migration itself does no data mutation — the comment says so explicitly: "No data changes needed — missing key handled by `AreaConfig._load_config()`." The bump here was belt-and-suspenders (a version marker for tooling/tests), not a technical requirement of the additive change itself.
 
-Rule of thumb: **a purely additive, `.get()`-defaulted key never needs a `CONF_VERSION` bump.** Only bump when you need to (a) mutate/rename/restructure existing stored data, or (b) force a one-time side effect (e.g. a DB reset) on upgrade. Bumping `CONF_VERSION` is not free: any mismatch versus the DB's stored schema version triggers `db/maintenance.py`'s `_ensure_schema_up_to_date`, which **deletes and recreates the entire SQLite database** (wipes all learned priors/history) — see `aod-architecture-contract`/`aod-debugging-playbook` for that mechanism. This is exactly why the (unmerged) adjacent-areas feature's own `AreaTransitions` table and `adjacent_areas` column were deliberately kept out of the version bump (`migrations.py:583-591` on the `feat/adjacent-areas` branch, not on `main`): it's additive (new column defaults on load, new table created via `Base.metadata.create_all(checkfirst=True)`), so bumping would have wiped every user's learned history for no reason.
+Rule of thumb: **a purely additive, `.get()`-defaulted key never needs a `CONF_VERSION` bump.** Only bump when you need to (a) mutate/rename/restructure existing stored data, or (b) force a one-time side effect (e.g. a DB reset) on upgrade. Bumping `CONF_VERSION` is not free: any mismatch versus the DB's stored schema version triggers `db/maintenance.py`'s `_ensure_schema_up_to_date`, which **deletes and recreates the entire SQLite database** (wipes all learned priors/history) — see `aod-architecture-contract`/`aod-debugging-playbook` for that mechanism. This is exactly why the adjacent-areas feature's own `AreaTransitions` table and `adjacent_areas` column were deliberately kept out of the version bump (`migrations.py:583-588`, merged to `main` 2026-07-06 as part of PR #454, `CONF_VERSION` still 18): it's additive (new column defaults on load, new `AreaTransitions` table — one of 15 tables in `db/schema.py` now — created via `Base.metadata.create_all(checkfirst=True)`), so bumping would have wiped every user's learned history for no reason.
 
 ## migrations.py rules
 
@@ -250,14 +250,14 @@ PR #488 (merged, commit `2c28849`) added `set_enabled_default(False)` (`sensor.p
 
 ## Re-verification one-liners
 
-Run these to regenerate this catalog's facts against current `main` (note: this working tree may be checked out on a feature branch — check `git branch --show-current` first; `feat/adjacent-areas` is expected to still show `ADJACENCY_*`/`CONF_ADJACENT_AREAS` until PR #454 merges):
+Run these to regenerate this catalog's facts against current `main` (the working tree is on `main` post-merge; `git branch --show-current` should show `main`, not `feat/adjacent-areas`):
 
 ```bash
 # Full CONF_*/DEFAULT_* symbol list with line numbers
 grep -n '^CONF_\|^DEFAULT_' custom_components/area_occupancy/const.py
 
-# Confirm adjacency is still unmerged (expect 0 on main)
-git show main:custom_components/area_occupancy/const.py | grep -c ADJACENCY_
+# Confirm adjacency is merged (expect >=1 on main as of 2026-07-06)
+grep -c ADJACENCY_ custom_components/area_occupancy/const.py
 gh pr view 454 --json state,mergeStateStatus,mergeable
 
 # Confirm CONF_SENSOR_PRECISION / diagnostic-disable status (expect MERGED)
@@ -296,15 +296,15 @@ grep -n 'invalid_decay_half_life' -A3 -B3 custom_components/area_occupancy/confi
 # entity_registry_enabled_default call sites (expect 7)
 grep -n 'set_enabled_default(False)' custom_components/area_occupancy/sensor.py | wc -l
 
-# Open-bug status for the #440-recurrence (PR #493) — verify before citing as fixed
-gh pr view 493 --json state,mergeStateStatus
+# Fixed-bug status for the #440-recurrence (PR #493) — confirm merged
+gh pr view 493 --json state,mergedAt
 ```
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (main branch HEAD `704c89e`; HEAD drifts — re-derive with `git log -1 --oneline origin/main`). Facts in this skill were verified directly against the repo unless noted otherwise:
+Date-stamped 2026-07-06 (post-merge sweep), integration version still 2026.5.17 — none of the 2026-07-06 merge wave is in a tagged release yet (main branch HEAD `17b71d2`; HEAD drifts — re-derive with `git log -1 --oneline origin/main`). Facts in this skill were verified directly against the repo unless noted otherwise:
 
-- Directly verified by reading source: full `const.py` (all `CONF_*`/`DEFAULT_*`/`ADJACENCY_*` lines and values), `data/config.py` (`IntegrationConfig`, `AreaConfig`, `Sensors`/`Weights`/`DecayConfig`/`WaspInBox` dataclasses, `_load_config`, `update_config`), `data/purpose.py` (`is_purpose_half_life`, `PURPOSE_DEFINITIONS`, `get_default_decay_half_life`), `migrations.py` (`async_migrate_entry` full ladder), `config_flow.py` (`_create_global_settings_schema`, `_apply_purpose_based_decay_default`, `_validate_config`, `_normalize_adjacent_areas`/`_apply_symmetric_adjacency`/`_strip_adjacency_references`), `sensor.py` (`set_enabled_default` call sites), `data/entity.py:731` (`MIN_WEIGHT`/`MAX_WEIGHT` usage), `number.py` (`Threshold` entity bounds).
-- Directly verified by command: `git branch --show-current` (confirmed this working tree is on `feat/adjacent-areas`, not `main`); `git show main:.../const.py | grep -c ADJACENCY_` → 0; `gh pr view 454/486/488/493` for merge status; `git show 7e3a856 --stat` (PR #486's file list) and `git show 7e3a856 -- const.py | grep CONF_VERSION` → empty; the Python key-diff script for `strings.json` vs `en.json` (10 keys only in en.json, 0 only in strings.json); dead-const grep for `CONF_WEIGHT_SLEEP`, `CONF_WEIGHT_WASP`, `DEFAULT_SLEEP_WEIGHT`, and the per-type `const.py` probability constants.
+- Directly verified by reading source: full `const.py` (all `CONF_*`/`DEFAULT_*`/`ADJACENCY_*` lines and values), `data/config.py` (`IntegrationConfig`, `AreaConfig`, `Sensors`/`Weights`/`DecayConfig`/`WaspInBox` dataclasses, `_load_config`, `update_config`), `data/purpose.py` (`is_purpose_half_life`, `PURPOSE_DEFINITIONS`, `get_default_decay_half_life`), `migrations.py` (`async_migrate_entry` full ladder, the adjacency no-version-bump comment at `migrations.py:583-588`), `config_flow.py` (`_create_global_settings_schema`, `_apply_purpose_based_decay_default`, `_validate_config`, `_normalize_adjacent_areas`/`_apply_symmetric_adjacency`/`_strip_adjacency_references`), `sensor.py` (`set_enabled_default` call sites), `data/entity.py:731` (`MIN_WEIGHT`/`MAX_WEIGHT` usage), `number.py` (`Threshold` entity bounds), `data/decay.py` (`_resolve_purpose_half_life()`'s #481 guard and the `modifier_factor` multiply in `half_life`), `db/schema.py` (`AreaTransitions`, now one of 15 tables).
+- Directly verified by command: `git log -1 --oneline` (confirmed working tree is on `main` at `17b71d2`, post-merge); `grep -c ADJACENCY_ const.py` → non-zero (adjacency merged); `gh pr view 454/486/488/491/492/493/494/495/496/472` all report `MERGED`; `git show 7e3a856 --stat` (PR #486's file list) and `git show 7e3a856 -- const.py | grep CONF_VERSION` → empty; the Python key-diff script for `strings.json` vs `en.json` (10 keys only in en.json, 0 only in strings.json); dead-const grep for `CONF_WEIGHT_SLEEP`, `CONF_WEIGHT_WASP`, `DEFAULT_SLEEP_WEIGHT`, and the per-type `const.py` probability constants.
 - Taken from the discovery dossier and spot-checked (not independently re-derived line-by-line): the exact historical narrative timing of issues #439/#481/#467/#435 and PR #440's commit hash (`68d576b`) — the causal chain and current code state were verified directly, but the dossier's issue-comment quotes were not re-fetched via `gh issue view` in this session.
-- PRs #491, #492, #493, #494, #454 are **CI-green and unmerged** as of 2026-07-06 — re-check with `gh pr view <n>` before treating any of their behavior as shipped on `main`.
+- PRs #491, #492, #493, #494, #454 (and #486, #488, #495, #496) are **merged to `main`** — all confirmed `MERGED` via `gh pr view <n>` as of 2026-07-06. None have shipped in a tagged release yet (integration version is still 2026.5.17); phrase user-facing claims accordingly.

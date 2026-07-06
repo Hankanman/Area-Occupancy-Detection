@@ -30,7 +30,7 @@ not implementation.
 | Distribution | HACS custom integration (not HA core) | `hacs.json`: `render_readme`, `zip_release: true`, `filename: area_occupancy.zip` |
 | Stars | 308 | `gh repo view Hankanman/Area-Occupancy-Detection --json stargazerCount` |
 | Min HA version declared | 2024.8.0 | `hacs.json`: `"homeassistant": "2024.8.0"` |
-| HA version actually tested against | 2026.2.2 | `pyproject.toml` pins `homeassistant==2026.2.2` |
+| HA version actually tested against | 2026.7.1 | `pyproject.toml` pins `homeassistant==2026.7.1` (dependency refresh, PR #496, merged 2026-07-06) |
 | Docs site | `hankanman.github.io/Area-Occupancy-Detection/` | `gh repo view` `homepageUrl` |
 | Release scheme | CalVer `YYYY.M.N` (not the SemVer CLAUDE.md's release section describes) | `gh release list`, e.g. `2026.5.17` |
 
@@ -93,11 +93,11 @@ upstream thread (#25), not a rivalry.
    room-to-room transition probabilities from observed history (not a
    hand-tuned "if kitchen occupied, boost dining room by X%" static rule) and
    applies both a Bayesian logit-space boost and a decay-half-life stretch to
-   neighboring areas. This is PR #454 — **merging as of 2026-07-06, NOT yet on
-   `main`. Verify current state with `gh pr view 454`** before describing it as
-   shipped. It directly answers community discussion #431 (a user request for
-   exactly this feature, unanswered by the requester's own suggested static-
-   config approach — AOD's design instead learns influence from data).
+   neighboring areas. This is PR #454 — **merged 2026-07-06, now on `main`**
+   (squash merge, main HEAD `17b71d2`). It directly answers community
+   discussion #431 (a user request for exactly this feature, unanswered by
+   the requester's own suggested static-config approach — AOD's design
+   instead learns influence from data).
 
 **No-oversell rule for #4 specifically:** every constant driving the
 adjacency boost/decay-modifier math (`ADJACENCY_BOOST_GAIN=0.5`,
@@ -163,7 +163,7 @@ at minimum:
    never blur the two. A synthetic-fixture result is a sanity check, not an
    accuracy claim.
 3. **Sample size**: this project's own internal bar for trusting a learned
-   correlation is `MIN_CORRELATION_SAMPLES = 50` (`const.py:286` on main; line drifts by branch — `grep -n MIN_CORRELATION_SAMPLES custom_components/area_occupancy/const.py`) — any
+   correlation is `MIN_CORRELATION_SAMPLES = 50` (`const.py:323` on main as of 2026-07-06; line drifts by branch — `grep -n MIN_CORRELATION_SAMPLES custom_components/area_occupancy/const.py`) — any
    external accuracy comparison with fewer than 50 underlying observations
    per area/sensor should be labeled preliminary, not a result.
 4. **The exact metric** (precision/recall on occupied-interval detection,
@@ -197,17 +197,20 @@ most reliable/most predictive" framing needs the measurement described in
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (`pyproject.toml`
-line 7 / `manifest.json` line 20 / `const.py` `DEVICE_SW_VERSION`).
-PRs #454 (adjacent-areas), #491, #492, #493, #494 were **open, CI-green,
-unmerged** at time of writing — re-verify before citing any of their content
-as shipped.
+Date-stamped 2026-07-06 (post-merge), integration version 2026.5.17
+(`pyproject.toml` line 7 / `manifest.json` line 20 / `const.py`
+`DEVICE_SW_VERSION`) — note the integration's *tagged release* version has
+not moved past 2026.5.17 yet, so "shipped in release" language should still
+say "merged to main, not yet in a tagged release."
+PRs #454 (adjacent-areas), #491, #492, #493, #494 were **merged 2026-07-06**
+(squash merges) — main HEAD is now `17b71d2`. Re-verify merge state before
+citing any of their content as shipped if working from an older checkout.
 
 Re-verification commands, by volatile fact category:
 
 - **Star count / repo metadata**: `gh repo view Hankanman/Area-Occupancy-Detection --json stargazerCount,description,homepageUrl`
-- **Adjacent-areas / PR #454 merge state**: `gh pr view 454 --json state,mergeable,statusCheckRollup`
-- **Same-day bugfix PRs #491-494 merge state**: `gh pr view 491 492 493 494 --json state,mergeable` (run each individually; `gh pr view` takes one number at a time)
+- **Adjacent-areas / PR #454 merge state** (merged 2026-07-06; reconfirm on an older checkout): `gh pr view 454 --json state,mergedAt`
+- **Same-day bugfix PRs #491-494 merge state** (all merged 2026-07-06): `gh pr view 491 492 493 494 --json state,mergedAt` (run each individually; `gh pr view` takes one number at a time)
 - **Bermuda thread #25 latest status**: `gh issue view 25 --json state,comments,labels`
 - **Adjacency tunables / "first-pass" disclaimer still present**: `grep -n "First-pass values" custom_components/area_occupancy/const.py`
 - **PR #486 measured numbers (15,952/7,058/3,323 rows, −55%/−79%)**: `gh pr view 486 --json body`

@@ -58,13 +58,21 @@ warning at all, and could wrongly conclude the reported deprecation was fabricat
 fixed. It wasn't: the deprecation was real, confirmed against HA's own 2026-05-26 blog post
 (`developers.home-assistant.io`) and the reporter's actual running version.
 
+**Status: SETTLED.** PR #489 merged 2026-07-06, and the follow-up dependency refresh (PR #496,
+merged 2026-07-06) moved the pinned test dependency itself to `homeassistant==2026.7.1` — past the
+version that exhibits the behavior — so the skew this lesson warns about no longer exists between
+CI and the reporter's install. Keep the story as a dated case study in *why* you verify against
+the right version, not as a live trap: the general lesson (identify which version is authoritative
+for a given claim — usually the reporter's live version or latest stable, not whatever's pinned in
+`pyproject.toml`) still applies whenever pins and reality can diverge again.
+
 **Lesson, generalized:** when refuting a claim about behavior that depends on an external
 version (HA core, a library, a user's own install), identify which version is authoritative for
 *that specific claim* — usually the reporter's live version, or the latest stable release, not
 whatever happens to be pinned in `pyproject.toml` for CI stability. The pinned CI version
-(`homeassistant==2026.2.2` as of 2026-07-06 — reverify with `grep homeassistant pyproject.toml`)
-is deliberately old for test stability; treat it as ground truth for *this repo's test suite*,
-never as ground truth for "does HA core still do X."
+(`homeassistant==2026.7.1` as of 2026-07-06 — reverify with `grep homeassistant pyproject.toml`)
+now tracks current HA core closely post-#496; treat it as ground truth for *this repo's test
+suite*, and re-check for drift the next time HA ships a release this repo hasn't picked up yet.
 
 ## Hypothesis-predicts-numbers-before-running
 
@@ -134,9 +142,9 @@ Notes on specific stages:
 
 ## Experiment flags: how an experimental capability ships and graduates
 
-The adjacent-areas feature (PR #454, `feat/adjacent-areas` branch — **not yet merged to main as
-of 2026-07-06; CI-green, `mergeable: MERGEABLE`, verify current state with `gh pr view 454`**) is
-the reference pattern for shipping something whose *tuning* is genuinely unknown at merge time:
+The adjacent-areas feature (PR #454, `feat/adjacent-areas` branch — **merged to main 2026-07-06**;
+verify with `gh pr view 454 --json state,mergedAt`) is the reference pattern for shipping something
+whose *tuning* is genuinely unknown at merge time:
 
 1. **Off by default, not behind a separate feature toggle.** There's no `enable_adjacency: bool`.
    Instead `CONF_ADJACENT_AREAS` defaults to `[]` (`data/config.py`, `raw_adjacent = data.get(CONF_ADJACENT_AREAS, [])`)
@@ -210,12 +218,13 @@ re-deriving it yourself — and credit it in the PR, matching this project's own
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (per `custom_components/area_occupancy/manifest.json`
-and `pyproject.toml` at that date). Facts verified directly against the repo/GitHub during
-authoring (not taken solely from a secondary dossier):
+Date-stamped 2026-07-06 (post-merge, main HEAD `17b71d2`), integration version still 2026.5.17
+(per `custom_components/area_occupancy/manifest.json` and `pyproject.toml` at that date — none of
+the 2026-07-06 merge wave has shipped in a tagged release yet). Facts verified directly against
+the repo/GitHub during authoring (not taken solely from a secondary dossier):
 
-- `pyproject.toml:26` — `homeassistant==2026.2.2` pinned test dependency. Reverify:
-  `grep -n '"homeassistant==' pyproject.toml`
+- `pyproject.toml:25` — `homeassistant==2026.7.1` pinned test dependency (bumped from 2026.2.2 by
+  PR #496, merged 2026-07-06). Reverify: `grep -n '"homeassistant==' pyproject.toml`
 - `custom_components/area_occupancy/const.py` lines ~189-221 — adjacency tunables and their
   "first-pass, tune from real data later" comment, exact constant names and values. Reverify:
   `sed -n '185,225p' custom_components/area_occupancy/const.py`
@@ -231,10 +240,10 @@ authoring (not taken solely from a secondary dossier):
 - Issue #464 comment by `@laszlojakab` (line-level root cause). Reverify: `gh issue view 464 --json comments`
 - Discussion #431 body (user's "next door room" request). Reverify:
   `gh api repos/Hankanman/Area-Occupancy-Detection/discussions/431`
-- PR #454 state (adjacent-areas feature) — **OPEN, not merged**, as of 2026-07-06. Reverify:
-  `gh pr view 454 --json state,mergeable,statusCheckRollup`
-- PRs #491/#492/#493/#494 — all **OPEN** as of 2026-07-06 (merging, not merged). Reverify:
-  `gh pr view <n> --json state` for each.
+- PR #454 state (adjacent-areas feature) — **MERGED 2026-07-06**. Reverify:
+  `gh pr view 454 --json state,mergedAt`
+- PRs #491/#492/#493/#494 — all **MERGED 2026-07-06**. Reverify:
+  `gh pr view <n> --json state,mergedAt` for each.
 - Health-saga PR/issue chain (#429, #444, #445, #446, #455, #459, #463, #465, #466, #472, #473,
   #474) — taken from the discovery dossier's git/PR archaeology lens; spot-verify any single
   claim with `gh pr view <n> --json body,mergedAt` before citing a specific number from it in new

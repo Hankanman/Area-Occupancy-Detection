@@ -25,7 +25,7 @@ sit in the pipeline, use `aod-architecture-contract`.
 
 | Function | Space | Status (2026-07-06) | Called from |
 |---|---|---|---|
-| `sigmoid_probability()` (utils.py:136) | **logit space**, additive weighted terms | **LIVE** — this is the actual engine | `presence_probability()`, `environmental_confidence()` → `area/area.py::Area._base_probability()` → `Area.probability()` → `sensor.py` state |
+| `sigmoid_probability()` (utils.py:136) | **logit space**, additive weighted terms | **LIVE** (2026-07-06) — this is the actual engine | `presence_probability()`, `environmental_confidence()` → `area/area.py::Area._base_probability()` → `Area.probability()` → `sensor.py` state |
 | `bayesian_probability()` (utils.py:451) | log-probability space, per-entity log-likelihood accumulation (mathematically a weighted naive-Bayes update) | **DEAD CODE** — defined, unit-tested, never called from any production path | only `tests/test_utils.py` |
 
 Verified: `grep -rn "bayesian_probability" custom_components/ tests/` returns only `utils.py`
@@ -93,8 +93,7 @@ After `_base_probability()`, `Area.probability()` (`area/area.py:245-274`) appli
    strong activity (TV, shower, cooking), `z = logit(base) + activity_boost × activity_confidence`,
    then sigmoid back. Boost magnitudes are `ACTIVITY_BOOST_HIGH=1.5` (showering/bathing/sleeping),
    `_STRONG=1.2` (TV), `_MODERATE=1.0` (cooking/working), `_MILD=0.8` (music/eating) — const.py:167-170.
-2. **Adjacency boost** (`apply_logit_boost`, see §6) — only if `feat/adjacent-areas` (PR #454) is
-   merged; see §6 for merge status.
+2. **Adjacency boost** (`apply_logit_boost`, see §6) — merged 2026-07-06 (PR #454), always applied.
 
 ### Worked example — motion sensor lifts a low prior
 
@@ -128,14 +127,14 @@ global_prior = clamp(occupied_duration / actual_period_duration, 0.01, 0.99)
 
 - `occupied_duration` = sum of merged occupied-interval durations over the period.
 - `actual_period_duration` = `actual_period_end − first_interval_start`.
-- **`actual_period_end` — merging as of 2026-07-06, verify with `gh pr view 491`.** Current
-  `main`/HEAD (`8840a50`): `actual_period_end` is `last_interval_end` whenever the area has been
-  quiet >1h, `now` otherwise (`data/analysis.py:517-520`) — **this is the buggy behavior**. PR #491
-  (`fix/global-prior-quiet-tail`) makes it **always** `now` (bar the existing clock-skew/invalid-
-  bounds fallbacks): truncating at the last interval drops known-quiet time from the denominator,
-  so every overnight recalculation re-inflates `global_prior` until it pins at `MAX_PRIOR = 0.99` —
-  one of the maintainer's three costliest historical bugs. Diff the fix:
-  `git diff main origin/fix/global-prior-quiet-tail -- custom_components/area_occupancy/data/analysis.py`.
+- **`actual_period_end` — SETTLED, PR #491 merged 2026-07-06 (main HEAD `17b71d2`).**
+  `actual_period_end` is now **always** `now` (bar the existing clock-skew/invalid-bounds
+  fallbacks) — `data/analysis.py:518`, comment there cites the historical bug as `#483`. Before the
+  fix, `actual_period_end` fell back to `last_interval_end` whenever the area had been quiet >1h,
+  which dropped known-quiet time from the denominator so every overnight recalculation re-inflated
+  `global_prior` until it pinned at `MAX_PRIOR = 0.99` — one of the maintainer's three costliest
+  historical bugs (issue #483, now closed). See `aod-failure-archaeology` for the full saga; this
+  section only tracks the live formula.
 - Fallback: invalid bounds, clock skew, or non-positive duration → `global_prior = 0.01` (hardcoded
   literal, same value as but independent of `MIN_PRIOR` — `data/analysis.py:472,494,541,565`).
 
@@ -259,14 +258,15 @@ half-life alternates: purpose base `half_life` (1200s) *inside* the sleep window
 overnight windows like `23:00→07:00` handled via `start_time > end_time`), `awake_half_life` (620s)
 *outside* it — a bedroom holds "occupied" through sleep but clears within ~45min (4.3×620s) once up.
 
-**Custom-override rule — merging as of 2026-07-06, verify with `gh pr view 493`.** Current
-`main`/HEAD: a **custom** half-life set for a Bedroom (anything other than the built-in 1200s)
-still gets silently switched to `awake_half_life=620` outside the sleep window — the override isn't
-respected. PR #493 (`fix/bedroom-half-life-override`) adds a guard:
-`if self._base_half_life != self._purpose.half_life: return self._base_half_life` — any half-life
-differing from the purpose default is treated as a deliberate override and the switch is skipped.
-Diff: `git diff main origin/fix/bedroom-half-life-override -- custom_components/area_occupancy/data/decay.py`.
-Matches the maintainer's #2 named historical failure class ("decay half-life config bugs").
+**Custom-override rule — SETTLED, PR #493 merged 2026-07-06 (main HEAD `17b71d2`).**
+`Decay._resolve_purpose_half_life()` (`data/decay.py:81-119`) now has the guard:
+`if self._base_half_life != self._purpose.half_life: return self._base_half_life` (line 90) — any
+half-life differing from the purpose default is treated as a deliberate override, so a **custom**
+half-life set for a Bedroom (anything other than the built-in 1200s) skips the sleep/awake switch
+entirely and is respected as-is. Before the fix (issue #481, now closed), a custom Bedroom
+half-life was still silently switched to `awake_half_life=620` outside the sleep window. Matches
+the maintainer's #2 named historical failure class ("decay half-life config bugs") — see
+`aod-failure-archaeology` for the full saga.
 
 ## 4. Likelihoods per sensor type — `P(evidence|occupied)` / `P(evidence|not-occupied)`
 
@@ -330,10 +330,13 @@ state, for rooms (typically bathrooms) where a single motion sensor can't see th
 
 ## 6. Adjacent-areas math — Bayesian boost + decay modifier
 
-**Merging as of 2026-07-06 — verify with `gh pr view 454`.** PR #454 (`feat/adjacent-areas`),
-CI-green, not yet merged to `main`. It IS the currently checked-out working tree in this session
-(`data/adjacency.py`, `data/trajectory.py`, `db/transitions.py` exist on disk) — confirm with
-`git log main..HEAD` before assuming it's live elsewhere. Design rationale: discussion #431.
+**MERGED to `main` 2026-07-06 (PR #454, main HEAD `17b71d2`).** `feat/adjacent-areas` is complete
+and live: `data/adjacency.py`, `data/trajectory.py`, `db/transitions.py` all exist on `main`, and
+`Area.probability()` (`area/area.py`) calls `apply_logit_boost()` unconditionally as step 2 after
+the activity boost — no feature flag or unmerged-branch caveat remains. Adjacency itself is still
+labeled a **candidate**, not validated against real households, pending real-data tuning of the
+gain/threshold constants below. Design rationale: discussion #431 (PR #456 was closed as merged
+into #454).
 
 ### Boost — `compute_adjacency_boost()` (`data/adjacency.py:122-186`)
 
@@ -429,11 +432,13 @@ methodology and how this feeds accuracy work, see `aod-research-methodology` and
 
 ## Provenance and maintenance
 
-Date-stamped: **2026-07-06**, integration version **2026.5.17** (`pyproject.toml:7`,
-`manifest.json:20`). Checked out branch during authoring: `feat/adjacent-areas` (PR #454, 28
-commits ahead of `main`, 0 behind, CI green, not yet merged). PRs #491, #492, #493, #494 are
-separate open branches off `main`, **not** included in `feat/adjacent-areas` — verified with
-`git merge-base --is-ancestor <sha> HEAD`.
+Date-stamped: **2026-07-06** (post-merge sweep), integration version **2026.5.17**
+(`pyproject.toml:7`, `manifest.json:20` — this is a released-version number only; none of the PRs
+below are in a tagged release yet). Checked out branch: `main`, HEAD `17b71d2`. PRs #454
+(adjacent-areas), #491 (global-prior quiet-tail fix), #492 (sleep unknown-presence), #493
+(bedroom half-life override guard), #494 (README purpose link) are all merged into `main` as of
+this sweep — verified with `git log --oneline -1` and per-fact `grep`s below rather than
+`gh pr view`/`git merge-base` against unmerged branches.
 
 Re-verification commands, one per volatile fact category:
 
@@ -441,27 +446,25 @@ Re-verification commands, one per volatile fact category:
 # Which probability function is actually live (§0)
 grep -rn "bayesian_probability\|sigmoid_probability" custom_components/area_occupancy/area/area.py custom_components/area_occupancy/utils.py
 
-# Global prior period-end behavior — is #491 merged yet? (§2a)
+# Global prior period-end behavior — confirm #491's fix still holds (§2a)
 grep -n "actual_period_end = " custom_components/area_occupancy/data/analysis.py
-gh pr view 491 --json state,mergeable,title
 
 # Purpose half-life / min_prior table (§3)
 sed -n '/PURPOSE_DEFINITIONS/,/^}/p' custom_components/area_occupancy/data/purpose.py
 
-# Bedroom custom half-life override guard — is #493 merged yet? (§3)
+# Bedroom custom half-life override guard — confirm #493's fix still holds (§3)
 grep -n "_base_half_life != self._purpose.half_life" custom_components/area_occupancy/data/decay.py
-gh pr view 493 --json state,mergeable,title
 
 # Sensor-type likelihood defaults (§4)
 sed -n '/^DEFAULT_TYPES/,/^}/p' custom_components/area_occupancy/data/entity_type.py
 
-# Adjacent-areas constants and merge status (§6, §7)
+# Adjacent-areas constants and wiring (§6, §7)
 grep -n "^ADJACENCY_" custom_components/area_occupancy/const.py
-gh pr view 454 --json state,mergeable,title
+grep -n "apply_logit_boost" custom_components/area_occupancy/area/area.py
 
 # Correlation sample-size floor (§8)
 grep -n "MIN_CORRELATION_SAMPLES" custom_components/area_occupancy/const.py
 
-# Confirm current branch / merge state before trusting any "merging as of" note above
-git branch --show-current && git log --oneline main..HEAD | wc -l
+# Confirm current branch / HEAD before trusting any date-stamped fact above
+git branch --show-current && git log --oneline -1
 ```

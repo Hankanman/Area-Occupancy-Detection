@@ -63,7 +63,7 @@ When you write a new feature, produce both files as a pair, cross-linked in both
 
 Plain prose over bureaucratic tone; short paragraphs; admonitions for callouts; tables for anything enumerable (fields, defaults, thresholds); mermaid for flow/sequence, not for anything a table would do better.
 
-**Admonition syntax is mkdocs Material's `!!!` block form, not GitHub's `> [!NOTE]`** — the two are not interchangeable and only one renders correctly depending on which renderer processes the file (GitHub's own Markdown preview understands `> [!NOTE]`/`> [!WARNING]`/`> [!CAUTION]`; mkdocs-material understands `!!! note`). `docs/docs/**` files use the mkdocs form exclusively (verified: `grep -rn '^!!! ' docs/docs/features/*.md` matches 12 admonitions across 6 files, zero `> [!` GitHub-style blocks in `docs/docs/`). `CHANGELOG.md` and GitHub Release bodies use the GitHub form instead (verified: `CHANGELOG.md:159` uses `> [!WARNING]`), because those render on github.com, not through mkdocs.
+**Admonition syntax is mkdocs Material's `!!!` block form, not GitHub's `> [!NOTE]`** — the two are not interchangeable and only one renders correctly depending on which renderer processes the file (GitHub's own Markdown preview understands `> [!NOTE]`/`> [!WARNING]`/`> [!CAUTION]`; mkdocs-material understands `!!! note`). `docs/docs/**` files use the mkdocs form exclusively (verified: `grep -rn '^!!! ' docs/docs/features/*.md` matches 12 admonitions across 5 files, zero `> [!` GitHub-style blocks in `docs/docs/`). `CHANGELOG.md` and GitHub Release bodies use the GitHub form instead (verified: `CHANGELOG.md:163` uses `> [!WARNING]`, shifted from `:159` after PR #495 added the deprecation banner), because those render on github.com, not through mkdocs.
 
 Exemplars, quoted directly:
 
@@ -131,34 +131,29 @@ fd61713 docs(adjacent-areas): Phase 5 documentation
 8840a50 refactor(analysis): hoist step helpers to module level for C901
 ```
 
-Squash-merge titles append the PR number in parentheses, e.g. `chore: bump version to 2026.5.17 (#475)` (verified: current `main` HEAD at time of writing, `704c89e`). When writing a PR title, don't add the `(#N)` yourself — GitHub's squash-merge UI appends it automatically from the PR number.
+Squash-merge titles append the PR number in parentheses, e.g. `chore: bump version to 2026.5.17 (#475)`. Same convention held through the 2026-07-06 merge wave, e.g. `feat: adjacent-areas — learned next-door room influence (#454)` (verified: current `main` HEAD as of this sweep, `17b71d2`). When writing a PR title, don't add the `(#N)` yourself — GitHub's squash-merge UI appends it automatically from the PR number.
 
-## Release notes and CHANGELOG.md — pick one, don't silently maintain both
+## Release notes and CHANGELOG.md — resolved 2026-07-06, pointer banner in place
 
 **Release notes are written by hand in GitHub Releases**, not generated from `CHANGELOG.md`. Verified via `gh release view 2026.5.17`: a hand-written release body with a narrative intro ("Saner repair defaults + the off-switch you asked for"), a numbered "What's fixed" section explaining each change's motivation, and a "What's Changed" list of `feat(scope): ... by @Hankanman in <PR URL>` lines matching the actual merged PRs (#472, #473, #474, #475). This is materially richer than a changelog entry — it explains *why*, tells users what to check (e.g. "Make sure your bedroom area's purpose is set to `Sleeping`"), and is the artifact users actually read on the releases page and via HACS.
 
-**`CHANGELOG.md` is abandoned.** Verified: its last dated entry is `## [2026.3.3] - 2026-03-09` (`CHANGELOG.md:11`), while the actual latest release is `2026.5.17` (2026-05-17) with several more releases in between not represented at all. Its `## [Unreleased]` section (line 8) is empty and has been for at least two release cycles. Do not add entries to it under the assumption it's the doc of record — it isn't, and quietly maintaining it in parallel with GitHub Releases means two sources of truth that will diverge (they already have).
-
-**This needs a maintainer decision: fix-or-delete, don't silently maintain.** Two honest options, both better than the status quo:
-1. Delete `CHANGELOG.md` and add a one-line pointer in its place (or in README) to the GitHub Releases page, since that's already the doc of record in practice.
-2. Recommit to it: backfill the missing 2026.3.3→2026.5.17 entries and add a pre-merge or pre-release checklist item to update it going forward.
-Don't pick a third option of "leave it exactly as-is" — a visibly-abandoned CHANGELOG.md next to an actively-maintained Releases page is worse than either extreme, because a reader has no way to know which one to trust. If you're asked to add a changelog entry for a new release and this hasn't been resolved, flag the inconsistency to the maintainer rather than silently perpetuating it.
+**`CHANGELOG.md` was abandoned (last dated entry `## [2026.3.3] - 2026-03-09`, `CHANGELOG.md:11`, while the actual latest release was `2026.5.17` with several releases in between not represented) — this is now SETTLED.** PR #495 (merged 2026-07-06) added a banner immediately under the `# Changelog` heading: *"this file is no longer maintained (last entry 2026.3.3). The changelog of record is [GitHub Releases](https://github.com/Hankanman/Area-Occupancy-Detection/releases)..."* This is the lighter-weight version of the two options this doc previously proposed (pointer banner, not a full delete) — don't re-propose deletion or backfilling as if the ambiguity were still open. Do not add new dated entries to the file's body; if a task asks you to log a release there, point to the banner and use GitHub Releases instead.
 
 ## STALE-DOC landmines — do not trust without re-verifying
 
-These are documents that describe a process the repo no longer follows. Each was checked against live repo state on 2026-07-06 — re-check before relying on them, since they may have been fixed or may have drifted further.
+These are documents that describe (or described) a process the repo no longer follows. Two of the three rows below were fixed in the 2026-07-06 merge wave (PR #495) — kept here as settled history rather than deleted, since the failure mode (a doc silently diverging from repo reality) recurs and the fix references are useful precedent. Re-check before relying on any row, since things may have drifted again since this sweep.
 
-| Doc | What it says | What the repo actually shows | Re-verify with |
+| Doc | What it said | Status as of 2026-07-06 | Re-verify with |
 |---|---|---|---|
-| `CONTRIBUTING.md:16` | "Fork the repo and create your branch from `dev`." | No `dev` branch exists on the remote. All recent feature/fix branches (`fix/global-prior-quiet-tail`, `feat/adjacent-areas`, `fix/bedroom-half-life-override`, etc.) target `main` directly. | `git branch -r` (look for absence of `dev`/`preview`); `gh pr view <n> --json baseRefName` on any open PR |
-| `CLAUDE.md` "Branch and Release Strategy" section | "Development happens on `dev` branch. PR from `dev` to `preview` for prereleases. PR from `preview` to `main` for full releases." | CLAUDE.md says dev→preview→main, but the repo shows every open PR (#454, #491, #492, #493, #494, as of 2026-07-06) bases directly on `main`, and `.github/workflows/release.yml` triggers on `release: published` (a manually-created GitHub Release), not on a branch-merge event. There is no `preview` branch either. | `git branch -r`; `cat .github/workflows/release.yml`; `gh pr list --json baseRefName` |
-| `pyproject.toml:114` | Inline comment `fail_under = 85 # Enforce 90% coverage minimum` | The enforced number (`fail_under = 85`) and the comment's stated number (90%) disagree with each other in the same line. `CLAUDE.md:147` separately says "85%+ coverage requirement (90% for core calculations)" — that CLAUDE.md line is internally consistent (85% overall, 90% for a subset) but the `pyproject.toml` comment is just wrong/stale on its own terms. | `grep -n fail_under pyproject.toml` |
+| `CONTRIBUTING.md:16` | "Fork the repo and create your branch from `dev`." | **SETTLED** (PR #495, merged 2026-07-06): now reads "Fork the repo and create your branch from `main`." No `dev` branch exists on the remote; all recent feature/fix branches (`fix/global-prior-quiet-tail`, `feat/adjacent-areas`, `fix/bedroom-half-life-override`, etc.) targeted `main` directly, and the doc now matches. | `git branch -r` (look for absence of `dev`/`preview`); `sed -n '16p' CONTRIBUTING.md` |
+| `CLAUDE.md` "Branch and Release Strategy" section | "Development happens on `dev` branch. PR from `dev` to `preview` for prereleases. PR from `preview` to `main` for full releases." | **STILL A LIVE LANDMINE** — CLAUDE.md is unchanged and still says dev→preview→main. The repo has no open PRs as of this sweep (the 2026-07-06 wave, #454/#491/#492/#493/#494/#495/#496, all merged direct to `main`), and `.github/workflows/release.yml` triggers on `release: published` (a manually-created GitHub Release), not a branch-merge event. There is no `preview` branch either. | `git branch -r`; `cat .github/workflows/release.yml`; `gh pr list --json baseRefName` |
+| `pyproject.toml` (line 114, now line 113) | Inline comment `fail_under = 85 # Enforce 90% coverage minimum` — the enforced number and the comment's stated number disagreed with each other in the same line. | **SETTLED** (PR #495, merged 2026-07-06): now reads `fail_under = 85 # Enforced global minimum; aim for 90%+ on core calculation modules (CLAUDE.md)` — internally consistent and cross-references `CLAUDE.md`'s "85%+ coverage requirement (90% for core calculations)" line instead of contradicting it. | `grep -n fail_under pyproject.toml` |
 
-Do not silently "fix" `CLAUDE.md`'s branch-strategy section as a drive-by edit — it's explicit project instruction content; flag it to the maintainer or fold the correction into a PR whose primary purpose is a docs/process cleanup, per `aod-change-control`'s rules on touching CLAUDE.md.
+Do not silently "fix" `CLAUDE.md`'s branch-strategy section as a drive-by edit — it's explicit project instruction content; flag it to the maintainer or fold the correction into a PR whose primary purpose is a docs/process cleanup, per `aod-change-control`'s rules on touching CLAUDE.md. (The other two rows show this is a real, fixable pattern once someone owns it — CLAUDE.md's branch-strategy section is the one that hasn't been picked up yet.)
 
 ## Keeping docs in sync when code changes — the #491 cautionary example
 
-**Cautionary example (PR #491, `fix(prior): keep quiet tail in global prior denominator`, merging as of 2026-07-06 — verify with `gh pr view 491`):** the code change altered how `PriorAnalyzer.calculate_and_update_prior()` picks the end of its observation period (previously truncated to `last_interval_end` when the area had been quiet >1h; now always `now`). `docs/docs/technical/global-prior-flow.md` documented the *old* (buggy) behavior in prose — "If last interval is more than 1 hour old: Use `last_interval_end` / Otherwise: Use current time" — and had to be edited in the same PR (7 additions, 16 deletions) to stop describing the bug as intended behavior. This was caught as a review nitpick, not by the original author remembering to update the doc.
+**Cautionary example (PR #491, `fix(prior): keep quiet tail in global prior denominator`, merged 2026-07-06 — verify with `gh pr view 491`):** the code change altered how `PriorAnalyzer.calculate_and_update_prior()` picks the end of its observation period (previously truncated to `last_interval_end` when the area had been quiet >1h; now always `now` — this is the current, permanent behavior on `main`, i.e. `actual_period_end` is always `now`, not conditionally truncated). `docs/docs/technical/global-prior-flow.md` documented the *old* (buggy) behavior in prose — "If last interval is more than 1 hour old: Use `last_interval_end` / Otherwise: Use current time" — and had to be edited in the same PR (7 additions, 16 deletions) to stop describing the bug as intended behavior. This was caught as a review nitpick, not by the original author remembering to update the doc.
 
 **Rule extracted:** when a change touches `data/analysis.py`, `data/prior.py`, `data/decay.py`, or `utils.py::bayesian_probability()` (the files `CLAUDE.md` names under "Modifying Bayesian Calculation"), grep `docs/docs/technical/` and `docs/docs/features/` for any prose description of the specific mechanism you changed before opening the PR:
 
@@ -181,7 +176,7 @@ Use this checklist before deciding a PR doesn't need a doc touch:
 
 ## Provenance and maintenance
 
-Date-stamped 2026-07-06, integration version 2026.5.17 (per `git log -1 --oneline` = `704c89e chore: bump version to 2026.5.17 (#475)`).
+Date-stamped 2026-07-06 (post-merge sweep), `main` HEAD `17b71d2` (`feat: adjacent-areas — learned next-door room influence (#454)`). Integration **release** version is still `2026.5.17` — the 2026-07-06 merge wave (#454, #486, #488, #489, #491–#496) is on `main` but not yet in a tagged release; don't describe any of that wave's changes as "shipped in release" until a new tag/release exists.
 
 Re-verification commands by volatile fact category:
 
@@ -194,7 +189,7 @@ Re-verification commands by volatile fact category:
 - **Commit prefix convention**: `git log --oneline -30`
 - **Release notes source of truth**: `gh release view <latest-tag>` and compare against `CHANGELOG.md`'s last `## [` entry
 - **CHANGELOG.md staleness**: `grep -n '^## \[' CHANGELOG.md | head -3` vs `gh release list --limit 3`
-- **Branch strategy reality**: `git branch -r`; `gh pr list --json number,baseRefName,headRefName`
+- **Branch strategy reality**: `git branch -r`; `gh pr list --json number,baseRefName,headRefName` (no open PRs as of this sweep)
 - **Coverage threshold**: `grep -n fail_under pyproject.toml`
-- **PR #491 status** (cited as merging, not merged): `gh pr view 491 --json state,mergeable,baseRefName`
+- **PR #491 status** (merged 2026-07-06 — re-check it's still merged, not reverted): `gh pr view 491 --json state,mergeable,baseRefName`
 - **Feature/planned-feature drift**: `grep -n '^## Features' -A 30 README.md` and `grep -n '^## Planned Features' -A 10 README.md`, cross-check against `custom_components/area_occupancy/data/entity_type.py`'s `InputType` enum
