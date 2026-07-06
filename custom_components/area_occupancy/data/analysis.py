@@ -107,40 +107,6 @@ async def run_full_analysis(
     async def _sync_states() -> None:
         await coordinator.db.sync_states()
 
-    async def _health_check_and_prune() -> None:
-        health_ok = await coordinator.hass.async_add_executor_job(
-            coordinator.db.periodic_health_check
-        )
-        if not health_ok:
-            _LOGGER.warning(
-                "Database health check found issues for areas: %s",
-                format_area_names(coordinator),
-            )
-        await coordinator.hass.async_add_executor_job(
-            coordinator.db.prune_old_intervals
-        )
-
-    async def _sensor_health_check() -> None:
-        if not coordinator.integration_config.health_enabled:
-            for area in coordinator.areas.values():
-                area.health_monitor.clear_all_issues()
-            return
-        for area in coordinator.areas.values():
-            excluded = set()
-            if area.wasp_entity_id:
-                excluded.add(area.wasp_entity_id)
-            if area.sleep_entity_id:
-                excluded.add(area.sleep_entity_id)
-            issues = area.health_monitor.check_health(
-                area.entities.entities, excluded_entity_ids=excluded or None
-            )
-            if issues:
-                _LOGGER.info(
-                    "Area '%s' has %d sensor health issue(s)",
-                    area.area_name,
-                    len(issues),
-                )
-
     async def _recalculate_priors() -> None:
         for area in coordinator.areas.values():
             await area.run_prior_analysis()
@@ -148,18 +114,6 @@ async def run_full_analysis(
     async def _run_correlations() -> None:
         await run_correlation_analysis(coordinator)
         await coordinator.async_refresh_correlations()
-
-    async def _run_transition_learning() -> None:
-        # Lazy import — db.transitions only matters when adjacency is in use.
-        from ..db.transitions import record_transitions_for_entry  # noqa: PLC0415
-
-        if coordinator.config_entry is None:
-            return
-        await coordinator.hass.async_add_executor_job(
-            record_transitions_for_entry,
-            coordinator.db,
-            coordinator.config_entry.entry_id,
-        )
 
     async def _pipeline_health_check() -> None:
         await _run_pipeline_health_check(coordinator)
@@ -172,8 +126,10 @@ async def run_full_analysis(
 
     try:
         await _run_step(1, "sync_states", _sync_states())
-        await _run_step(2, "health_check_and_prune", _health_check_and_prune())
-        await _run_step(3, "sensor_health_check", _sensor_health_check())
+        await _run_step(
+            2, "health_check_and_prune", _run_health_check_and_prune(coordinator)
+        )
+        await _run_step(3, "sensor_health_check", _run_sensor_health_check(coordinator))
         await _run_step(
             4,
             "populate_occupied_intervals_cache",
@@ -187,7 +143,7 @@ async def run_full_analysis(
         )
         await _run_step(7, "recalculate_priors", _recalculate_priors())
         await _run_step(8, "correlation_analysis", _run_correlations())
-        await _run_step(9, "transition_learning", _run_transition_learning())
+        await _run_step(9, "transition_learning", _run_transition_learning(coordinator))
         await _run_step(10, "pipeline_health_check", _pipeline_health_check())
         await _run_step(11, "save_data_before_refresh", _save_data())
         await _run_step(12, "refresh_coordinator", _refresh())
@@ -240,6 +196,56 @@ async def run_full_analysis(
             f"Analysis pipeline had {len(failed_steps)} failed step(s): "
             f"{', '.join(failed_steps)}"
         )
+
+
+async def _run_health_check_and_prune(coordinator: AreaOccupancyCoordinator) -> None:
+    """Run the periodic DB health check and prune old intervals."""
+    health_ok = await coordinator.hass.async_add_executor_job(
+        coordinator.db.periodic_health_check
+    )
+    if not health_ok:
+        _LOGGER.warning(
+            "Database health check found issues for areas: %s",
+            format_area_names(coordinator),
+        )
+    await coordinator.hass.async_add_executor_job(coordinator.db.prune_old_intervals)
+
+
+async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> None:
+    """Check per-entity sensor health for every area (repairs pipeline)."""
+    if not coordinator.integration_config.health_enabled:
+        for area in coordinator.areas.values():
+            area.health_monitor.clear_all_issues()
+        return
+    for area in coordinator.areas.values():
+        excluded = set()
+        if area.wasp_entity_id:
+            excluded.add(area.wasp_entity_id)
+        if area.sleep_entity_id:
+            excluded.add(area.sleep_entity_id)
+        issues = area.health_monitor.check_health(
+            area.entities.entities, excluded_entity_ids=excluded or None
+        )
+        if issues:
+            _LOGGER.info(
+                "Area '%s' has %d sensor health issue(s)",
+                area.area_name,
+                len(issues),
+            )
+
+
+async def _run_transition_learning(coordinator: AreaOccupancyCoordinator) -> None:
+    """Record adjacent-area transition observations (Phase 3 learning)."""
+    # Lazy import — db.transitions only matters when adjacency is in use.
+    from ..db.transitions import record_transitions_for_entry  # noqa: PLC0415
+
+    if coordinator.config_entry is None:
+        return
+    await coordinator.hass.async_add_executor_job(
+        record_transitions_for_entry,
+        coordinator.db,
+        coordinator.config_entry.entry_id,
+    )
 
 
 async def _run_pipeline_health_check(
