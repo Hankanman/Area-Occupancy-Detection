@@ -112,6 +112,7 @@ nav:
       - Prior Learning: features/prior-learning.md
       - Sensor Likelihoods: features/likelihood.md
       - Sensor Correlation: features/sensor-correlation.md
+      - Adjacent Areas: features/adjacent-areas.md
       - Wasp in Box: features/wasp-in-box.md
       - Sleep Presence: features/sleep-presence.md
       - Activity Detection: features/activity-detection.md
@@ -127,6 +128,7 @@ nav:
       - Data Flow: technical/data-flow.md
       - Global Prior Flow: technical/global-prior-flow.md
       - Time Prior Flow: technical/time-prior-flow.md
+      - Transition Learning: technical/transition-learning.md
       - Entity Evidence: technical/entity-evidence.md
       - Likelihood Calculation: technical/likelihood-calculation.md
       - Database Schema: technical/database-schema.md

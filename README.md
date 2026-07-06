@@ -91,6 +91,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **Adaptive Historical Analysis**: Learns sensor reliability and priors over time, improving accuracy as it gathers data.
 - **Probability Decay**: Gradually reduces occupancy probability when no new activity occurs, with purpose-based defaults.
 - **Wasp in Box**: Virtual sensor for rooms with a single entry/exit point — maintains occupancy when the door closes after motion.
+- **Adjacent Areas**: Learns transition patterns between physically-connected rooms, boosting a neighbour's probability when household movement suggests it's next and slowing decay when the only known exit has stayed quiet.
 - **All Areas Aggregation**: Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration.
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability.
@@ -105,7 +106,6 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **Occupancy Zone Hierarchies**:
   - **Parent-Child Area Relationships**: If the kitchen is occupied and the dining room is adjacent, allow probabilities to influence each other.
   - **Multi-Room Tracking**: Track movement across rooms for more continuous occupancy detection.
-  - **Adjacent Area Detection**: Pre-heat or turn on devices as the probability rises based on motion in adjacent areas.
 
 ## Installation
 

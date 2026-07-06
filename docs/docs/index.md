@@ -14,6 +14,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
 - **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, cover, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 - **[Wasp in Box](features/wasp-in-box.md)**: Special logic for rooms with single entry/exit points
+- **[Adjacent Areas](features/adjacent-areas.md)**: Learns transitions between physically-connected rooms to boost neighbouring probabilities and slow decay when the only known exit has been quiet
 - **[All Areas Aggregation](features/entities.md#all-areas-aggregation-device)**: Automatically aggregates occupancy data across all configured areas for whole-home detection
 
 ### Advanced Features
