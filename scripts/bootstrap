@@ -46,7 +46,7 @@ fi
 
 echo "==> Creating virtual environment if needed..."
 if [ ! -d ".venv" ]; then
-    uv venv --python 3.13
+    uv venv --python 3.14
 fi
 
 echo "==> Installing root project dependencies..."
