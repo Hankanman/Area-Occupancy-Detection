@@ -105,11 +105,11 @@ class TestUtils:
         """Test float formatting with custom precision settings."""
         # Test default precision (2)
         assert format_float(1.234567) == 1.23
-        
+
         # Test precision = 1
         assert format_float(1.234567, 1) == 1.2
         assert format_float(1.2789, 1) == 1.3
-        
+
         # Test precision = 0
         assert format_float(1.234567, 0) == 1.0
         assert format_float(1.789, 0) == 2.0

@@ -1027,12 +1027,12 @@ class TestSensorIntegration:
         self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """Test that diagnostic sensors round their native_value based on sensor_precision setting."""
-        from custom_components.area_occupancy.sensor import (
-            PresenceProbabilitySensor,
-            EnvironmentalConfidenceSensor,
-            ActivityConfidenceSensor,
-        )
         from custom_components.area_occupancy.const import CONF_SENSOR_PRECISION
+        from custom_components.area_occupancy.sensor import (
+            ActivityConfidenceSensor,
+            EnvironmentalConfidenceSensor,
+            PresenceProbabilitySensor,
+        )
 
         area_name = coordinator_with_sensors.get_area_names()[0]
         area = coordinator_with_sensors.get_area(area_name)
@@ -1057,17 +1057,21 @@ class TestSensorIntegration:
         area.decay = Mock(return_value=0.154321)
         area.presence_probability = Mock(return_value=0.456789)
         area.environmental_confidence = Mock(return_value=0.554321)
-        
+
         mock_activity = Mock()
         mock_activity.confidence = 0.756789
         area.detected_activity = Mock(return_value=mock_activity)
 
         # Backup original options
-        original_options = coordinator_with_sensors.integration_config.config_entry.options
+        original_options = (
+            coordinator_with_sensors.integration_config.config_entry.options
+        )
 
         try:
             # 1. Test precision = 2 (default)
-            coordinator_with_sensors.integration_config.config_entry.options = {CONF_SENSOR_PRECISION: 2}
+            coordinator_with_sensors.integration_config.config_entry.options = {
+                CONF_SENSOR_PRECISION: 2
+            }
             assert probability_sensor.native_value == 65.43
             assert priors_sensor.native_value == 35.68
             assert decay_sensor.native_value == 84.57
@@ -1076,7 +1080,9 @@ class TestSensorIntegration:
             assert activity_sensor.native_value == 75.68
 
             # 2. Test precision = 1
-            coordinator_with_sensors.integration_config.config_entry.options = {CONF_SENSOR_PRECISION: 1}
+            coordinator_with_sensors.integration_config.config_entry.options = {
+                CONF_SENSOR_PRECISION: 1
+            }
             assert probability_sensor.native_value == 65.4
             assert priors_sensor.native_value == 35.7
             assert decay_sensor.native_value == 84.6
@@ -1085,7 +1091,9 @@ class TestSensorIntegration:
             assert activity_sensor.native_value == 75.7
 
             # 3. Test precision = 0
-            coordinator_with_sensors.integration_config.config_entry.options = {CONF_SENSOR_PRECISION: 0}
+            coordinator_with_sensors.integration_config.config_entry.options = {
+                CONF_SENSOR_PRECISION: 0
+            }
             assert probability_sensor.native_value == 65.0
             assert priors_sensor.native_value == 36.0
             assert decay_sensor.native_value == 85.0
@@ -1093,7 +1101,9 @@ class TestSensorIntegration:
             assert env_sensor.native_value == 55.0
             assert activity_sensor.native_value == 76.0
         finally:
-            coordinator_with_sensors.integration_config.config_entry.options = original_options
+            coordinator_with_sensors.integration_config.config_entry.options = (
+                original_options
+            )
 
     def test_occupancy_decoupled_from_precision(
         self, coordinator_with_sensors: AreaOccupancyCoordinator
@@ -1103,29 +1113,35 @@ class TestSensorIntegration:
 
         area_name = coordinator_with_sensors.get_area_names()[0]
         area = coordinator_with_sensors.get_area(area_name)
-        
+
         # Set threshold to 65% (0.65)
         # Set base probability to 0.649 -> 64.9% (below threshold)
         # However, if precision = 1, it rounds to 65.0%
         # Or if precision = 0, it rounds to 65.0% (exactly at threshold)
         area.config.threshold = 0.65
-        
+
         # Mock probability to return 0.649 (unrounded raw value)
         area.probability = Mock(return_value=0.649)
-        
+
         # Backup original options
-        original_options = coordinator_with_sensors.integration_config.config_entry.options
+        original_options = (
+            coordinator_with_sensors.integration_config.config_entry.options
+        )
 
         try:
             # Even with precision = 0 (which rounds 64.9 to 65.0), area.occupied() should use raw probability 0.649 and return False.
-            coordinator_with_sensors.integration_config.config_entry.options = {CONF_SENSOR_PRECISION: 0}
+            coordinator_with_sensors.integration_config.config_entry.options = {
+                CONF_SENSOR_PRECISION: 0
+            }
             assert area.occupied() is False
 
             # If probability is 0.651, area.occupied() should return True, regardless of precision
             area.probability = Mock(return_value=0.651)
             assert area.occupied() is True
         finally:
-            coordinator_with_sensors.integration_config.config_entry.options = original_options
+            coordinator_with_sensors.integration_config.config_entry.options = (
+                original_options
+            )
 
 
 class TestSensorErrorHandling:

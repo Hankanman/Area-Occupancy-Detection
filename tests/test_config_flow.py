@@ -1345,9 +1345,9 @@ class TestAreaOccupancyOptionsFlow:
     ):
         """Test that global settings are actually saved."""
         from custom_components.area_occupancy.const import (
+            CONF_SENSOR_PRECISION,
             CONF_SLEEP_END,
             CONF_SLEEP_START,
-            CONF_SENSOR_PRECISION,
         )
 
         flow = config_flow_options_flow
