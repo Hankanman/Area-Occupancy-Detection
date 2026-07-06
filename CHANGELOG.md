@@ -1,6 +1,10 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+> **Note:** this file is no longer maintained (last entry 2026.3.3). The
+> changelog of record is [GitHub Releases](https://github.com/Hankanman/Area-Occupancy-Detection/releases)
+> — use `gh release list` / `gh release view <tag>`.
+
+All notable changes to this project were previously documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
