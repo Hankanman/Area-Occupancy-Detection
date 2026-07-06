@@ -8,6 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.adjacency import (
+    BoostContribution,
+    DecayModifierContribution,
+)
 from custom_components.area_occupancy.diagnostics import (
     async_get_config_entry_diagnostics,
 )
@@ -236,3 +240,78 @@ class TestDiagnosticsExport:
             assert "prior" in area
             assert "entities" in area
             assert "health" in area
+
+    @pytest.mark.asyncio
+    async def test_adjacency_block_present_when_cached(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        entry_with_runtime_data,
+    ) -> None:
+        """Adjacency boost + decay modifier surface under current.adjacency."""
+        area_name = coordinator.get_area_names()[0]
+        coordinator._adjacency_boosts = {  # noqa: SLF001
+            area_name: BoostContribution(
+                fired=True,
+                trajectory_prev="hallway",
+                trajectory_prev_prev="kitchen",
+                hour_of_week=42,
+                raw_probability=0.8,
+                fallback_level="2hop_hour_of_week",
+                observed_count=8.0,
+                total_count=10.0,
+                logit_contribution=0.69,
+            )
+        }
+        coordinator._adjacency_decay_modifiers = {  # noqa: SLF001
+            area_name: DecayModifierContribution(
+                fired=True,
+                silence_score=0.8,
+                decay_modifier=1.6,
+                base_half_life_seconds=1.0,
+                effective_half_life_seconds=1.6,
+                silent_neighbours=[("hallway", 0.1, 0.8)],
+            )
+        }
+
+        result = await async_get_config_entry_diagnostics(hass, entry_with_runtime_data)
+
+        area_snapshot = next(a for a in result["areas"] if a["area_name"] == area_name)
+        adjacency = area_snapshot["current"]["adjacency"]
+        boost = adjacency["boost"]
+        assert boost["fired"] is True
+        assert boost["trajectory_prev"] == "hallway"
+        assert boost["trajectory_prev_prev"] == "kitchen"
+        assert boost["hour_of_week"] == 42
+        assert boost["fallback_level"] == "2hop_hour_of_week"
+        assert boost["logit_contribution"] == 0.69
+
+        modifier = adjacency["decay_modifier"]
+        assert modifier["fired"] is True
+        assert modifier["silence_score"] == 0.8
+        assert modifier["decay_modifier"] == 1.6
+        assert modifier["silent_neighbours"] == [
+            {
+                "neighbour": "hallway",
+                "lagged_probability": 0.1,
+                "transition_probability": 0.8,
+            }
+        ]
+
+        # And the whole thing must stay JSON-serializable
+        json.dumps(result)
+
+    @pytest.mark.asyncio
+    async def test_adjacency_block_omitted_before_first_tick(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        entry_with_runtime_data,
+    ) -> None:
+        """No cached adjacency state → no adjacency key in the snapshot."""
+        area_name = coordinator.get_area_names()[0]
+
+        result = await async_get_config_entry_diagnostics(hass, entry_with_runtime_data)
+
+        area_snapshot = next(a for a in result["areas"] if a["area_name"] == area_name)
+        assert "adjacency" not in area_snapshot["current"]

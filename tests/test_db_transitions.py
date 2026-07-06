@@ -12,9 +12,12 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.db.maintenance import init_db
+from custom_components.area_occupancy.db.schema import AreaTransitions
 from custom_components.area_occupancy.db.transitions import (
     LEVEL_1HOP_HOUR_OF_WEEK,
     LEVEL_1HOP_UNBUCKETED,
@@ -767,3 +770,49 @@ class TestDiagnosticsSummary:
         assert summary["1_hop_count"] == 1
         assert summary["2_hop_count"] == 1
         assert summary["total_observations"] == pytest.approx(4.5)
+
+
+class TestAreaTransitionsUpgrade:
+    """Non-destructive upgrade path for the AreaTransitions table.
+
+    Existing installs created before this feature have databases without
+    the ``area_transitions`` table. ``init_db`` runs ``create_all`` with
+    ``checkfirst=True`` on every startup, which must add the missing
+    table without touching existing data.
+    """
+
+    def test_missing_table_created_without_data_loss(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Simulate a pre-feature DB: drop the table, re-init, data survives."""
+        db = coordinator.db
+
+        # Capture pre-existing data from another table (fixture seeds areas)
+        with db.get_session() as session:
+            areas_before = session.query(db.Areas).count()
+
+        # Simulate the pre-feature schema
+        AreaTransitions.__table__.drop(db.engine)
+        inspector = sa.inspect(db.engine)
+        assert "area_transitions" not in inspector.get_table_names()
+
+        # Startup init re-creates the missing table only
+        init_db(db)
+
+        inspector = sa.inspect(db.engine)
+        assert "area_transitions" in inspector.get_table_names()
+        with db.get_session() as session:
+            assert session.query(db.Areas).count() == areas_before
+            # New table is usable immediately
+            session.add(
+                db.AreaTransitions(
+                    entry_id=db.coordinator.entry_id,
+                    from_area="hall",
+                    mid_area="",
+                    to_area="bedroom",
+                    hour_of_week=9,
+                    count=1.0,
+                )
+            )
+            session.commit()
+            assert session.query(db.AreaTransitions).count() == 1
