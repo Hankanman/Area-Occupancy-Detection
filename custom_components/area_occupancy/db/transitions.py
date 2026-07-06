@@ -408,7 +408,7 @@ def record_transitions_for_entry(
     if last_observed_iso:
         try:
             since = dt_util.parse_datetime(last_observed_iso)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             since = None
 
     if since is not None:
