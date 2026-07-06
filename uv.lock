@@ -297,7 +297,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-homeassistant-custom-component", marker = "extra == 'test'", specifier = "==0.13.315" },
     { name = "pyturbojpeg" },
-    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.2" },
     { name = "unicode-rbnf", specifier = "==2.4.0" },
 ]
 provides-extras = ["dev", "test", "viz"]
