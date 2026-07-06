@@ -44,3 +44,6 @@ codex.patch
 testlog.log
 build
 tmp/
+# Claude Code personal settings (shared allowlist lives in .claude/settings.json)
+.claude/settings.local.json
+.claude/worktrees/

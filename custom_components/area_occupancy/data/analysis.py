@@ -511,39 +511,27 @@ class PriorAnalyzer:
                 now.tzinfo,
             )
 
-            # Use actual period: from first interval to now (or last interval if very recent)
-            # If last interval is more than 1 hour old, use it; otherwise use now
-            # Ensure we use UTC-aware datetimes for all calculations
-            if (now - last_interval_end).total_seconds() > 3600:
-                actual_period_end = last_interval_end
-            else:
-                actual_period_end = now
+            # Use actual period: from first interval start to now. Time after
+            # the last interval is known-unoccupied and must stay in the
+            # denominator — truncating the period at last_interval_end inflates
+            # the prior every time the area is quiet for a while (#483).
+            actual_period_end = now
 
             # Defensive check: ensure actual_period_end >= first_interval_start
             if actual_period_end < first_interval_start:
-                _LOGGER.warning(
-                    "actual_period_end (%s) < first_interval_start (%s) for area %s. "
-                    "This may indicate timezone issues or clock skew. Using now instead.",
+                _LOGGER.error(
+                    "'now' (%s) is before first_interval_start (%s) for area %s. "
+                    "This indicates severe clock skew or timezone issues. Using fallback prior.",
                     actual_period_end,
                     first_interval_start,
                     self.area_name,
                 )
-                actual_period_end = now
-                # Double-check after using now
-                if actual_period_end < first_interval_start:
-                    _LOGGER.error(
-                        "Even 'now' (%s) is before first_interval_start (%s) for area %s. "
-                        "This indicates severe clock skew or timezone issues. Using fallback prior.",
-                        actual_period_end,
-                        first_interval_start,
-                        self.area_name,
-                    )
-                    self.area.prior.set_global_prior(0.01)
-                    _LOGGER.debug(
-                        "Prior analysis completed for area %s: global_prior=0.010 (fallback due to clock skew)",
-                        self.area_name,
-                    )
-                    return
+                self.area.prior.set_global_prior(0.01)
+                _LOGGER.debug(
+                    "Prior analysis completed for area %s: global_prior=0.010 (fallback due to clock skew)",
+                    self.area_name,
+                )
+                return
 
             actual_period_duration = (
                 actual_period_end - first_interval_start

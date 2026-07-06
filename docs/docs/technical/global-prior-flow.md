@@ -23,17 +23,14 @@ global_prior = total_occupied_time / total_period_duration
 Where:
 
 - `total_occupied_time`: Sum of all occupied interval durations (from motion sensors)
-- `total_period_duration`: Duration from first interval to last interval (or current time)
+- `total_period_duration`: Duration from first interval start to current time
 
 ### Period Calculation
 
 The system uses the **actual data period** rather than a fixed lookback window:
 
 1. **First Interval Start**: Earliest motion sensor interval start time
-2. **Last Interval End**: Latest motion sensor interval end time
-3. **Period End Determination**:
-   - If last interval is more than 1 hour old: Use `last_interval_end`
-   - Otherwise: Use current time (`now`)
+2. **Period End**: Always the current time (`now`). Time after the last interval is known-unoccupied and must stay in the denominator — truncating the period at the last interval inflated the prior on every recalculation during a quiet stretch (#483).
 
 This approach ensures the prior reflects the actual data available, not an arbitrary time window.
 
@@ -123,13 +120,9 @@ occupied_intervals = self.get_occupied_intervals(days)
 
 ```python
 first_interval_start = min(start for start, end in occupied_intervals)
-last_interval_end = max(end for start, end in occupied_intervals)
 now = dt_util.utcnow()
 
-if (now - last_interval_end).total_seconds() > 3600:
-    actual_period_end = last_interval_end
-else:
-    actual_period_end = now
+actual_period_end = now
 
 actual_period_duration = (actual_period_end - first_interval_start).total_seconds()
 ```
@@ -137,7 +130,7 @@ actual_period_duration = (actual_period_end - first_interval_start).total_second
 **Rationale**: Using actual data period instead of fixed lookback ensures:
 
 - Prior reflects actual data availability
-- No artificial inflation from empty periods
+- Known-unoccupied time after the last interval stays in the denominator (#483)
 - More accurate representation of occupancy patterns
 
 **Edge Case Handling**: If duration is zero or negative (bad timestamps or clock skew), the system sets a safe fallback prior of 0.01 and returns early.
@@ -397,13 +390,11 @@ sequenceDiagram
 
 ## Known Issues and Limitations
 
-1. **Period Calculation Edge Case**: The 1-hour threshold for determining `actual_period_end` may cause issues if last interval is exactly 1 hour old (uses last interval end instead of current time).
+1. **No Validation of Loaded Prior**: Loaded prior from database is set without validation that it's still valid or within expected bounds.
 
-2. **No Validation of Loaded Prior**: Loaded prior from database is set without validation that it's still valid or within expected bounds.
+2. **Race Conditions**: If multiple areas calculate priors simultaneously, database operations may conflict (though SQLite handles this gracefully).
 
-3. **Race Conditions**: If multiple areas calculate priors simultaneously, database operations may conflict (though SQLite handles this gracefully).
-
-4. **Missing Error Handling**: If `save_global_prior()` fails, calculation continues but prior is lost (should log warning).
+3. **Missing Error Handling**: If `save_global_prior()` fails, calculation continues but prior is lost (should log warning).
 
 ## Related Documentation
 
