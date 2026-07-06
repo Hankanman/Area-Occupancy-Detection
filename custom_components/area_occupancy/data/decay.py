@@ -59,6 +59,12 @@ class Decay:
         if self._purpose is None or self._purpose.awake_half_life is None:
             return self._base_half_life
 
+        # A user-configured half-life overrides the sleep/awake switching:
+        # the awake_half_life alternative only applies when the half-life
+        # is the purpose's own default (#481).
+        if self._base_half_life != self._purpose.half_life:
+            return self._base_half_life
+
         # If sleep times are not configured, use base half-life
         if not self.sleep_start or not self.sleep_end:
             return self._base_half_life

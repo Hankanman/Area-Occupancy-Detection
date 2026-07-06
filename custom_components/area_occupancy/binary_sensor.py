@@ -13,7 +13,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_HOME, STATE_OFF, STATE_ON
+from homeassistant.const import (
+    STATE_HOME,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
@@ -848,6 +854,20 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         """Handle state changes for tracked entities."""
         self._evaluate_and_update()
 
+    def _person_home_state(self, person: PersonConfig) -> bool | None:
+        """Return whether the person is home, or None if presence is unknown.
+
+        Uses the configured device tracker if set, otherwise the person
+        entity. A person entity with no device trackers assigned reports
+        "unknown" — in that case presence cannot be determined and None is
+        returned so sleep detection can rely on the sleep sensors alone.
+        """
+        entity_id = person.device_tracker or person.person_entity
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
+            return None
+        return state.state == STATE_HOME
+
     def _evaluate_sleep_state(self) -> bool:
         """Evaluate whether any person is home and sleeping.
 
@@ -855,13 +875,11 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         Any active sleep sensor means the person is sleeping (OR logic).
         """
         for person in self._people:
-            # Use device_tracker if configured, otherwise fall back to person entity
-            if person.device_tracker:
-                home_state = self.hass.states.get(person.device_tracker)
-            else:
-                home_state = self.hass.states.get(person.person_entity)
-
-            if not home_state or home_state.state != STATE_HOME:
+            # Skip a person only when they are definitively away. When
+            # presence can't be determined (e.g. a person entity with no
+            # device trackers reports "unknown"), trust the sleep sensors
+            # directly (#464).
+            if self._person_home_state(person) is False:
                 continue
 
             for sensor_id in person.sleep_sensors:
@@ -923,7 +941,9 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                 home_entity_state = self.hass.states.get(person.device_tracker)
             else:
                 home_entity_state = person_state
-            is_home = home_entity_state and home_entity_state.state == STATE_HOME
+            # None means presence is unknown; only a definitive "away"
+            # blocks sleep detection (#464).
+            is_home = self._person_home_state(person)
 
             # Build per-sensor details
             sensor_details: list[dict[str, Any]] = []
@@ -957,7 +977,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                     }
                 )
 
-            is_sleeping = is_home and any_sensor_active
+            is_sleeping = is_home is not False and any_sensor_active
 
             if is_sleeping:
                 people_sleeping.append(friendly_name)
