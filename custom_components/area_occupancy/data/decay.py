@@ -83,7 +83,7 @@ class Decay:
             if is_sleeping:
                 # Use the configured half-life (should be high for sleeping)
                 return self._base_half_life
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             _LOGGER.exception("Error calculating half-life for sleeping purpose")
             return self._base_half_life
 

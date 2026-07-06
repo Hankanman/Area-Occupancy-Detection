@@ -668,7 +668,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         # Also check if it's a valid integer to handle test mocks
         try:
             delay = int(self._verification_delay) if self._verification_delay else 0
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             delay = 0
 
         if not delay:
@@ -884,7 +884,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
                         confidence = float(sensor_state.state)
                         if confidence >= person.confidence_threshold:
                             return True
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         continue
         return False
 

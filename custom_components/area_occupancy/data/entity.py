@@ -351,7 +351,7 @@ class Entity:
             min_val, max_val = self.active_range
             try:
                 return min_val <= float(self.state) <= max_val
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return False
 
         return None
@@ -620,7 +620,7 @@ class EntityFactory:
 
     def __init__(
         self,
-        coordinator: "AreaOccupancyCoordinator",
+        coordinator: AreaOccupancyCoordinator,
         area_name: str,
     ) -> None:
         """Initialize the factory.
@@ -640,7 +640,7 @@ class EntityFactory:
             )
         self.config = coordinator.areas[area_name].config
 
-    def create_from_db(self, entity_obj: "DB.Entities") -> Entity:
+    def create_from_db(self, entity_obj: DB.Entities) -> Entity:
         """Create entity from storage data.
 
         Args:
@@ -730,7 +730,7 @@ class EntityFactory:
         try:
             if MIN_WEIGHT <= db_weight <= MAX_WEIGHT:
                 entity_type.weight = db_weight
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             # Weight is invalid, keep the default from EntityType initialization
             pass
 
@@ -977,7 +977,7 @@ class EntityManager:
 
     def __init__(
         self,
-        coordinator: "AreaOccupancyCoordinator",
+        coordinator: AreaOccupancyCoordinator,
         area_name: str | None = None,
     ) -> None:
         """Initialize the entity manager.
@@ -1008,9 +1008,7 @@ class EntityManager:
         """Get the entities."""
         return self._entities
 
-    def get_entities_by_input_type(
-        self, input_type: "InputType"
-    ) -> dict[str, "Entity"]:
+    def get_entities_by_input_type(self, input_type: InputType) -> dict[str, Entity]:
         """Get entities filtered by InputType."""
         return {
             entity_id: entity

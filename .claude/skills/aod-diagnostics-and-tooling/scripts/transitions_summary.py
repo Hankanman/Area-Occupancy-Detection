@@ -124,7 +124,7 @@ def summarize(db_path: str, top_n: int = 10) -> None:
         try:
             updated = dt.datetime.fromisoformat(c["most_recent"])
             days_since = (now - updated).total_seconds() / 86400
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             days_since = float("nan")
 
         total_count = c["total_count"] or 0.0
