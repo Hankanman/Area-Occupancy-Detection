@@ -51,8 +51,9 @@ of adversarial refutation going wrong because it checked the wrong ground truth.
 installation ran HA core-2026.6.1 (see issue #487's System Health block). `FlowHandler.show_advanced_options`
 only unconditionally returns `True` — triggering the deprecation warning on every flow run — from
 HA **2026.6 onward** (confirmed in the maintainer's PR #489 review). But this repo's *pinned test
-dependency* is `homeassistant==2026.2.2` (`pyproject.toml:26`) — four months older than the
-version that exhibits the behavior. A refutation attempt that ran against the pinned test
+dependency* was, at the time, `homeassistant==2026.2.2` — four months older than the
+version that exhibits the behavior (the pin has since moved to `2026.7.1` via PR #496;
+re-verify with `grep -n '"homeassistant==' pyproject.toml`). A refutation attempt that ran against the pinned test
 environment (the "convenient", already-installed source of truth) would not reproduce the
 warning at all, and could wrongly conclude the reported deprecation was fabricated or already
 fixed. It wasn't: the deprecation was real, confirmed against HA's own 2026-05-26 blog post
