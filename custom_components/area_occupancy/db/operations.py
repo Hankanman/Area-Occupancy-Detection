@@ -463,19 +463,19 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
         # Normalize values before persisting
         try:
             weight = float(getattr(entity.type, "weight", DEFAULT_ENTITY_WEIGHT))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             weight = DEFAULT_ENTITY_WEIGHT
         weight = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
 
         try:
             prob_true = float(entity.prob_given_true)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             prob_true = DEFAULT_ENTITY_PROB_GIVEN_TRUE
         prob_true = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_true))
 
         try:
             prob_false = float(entity.prob_given_false)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             prob_false = DEFAULT_ENTITY_PROB_GIVEN_FALSE
         prob_false = max(MIN_PROBABILITY, min(MAX_PROBABILITY, prob_false))
 

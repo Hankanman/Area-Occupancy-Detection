@@ -74,7 +74,7 @@ class Purpose:
         try:
             purpose_enum = AreaPurpose(purpose_value)
             definition = PURPOSE_DEFINITIONS[purpose_enum]
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             definition = PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL]
 
         self.purpose = definition.purpose
@@ -118,7 +118,7 @@ class Purpose:
         """
         try:
             return PURPOSE_DEFINITIONS[AreaPurpose(purpose)].name
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             return purpose.replace("_", " ").title()
 
     @staticmethod
@@ -149,7 +149,7 @@ class Purpose:
             return False
         try:
             return PURPOSE_DEFINITIONS[AreaPurpose(purpose)].half_life == value
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             return False
 
     def cleanup(self) -> None:
@@ -257,7 +257,7 @@ def get_default_decay_half_life(purpose: str | None = None) -> float:
         try:
             purpose_enum = AreaPurpose(purpose)
             return PURPOSE_DEFINITIONS[purpose_enum].half_life
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             pass
     # Fallback to default purpose half-life
     return PURPOSE_DEFINITIONS[AreaPurpose(DEFAULT_PURPOSE)].half_life

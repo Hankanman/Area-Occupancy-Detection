@@ -128,7 +128,7 @@ def _states_to_numeric_samples(
         for state in state_list:
             try:
                 value = float(state.state)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
 
             samples.append(
