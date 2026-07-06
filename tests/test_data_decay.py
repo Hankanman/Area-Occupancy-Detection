@@ -532,6 +532,31 @@ class TestDecayHalfLife:
             current_time, sleep_start, sleep_end, expected_half_life, SLEEPING_HALF_LIFE
         )
 
+    @pytest.mark.parametrize(
+        ("current_time", "sleep_start", "sleep_end"),
+        [
+            # Outside the sleep window — previously returned awake_half_life,
+            # discarding the user's custom value
+            ("12:00:00", "23:00:00", "07:00:00"),
+            ("22:59:59", "23:00:00", "07:00:00"),
+            # Inside the sleep window
+            ("01:00:00", "23:00:00", "07:00:00"),
+        ],
+    )
+    def test_sleeping_custom_half_life_respected(
+        self, current_time: str, sleep_start: str, sleep_end: str
+    ) -> None:
+        """Test a custom half-life overrides sleep/awake switching (#481).
+
+        Regression test: a Bedroom-purpose area with a user-configured
+        half-life (e.g. 10s) used awake_half_life (620s) outside the sleep
+        window, ignoring the custom value entirely.
+        """
+        custom_half_life = 10.0
+        self.check_sleep_window_half_life(
+            current_time, sleep_start, sleep_end, custom_half_life, custom_half_life
+        )
+
     def test_sleeping_error_handling_invalid_format(self) -> None:
         """Test SLEEPING purpose with invalid sleep time format falls back to base_half_life."""
         decay = Decay(
