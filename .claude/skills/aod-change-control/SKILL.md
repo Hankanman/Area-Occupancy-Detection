@@ -228,13 +228,20 @@ Five GitHub Actions workflows in `.github/workflows/`:
 | `release.yml` | on `release: published` | Hard-fails if `manifest.json`'s version doesn't equal the GitHub release's tag name; then zips `custom_components/area_occupancy` and uploads it as the HACS-installable asset via `gh release upload` |
 | `docs.yml` | push to `main` only | Builds and deploys `docs/` via `mkdocs gh-deploy --force` to the `gh-pages` branch |
 
-**Branch protection**: `gh api repos/Hankanman/Area-Occupancy-Detection/branches/main/protection`
-returns `404 Branch not protected` — **there is no GitHub branch protection
-on `main`**. CI is advisory only; nothing stops a direct push or a merge with
-failing/pending checks. Discipline (running `scripts/lint`/`scripts/test`
-locally, waiting for green CI, waiting for CodeRabbit review) is the only
-gate. Do not treat a red CI check as something GitHub will block for you —
-it won't.
+**Branch protection**: *classic* branch protection is absent
+(`gh api repos/Hankanman/Area-Occupancy-Detection/branches/main/protection`
+returns `404 Branch not protected`), but a **repository ruleset named "Main"
+does exist** (`gh api repos/Hankanman/Area-Occupancy-Detection/rulesets`,
+id 6210511, enforcement: active): it forbids deletion and non-fast-forward
+pushes and **requires changes to `main` to come through a pull request** —
+however, repository admins and one GitHub App integration bypass it
+("bypass_mode": "always"), so the maintainer's own direct pushes go through
+with a "Bypassed rule violations" warning. No status checks are required by
+the ruleset: CI is still advisory. Practical rule: work through PRs; treat
+the admin bypass as an escape hatch for meta-content (e.g. this skills
+library), not for code. Discipline (running `scripts/lint`/`scripts/test`
+locally, waiting for green CI, waiting for CodeRabbit review) remains the
+real gate — GitHub will not block a merge on red CI.
 
 **CodeRabbit**: reviews every PR automatically (no `.coderabbit.yaml` present
 in the repo, so it runs on CodeRabbit's default configuration/GitHub App
