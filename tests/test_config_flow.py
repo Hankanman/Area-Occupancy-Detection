@@ -39,6 +39,7 @@ from custom_components.area_occupancy.const import (
     CONF_DOOR_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
+    CONF_MIN_PRIOR_OVERRIDE,
     CONF_MOTION_PROB_GIVEN_FALSE,
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
@@ -853,6 +854,32 @@ class TestHelperFunctions:
                 }
             )
             assert data[CONF_AREA_ID] == "test_area"
+
+    @pytest.mark.parametrize("is_options", [False, True])
+    def test_create_schema_always_includes_advanced_fields(
+        self, hass, entity_registry, is_options
+    ):
+        """Test that the former advanced-mode fields are always in the schema.
+
+        show_advanced_options gating was removed (deprecated in HA, removal
+        2027.6), so these fields must be present unconditionally.
+        """
+
+        def section_field_names(schema_dict, section_name):
+            for key, value in schema_dict.items():
+                if getattr(key, "schema", None) == section_name:
+                    return {marker.schema for marker in value.schema.schema}
+            raise AssertionError(f"Section {section_name} not found in schema")
+
+        schema_dict = create_schema(hass, None, is_options)
+
+        motion_fields = section_field_names(schema_dict, "motion")
+        assert CONF_MOTION_PROB_GIVEN_TRUE in motion_fields
+        assert CONF_MOTION_PROB_GIVEN_FALSE in motion_fields
+
+        parameter_fields = section_field_names(schema_dict, "parameters")
+        assert CONF_DECAY_HALF_LIFE in parameter_fields
+        assert CONF_MIN_PRIOR_OVERRIDE in parameter_fields
 
 
 class TestAreaOccupancyConfigFlow:
