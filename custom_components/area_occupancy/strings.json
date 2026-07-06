@@ -786,11 +786,15 @@
                 "description": "Configure global settings that apply to all areas",
                 "data": {
                     "sleep_start": "Sleep Start Time",
-                    "sleep_end": "Sleep End Time"
+                    "sleep_end": "Sleep End Time",
+                    "health_enabled": "Sensor health monitoring",
+                    "sensor_precision": "Sensor state precision (decimals)"
                 },
                 "data_description": {
                     "sleep_start": "The time when your sleep schedule begins. Areas with the 'Sleeping' purpose will use their configured decay half-life during this period.",
-                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours."
+                    "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours.",
+                    "health_enabled": "When enabled, the integration raises Home Assistant repair issues for stuck, unavailable, or never-triggered sensors and for slow or failing analysis cycles. Turn off to silence all repairs from this integration; previously raised issues will be cleared on the next analysis cycle.",
+                    "sensor_precision": "Lower values significantly reduce recorder database writes from diagnostic sensors. 0 is recommended unless you need sub-percent resolution."
                 }
             },
             "manage_people": {
@@ -909,19 +913,19 @@
     "issues": {
         "sensor_health_stuck_active": {
             "title": "{entity_id} appears stuck in {area}",
-            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has been continuously active for {duration} hours, which exceeds the expected threshold for this sensor type.\n\nThis may indicate a hardware malfunction (e.g. a stuck PIR sensor), a connectivity issue, or an automation keeping the device in an unexpected state.\n\n**What to do:**\n- Check the physical sensor for obstructions or damage\n- Verify Zigbee/Z-Wave connectivity\n- Restart the device or replace the battery\n\nThis issue will resolve automatically when the sensor changes state."
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has been continuously active for {duration}h, which exceeds the expected threshold for this sensor type.\n\nThis may indicate a hardware malfunction (e.g. a stuck PIR sensor), a connectivity issue, or an automation keeping the device in an unexpected state.\n\n**What to do:**\n- Check the physical sensor for obstructions or damage\n- Verify Zigbee/Z-Wave connectivity\n- Restart the device or replace the battery\n\nThis issue will resolve automatically when the sensor changes state."
         },
         "sensor_health_stuck_inactive": {
             "title": "{entity_id} hasn't triggered in {area}",
-            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has not changed state for {duration} hours, which is unusually long for this sensor type.\n\nThis may indicate the sensor is offline, has a dead battery, or is misconfigured.\n\n**What to do:**\n- Check the physical sensor and battery level\n- Verify the sensor is still paired and reachable\n- Check if the entity's active state mapping is correct in the integration configuration\n\nThis issue will resolve automatically when the sensor changes state."
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has not changed state for {duration}h, which is unusually long for this sensor type.\n\nThis may indicate the sensor is offline, has a dead battery, or is misconfigured.\n\n**What to do:**\n- Check the physical sensor and battery level\n- Verify the sensor is still paired and reachable\n- Check if the entity's active state mapping is correct in the integration configuration\n\nThis issue will resolve automatically when the sensor changes state."
         },
         "sensor_health_unavailable": {
             "title": "{entity_id} is offline in {area}",
-            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has been unavailable for {duration} hours.\n\nThe integration is currently falling back to learned priors for this area, which reduces occupancy detection accuracy.\n\n**What to do:**\n- Check the device battery level\n- Verify Zigbee/Z-Wave network connectivity\n- Re-pair the device if necessary\n- Check if the device's integration (e.g. Zigbee2MQTT) is running\n\nThis issue will resolve automatically when the sensor comes back online."
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has been unavailable for {duration}h.\n\nThe integration is currently falling back to learned priors for this area, which reduces occupancy detection accuracy.\n\n**What to do:**\n- Check the device battery level\n- Verify Zigbee/Z-Wave network connectivity\n- Re-pair the device if necessary\n- Check if the device's integration (e.g. Zigbee2MQTT) is running\n\nThis issue will resolve automatically when the sensor comes back online."
         },
         "sensor_health_never_triggered": {
             "title": "{entity_id} may be misconfigured in {area}",
-            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has never been active in {duration} hours of monitoring.\n\nThis sensor is not contributing any useful data to occupancy detection. It may be misconfigured (wrong active state), broken, or not appropriate for this area.\n\n**What to do:**\n- Verify the sensor's active state mapping matches the actual device behavior\n- Check if the device is functional by triggering it manually\n- Consider removing it from the area configuration if it's not needed\n\nThis issue will resolve automatically if the sensor triggers."
+            "description": "The {sensor_type} sensor **{entity_id}** in **{area}** has never been active in {duration}h of monitoring.\n\nThis sensor is not contributing any useful data to occupancy detection. It may be misconfigured (wrong active state), broken, or not appropriate for this area.\n\n**What to do:**\n- Verify the sensor's active state mapping matches the actual device behavior\n- Check if the device is functional by triggering it manually\n- Consider removing it from the area configuration if it's not needed\n\nThis issue will resolve automatically if the sensor triggers."
         },
         "pipeline_health_insufficient_priors": {
             "title": "Priors haven't trained for {area}",
@@ -933,7 +937,7 @@
         },
         "pipeline_health_slow_analysis": {
             "title": "Analysis cycle is slow for {area}",
-            "description": "The most recent analysis cycle took longer than 30 seconds. This usually indicates a database under pressure, a very large sensor / area count, or a long-running correlation run.\n\n{details}\n\n**What to do:**\n- Check `Settings → System → Repairs` for related warnings\n- If the database is large, consider lowering retention via integration options\n- Open a GitHub issue with a downloaded diagnostic if the slowness persists across cycles\n\nThis issue will resolve automatically when the next analysis cycle completes within the threshold."
+            "description": "The most recent analysis cycle took longer than 3 minutes. This usually indicates a database under pressure, a very large sensor / area count, or a long-running correlation run.\n\n{details}\n\n**What to do:**\n- Check `Settings → System → Repairs` for related warnings\n- If the database is large, consider lowering retention via integration options\n- Open a GitHub issue with a downloaded diagnostic if the slowness persists across cycles\n\nThis issue will resolve automatically when the next analysis cycle completes within the threshold."
         },
         "pipeline_health_correlation_failures": {
             "title": "Sensor correlation analysis is failing in {area}",

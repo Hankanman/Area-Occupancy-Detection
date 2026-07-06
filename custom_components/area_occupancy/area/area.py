@@ -170,7 +170,10 @@ class Area:
         if self._health_monitor is None:
             area_id = self.config.area_id or self.area_name
             self._health_monitor = HealthMonitor(
-                self.area_name, area_id, self.coordinator.hass
+                self.area_name,
+                area_id,
+                self.coordinator.hass,
+                purpose=self.purpose.purpose,
             )
         return self._health_monitor
 
