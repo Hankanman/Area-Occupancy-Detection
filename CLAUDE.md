@@ -202,7 +202,9 @@ The integration uses timezone-aware datetimes throughout:
 
 ### Branch and Release Strategy
 
-- Feature/fix branches PR directly to `main` (a repository ruleset requires PRs; the historical `dev`/`preview` flow is retired)
+- Two-line model since 2026-07: `main` is the stable/hotfix line for the current release family; `next` is the integration branch for roadmap epics (#499-#503)
+- Hotfixes PR to `main` (and `main` merges into `next` regularly); roadmap feature branches PR to `next`; `next` merges to `main` at a release window
+- A repository ruleset requires PRs to `main`; the historical `dev`/`preview` flow is retired
 - Versioning is CalVer: `YYYY.M.N` (e.g. `2026.7.1`), with `-preN` suffixes for pre-releases
 - Version stored in three files that must always match: `pyproject.toml`, `const.py` (`DEVICE_SW_VERSION`), and `manifest.json` — the release workflow hard-fails if `manifest.json` doesn't equal the release tag
 - GitHub Releases are the changelog of record (`CHANGELOG.md` is retired); release notes are hand-written narrative
