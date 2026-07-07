@@ -38,7 +38,7 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 
 | Fact | Value | Verify with |
 |---|---|---|
-| Integration version | 2026.5.17 | `cat custom_components/area_occupancy/manifest.json \| grep version` |
+| Integration version | 2026.7.1-pre1 (pre-release, published 2026-07-07; last GA 2026.5.17) | `cat custom_components/area_occupancy/manifest.json \| grep version` |
 | Quality scale (HA manifest) | `silver` | `grep quality_scale custom_components/area_occupancy/manifest.json` |
 | Runtime pip requirements | `[]` (none) | `grep -A2 '"requirements"' custom_components/area_occupancy/manifest.json` |
 | Test coverage gate | `fail_under = 85` in pyproject, comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules" — the old stale-comment mismatch was fixed by #495 (CI hygiene) | `grep -n fail_under pyproject.toml` |
@@ -52,6 +52,26 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 today — confirm with
 `git show main:custom_components/area_occupancy/const.py | grep -c ADJACENCY_`
 (returns `10` on main as of this writing, not `0`).
+
+---
+
+## Roadmap epics (filed 2026-07-07 — the frontiers made concrete)
+
+The maintainer converted this skill's frontiers into five tracked epics with
+agreed sequencing. Each issue carries first-steps and a falsifiable
+"you have a result when" gate — read the issue before starting work on a
+frontier; it is the live version of the corresponding section below.
+
+| # | Epic | Maps to | Sequencing |
+|---|---|---|---|
+| [#499](https://github.com/Hankanman/Area-Occupancy-Detection/issues/499) | Per-area trust score: calibration error, false-transition rate, earned auto-threshold | Frontier 1 (Reliability King) | **First** — it is the measurement harness every other epic validates against |
+| [#500](https://github.com/Hankanman/Area-Occupancy-Detection/issues/500) | Retire the sidecar SQLite DB: online learning via sufficient statistics | Frontier 4 enabler (removes the core-quality blocker) | Second, parallel with #501; shadow-mode only until diffed for 30 days |
+| [#501](https://github.com/Hankanman/Area-Occupancy-Detection/issues/501) | Learned sensor fusion: per-home trained weights/likelihoods (subsumes #93/#159/#458) | Frontier 2 (learned-model research) | Second, parallel with #500 |
+| [#502](https://github.com/Hankanman/Area-Occupancy-Detection/issues/502) | Predictive occupancy: P(occupied within N min) + likely-next-area | Frontier 3 | Third — needs adjacency data maturity + #499 scoring |
+| [#503](https://github.com/Hankanman/Area-Occupancy-Detection/issues/503) | Person-level occupancy: Bermuda identity fusion (continues #25) | Near frontier → promoted | Whenever Bermuda ships their side; steps 1–2 unblocked today |
+
+Development model: roadmap epics build on the `next` branch; `main` stays the
+stable/hotfix line for the current release family.
 
 ---
 
