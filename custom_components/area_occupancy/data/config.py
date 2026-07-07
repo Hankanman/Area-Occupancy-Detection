@@ -1,5 +1,7 @@
 """Configuration model and manager for Area Occupancy Detection."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
@@ -206,7 +208,7 @@ class IntegrationConfig:
                     CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
                 )
             )
-        except ValueError, TypeError, OverflowError:
+        except (ValueError, TypeError, OverflowError):
             return DEFAULT_SENSOR_PRECISION
         return max(0, min(2, precision))
 
@@ -246,7 +248,7 @@ class IntegrationConfig:
                         DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
                     )
                 )
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 _LOGGER.warning(
                     "Invalid confidence threshold for %s, using default",
                     person_entity,

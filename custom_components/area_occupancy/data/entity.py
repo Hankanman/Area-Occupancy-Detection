@@ -1,5 +1,7 @@
 """Entity model."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -351,7 +353,7 @@ class Entity:
             min_val, max_val = self.active_range
             try:
                 return min_val <= float(self.state) <= max_val
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 return False
 
         return None
@@ -730,7 +732,7 @@ class EntityFactory:
         try:
             if MIN_WEIGHT <= db_weight <= MAX_WEIGHT:
                 entity_type.weight = db_weight
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             # Weight is invalid, keep the default from EntityType initialization
             pass
 

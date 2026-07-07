@@ -677,7 +677,7 @@ def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str |
         identifier_tuple = next(iter(identifiers))
         if isinstance(identifier_tuple, tuple) and len(identifier_tuple) >= 2:
             return str(identifier_tuple[1])
-    except StopIteration, TypeError:
+    except (StopIteration, TypeError):
         pass
     return None
 

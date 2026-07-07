@@ -168,7 +168,7 @@ class PriorsSensor(AreaOccupancySensorBase):
                     "day_of_week": area.prior.day_of_week if area else None,
                     "time_slot": area.prior.time_slot if area else None,
                 }
-        except TypeError, AttributeError, KeyError:
+        except (TypeError, AttributeError, KeyError):
             return {}
         return attrs
 
@@ -227,7 +227,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
                 {"entity_id": e.entity_id, "decay_factor": e.decay.decay_factor}
                 for e in area.entities.decaying_entities
             ]
-        except AttributeError, KeyError, TypeError:
+        except (AttributeError, KeyError, TypeError):
             return {}
         return {
             **snapshot,
@@ -326,7 +326,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
                     )
                 ],
             }
-        except TypeError, AttributeError, KeyError:
+        except (TypeError, AttributeError, KeyError):
             return {}
 
 
@@ -400,7 +400,7 @@ class DecaySensor(AreaOccupancySensorBase):
                     for entity in area.entities.decaying_entities
                 ]
             }
-        except TypeError, AttributeError, KeyError:
+        except (TypeError, AttributeError, KeyError):
             return {}
 
 
@@ -521,7 +521,7 @@ class DetectedActivitySensor(AreaOccupancySensorBase):
                 "confidence": round(result.confidence * 100, 1),
                 "matching_indicators": result.matching_indicators,
             }
-        except TypeError, AttributeError, KeyError:
+        except (TypeError, AttributeError, KeyError):
             return {}
 
 
@@ -621,7 +621,7 @@ class SensorHealthSensor(AreaOccupancySensorBase):
                     monitor.last_check.isoformat() if monitor.last_check else None
                 ),
             }
-        except TypeError, AttributeError, KeyError:
+        except (TypeError, AttributeError, KeyError):
             return {}
 
 
