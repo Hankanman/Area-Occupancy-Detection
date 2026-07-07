@@ -320,6 +320,12 @@ AGGREGATION_LEVEL_RAW: Final = "raw"
 
 # Correlation analysis constants
 # Minimum samples needed for reliable correlation
+# --- Trust score (#499, shadow mode) ---
+# Rolling tick-buffer depth per area: ~24h at the 10s decay cadence.
+ACCURACY_TICK_BUFFER_MAXLEN: Final = 8640
+# Hours of tick history scored against ground truth each analysis cycle.
+ACCURACY_WINDOW_HOURS: Final = 24
+
 MIN_CORRELATION_SAMPLES: Final = 50
 # Minimum confidence for correlation to be considered significant
 CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
