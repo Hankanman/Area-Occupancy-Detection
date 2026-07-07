@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard library imports
+from collections import deque
 import contextlib
 from datetime import datetime, timedelta
 import logging
@@ -29,7 +30,14 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
-from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .const import (
+    ACCURACY_TICK_BUFFER_MAXLEN,
+    CONF_AREA_ID,
+    CONF_AREAS,
+    DEFAULT_NAME,
+    DOMAIN,
+    SAVE_INTERVAL,
+)
 from .data.adjacency import (
     BoostContribution,
     DecayModifierContribution,
@@ -39,6 +47,7 @@ from .data.adjacency import (
 )
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
+from .data.metrics import AccuracyMetrics, TickSample
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
 from .db.transitions import build_adjacency_index, lookup_transition_probability
@@ -115,6 +124,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Decay modifiers (Option 3a) precomputed alongside the boosts
         # and applied to each entity's ``Decay.modifier_factor``.
         self._adjacency_decay_modifiers: dict[str, DecayModifierContribution] = {}
+        # Trust-score epic (#499), shadow mode: rolling per-area tick
+        # observations scored hourly against motion-confirmed ground
+        # truth. maxlen bounds memory to ~24h at the 10s decay cadence.
+        # Nothing here feeds back into probability or thresholds.
+        self._accuracy_ticks: dict[str, deque[TickSample]] = {}
+        self._accuracy_metrics: dict[str, AccuracyMetrics] = {}
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -563,6 +578,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 is_occupied=is_occupied,
                 now=now,
             )
+            self._accuracy_ticks.setdefault(
+                area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
+            ).append(
+                TickSample(timestamp=now, probability=probability, occupied=is_occupied)
+            )
             result[area_name] = {
                 "probability": probability,
                 "occupied": is_occupied,
@@ -599,6 +619,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> DecayModifierContribution | None:
         """Return the cached decay modifier for ``area_name`` this tick."""
         return self._adjacency_decay_modifiers.get(area_name)
+
+    # --- Trust score (#499, shadow mode) accessors ---
+    def accuracy_samples_for(self, area_name: str) -> list[TickSample]:
+        """Return the rolling tick observations for an area, oldest first."""
+        return list(self._accuracy_ticks.get(area_name, ()))
+
+    def accuracy_metrics_for(self, area_name: str) -> AccuracyMetrics | None:
+        """Return the most recent shadow accuracy snapshot for an area.
+
+        ``None`` until the hourly analysis pipeline has scored the area
+        at least once (or when the area has no tick history yet).
+        """
+        return self._accuracy_metrics.get(area_name)
+
+    def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
+        """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
+        self._accuracy_metrics[area_name] = metrics
 
     def _compute_adjacency_state(
         self, now: datetime

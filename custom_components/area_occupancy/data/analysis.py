@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_LOOKBACK_DAYS, TIME_PRIOR_MAX_BOUND, TIME_PRIOR_MIN_BOUND
+from ..const import (
+    ACCURACY_WINDOW_HOURS,
+    DEFAULT_LOOKBACK_DAYS,
+    TIME_PRIOR_MAX_BOUND,
+    TIME_PRIOR_MIN_BOUND,
+)
 from ..db.correlation import (
     CORRELATION_FAILURE_ERRORS,
     get_correlatable_entities_by_area,
@@ -37,7 +42,7 @@ async def run_full_analysis(
 ) -> None:
     """Run the full analysis chain for all areas.
 
-    This function orchestrates the complete 13-step analysis process:
+    This function orchestrates the complete 14-step analysis process:
     1. Sync states from recorder
     2. Database health check and pruning
     3. Sensor health check (per-entity anomalies → repair issues)
@@ -49,10 +54,12 @@ async def run_full_analysis(
     9. Transition learning (adjacent-areas Phase 3: count chain
        observations into ``AreaTransitions`` for the Bayesian boost
        and decay modifier)
-    10. Pipeline health check (per-area calc anomalies → repair issues)
-    11. Save data (preserve decay state before refresh)
-    12. Refresh coordinator
-    13. Save data (persist all changes)
+    10. Accuracy metrics (trust score #499, shadow mode: calibration +
+        decision stability vs motion-confirmed ground truth)
+    11. Pipeline health check (per-area calc anomalies → repair issues)
+    12. Save data (preserve decay state before refresh)
+    13. Refresh coordinator
+    14. Save data (persist all changes)
 
     Args:
         coordinator: The coordinator instance containing areas and database
@@ -66,7 +73,7 @@ async def run_full_analysis(
     analysis_start_time = time.perf_counter()
     failed_steps: list[str] = []
     cancelled = False
-    total_steps = 13
+    total_steps = 14
 
     async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
         """Run a single analysis step with timing and error tracking."""
@@ -144,10 +151,11 @@ async def run_full_analysis(
         await _run_step(7, "recalculate_priors", _recalculate_priors())
         await _run_step(8, "correlation_analysis", _run_correlations())
         await _run_step(9, "transition_learning", _run_transition_learning(coordinator))
-        await _run_step(10, "pipeline_health_check", _pipeline_health_check())
-        await _run_step(11, "save_data_before_refresh", _save_data())
-        await _run_step(12, "refresh_coordinator", _refresh())
-        await _run_step(13, "save_data_after_refresh", _save_data())
+        await _run_step(10, "accuracy_metrics", _run_accuracy_metrics(coordinator))
+        await _run_step(11, "pipeline_health_check", _pipeline_health_check())
+        await _run_step(12, "save_data_before_refresh", _save_data())
+        await _run_step(13, "refresh_coordinator", _refresh())
+        await _run_step(14, "save_data_after_refresh", _save_data())
 
     except Exception as err:
         _LOGGER.error("Fatal error during analysis pipeline: %s", err)
@@ -246,6 +254,52 @@ async def _run_transition_learning(coordinator: AreaOccupancyCoordinator) -> Non
         coordinator.db,
         coordinator.config_entry.entry_id,
     )
+
+
+async def _run_accuracy_metrics(coordinator: AreaOccupancyCoordinator) -> None:
+    """Score each area's probability stream against ground truth (#499).
+
+    Shadow mode: computes calibration + decision-stability metrics from
+    the coordinator's rolling tick buffer and the motion-confirmed
+    occupied intervals, caches them for diagnostics, and logs a summary.
+    Nothing feeds back into probability, thresholds, or decay.
+    """
+    # Lazy import mirrors the transition-learning step's pattern.
+    from .metrics import compute_accuracy_metrics  # noqa: PLC0415
+
+    now = dt_util.utcnow()
+    window_start = now - timedelta(hours=ACCURACY_WINDOW_HOURS)
+    for area_name in coordinator.areas:
+        samples = [
+            s
+            for s in coordinator.accuracy_samples_for(area_name)
+            if s.timestamp >= window_start
+        ]
+        if not samples:
+            continue
+        intervals = await coordinator.hass.async_add_executor_job(
+            lambda name=area_name: coordinator.db.get_occupied_intervals(
+                area_name=name, start_time=window_start
+            )
+        )
+        metrics = compute_accuracy_metrics(samples, intervals)
+        coordinator.set_accuracy_metrics(area_name, metrics)
+        _LOGGER.debug(
+            "Accuracy (shadow) for area %s: samples=%d ece=%.4f agreement=%.3f "
+            "false_on=%s false_off=%s decision_flips=%d truth_flips=%d",
+            area_name,
+            metrics.sample_count,
+            metrics.expected_calibration_error or 0.0,
+            metrics.agreement or 0.0,
+            f"{metrics.false_on_rate:.3f}"
+            if metrics.false_on_rate is not None
+            else "n/a",
+            f"{metrics.false_off_rate:.3f}"
+            if metrics.false_off_rate is not None
+            else "n/a",
+            metrics.decision_transitions,
+            metrics.truth_transitions,
+        )
 
 
 async def _run_pipeline_health_check(

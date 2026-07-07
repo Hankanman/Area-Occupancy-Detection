@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_VERSION, CONF_VERSION_MINOR, DEVICE_SW_VERSION
+from .data.metrics import metrics_to_diagnostics
 from .db import queries
 
 if TYPE_CHECKING:
@@ -252,6 +253,9 @@ def _area_snapshot(
         adjacency = _adjacency_snapshot(coordinator, area_name)
         if adjacency:
             current["adjacency"] = adjacency
+        accuracy = coordinator.accuracy_metrics_for(area_name)
+        if accuracy is not None:
+            current["accuracy"] = metrics_to_diagnostics(accuracy)
         snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
         _LOGGER.warning(
