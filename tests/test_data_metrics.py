@@ -5,7 +5,7 @@ import json
 from unittest.mock import patch
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.analysis import _run_accuracy_metrics
+from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
 from custom_components.area_occupancy.data.metrics import (
     AccuracyMetrics,
     TickSample,
@@ -163,7 +163,7 @@ class TestShadowWiring:
             "get_occupied_intervals",
             return_value=[],
         ):
-            await _run_accuracy_metrics(coordinator)
+            await _run_shadow_metrics(coordinator)
 
         metrics = coordinator.accuracy_metrics_for(area_name)
         assert metrics is not None
@@ -177,7 +177,7 @@ class TestShadowWiring:
         """The step is a no-op for areas with an empty tick buffer."""
         area_name = coordinator.get_area_names()[0]
 
-        await _run_accuracy_metrics(coordinator)
+        await _run_shadow_metrics(coordinator)
 
         assert coordinator.accuracy_metrics_for(area_name) is None
 
