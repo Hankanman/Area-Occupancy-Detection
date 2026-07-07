@@ -282,7 +282,7 @@ class HealthMonitor:
                 for (domain, issue_id) in registry.issues
                 if domain == DOMAIN and issue_id.startswith(prefixes)
             }
-        except AttributeError, KeyError, TypeError:
+        except (AttributeError, KeyError, TypeError):
             _LOGGER.debug(
                 "Could not load existing health issues for area '%s'",
                 self._area_name,
@@ -316,7 +316,7 @@ class HealthMonitor:
         """
         try:
             entry = ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id)
-        except AttributeError, KeyError, TypeError:
+        except (AttributeError, KeyError, TypeError):
             return False
         if entry is None:
             return False

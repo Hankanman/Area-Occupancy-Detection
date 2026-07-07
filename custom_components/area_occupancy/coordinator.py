@@ -162,7 +162,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     exc_info=True,
                 )
                 self._cached_correlations[area_name] = {}
-            except AttributeError, ValueError, OSError, RuntimeError:
+            except (AttributeError, ValueError, OSError, RuntimeError):
                 _LOGGER.debug(
                     "Failed to load entity correlations for area %s",
                     area_name,
@@ -423,7 +423,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # area_id (e.g. historical rows left behind by reconfiguration).
             try:
                 await self._prune_fully_orphaned_db_areas()
-            except HomeAssistantError, OSError, RuntimeError:
+            except (HomeAssistantError, OSError, RuntimeError):
                 _LOGGER.debug(
                     "Pruning fully-orphaned DB areas failed at startup",
                     exc_info=True,
@@ -988,7 +988,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     .first()
                 )
                 return result[0] if result else None
-        except OSError, RuntimeError, HomeAssistantError:
+        except (OSError, RuntimeError, HomeAssistantError):
             _LOGGER.exception(
                 "Failed to look up area_name for area_id '%s' from DB", area_id
             )
@@ -1008,7 +1008,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     .all()
                 )
                 return [(row[0], row[1]) for row in rows]
-        except OSError, RuntimeError, HomeAssistantError:
+        except (OSError, RuntimeError, HomeAssistantError):
             _LOGGER.exception(
                 "Failed to list DB areas for entry '%s' during orphan prune",
                 self.entry_id,

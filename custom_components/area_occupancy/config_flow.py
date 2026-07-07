@@ -3052,7 +3052,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             if selected.startswith("person_"):
                 try:
                     idx = int(selected.replace("person_", ""))
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     idx = -1
                 if 0 <= idx < len(people):
                     self._person_being_edited = idx

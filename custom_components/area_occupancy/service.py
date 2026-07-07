@@ -1,5 +1,7 @@
 """Service definitions for the Area Occupancy Detection integration."""
 
+from __future__ import annotations
+
 import contextlib
 from dataclasses import asdict
 import logging

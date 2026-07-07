@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "area-occupancy-detection"
-version = "2026.5.17"
+version = "2026.7.1-pre1"
 license = "Apache-2.0"
 description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
 readme = "README.md"  # Assuming you'll have a README.md
@@ -113,6 +113,12 @@ exclude_lines = [
 fail_under = 85 # Enforced global minimum; aim for 90%+ on core calculation modules (CLAUDE.md)
 
 [tool.ruff]
+# Shipped integration code must IMPORT on the Python of the oldest supported
+# HA runtime (3.13 for HA <=2026.5), even though the dev/test environment
+# requires 3.14 for homeassistant==2026.7.1. py314 target makes ruff-format
+# strip except-tuple parentheses (PEP 758), which is a SyntaxError on 3.13 —
+# keep this at the runtime floor, not the dev interpreter version.
+target-version = "py313"
 required-version = ">=0.13.0"
 
 [tool.ruff.lint]

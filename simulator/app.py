@@ -111,7 +111,7 @@ def _format_state_display(entity: Entity) -> str:
     if entity.type.active_range is not None:
         try:
             return f"{float(state):.2f}"
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return str(state)
 
     return str(state)
@@ -307,7 +307,7 @@ def _get_half_life_from_purpose(purpose_str: str | None) -> float:
     try:
         purpose_enum = AreaPurpose(normalized)
         return PURPOSE_DEFINITIONS[purpose_enum].half_life
-    except ValueError, KeyError:
+    except (ValueError, KeyError):
         return PURPOSE_DEFINITIONS[AreaPurpose.SOCIAL].half_life
 
 
@@ -354,7 +354,7 @@ def _coerce_state(entity_type: EntityType, raw_state: Any) -> Any:
     if entity_type.active_range is not None:
         try:
             return float(raw_state)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
 
     if raw_state is None:
@@ -469,14 +469,14 @@ def _create_entities_from_inputs(
                 weight_value = float(type_weight_override)
                 if MIN_WEIGHT <= weight_value <= MAX_WEIGHT:
                     entity_type.weight = weight_value
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
         elif weight_override is not None:
             try:
                 weight_value = float(weight_override)
                 if MIN_WEIGHT <= weight_value <= MAX_WEIGHT:
                     entity_type.weight = weight_value
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
 
         raw_state = entity_input.get("state")
@@ -487,14 +487,14 @@ def _create_entities_from_inputs(
             prob_true = float(
                 entity_input.get("prob_given_true", entity_type.prob_given_true)
             )
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             prob_true = entity_type.prob_given_true
 
         try:
             prob_false = float(
                 entity_input.get("prob_given_false", entity_type.prob_given_false)
             )
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             prob_false = entity_type.prob_given_false
 
         prob_true = _normalize_probability(prob_true)
@@ -759,7 +759,7 @@ def _normalize_simulation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         for type_key, raw_weight in weights_payload.items():
             try:
                 weight_value = float(raw_weight)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 continue
             weight_value = max(MIN_WEIGHT, min(MAX_WEIGHT, weight_value))
             weights[str(type_key)] = weight_value
@@ -863,7 +863,7 @@ def _build_simulation_from_yaml(
                 weight_value = float(weight)
                 if MIN_WEIGHT <= weight_value <= MAX_WEIGHT:
                     weights.setdefault(str(entity_type), weight_value)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
 
         # Build entity with all available fields, including new ones
