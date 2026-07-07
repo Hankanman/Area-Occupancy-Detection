@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_VERSION, CONF_VERSION_MINOR, DEVICE_SW_VERSION
 from .data.metrics import metrics_to_diagnostics
@@ -256,6 +257,21 @@ def _area_snapshot(
         accuracy = coordinator.accuracy_metrics_for(area_name)
         if accuracy is not None:
             current["accuracy"] = metrics_to_diagnostics(accuracy)
+        estimator = coordinator.online_prior_for(area_name)
+        if estimator is not None:
+            now = dt_util.utcnow()
+            online_value = estimator.prior(now)
+            if online_value is not None:
+                db_prior = area.prior.global_prior
+                current["online_prior"] = {
+                    "shadow_mode": True,
+                    "value": round(online_value, 4),
+                    "db_prior": round(db_prior, 4) if db_prior is not None else None,
+                    "diff": round(online_value - db_prior, 4)
+                    if db_prior is not None
+                    else None,
+                    "observed_days": round(estimator.observed_days(now), 2),
+                }
         snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
         _LOGGER.warning(

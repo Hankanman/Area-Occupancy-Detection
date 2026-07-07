@@ -54,8 +54,9 @@ async def run_full_analysis(
     9. Transition learning (adjacent-areas Phase 3: count chain
        observations into ``AreaTransitions`` for the Bayesian boost
        and decay modifier)
-    10. Accuracy metrics (trust score #499, shadow mode: calibration +
-        decision stability vs motion-confirmed ground truth)
+    10. Shadow metrics (no feedback into behavior): trust-score
+        calibration + decision stability vs ground truth (#499), and
+        the online-prior diff vs the DB-computed prior (#500)
     11. Pipeline health check (per-area calc anomalies → repair issues)
     12. Save data (preserve decay state before refresh)
     13. Refresh coordinator
@@ -151,7 +152,7 @@ async def run_full_analysis(
         await _run_step(7, "recalculate_priors", _recalculate_priors())
         await _run_step(8, "correlation_analysis", _run_correlations())
         await _run_step(9, "transition_learning", _run_transition_learning(coordinator))
-        await _run_step(10, "accuracy_metrics", _run_accuracy_metrics(coordinator))
+        await _run_step(10, "shadow_metrics", _run_shadow_metrics(coordinator))
         await _run_step(11, "pipeline_health_check", _pipeline_health_check())
         await _run_step(12, "save_data_before_refresh", _save_data())
         await _run_step(13, "refresh_coordinator", _refresh())
@@ -256,7 +257,7 @@ async def _run_transition_learning(coordinator: AreaOccupancyCoordinator) -> Non
     )
 
 
-async def _run_accuracy_metrics(coordinator: AreaOccupancyCoordinator) -> None:
+async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
     """Score each area's probability stream against ground truth (#499).
 
     Shadow mode: computes calibration + decision-stability metrics from
@@ -300,6 +301,37 @@ async def _run_accuracy_metrics(coordinator: AreaOccupancyCoordinator) -> None:
             metrics.decision_transitions,
             metrics.truth_transitions,
         )
+
+    # Online-prior shadow diff (#500): compare the incremental estimator
+    # against the DB-computed prior that step 7 just recalculated. A
+    # persistent, growing divergence means a bug in one of them.
+    for area_name, area in coordinator.areas.items():
+        estimator = coordinator.online_prior_for(area_name)
+        if estimator is None:
+            continue
+        online = estimator.prior(now)
+        if online is None:
+            continue
+        stored = area.prior.global_prior
+        if stored is None:
+            _LOGGER.debug(
+                "Online prior (shadow) for area %s: online=%.4f db=<not yet "
+                "calculated> observed_days=%.2f",
+                area_name,
+                online,
+                estimator.observed_days(now),
+            )
+            continue
+        _LOGGER.debug(
+            "Online prior (shadow) for area %s: online=%.4f db=%.4f diff=%+.4f "
+            "observed_days=%.2f",
+            area_name,
+            online,
+            stored,
+            online - stored,
+            estimator.observed_days(now),
+        )
+    await coordinator.async_save_online_priors()
 
 
 async def _run_pipeline_health_check(

@@ -25,6 +25,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
 )
 from homeassistant.helpers.start import async_at_started
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -47,7 +48,9 @@ from .data.adjacency import (
 )
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
+from .data.entity_type import InputType
 from .data.metrics import AccuracyMetrics, TickSample
+from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
 from .db.transitions import build_adjacency_index, lookup_transition_probability
@@ -130,6 +133,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Nothing here feeds back into probability or thresholds.
         self._accuracy_ticks: dict[str, deque[TickSample]] = {}
         self._accuracy_metrics: dict[str, AccuracyMetrics] = {}
+        # DB-retirement epic (#500), shadow mode: per-area online prior
+        # estimators fed from live motion evidence each tick, persisted
+        # via the HA storage helper, and diffed against the DB-computed
+        # prior each analysis cycle. Never read by the probability path.
+        self._online_priors: dict[str, OnlinePriorEstimator] = {}
+        self._online_prior_store: Store[dict[str, dict]] = Store(
+            hass, 1, f"{DOMAIN}.online_prior.{self.entry_id}"
+        )
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -446,6 +457,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._validate_areas_configured()
 
+            # Restore online-prior shadow state (#500) for known areas
+            stored_priors = await self._online_prior_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_priors:
+                    self._online_priors[area_name] = OnlinePriorEstimator(
+                        OnlinePriorState.from_dict(stored_priors[area_name])
+                    )
+
             _LOGGER.info(
                 "Initializing Area Occupancy for %d area(s): %s",
                 len(self.areas),
@@ -583,6 +602,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ).append(
                 TickSample(timestamp=now, probability=probability, occupied=is_occupied)
             )
+            motion_active = any(
+                entity.evidence and entity.type.input_type == InputType.MOTION
+                for entity in area.entities.entities.values()
+            )
+            self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
+                motion_active=motion_active, now=now
+            )
             result[area_name] = {
                 "probability": probability,
                 "occupied": is_occupied,
@@ -636,6 +662,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
         """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
         self._accuracy_metrics[area_name] = metrics
+
+    # --- Online prior (#500, shadow mode) accessors ---
+    def online_prior_for(self, area_name: str) -> OnlinePriorEstimator | None:
+        """Return the area's shadow online-prior estimator, if any ticks seen."""
+        return self._online_priors.get(area_name)
+
+    async def async_save_online_priors(self) -> None:
+        """Persist online-prior shadow state via the HA storage helper."""
+        await self._online_prior_store.async_save(
+            {name: est.state.to_dict() for name, est in self._online_priors.items()}
+        )
 
     def _compute_adjacency_state(
         self, now: datetime
