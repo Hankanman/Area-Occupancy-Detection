@@ -103,9 +103,9 @@ Stores state change intervals for all sensors.
 
 **Retention Policy:**
 
-- Raw intervals: 60 days
-- Daily aggregates: 90 days
-- Weekly aggregates: 365 days
+- Raw intervals: 28 days
+- Daily aggregates: 28 days (then rolled into weekly)
+- Weekly aggregates: 56 days (then rolled into monthly)
 - Monthly aggregates: 5 years
 
 ### `priors`
@@ -523,10 +523,10 @@ Stores database metadata (version, last prune time, etc.).
 
 1. **Raw Intervals**: State changes from Home Assistant recorder are converted to intervals and stored in `intervals` table with `aggregation_level="raw"`.
 2. **Aggregation**: Periodically, raw intervals are aggregated:
-   - Raw → Daily: After 60 days
-   - Daily → Weekly: After 90 days
-   - Weekly → Monthly: After 365 days
-   - Monthly aggregates are retained indefinitely
+   - Raw → Daily: After 28 days (`RETENTION_RAW_INTERVALS_DAYS`)
+   - Daily → Weekly: After 28 days (`RETENTION_DAILY_AGGREGATES_DAYS`)
+   - Weekly → Monthly: After 56 days (`RETENTION_WEEKLY_AGGREGATES_DAYS`)
+   - Monthly aggregates are retained for 5 years (effectively indefinite for trends)
 3. **Occupied Intervals Cache**: Raw intervals are processed to create precomputed occupied intervals stored in `occupied_intervals_cache`.
 
 ### Prior Calculation
@@ -544,10 +544,10 @@ Stores database metadata (version, last prune time, etc.).
 
 | Data Type                   | Retention Period               | Aggregation      |
 | --------------------------- | ------------------------------ | ---------------- |
-| Raw intervals               | 60 days                        | None             |
-| Raw numeric samples         | 14 days                        | None             |
-| Daily interval aggregates   | 90 days                        | From raw         |
-| Weekly interval aggregates  | 365 days                       | From daily       |
+| Raw intervals               | 28 days                        | None             |
+| Raw numeric samples         | 7 days                         | None             |
+| Daily interval aggregates   | 28 days                        | From raw         |
+| Weekly interval aggregates  | 56 days                        | From daily       |
 | Monthly interval aggregates | 5 years                        | From weekly      |
 | Hourly numeric aggregates   | 30 days                        | From raw samples |
 | Weekly numeric aggregates   | 3 years                        | From hourly      |

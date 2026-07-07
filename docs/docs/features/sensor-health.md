@@ -19,14 +19,33 @@ Thresholds are tuned per sensor type to avoid false positives:
 
 ### Stuck Active (sensor continuously "on")
 
-| Sensor Type | Threshold | Rationale |
+| Sensor Type | Base Threshold | Rationale |
 |------------|-----------|-----------|
-| Motion | 2 hours | PIR sensors should cycle on/off frequently |
+| Motion | 8 hours | mmWave/presence sensors can legitimately stay active for a whole evening |
 | Media | 12 hours | TVs/speakers may run for hours but not overnight |
 | Appliance | 24 hours | Ovens/washers can run for hours but not a full day |
 | Door | 48 hours | Doors can legitimately stay open for a day or two |
 | Window | 72 hours | Windows may stay open for days in warm weather |
 | Cover | 24 hours | Covers shouldn't stay in transition for a full day |
+
+The base threshold is multiplied by the area's [purpose](purpose.md), so rooms
+where long stillness is normal get much more headroom:
+
+| Area Purpose | Multiplier | Effective motion threshold |
+|------------|-----------|-----------|
+| Bedroom (`Sleeping`) | ×6 | 48 hours |
+| Media Room (`Relaxing`) | ×4 | 32 hours |
+| Office (`Working`) | ×3 | 24 hours |
+| All other purposes | ×1 | 8 hours |
+
+Two exemptions apply: `media_player.*` entities are never flagged for being
+`unavailable` (a TV powering off is normal operation, not a fault), and the
+virtual Sleep presence sensor is excluded from all health checks.
+
+!!! tip "Turning it all off"
+    Repair monitoring can be disabled entirely under **Configure → Global
+    Settings → Enable sensor health monitoring**. Ignored repair issues also
+    stay ignored across restarts and condition flaps.
 
 ### Stuck Inactive (sensor never changes state)
 
@@ -134,11 +153,11 @@ A Zigbee motion sensor runs out of battery and goes `unavailable`. After 1 hour,
 
 ### Stuck Sensor
 
-A PIR sensor gets stuck in the "on" state (hardware malfunction). After 2 hours:
+A PIR sensor gets stuck in the "on" state (hardware malfunction). After the 8-hour base threshold (this area has no purpose multiplier):
 
 > **binary_sensor.toilet_motion_1 appears stuck in Toilet**
 >
-> The motion sensor has been continuously active for 3 hours, which exceeds the 2-hour threshold.
+> The motion sensor has been continuously active for 9 hours, which exceeds the 8-hour threshold.
 
 ### Misconfigured Sensor
 
