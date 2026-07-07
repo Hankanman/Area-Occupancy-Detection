@@ -104,7 +104,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **Location Aware**: Leveraging BLE, WiFi, GPS.
 - **Weather-Aware**: Integrate weather data into priors (cold and rainy → more likely to be indoors).
 - **Occupancy Zone Hierarchies**:
-  - **Parent-Child Area Relationships**: If the kitchen is occupied and the dining room is adjacent, allow probabilities to influence each other.
+  - **Parent-Child Area Relationships**: Hierarchical zones (floor → room) whose occupancy aggregates and cascades — beyond the peer-to-peer influence that [Adjacent Areas](https://hankanman.github.io/Area-Occupancy-Detection/features/adjacent-areas/) now provides.
   - **Multi-Room Tracking**: Track movement across rooms for more continuous occupancy detection.
 
 ## Installation

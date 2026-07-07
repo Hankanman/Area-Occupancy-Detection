@@ -97,14 +97,18 @@ AreaOccupancyCoordinator (global singleton)
 - `db/sync.py`: Import entity states from Home Assistant recorder
 - `db/maintenance.py`: Health checks, pruning, backups
 
-**Analysis Pipeline**: Every hour (configurable), the coordinator runs:
+**Analysis Pipeline**: Every hour (configurable), the coordinator runs 13 steps in order:
 1. Sync states from recorder → import recent entity state changes
-2. Health check and pruning → validate database integrity, remove old data
-3. Populate occupied intervals cache → identify when areas were occupied
-4. Run aggregations → hourly/daily/weekly/monthly summaries
-5. Recalculate priors → update learned probabilities from historical data
-6. Correlation analysis → identify sensor relationships with occupancy
-7. Save and refresh → persist changes, update entities
+2. Database health check and pruning → validate integrity, remove old data
+3. Sensor health check → per-entity anomalies raised as HA repair issues
+4. Populate occupied intervals cache → identify when areas were occupied
+5. Interval aggregation → daily/weekly/monthly summaries
+6. Numeric aggregation → environmental sensor sample rollups
+7. Recalculate priors → update learned probabilities from historical data
+8. Correlation analysis → identify sensor relationships with occupancy
+9. Transition learning → record adjacent-area movement chains (adjacency feature)
+10. Pipeline health check → per-area calculation anomalies as repair issues
+11-13. Save, refresh coordinator, save again → persist and publish changes
 
 ### Critical Files
 
@@ -116,6 +120,7 @@ AreaOccupancyCoordinator (global singleton)
 - `data/config.py`: Configuration management for both integration-level and area-level settings
 - `data/decay.py`: Time-based probability decay implementation
 - `data/purpose.py`: Room purpose definitions (social, work, sleep, etc.) with default decay settings
+- `data/adjacency.py` + `data/trajectory.py` + `db/transitions.py`: Adjacent-areas transition learning — Bayesian boost and decay modifier from learned room-to-room movement
 - `db/core.py`: Database initialization, connection management
 - `db/correlation.py`: Statistical analysis of sensor-occupancy relationships (660+ lines)
 - `utils.py`: Bayesian probability calculations, state mapping utilities
@@ -144,7 +149,7 @@ The integration uses Home Assistant's config flow with a **list-based multi-area
 
 Tests use `pytest-homeassistant-custom-component` with extensive mocking:
 - `tests/conftest.py`: Shared fixtures for Home Assistant, coordinator, database
-- 85%+ coverage requirement (90% for core calculations)
+- Coverage: 85% enforced in CI (`fail_under` in pyproject.toml); aim for 90%+ on core calculation modules
 - Tests organized by component: area, coordinator, db, entities, config flow, etc.
 - Mock Home Assistant services, entity states, recorder data
 - Use `pytest-cov` for coverage reporting
@@ -197,11 +202,11 @@ The integration uses timezone-aware datetimes throughout:
 
 ### Branch and Release Strategy
 
-- Development happens on `dev` branch
-- PR from `dev` to `preview` for prereleases
-- PR from `preview` to `main` for full releases
-- Use semantic versioning (MAJOR.MINOR.PATCH)
-- Version stored in `pyproject.toml`, `const.py`, and `manifest.json`
+- Feature/fix branches PR directly to `main` (a repository ruleset requires PRs; the historical `dev`/`preview` flow is retired)
+- Versioning is CalVer: `YYYY.M.N` (e.g. `2026.7.1`), with `-preN` suffixes for pre-releases
+- Version stored in three files that must always match: `pyproject.toml`, `const.py` (`DEVICE_SW_VERSION`), and `manifest.json` — the release workflow hard-fails if `manifest.json` doesn't equal the release tag
+- GitHub Releases are the changelog of record (`CHANGELOG.md` is retired); release notes are hand-written narrative
+- Pre-releases are published with the GitHub prerelease flag and soak on the maintainer's install before GA
 
 ### Pre-commit Hooks
 
@@ -213,7 +218,8 @@ Pre-commit runs ruff formatting and linting automatically. If it fails:
 ### Code Style
 
 - Use ruff for formatting and linting (matches Home Assistant core standards)
-- Full type annotations required (Python 3.13+)
+- Full type annotations required
+- The dev/test environment runs Python 3.14 (`.python-version`, required by the pinned `homeassistant` test dependency), but shipped integration code must stay importable on Python 3.13 — the runtime of older supported HA installs. `[tool.ruff] target-version = "py313"` guards this; do not raise it without raising the minimum supported HA version
 - Google-style docstrings for public APIs
 - Log at appropriate levels: debug for internals, info for user-visible events, warning/error for issues
 - Use `_LOGGER` from module-level `logging.getLogger(__name__)`
