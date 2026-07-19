@@ -11,14 +11,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AreaDeviceHandle
 from .const import CONF_THRESHOLD
 from .coordinator import AreaOccupancyCoordinator
-from .utils import generate_entity_unique_id
+from .utils import assign_device_to_ha_area, generate_entity_unique_id
 
 if TYPE_CHECKING:
     from .area import Area
@@ -66,14 +65,8 @@ class Threshold(CoordinatorEntity, NumberEntity):
         await super().async_added_to_hass()
         # Assign device to Home Assistant area if area_id is configured
         area = self._get_area()
-        if area and area.config.area_id and self.device_info:
-            device_registry = dr.async_get(self.hass)
-            identifiers = self.device_info.get("identifiers", set())
-            device = device_registry.async_get_device(identifiers=identifiers)
-            if device and device.area_id != area.config.area_id:
-                device_registry.async_update_device(
-                    device.id, area_id=area.config.area_id
-                )
+        if area is not None:
+            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
 
     @property
     def native_value(self) -> float:

@@ -337,11 +337,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not area.config.area_id:
                 continue
             area_entry = area_reg.async_get_area(area.config.area_id)
-            if area_entry and area_entry.floor_id:
-                if area_entry.floor_id not in seen_floors:
-                    floor_entry = floor_reg.async_get_floor(area_entry.floor_id)
-                    if floor_entry:
-                        seen_floors[area_entry.floor_id] = floor_entry.name
+            if (
+                area_entry
+                and area_entry.floor_id
+                and area_entry.floor_id not in seen_floors
+            ):
+                floor_entry = floor_reg.async_get_floor(area_entry.floor_id)
+                if floor_entry:
+                    seen_floors[area_entry.floor_id] = floor_entry.name
 
         self._floor_aggregators = {
             floor_id: FloorAreas(self, floor_id, floor_name)

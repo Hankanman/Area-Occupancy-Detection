@@ -341,9 +341,11 @@ def _score_binary_indicator(
         # (-1.0, []) — because the area *has* sensors of this type, they just
         # aren't the right kind. With total-weight normalization the outcome
         # is identical, but semantically "no matching device" ≠ "no sensor."
-        if indicator.ha_device_classes is not None:
-            if entity.ha_device_class not in indicator.ha_device_classes:
-                continue
+        if (
+            indicator.ha_device_classes is not None
+            and entity.ha_device_class not in indicator.ha_device_classes
+        ):
+            continue
 
         if indicator.require_active:
             if entity.evidence is True:

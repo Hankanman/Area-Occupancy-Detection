@@ -1161,7 +1161,7 @@ class TestSensorErrorHandling:
         mock_registry.async_get_device.side_effect = Exception("Registry error")
         with (
             patch(
-                "custom_components.area_occupancy.sensor.dr.async_get",
+                "custom_components.area_occupancy.utils.dr.async_get",
                 return_value=mock_registry,
             ),
             pytest.raises(Exception, match="Registry error"),
@@ -1183,7 +1183,7 @@ class TestSensorErrorHandling:
         mock_registry = Mock()
         mock_registry.async_get_device.return_value = None
         with patch(
-            "custom_components.area_occupancy.sensor.dr.async_get",
+            "custom_components.area_occupancy.utils.dr.async_get",
             return_value=mock_registry,
         ):
             # Should handle gracefully
@@ -1212,7 +1212,7 @@ class TestSensorErrorHandling:
         mock_registry.async_update_device = Mock()
 
         with patch(
-            "custom_components.area_occupancy.sensor.dr.async_get",
+            "custom_components.area_occupancy.utils.dr.async_get",
             return_value=mock_registry,
         ):
             await sensor.async_added_to_hass()
@@ -1234,7 +1234,7 @@ class TestSensorErrorHandling:
         mock_registry.async_get_device = Mock()
 
         with patch(
-            "custom_components.area_occupancy.sensor.dr.async_get",
+            "custom_components.area_occupancy.utils.dr.async_get",
             return_value=mock_registry,
         ):
             await sensor.async_added_to_hass()
@@ -1259,7 +1259,7 @@ class TestSensorErrorHandling:
         mock_registry.async_update_device = Mock()
 
         with patch(
-            "custom_components.area_occupancy.sensor.dr.async_get",
+            "custom_components.area_occupancy.utils.dr.async_get",
             return_value=mock_registry,
         ):
             await sensor.async_added_to_hass()

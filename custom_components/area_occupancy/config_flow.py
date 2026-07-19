@@ -226,11 +226,7 @@ def _entity_contains_keyword(hass: HomeAssistant, entity_id: str, keyword: str) 
 
     # Check friendly name from state
     state = hass.states.get(entity_id)
-    if state and state.name:
-        if keyword_lower in state.name.lower():
-            return True
-
-    return False
+    return bool(state and state.name and keyword_lower in state.name.lower())
 
 
 def _is_weather_entity(entity_id: str, platform: str | None) -> bool:

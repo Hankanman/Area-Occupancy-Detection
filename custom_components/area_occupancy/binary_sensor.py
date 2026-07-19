@@ -21,7 +21,6 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -52,7 +51,7 @@ from .const import (
     NAME_SLEEP_PRESENCE,
     NAME_WASP_IN_BOX,
 )
-from .utils import generate_entity_unique_id
+from .utils import assign_device_to_ha_area, generate_entity_unique_id
 
 if TYPE_CHECKING:
     from .area import Area
@@ -116,17 +115,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         # Let the coordinator know our entity_id. Only for per-area entities, not aggregates.
         if self._handle is not None and (area := self._get_area()) is not None:
             area.occupancy_entity_id = self.entity_id
-
-            # Assign device to Home Assistant area if area_id is configured
-            if area.config.area_id and self.device_info:
-                device_registry = dr.async_get(self.hass)
-                # DeviceInfo is a TypedDict, access identifiers directly
-                identifiers = self.device_info.get("identifiers", set())
-                device = device_registry.async_get_device(identifiers=identifiers)
-                if device and device.area_id != area.config.area_id:
-                    device_registry.async_update_device(
-                        device.id, area_id=area.config.area_id
-                    )
+            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
@@ -429,13 +418,11 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if not self._door_entities:
             return DOOR_CLOSED
 
-        # Check all door sensors
+        # If ANY door is open, return DOOR_OPEN
         for entity_id in self._door_entities:
             state = self.hass.states.get(entity_id)
-            if state and state.state not in ["unknown", "unavailable"]:
-                # If ANY door is open, return DOOR_OPEN
-                if state.state == DOOR_OPEN:
-                    return DOOR_OPEN
+            if state and state.state == DOOR_OPEN:
+                return DOOR_OPEN
 
         # All doors are closed (or unavailable/unknown)
         return DOOR_CLOSED
@@ -453,13 +440,11 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if not self._motion_entities:
             return STATE_OFF
 
-        # Check all motion sensors
+        # If ANY motion sensor is active, return STATE_ON
         for entity_id in self._motion_entities:
             state = self.hass.states.get(entity_id)
-            if state and state.state not in ["unknown", "unavailable"]:
-                # If ANY motion sensor is active, return STATE_ON
-                if state.state == STATE_ON:
-                    return STATE_ON
+            if state and state.state == STATE_ON:
+                return STATE_ON
 
         # All motion sensors are off (or unavailable/unknown)
         return STATE_OFF
