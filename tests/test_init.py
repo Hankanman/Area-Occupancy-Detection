@@ -27,6 +27,7 @@ from custom_components.area_occupancy.const import (
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import Base
 from custom_components.area_occupancy.db.schema import Areas, Entities
+from custom_components.area_occupancy.service import async_setup_services
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -445,6 +446,24 @@ class TestAsyncUnloadEntry:
 
         # Verify runtime_data was cleared in both cases
         assert mock_config_entry.runtime_data is None
+
+    async def test_async_unload_entry_removes_services_on_last_entry(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """Unloading the last entry unregisters the domain services."""
+        await async_setup_services(hass)
+        assert hass.services.has_service(DOMAIN_CONST, "run_analysis")
+
+        mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
+        hass.data[DOMAIN_CONST] = mock_coordinator
+        hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+        hass.config_entries.async_entries = Mock(return_value=[])
+
+        result = await async_unload_entry(hass, mock_config_entry)
+
+        assert result is True
+        for service in ("run_analysis", "export_config", "purge_area_history"):
+            assert not hass.services.has_service(DOMAIN_CONST, service)
 
     async def test_async_unload_entry_platform_unload_failure(
         self, hass: HomeAssistant, mock_config_entry: Mock
