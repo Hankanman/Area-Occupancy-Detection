@@ -357,7 +357,7 @@ class TestThreshold:
                 "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass"
             ),
             patch(
-                "custom_components.area_occupancy.number.dr.async_get",
+                "custom_components.area_occupancy.utils.dr.async_get",
                 return_value=mock_registry,
             ),
         ):

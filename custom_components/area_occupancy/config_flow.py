@@ -226,11 +226,7 @@ def _entity_contains_keyword(hass: HomeAssistant, entity_id: str, keyword: str) 
 
     # Check friendly name from state
     state = hass.states.get(entity_id)
-    if state and state.name:
-        if keyword_lower in state.name.lower():
-            return True
-
-    return False
+    return bool(state and state.name and keyword_lower in state.name.lower())
 
 
 def _is_weather_entity(entity_id: str, platform: str | None) -> bool:
@@ -462,69 +458,6 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         "pm10": include_pm10_entities,
         "motion": include_motion_entities,
     }
-
-
-def _create_motion_section_schema(
-    defaults: dict[str, Any],
-    motion_entities: list[str],
-) -> vol.Schema:
-    """Create schema for the motion section."""
-    fields: dict[vol.Marker, Any] = {
-        vol.Required(
-            CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
-        ): EntitySelector(
-            EntitySelectorConfig(
-                include_entities=motion_entities,
-                multiple=True,
-            )
-        ),
-        vol.Optional(
-            CONF_WEIGHT_MOTION,
-            default=defaults.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=WEIGHT_MIN,
-                max=WEIGHT_MAX,
-                step=WEIGHT_STEP,
-                mode=NumberSelectorMode.SLIDER,
-                unit_of_measurement="weight",
-            )
-        ),
-        vol.Optional(
-            CONF_MOTION_TIMEOUT,
-            default=_seconds_to_duration(
-                defaults.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)
-            ),
-        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-        vol.Optional(
-            CONF_MOTION_PROB_GIVEN_TRUE,
-            default=defaults.get(
-                CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
-            ),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_PROBABILITY,
-                max=MAX_PROBABILITY,
-                step=0.01,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_MOTION_PROB_GIVEN_FALSE,
-            default=defaults.get(
-                CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
-            ),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=0.001,
-                max=MAX_PROBABILITY,
-                step=0.001,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-    }
-
-    return vol.Schema(fields)
 
 
 def _create_windows_and_doors_section_schema(
@@ -873,51 +806,6 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _create_parameters_section_schema(
-    defaults: dict[str, Any],
-) -> vol.Schema:
-    """Create schema for the parameters section."""
-    # Default decay half-life to 0 (use purpose value)
-    decay_half_life_default = defaults.get(
-        CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE
-    )
-
-    fields: dict[vol.Marker, Any] = {
-        vol.Optional(
-            CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=THRESHOLD_MIN,
-                max=THRESHOLD_MAX,
-                step=THRESHOLD_STEP,
-                mode=NumberSelectorMode.SLIDER,
-            )
-        ),
-        vol.Optional(
-            CONF_DECAY_ENABLED,
-            default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
-        ): BooleanSelector(),
-        vol.Optional(
-            CONF_DECAY_HALF_LIFE,
-            default=_seconds_to_duration(decay_half_life_default),
-        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-        vol.Optional(
-            CONF_MIN_PRIOR_OVERRIDE,
-            default=defaults.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=0.0,
-                max=1.0,
-                step=0.01,
-                mode=NumberSelectorMode.SLIDER,
-                unit_of_measurement="probability",
-            )
-        ),
-    }
-
-    return vol.Schema(fields)
-
-
 def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the wasp in box section."""
     return vol.Schema(
@@ -959,117 +847,6 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): DurationSelector(DurationSelectorConfig(enable_day=False)),
         }
     )
-
-
-def create_schema(
-    hass: HomeAssistant,
-    defaults: dict[str, Any] | None = None,
-    is_options: bool = False,
-    include_entities: dict[str, list[str]] | None = None,
-) -> dict:
-    """Create a schema with optional default values, using helper functions.
-
-    Args:
-        hass: Home Assistant instance
-        defaults: Optional default values for form fields
-        is_options: Whether this is for options flow (vs initial config flow)
-        include_entities: Optional pre-computed entity lists. If not provided,
-            will be computed from hass.
-
-    Returns:
-        Schema dictionary for form
-    """
-    # Ensure defaults is a dictionary
-    defaults = defaults if defaults is not None else {}
-
-    # Pre-calculate expensive lookups (or use provided)
-    if include_entities is None:
-        include_entities = _get_include_entities(hass)
-    door_state_options = _get_state_select_options("door")
-    media_state_options = _get_state_select_options("media")
-    window_state_options = _get_state_select_options("window")
-    cover_state_options = _get_state_select_options("cover")
-    appliance_state_options = _get_state_select_options("appliance")
-
-    # Initialize the dictionary for the schema
-    schema_dict: dict[vol.Marker, Any] = {}
-
-    # Get default area ID from defaults (for editing existing areas)
-    default_area_id = defaults.get(CONF_AREA_ID, "")
-
-    # Add area selector (same for both initial and options flow)
-    schema_dict[vol.Required(CONF_AREA_ID, default=default_area_id)] = AreaSelector(
-        AreaSelectorConfig()
-    )
-    # Add purpose field at root level (not in a section)
-    schema_dict[
-        vol.Optional(CONF_PURPOSE, default=defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE))
-    ] = SelectSelector(
-        SelectSelectorConfig(
-            options=cast("list[SelectOptionDict]", get_purpose_options()),
-            mode=SelectSelectorMode.DROPDOWN,
-        )
-    )
-
-    # Add sections by assigning keys directly to the dictionary
-    schema_dict[vol.Required("motion")] = section(
-        _create_motion_section_schema(defaults, include_entities["motion"]),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("windows_and_doors")] = section(
-        _create_windows_and_doors_section_schema(
-            defaults,
-            include_entities["door"],
-            include_entities["window"],
-            include_entities["cover"],
-            cast("list[SelectOptionDict]", door_state_options),
-            cast("list[SelectOptionDict]", window_state_options),
-            cast("list[SelectOptionDict]", cover_state_options),
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("media")] = section(
-        _create_media_section_schema(
-            defaults, cast("list[SelectOptionDict]", media_state_options)
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("appliances")] = section(
-        _create_appliances_section_schema(
-            defaults,
-            include_entities["appliance"],
-            cast("list[SelectOptionDict]", appliance_state_options),
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("environmental")] = section(
-        _create_environmental_section_schema(
-            defaults,
-            include_entities["temperature"],
-            include_entities["humidity"],
-            include_entities["pressure"],
-            include_entities["air_quality"],
-            include_entities["pm25"],
-            include_entities["pm10"],
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("power")] = section(
-        _create_power_section_schema(defaults), {"collapsed": True}
-    )
-    schema_dict[vol.Required("wasp_in_box")] = section(
-        _create_wasp_in_box_section_schema(defaults), {"collapsed": True}
-    )
-    schema_dict[vol.Required("parameters")] = section(
-        _create_parameters_section_schema(defaults),
-        {"collapsed": True},
-    )
-
-    # Pass the correctly structured dictionary to vol.Schema
-    return schema_dict
-
-
-# ── Wizard step schemas ──────────────────────────────────────────────
 
 
 def _create_basics_step_schema(

@@ -40,7 +40,7 @@ from .db.schema import (
     Priors,
 )
 from .migrations import async_migrate_entry
-from .service import async_setup_services
+from .service import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -451,7 +451,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await coordinator.async_shutdown()
                 del hass.data[DOMAIN]
 
-            # Clean up services flag
+            # Remove services and clean up the setup flag
+            async_unload_services(hass)
             if (
                 "_services_setup" in hass.data
                 and DOMAIN in hass.data["_services_setup"]

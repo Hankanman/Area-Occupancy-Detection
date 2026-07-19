@@ -97,25 +97,23 @@ class EntityType:
         self.input_type = input_type
 
         # Validate weight if provided
-        if weight is not None:
-            if not isinstance(weight, (int, float)) or not 0 <= weight <= 1:
-                raise ValueError(f"Invalid weight for {input_type}: {weight}")
+        if weight is not None and (
+            not isinstance(weight, (int, float)) or not 0 <= weight <= 1
+        ):
+            raise ValueError(f"Invalid weight for {input_type}: {weight}")
 
         # Validate active_states if provided
-        if active_states is not None:
-            if not isinstance(active_states, list) or not all(
-                isinstance(s, str) for s in active_states
-            ):
-                raise ValueError(
-                    f"Invalid active states for {input_type}: {active_states}"
-                )
+        if active_states is not None and (
+            not isinstance(active_states, list)
+            or not all(isinstance(s, str) for s in active_states)
+        ):
+            raise ValueError(f"Invalid active states for {input_type}: {active_states}")
 
         # Validate active_range if provided
-        if active_range is not None:
-            if not isinstance(active_range, tuple) or len(active_range) != 2:
-                raise ValueError(
-                    f"Invalid active range for {input_type}: {active_range}"
-                )
+        if active_range is not None and (
+            not isinstance(active_range, tuple) or len(active_range) != 2
+        ):
+            raise ValueError(f"Invalid active range for {input_type}: {active_range}")
 
         # Get defaults from DEFAULT_TYPES with safe fallback
         default_type = DEFAULT_TYPES.get(input_type)

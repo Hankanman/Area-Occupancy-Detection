@@ -15,6 +15,8 @@ from custom_components.area_occupancy.config_flow import (
     _apply_symmetric_adjacency,
     _build_area_description_placeholders,
     _create_area_selector_schema,
+    _create_behavior_step_schema,
+    _create_motion_step_schema,
     _entity_contains_keyword,
     _find_area_by_id,
     _find_area_by_sanitized_id,
@@ -28,7 +30,6 @@ from custom_components.area_occupancy.config_flow import (
     _remove_area_from_list,
     _strip_adjacency_references,
     _update_area_in_list,
-    create_schema,
 )
 from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
@@ -52,14 +53,13 @@ from custom_components.area_occupancy.const import (
     CONF_WASP_ENABLED,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
-    DEFAULT_PURPOSE,
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 from homeassistant.exceptions import HomeAssistantError
-from tests.conftest import create_area_config, patch_create_schema_context
+from tests.conftest import create_area_config
 
 
 # ruff: noqa: SLF001, TID251, PLC0415
@@ -776,113 +776,24 @@ class TestHelperFunctions:
         assert "binary_sensor.mqtt_room_occupancy" in result["motion"]
         assert "binary_sensor.ble_monitor_person_presence" in result["motion"]
 
-    @pytest.mark.parametrize(
-        ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
-        [
-            (None, False, True, False),  # defaults test
-            (
-                {
-                    CONF_AREA_ID: "test_area",
-                    CONF_MOTION_SENSORS: ["binary_sensor.motion_1"],
-                },
-                False,
-                True,  # CONF_AREA_ID is always present in schema now
-                True,
-            ),  # with_defaults test
-            (
-                None,
-                True,
-                True,
-                False,
-            ),  # options_mode test - CONF_AREA_ID is always present
-        ],
-    )
-    def test_create_schema(
-        self,
-        hass,
-        entity_registry,
-        defaults,
-        is_options,
-        expected_name_present,
-        test_schema_validation,
-    ):
-        """Test creating schema with different configurations."""
-        # Use real entity registry via fixture
-        schema_dict = create_schema(hass, defaults, is_options)
-        schema = vol.Schema(schema_dict)
-
-        expected_sections = [
-            "motion",
-            "windows_and_doors",
-            "media",
-            "appliances",
-            "environmental",
-            "power",
-            "wasp_in_box",
-            "parameters",
-        ]
-        assert isinstance(schema_dict, dict)
-        for section in expected_sections:
-            assert section in schema_dict
-
-        # Check if CONF_AREA_ID is present in schema_dict
-        # Schema dict uses vol.Required/vol.Optional markers as keys, so we need to check the .schema attribute
-        area_id_present = any(
-            hasattr(key, "schema") and key.schema == CONF_AREA_ID for key in schema_dict
-        )
-        if expected_name_present:
-            assert area_id_present, (
-                "CONF_AREA_ID should be present in schema but was not found"
-            )
-        else:
-            assert not area_id_present, (
-                "CONF_AREA_ID should not be present in schema but was found"
-            )
-
-        if test_schema_validation:
-            # Test schema instantiation
-            # Note: purpose is a string, not a dict section
-            data = schema(
-                {
-                    CONF_AREA_ID: "test_area",
-                    "purpose": DEFAULT_PURPOSE,  # purpose is a string value, not a section
-                    "motion": {},
-                    "windows_and_doors": {},
-                    "media": {},
-                    "appliances": {},
-                    "environmental": {},
-                    "power": {},
-                    "wasp_in_box": {},
-                    "parameters": {},
-                }
-            )
-            assert data[CONF_AREA_ID] == "test_area"
-
-    @pytest.mark.parametrize("is_options", [False, True])
-    def test_create_schema_always_includes_advanced_fields(
-        self, hass, entity_registry, is_options
-    ):
+    def test_wizard_steps_always_include_advanced_fields(self, hass, entity_registry):
         """Test that the former advanced-mode fields are always in the schema.
 
         show_advanced_options gating was removed (deprecated in HA, removal
-        2027.6), so these fields must be present unconditionally.
+        2027.6), so these fields must be present unconditionally in the
+        wizard step schemas users actually see.
         """
 
-        def section_field_names(schema_dict, section_name):
-            for key, value in schema_dict.items():
-                if getattr(key, "schema", None) == section_name:
-                    return {marker.schema for marker in value.schema.schema}
-            raise AssertionError(f"Section {section_name} not found in schema")
+        def field_names(schema_dict):
+            return {getattr(key, "schema", None) for key in schema_dict}
 
-        schema_dict = create_schema(hass, None, is_options)
-
-        motion_fields = section_field_names(schema_dict, "motion")
+        motion_fields = field_names(_create_motion_step_schema(hass))
         assert CONF_MOTION_PROB_GIVEN_TRUE in motion_fields
         assert CONF_MOTION_PROB_GIVEN_FALSE in motion_fields
 
-        parameter_fields = section_field_names(schema_dict, "parameters")
-        assert CONF_DECAY_HALF_LIFE in parameter_fields
-        assert CONF_MIN_PRIOR_OVERRIDE in parameter_fields
+        behavior_fields = field_names(_create_behavior_step_schema())
+        assert CONF_DECAY_HALF_LIFE in behavior_fields
+        assert CONF_MIN_PRIOR_OVERRIDE in behavior_fields
 
 
 class TestAreaOccupancyConfigFlow:
@@ -929,8 +840,7 @@ class TestAreaOccupancyConfigFlow:
         config_flow_flow._areas = areas
 
         if patch_type == "schema":
-            with patch_create_schema_context():
-                result = await config_flow_flow.async_step_user(user_input)
+            result = await config_flow_flow.async_step_user(user_input)
         elif patch_type == "unique_id":
             with (
                 patch.object(
@@ -1071,14 +981,13 @@ class TestAreaOccupancyConfigFlow:
         config_flow_flow._area_being_edited = area_being_edited
         config_flow_flow._area_to_remove = area_to_remove
 
-        with patch_create_schema_context():
-            method = getattr(config_flow_flow, step_method)
-            result = await method()
-            if expected_step_id == "user":
-                assert result.get("type") == FlowResultType.MENU
-            else:
-                assert result.get("type") == FlowResultType.FORM
-            assert result.get("step_id") == expected_step_id
+        method = getattr(config_flow_flow, step_method)
+        result = await method()
+        if expected_step_id == "user":
+            assert result.get("type") == FlowResultType.MENU
+        else:
+            assert result.get("type") == FlowResultType.FORM
+        assert result.get("step_id") == expected_step_id
 
     async def test_config_flow_remove_area_shows_menu(
         self,
@@ -1346,7 +1255,7 @@ class TestConfigFlowIntegration:
                 "pm10": ["sensor.pm10_1"],
                 "motion": ["binary_sensor.motion1"],
             }
-            schema_dict = create_schema(hass)
+            schema_dict = _create_motion_step_schema(hass)
             assert isinstance(schema_dict, dict)
             assert len(schema_dict) > 0
 

@@ -12,15 +12,19 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AllAreas, AreaDeviceHandle, FloorAreas
 from .const import ALL_AREAS_IDENTIFIER, DEFAULT_SENSOR_PRECISION
 from .data.activity import ActivityId
 from .data.entity_type import InputType
-from .utils import format_float, format_percentage, generate_entity_unique_id
+from .utils import (
+    assign_device_to_ha_area,
+    format_float,
+    format_percentage,
+    generate_entity_unique_id,
+)
 
 if TYPE_CHECKING:
     from .area import Area
@@ -78,14 +82,7 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
         # Assign device to Home Assistant area if area_id is configured.
         # Only for specific areas, not "All Areas" or floor aggregates.
         if self._area_handle is not None and (area := self._get_area()) is not None:
-            if area.config.area_id and self.device_info:
-                device_registry = dr.async_get(self.hass)
-                identifiers = self.device_info.get("identifiers", set())
-                device = device_registry.async_get_device(identifiers=identifiers)
-                if device and device.area_id != area.config.area_id:
-                    device_registry.async_update_device(
-                        device.id, area_id=area.config.area_id
-                    )
+            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""
@@ -234,11 +231,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             "active_entities": active_entities,
             "decaying_entities": decaying_entities,
         }
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        super()._handle_coordinator_update()
 
 
 class EvidenceSensor(AreaOccupancySensorBase):

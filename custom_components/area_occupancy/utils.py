@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
@@ -18,6 +19,24 @@ _LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
+
+
+def assign_device_to_ha_area(
+    hass: HomeAssistant, device_info: DeviceInfo | None, area_id: str | None
+) -> None:
+    """Assign an entity's device to its configured Home Assistant area.
+
+    Shared by the sensor, binary_sensor, and number platforms in
+    ``async_added_to_hass``. No-op when the area has no ``area_id``
+    configured or the device isn't registered yet.
+    """
+    if not area_id or not device_info:
+        return
+    device_registry = dr.async_get(hass)
+    identifiers = device_info.get("identifiers", set())
+    device = device_registry.async_get_device(identifiers=identifiers)
+    if device and device.area_id != area_id:
+        device_registry.async_update_device(device.id, area_id=area_id)
 
 
 def format_float(value: float, precision: int = ROUNDING_PRECISION) -> float:

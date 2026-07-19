@@ -795,10 +795,15 @@ def delete_area_data(db: AreaOccupancyDB, area_name: str) -> int:
             ).delete(synchronize_session=False)
 
             # Delete cross-area stats referencing this area
-            # involved_areas is a JSON array; use cast+like for SQLite compatibility
+            # involved_areas is a JSON array; use cast+like for SQLite
+            # compatibility. Escape LIKE metacharacters so area names
+            # containing % or _ can't over-match other areas' rows.
+            escaped_name = (
+                area_name.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+            )
             session.query(db.CrossAreaStats).filter(
                 sa.cast(db.CrossAreaStats.involved_areas, sa.String).like(
-                    f'%"{area_name}"%'
+                    f'%"{escaped_name}"%', escape="\\"
                 )
             ).delete(synchronize_session=False)
 
@@ -1139,6 +1144,16 @@ def save_time_priors(
             saved_count = 0
             updated_count = 0
 
+            # Preload all existing priors for the area in one query instead
+            # of probing per slot (up to 168 SELECTs per area per cycle)
+            existing_by_slot = {
+                (row.day_of_week, row.time_slot): row
+                for row in session.query(db.Priors).filter_by(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                )
+            }
+
             for (day_of_week, time_slot), prior_value in time_priors.items():
                 data_points = data_points_per_slot.get((day_of_week, time_slot), 0)
 
@@ -1148,17 +1163,7 @@ def save_time_priors(
                     TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, prior_value)
                 )
 
-                # Check if prior already exists
-                existing = (
-                    session.query(db.Priors)
-                    .filter_by(
-                        entry_id=db.coordinator.entry_id,
-                        area_name=area_name,
-                        day_of_week=day_of_week,
-                        time_slot=time_slot,
-                    )
-                    .first()
-                )
+                existing = existing_by_slot.get((day_of_week, time_slot))
 
                 if existing:
                     # Update existing record

@@ -7,7 +7,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
-from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import literal
 
@@ -242,57 +241,6 @@ def get_occupied_intervals(
         return []
     else:
         return extended_intervals
-
-
-def get_time_bounds(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    area_name: str,
-    entity_ids: list[str] | None = None,
-) -> tuple[datetime | None, datetime | None]:
-    """Return min/max timestamps for specified entities or area."""
-    try:
-        with db.get_session() as session:
-            query = session.query(
-                func.min(db.Intervals.start_time).label("first"),
-                func.max(db.Intervals.end_time).label("last"),
-            )
-
-            if entity_ids is not None:
-                query = query.filter(
-                    db.Intervals.entity_id.in_(entity_ids),
-                    db.Intervals.area_name == area_name,
-                )
-            else:
-                query = query.join(
-                    db.Entities,
-                    (db.Intervals.entity_id == db.Entities.entity_id)
-                    & (db.Intervals.area_name == db.Entities.area_name),
-                ).filter(
-                    db.Entities.entry_id == entry_id,
-                    db.Entities.area_name == area_name,
-                )
-
-            time_bounds = query.first()
-            if not time_bounds:
-                return (None, None)
-            # DB stores naive UTC; return aware UTC to callers
-            first = time_bounds.first
-            last = time_bounds.last
-            return (
-                from_db_utc(first) if first is not None else None,
-                from_db_utc(last) if last is not None else None,
-            )
-    except (
-        SQLAlchemyError,
-        ValueError,
-        TypeError,
-        RuntimeError,
-        OSError,
-        TimeoutError,
-    ) as e:
-        _LOGGER.error("Error getting time bounds: %s", e)
-        return (None, None)
 
 
 def build_base_filters(
@@ -560,33 +508,3 @@ def get_area_created_at(
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Error reading created_at for area '%s': %s", area_name, e)
         return None
-
-
-def get_total_occupied_seconds(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    area_name: str,
-    lookback_days: int,
-    motion_timeout_seconds: int,
-) -> float:
-    """Calculate total occupied seconds using robust Python interval merging logic.
-
-    This method handles all complexity (timeouts, overlapping intervals) by fetching
-    raw motion sensor intervals and processing them consistently.
-    """
-    intervals = get_occupied_intervals(
-        db,
-        entry_id,
-        area_name,
-        lookback_days,
-        motion_timeout_seconds,
-    )
-
-    total_seconds = 0.0
-    for start_time, end_time in intervals:
-        total_seconds += (end_time - start_time).total_seconds()
-
-    _LOGGER.debug(
-        "Total occupied seconds (Python) for %s: %.1f", area_name, total_seconds
-    )
-    return total_seconds

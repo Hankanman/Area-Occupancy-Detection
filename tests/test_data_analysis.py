@@ -22,7 +22,6 @@ from custom_components.area_occupancy.data.analysis import (
     run_numeric_aggregation,
     start_prior_analysis,
 )
-from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.utils import (
     apply_motion_timeout,
     find_overlapping_motion_intervals,
@@ -728,53 +727,6 @@ class TestPriorAnalyzerCalculateTimePriors:
         # Should only be in slot 10 (not slot 11 since end is exclusive at 11:00)
         assert (0, 10) in time_priors
         assert (0, 11) not in time_priors
-
-
-class TestPriorAnalyzerGetEntityIdsByType:
-    """Test PriorAnalyzer._get_entity_ids_by_type method."""
-
-    def test_get_motion_entity_ids(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Test getting entity IDs for motion type."""
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        # Add a motion entity using the area's entity manager
-        # Entities are already created from config, so we can check existing ones
-        # or add one directly to the entities dict
-        from custom_components.area_occupancy.data.decay import Decay
-        from custom_components.area_occupancy.data.entity import Entity
-        from custom_components.area_occupancy.data.entity_type import EntityType
-
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=0.85,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            active_states=["on"],
-        )
-        motion_entity = Entity(
-            entity_id="binary_sensor.motion1",
-            type=entity_type,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            decay=Decay(half_life=60.0),
-            hass=coordinator.hass,
-        )
-        area.entities.entities["binary_sensor.motion1"] = motion_entity
-
-        entity_ids = analyzer._get_entity_ids_by_type(InputType.MOTION)
-        assert "binary_sensor.motion1" in entity_ids
-
-    def test_get_empty_result_for_type_with_no_entities(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test that empty result is returned for type with no entities."""
-        area_name = coordinator.get_area_names()[0]
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        entity_ids = analyzer._get_entity_ids_by_type(InputType.CO2)
-        assert entity_ids == []
 
 
 class TestOrchestrationFunctions:

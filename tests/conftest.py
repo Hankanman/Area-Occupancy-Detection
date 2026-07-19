@@ -20,7 +20,6 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
-import voluptuous as vol
 
 from homeassistant.helpers import area_registry as ar
 
@@ -1796,16 +1795,6 @@ def config_flow_mock_config_entry_with_areas(
 
 # Config Flow Helper Functions
 # These helper functions reduce code duplication in config flow tests
-
-
-@contextmanager
-def patch_create_schema_context(return_value: dict[str, Any] | None = None):
-    """Context manager to patch create_schema for tests."""
-    with patch(
-        "custom_components.area_occupancy.config_flow.create_schema",
-        return_value=return_value or {"test": vol.Required("test")},
-    ):
-        yield
 
 
 @contextmanager
