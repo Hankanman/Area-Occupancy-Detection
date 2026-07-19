@@ -391,25 +391,3 @@ def validate_sample_count(
             "analysis_error": error_type,
         }
     return None
-
-
-def validate_occupied_intervals(
-    intervals: list[Any],
-    sample_count: int,
-) -> dict[str, Any] | None:
-    """Validate occupied intervals exist.
-
-    Args:
-        intervals: List of occupied intervals
-        sample_count: Number of samples (for reporting in error)
-
-    Returns:
-        Error dict if invalid, None if valid
-    """
-    if not intervals:
-        _LOGGER.debug("No occupied intervals found for analysis")
-        return {
-            "sample_count": sample_count,
-            "analysis_error": "no_occupancy_data",
-        }
-    return None

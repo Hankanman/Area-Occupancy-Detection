@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AllAreas, AreaDeviceHandle, FloorAreas
@@ -231,11 +231,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             "active_entities": active_entities,
             "decaying_entities": decaying_entities,
         }
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        super()._handle_coordinator_update()
 
 
 class EvidenceSensor(AreaOccupancySensorBase):

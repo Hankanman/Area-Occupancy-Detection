@@ -720,7 +720,7 @@ class TestRunIntervalAggregation:
             )
             assert raw_count_before == 1
 
-        results = run_interval_aggregation(db, area_name, force=False)
+        results = run_interval_aggregation(db, area_name)
         assert isinstance(results, dict)
         assert "daily" in results
         assert "weekly" in results
@@ -1398,7 +1398,7 @@ class TestRunNumericAggregation:
             )
             assert sample_count_before == 1
 
-        results = run_numeric_aggregation(db, area_name, force=False)
+        results = run_numeric_aggregation(db, area_name)
         assert isinstance(results, dict)
         assert "hourly" in results
         assert "weekly" in results

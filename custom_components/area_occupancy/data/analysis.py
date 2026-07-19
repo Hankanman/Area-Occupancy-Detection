@@ -26,9 +26,8 @@ from ..db.queries import (
     get_occupied_intervals_cache_age_hours,
     is_occupied_intervals_cache_valid,
 )
-from ..time_utils import ensure_timezone_aware, ensure_utc_datetime, to_local, to_utc
+from ..time_utils import ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
-from .entity_type import InputType
 from .prior import Prior
 
 if TYPE_CHECKING:
@@ -484,9 +483,7 @@ class PriorAnalyzer:
             # so we can't see the raw count here. The merge happens in queries.get_occupied_intervals.
             # We log what we have: the final merged interval count and duration.
             occupied_duration_before_calc = sum(
-                (
-                    ensure_timezone_aware(end) - ensure_timezone_aware(start)
-                ).total_seconds()
+                (ensure_utc_datetime(end) - ensure_utc_datetime(start)).total_seconds()
                 for start, end in occupied_intervals
             )
             _LOGGER.debug(
@@ -499,7 +496,6 @@ class PriorAnalyzer:
             # 2. Calculate global prior using actual data period
             # Determine actual data period from intervals (not fixed lookback)
             # Ensure all datetime objects are timezone-aware UTC
-            # Use ensure_timezone_aware for consistency (intervals are already timezone-aware)
 
             # Diagnostic logging: log interval details before calculation
             _LOGGER.debug(
@@ -510,8 +506,8 @@ class PriorAnalyzer:
             if occupied_intervals:
                 # Log first few intervals for debugging
                 for i, (start, end) in enumerate(occupied_intervals[:5]):
-                    start_aware = ensure_timezone_aware(start)
-                    end_aware = ensure_timezone_aware(end)
+                    start_aware = ensure_utc_datetime(start)
+                    end_aware = ensure_utc_datetime(end)
                     _LOGGER.debug(
                         "Interval %d: start=%s (tz=%s), end=%s (tz=%s), duration=%.2f",
                         i,
@@ -740,11 +736,6 @@ class PriorAnalyzer:
             _LOGGER.error(
                 "Failed to calculate prior for area %s: %s", self.area_name, e
             )
-
-    def _get_entity_ids_by_type(self, input_type: InputType) -> list[str]:
-        """Get entity IDs for a specific input type in this area."""
-        entities = self.area.entities.get_entities_by_input_type(input_type)
-        return list(entities.keys())
 
     def calculate_time_priors(
         self,

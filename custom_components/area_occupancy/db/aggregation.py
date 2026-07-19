@@ -532,14 +532,13 @@ def aggregate_weekly_to_monthly(
 
 
 def run_interval_aggregation(
-    db: AreaOccupancyDB, area_name: str | None = None, force: bool = False
+    db: AreaOccupancyDB, area_name: str | None = None
 ) -> dict[str, int]:
     """Run the full tiered aggregation process for intervals.
 
     Args:
         db: Database instance
         area_name: Optional area name to filter by. If None, processes all areas.
-        force: If True, run aggregation even if recently run
 
     Returns:
         Dictionary with counts of aggregates created at each level
@@ -1054,14 +1053,13 @@ def aggregate_hourly_to_weekly(
 
 
 def run_numeric_aggregation(
-    db: AreaOccupancyDB, area_name: str | None = None, force: bool = False
+    db: AreaOccupancyDB, area_name: str | None = None
 ) -> dict[str, int]:
     """Run the full tiered aggregation process for numeric samples.
 
     Args:
         db: Database instance
         area_name: Optional area name to filter by. If None, processes all areas.
-        force: If True, run aggregation even if recently run
 
     Returns:
         Dictionary with counts of aggregates created at each level

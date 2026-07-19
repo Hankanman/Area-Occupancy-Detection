@@ -553,22 +553,6 @@ def delete_db(db: AreaOccupancyDB) -> None:
             _LOGGER.error("Failed to delete database file: %s", e)
 
 
-def get_last_prune_time(db: AreaOccupancyDB) -> datetime | None:
-    """Get timestamp of last successful prune operation.
-
-    Returns:
-        datetime of last prune, or None if not recorded
-    """
-    try:
-        with db.get_session() as session:
-            result = session.query(db.Metadata).filter_by(key="last_prune_time").first()
-            if result:
-                return datetime.fromisoformat(result.value)
-    except (ValueError, AttributeError, SQLAlchemyError, OSError) as e:
-        _LOGGER.debug("Failed to get last prune time: %s", e)
-    return None
-
-
 def set_last_prune_time(
     db: AreaOccupancyDB, timestamp: datetime, session: Any = None
 ) -> None:

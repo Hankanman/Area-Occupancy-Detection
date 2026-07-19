@@ -155,11 +155,6 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
             return None
         return self._handle.area
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        super()._handle_coordinator_update()
-
 
 class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
     """Wasp in Box binary sensor implementation.
@@ -198,7 +193,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             raise ValueError(f"Area '{area_handle.area_name}' is not available")
         self._config = area.config
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
-        self._weight = self._config.wasp_in_box.weight
         self._max_duration = self._config.wasp_in_box.max_duration
         self._verification_delay = self._config.wasp_in_box.verification_delay
 
@@ -350,11 +344,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             ATTR_VERIFICATION_DELAY: self._verification_delay,
             ATTR_VERIFICATION_PENDING: self._verification_pending,
         }
-
-    @property
-    def weight(self) -> float:
-        """Return the sensor weight for probability calculation."""
-        return self._weight
 
     def _setup_entity_tracking(self) -> None:
         """Set up state tracking for door and motion entities."""
