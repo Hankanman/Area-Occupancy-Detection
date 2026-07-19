@@ -42,10 +42,6 @@ ALL_AREAS_IDENTIFIER: Final = (
 
 # Config flow action constants
 CONF_ACTION_ADD_AREA: Final = "add_area"
-CONF_ACTION_FINISH_SETUP: Final = "finish_setup"
-CONF_ACTION_EDIT: Final = "edit"
-CONF_ACTION_REMOVE: Final = "remove"
-CONF_ACTION_CANCEL: Final = "cancel"
 CONF_ACTION_GLOBAL_SETTINGS: Final = "global_settings"
 CONF_ACTION_MANAGE_PEOPLE: Final = "manage_people"
 CONF_OPTION_PREFIX_AREA: Final = "area_"
@@ -84,10 +80,7 @@ CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
 CONF_THRESHOLD: Final = "threshold"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
-CONF_DEVICE_STATES: Final = "device_states"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
-CONF_SENSORS: Final = "sensors"
-CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
@@ -128,7 +121,6 @@ DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_COVER_ACTIVE_STATES: Final[list[str]] = [STATE_OPENING, STATE_CLOSING]
 DEFAULT_NAME: Final = "Area Occupancy"
-DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
@@ -140,7 +132,6 @@ DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
 DEFAULT_HEALTH_ENABLED: Final = True
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
-DEFAULT_SLEEP_WEIGHT: Final = 0.9
 SLEEP_PRESENCE_HALF_LIFE: Final = (
     7200  # 2 hour half-life for sleep (persistent presence)
 )
@@ -151,7 +142,11 @@ DEFAULT_MAX_RECOVERY_ATTEMPTS: Final = 3
 DEFAULT_ENABLE_PERIODIC_BACKUPS: Final = True
 DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
 
-# Default weights
+# Default weights. These are authoritative: config Weights always pass
+# them as config_weight, so the "weight" values in DEFAULT_TYPES
+# (data/entity_type.py) are fallback-only and effectively shadowed.
+# Media intentionally differs there (0.85) — do not "align" either value
+# without a deliberate, tested decision.
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
@@ -221,48 +216,8 @@ ADJACENCY_N_CHAIN: Final[int] = 50  # chain un-bucketed
 ADJACENCY_N_PAIR: Final[int] = 20  # 1-hop pair un-bucketed
 
 # Default prior probabilities
-DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
-DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
+# (Per-type probabilities/priors live in data/entity_type.py DEFAULT_TYPES.)
 DEFAULT_TIME_PRIOR: Final[float] = 0.5
-
-# Door sensor defaults
-DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
-DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02
-DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
-
-# Window sensor defaults
-WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
-WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
-WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
-
-# Media device defaults
-MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25
-MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
-MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
-
-# Appliance defaults
-APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
-APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
-APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
-
-# Cover defaults (blinds, shades, garage doors being operated)
-COVER_PROB_GIVEN_TRUE: Final[float] = 0.35
-COVER_PROB_GIVEN_FALSE: Final[float] = 0.02
-COVER_DEFAULT_PRIOR: Final[float] = 0.25
-
-# Environmental defaults
-ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
-ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
-ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
-
-# Wasp in Box defaults (High confidence when active)
-WASP_PROB_GIVEN_TRUE: Final[float] = 0.95
-WASP_PROB_GIVEN_FALSE: Final[float] = 0.05
-WASP_DEFAULT_PRIOR: Final[float] = 0.60
-
-# Sleep presence defaults (High confidence when active)
-SLEEP_PROB_GIVEN_TRUE: Final[float] = 0.95
-SLEEP_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
