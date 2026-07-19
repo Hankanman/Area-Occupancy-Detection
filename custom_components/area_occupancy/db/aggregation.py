@@ -42,6 +42,85 @@ HOURS_PER_DAY = 24
 MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR
 
 
+def _merge_interval_aggregate(existing: Any, agg_data: dict[str, Any]) -> None:
+    """Fold newly-eligible source rows into an existing target aggregate.
+
+    The retention cutoff slides forward continuously, so source rows for
+    the same target bucket become eligible across successive runs (e.g.
+    the seven dailies of one ISO week cross the cutoff on seven
+    consecutive days). The first run creates the target aggregate; later
+    runs MUST merge into it — skipping would silently drop the new rows'
+    contribution just before they are deleted below.
+    """
+    existing.interval_count += agg_data["interval_count"]
+    existing.total_duration_seconds += agg_data["total_duration_seconds"]
+    if existing.interval_count > 0:
+        existing.avg_duration_seconds = (
+            existing.total_duration_seconds / existing.interval_count
+        )
+    for field, pick in (
+        ("min_duration_seconds", min),
+        ("max_duration_seconds", max),
+        ("first_occurrence", min),
+        ("last_occurrence", max),
+    ):
+        new_value = agg_data.get(field)
+        if new_value is None:
+            continue
+        current = getattr(existing, field)
+        setattr(
+            existing, field, new_value if current is None else pick(current, new_value)
+        )
+
+
+def _merge_numeric_aggregate(existing: Any, agg_data: dict[str, Any]) -> None:
+    """Fold newly-eligible numeric rows into an existing target aggregate.
+
+    Same sliding-cutoff situation as ``_merge_interval_aggregate``.
+    min/max/avg/sample_count merge exactly (avg weighted by counts).
+    median and std_deviation cannot be reconstructed from two summaries,
+    so they merge as sample-count-weighted approximations — consistent
+    with the hourly→weekly rollup, which already approximates both.
+    Newly-eligible rows are chronologically later than the already-merged
+    ones (the cutoff moves forward), so first_value is kept and
+    last_value is taken from the new batch.
+    """
+    n_old = existing.sample_count or 0
+    n_new = agg_data.get("sample_count") or 0
+    n_total = n_old + n_new
+    if n_new == 0:
+        return
+
+    for field, pick in (("min_value", min), ("max_value", max)):
+        new_value = agg_data.get(field)
+        if new_value is None:
+            continue
+        current = getattr(existing, field)
+        setattr(
+            existing, field, new_value if current is None else pick(current, new_value)
+        )
+
+    def _weighted(current: float | None, new_value: float | None) -> float | None:
+        if current is None:
+            return new_value
+        if new_value is None or n_total == 0:
+            return current
+        return (current * n_old + new_value * n_new) / n_total
+
+    existing.avg_value = _weighted(existing.avg_value, agg_data.get("avg_value"))
+    existing.median_value = _weighted(
+        existing.median_value, agg_data.get("median_value")
+    )
+    existing.std_deviation = _weighted(
+        existing.std_deviation, agg_data.get("std_deviation")
+    )
+    existing.sample_count = n_total
+    if existing.first_value is None:
+        existing.first_value = agg_data.get("first_value")
+    if agg_data.get("last_value") is not None:
+        existing.last_value = agg_data["last_value"]
+
+
 def aggregate_raw_to_daily(
     db: AreaOccupancyDB, area_name: str | None = None
 ) -> tuple[int, list[int]]:
@@ -163,7 +242,9 @@ def aggregate_raw_to_daily(
                     .first()
                 )
 
-                if not existing:
+                if existing:
+                    _merge_interval_aggregate(existing, agg_data)
+                else:
                     aggregate = db.IntervalAggregates(**agg_data)
                     session.add(aggregate)
                     session.flush()  # Flush to get the ID
@@ -327,7 +408,9 @@ def aggregate_daily_to_weekly(
                     .first()
                 )
 
-                if not existing:
+                if existing:
+                    _merge_interval_aggregate(existing, agg_data)
+                else:
                     aggregate = db.IntervalAggregates(**agg_data)
                     session.add(aggregate)
                     session.flush()  # Flush to get the ID
@@ -496,7 +579,9 @@ def aggregate_weekly_to_monthly(
                     .first()
                 )
 
-                if not existing:
+                if existing:
+                    _merge_interval_aggregate(existing, agg_data)
+                else:
                     aggregate = db.IntervalAggregates(**agg_data)
                     new_aggregates.append(aggregate)
                     created_count += 1
@@ -747,9 +832,12 @@ def aggregate_numeric_samples_to_hourly(
                 dt_util.utcnow() - timedelta(days=RETENTION_RAW_NUMERIC_SAMPLES_DAYS)
             )
 
-            # Find raw samples older than cutoff
-            query = session.query(db.NumericSamples).filter(
-                db.NumericSamples.timestamp < cutoff_date,
+            # Find raw samples older than cutoff. Ordered by timestamp so
+            # first_value/last_value below are chronological, not row-order.
+            query = (
+                session.query(db.NumericSamples)
+                .filter(db.NumericSamples.timestamp < cutoff_date)
+                .order_by(db.NumericSamples.timestamp)
             )
 
             if area_name:
@@ -836,7 +924,9 @@ def aggregate_numeric_samples_to_hourly(
                     .first()
                 )
 
-                if not existing:
+                if existing:
+                    _merge_numeric_aggregate(existing, agg_data)
+                else:
                     aggregate = db.NumericAggregates(**agg_data)
                     session.add(aggregate)
                     session.flush()  # Flush to get the ID
@@ -895,10 +985,16 @@ def aggregate_hourly_to_weekly(
                 dt_util.utcnow() - timedelta(days=RETENTION_HOURLY_NUMERIC_DAYS)
             )
 
-            # Find hourly aggregates older than cutoff
-            query = session.query(db.NumericAggregates).filter(
-                db.NumericAggregates.aggregation_period == AGGREGATION_PERIOD_HOURLY,
-                db.NumericAggregates.period_start < cutoff_date,
+            # Find hourly aggregates older than cutoff. Ordered by period
+            # so first_value/last_value below are chronological.
+            query = (
+                session.query(db.NumericAggregates)
+                .filter(
+                    db.NumericAggregates.aggregation_period
+                    == AGGREGATION_PERIOD_HOURLY,
+                    db.NumericAggregates.period_start < cutoff_date,
+                )
+                .order_by(db.NumericAggregates.period_start)
             )
 
             if area_name:
@@ -1020,7 +1116,9 @@ def aggregate_hourly_to_weekly(
                     .first()
                 )
 
-                if not existing:
+                if existing:
+                    _merge_numeric_aggregate(existing, agg_data)
+                else:
                     aggregate = db.NumericAggregates(**agg_data)
                     session.add(aggregate)
                     session.flush()  # Flush to get the ID

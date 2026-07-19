@@ -1425,3 +1425,157 @@ class TestRunNumericAggregation:
                 .count()
             )
             assert hourly_count > 0, "Hourly aggregates should exist"
+
+
+class TestSlidingCutoffMerge:
+    """Regression tests for the sliding-cutoff merge.
+
+    Source rows crossing the retention cutoff on a later run must MERGE
+    into an existing target aggregate, not be skipped and deleted
+    (silent undercount).
+    """
+
+    def test_daily_to_weekly_merges_into_existing_weekly(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Two dailies of one week arriving on successive runs both count."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        _setup_area_and_entity(db, area_name, "binary_sensor.motion1", "motion")
+
+        # Anchor: local Monday midnight of a week safely past the cutoff
+        old_local = dt_util.as_local(
+            _get_old_date(RETENTION_DAILY_AGGREGATES_DAYS, offset_days=30)
+        )
+        monday_local = (old_local - timedelta(days=old_local.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        monday_utc = monday_local.astimezone(dt_util.UTC)
+        tuesday_utc = (monday_local + timedelta(days=1)).astimezone(dt_util.UTC)
+
+        def _add_daily(period_start, period_end, count, total, dmin, dmax):
+            with db.get_session() as session:
+                session.add(
+                    db.IntervalAggregates(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        entity_id="binary_sensor.motion1",
+                        aggregation_period="daily",
+                        period_start=period_start,
+                        period_end=period_end,
+                        state="on",
+                        interval_count=count,
+                        total_duration_seconds=total,
+                        min_duration_seconds=dmin,
+                        max_duration_seconds=dmax,
+                        avg_duration_seconds=total / count,
+                        first_occurrence=period_start,
+                        last_occurrence=period_end,
+                    )
+                )
+                session.commit()
+
+        # Run 1: only Monday's daily is present -> weekly created from it
+        _add_daily(monday_utc, monday_utc + timedelta(days=1), 4, 4000.0, 500.0, 1500.0)
+        created, _ = aggregate_daily_to_weekly(db, area_name)
+        assert created == 1
+
+        # Run 2: Tuesday's daily crosses the cutoff -> must merge, not skip
+        _add_daily(
+            tuesday_utc, tuesday_utc + timedelta(days=1), 6, 9000.0, 300.0, 2000.0
+        )
+        created, _ = aggregate_daily_to_weekly(db, area_name)
+        assert created == 0  # merged into the existing weekly, none created
+
+        with db.get_session() as session:
+            weekly = (
+                session.query(db.IntervalAggregates)
+                .filter_by(
+                    area_name=area_name,
+                    aggregation_period="weekly",
+                    state="on",
+                )
+                .one()
+            )
+            assert weekly.interval_count == 10
+            assert weekly.total_duration_seconds == 13000.0
+            assert weekly.avg_duration_seconds == 1300.0
+            assert weekly.min_duration_seconds == 300.0
+            assert weekly.max_duration_seconds == 2000.0
+            # Tuesday's daily must be gone (consumed by the merge)
+            dailies_left = (
+                session.query(db.IntervalAggregates)
+                .filter_by(area_name=area_name, aggregation_period="daily")
+                .count()
+            )
+            assert dailies_left == 0
+
+    def test_hourly_to_weekly_merges_numeric_stats(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Numeric weekly rollup merges counts and weights the average."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        _setup_area_and_entity(db, area_name, "sensor.temperature", "temperature")
+
+        old_local = dt_util.as_local(
+            _get_old_date(RETENTION_HOURLY_NUMERIC_DAYS, offset_days=30)
+        )
+        monday_local = (old_local - timedelta(days=old_local.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        hour1_utc = monday_local.astimezone(dt_util.UTC)
+        hour2_utc = (monday_local + timedelta(hours=1)).astimezone(dt_util.UTC)
+
+        def _add_hourly(period_start, count, vmin, vmax, avg, first, last):
+            with db.get_session() as session:
+                session.add(
+                    db.NumericAggregates(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        entity_id="sensor.temperature",
+                        aggregation_period="hourly",
+                        period_start=period_start,
+                        period_end=period_start + timedelta(hours=1),
+                        sample_count=count,
+                        min_value=vmin,
+                        max_value=vmax,
+                        avg_value=avg,
+                        median_value=avg,
+                        std_deviation=0.5,
+                        first_value=first,
+                        last_value=last,
+                    )
+                )
+                session.commit()
+
+        # Run 1: first hour only -> weekly created
+        _add_hourly(hour1_utc, 10, 18.0, 22.0, 20.0, 18.5, 21.5)
+        created, _ = aggregate_hourly_to_weekly(db, area_name)
+        assert created == 1
+
+        # Run 2: second hour crosses the cutoff -> merge into weekly
+        _add_hourly(hour2_utc, 30, 16.0, 26.0, 24.0, 22.0, 25.0)
+        created, _ = aggregate_hourly_to_weekly(db, area_name)
+        assert created == 0
+
+        with db.get_session() as session:
+            weekly = (
+                session.query(db.NumericAggregates)
+                .filter_by(area_name=area_name, aggregation_period="weekly")
+                .one()
+            )
+            assert weekly.sample_count == 40
+            assert weekly.min_value == 16.0
+            assert weekly.max_value == 26.0
+            # Weighted average: (20*10 + 24*30) / 40 = 23.0
+            assert weekly.avg_value == pytest.approx(23.0)
+            # First value kept from run 1, last value from run 2
+            assert weekly.first_value == 18.5
+            assert weekly.last_value == 25.0
+            hourlies_left = (
+                session.query(db.NumericAggregates)
+                .filter_by(area_name=area_name, aggregation_period="hourly")
+                .count()
+            )
+            assert hourlies_left == 0
