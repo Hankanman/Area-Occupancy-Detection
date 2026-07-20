@@ -902,6 +902,18 @@
             },
             "activity_confidence": {
                 "name": "Activity Confidence"
+            },
+            "evidence": {
+                "name": "Evidence"
+            },
+            "presence_confidence": {
+                "name": "Presence Confidence"
+            },
+            "environmental_confidence": {
+                "name": "Environmental Confidence"
+            },
+            "sensor_health": {
+                "name": "Sensor Health"
             }
         },
         "number": {

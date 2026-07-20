@@ -100,7 +100,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
             ),
             NAME_BINARY_SENSOR,
         )
-        self._attr_name = NAME_BINARY_SENSOR
+        self._attr_translation_key = "occupancy_status"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         # Get device_info directly from Area or AllAreas
         self._attr_device_info = (
@@ -204,7 +204,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             area.device_info(),
             NAME_WASP_IN_BOX,
         )
-        self._attr_name = NAME_WASP_IN_BOX
+        self._attr_translation_key = "wasp_in_box"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         # Get device_info directly from Area
         self._attr_device_info = area.device_info() if area is not None else None
@@ -761,7 +761,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
             area.device_info(),
             NAME_SLEEP_PRESENCE,
         )
-        self._attr_name = NAME_SLEEP_PRESENCE
+        self._attr_translation_key = "sleeping"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._attr_icon = "mdi:sleep"
         self._attr_device_info = area.device_info()

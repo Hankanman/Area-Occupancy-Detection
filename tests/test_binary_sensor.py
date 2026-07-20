@@ -38,7 +38,7 @@ class TestOccupancy:
         device_id = next(iter(area.device_info()["identifiers"]))[1]
         expected_unique_id = f"{entry_id}_{device_id}_occupancy_status"
         assert entity.unique_id == expected_unique_id
-        assert entity.name == "Occupancy Status"
+        assert entity.translation_key == "occupancy_status"
 
     async def test_async_added_to_hass(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
@@ -210,7 +210,7 @@ class TestWaspInBoxSensor:
         device_id = next(iter(area.device_info()["identifiers"]))[1]
         expected_unique_id = f"{entry_id}_{device_id}_wasp_in_box"
         assert entity.unique_id == expected_unique_id
-        assert entity.name == "Wasp in Box"
+        assert entity.translation_key == "wasp_in_box"
         assert entity.should_poll is False
 
     async def test_async_added_to_hass(

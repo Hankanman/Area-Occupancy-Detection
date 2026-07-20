@@ -105,7 +105,7 @@ class TestThreshold:
         """Test that all initialization attributes are set correctly."""
         # Assert: Verify all __init__ attributes
         assert threshold_entity._attr_has_entity_name is True
-        assert threshold_entity._attr_name == "Threshold"
+        assert threshold_entity._attr_translation_key == "threshold"
         assert threshold_entity._attr_native_min_value == 1.0
         assert threshold_entity._attr_native_max_value == 99.0
         assert threshold_entity._attr_native_step == 1.0

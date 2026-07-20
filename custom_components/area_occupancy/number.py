@@ -43,7 +43,7 @@ class Threshold(CoordinatorEntity, NumberEntity):
         self._area_name = area_handle.area_name
         self._area_handle = area_handle
         self._attr_has_entity_name = True
-        self._attr_name = "Threshold"
+        self._attr_translation_key = "threshold"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             area_handle.coordinator.entry_id,

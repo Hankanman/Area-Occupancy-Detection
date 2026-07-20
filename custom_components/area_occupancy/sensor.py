@@ -112,7 +112,7 @@ class PriorsSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the priors sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_PRIORS_SENSOR
+        self._attr_translation_key = "prior_probability"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
@@ -180,7 +180,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the probability sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_PROBABILITY_SENSOR
+        self._attr_translation_key = "occupancy_probability"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
@@ -245,7 +245,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the entities sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_EVIDENCE_SENSOR
+        self._attr_translation_key = "evidence"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
@@ -332,7 +332,7 @@ class DecaySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the decay sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_DECAY_SENSOR
+        self._attr_translation_key = "decay_status"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
@@ -406,7 +406,7 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the presence probability sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_PRESENCE_PROBABILITY_SENSOR
+        self._attr_translation_key = "presence_confidence"
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
@@ -441,7 +441,7 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the environmental confidence sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR
+        self._attr_translation_key = "environmental_confidence"
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
@@ -560,7 +560,7 @@ class SensorHealthSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the sensor health sensor."""
         super().__init__(area_handle=area_handle)
-        self._attr_name = NAME_SENSOR_HEALTH_SENSOR
+        self._attr_translation_key = "sensor_health"
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
