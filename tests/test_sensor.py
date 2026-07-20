@@ -19,8 +19,22 @@ from custom_components.area_occupancy.utils import generate_entity_unique_id
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 
-
 # ruff: noqa: SLF001, PLC0415, TID251
+
+# Entities name via translation_key + strings.json, so entity.name does not
+# resolve to the literal in a bare unit test. Assert the translation_key
+# instead; unique_id (built from the NAME_* constant) still guards stability.
+_NAME_TO_TRANSLATION_KEY = {
+    "Prior Probability": "prior_probability",
+    "Occupancy Probability": "occupancy_probability",
+    "Decay Status": "decay_status",
+    "Evidence": "evidence",
+    "Presence Confidence": "presence_confidence",
+    "Environmental Confidence": "environmental_confidence",
+    "Sensor Health": "sensor_health",
+}
+
+
 class TestAreaOccupancySensorBase:
     """Test AreaOccupancySensorBase class."""
 
@@ -107,7 +121,7 @@ class TestPercentageSensors:
             expected_name,
         )
         assert sensor.unique_id == expected_unique_id_new
-        assert sensor.name == expected_name
+        assert sensor.translation_key == _NAME_TO_TRANSLATION_KEY[expected_name]
         assert sensor.native_unit_of_measurement == "%"
         assert sensor.suggested_display_precision == 1
 
@@ -166,7 +180,7 @@ class TestEvidenceSensor:
         device_id = next(iter(area.device_info()["identifiers"]))[1]
         expected_unique_id = f"{entry_id}_{device_id}_evidence"
         assert sensor.unique_id == expected_unique_id
-        assert sensor.name == "Evidence"
+        assert sensor.translation_key == "evidence"
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
     def test_native_value_property(
@@ -327,7 +341,7 @@ class TestDecaySensor:
         device_id = next(iter(area.device_info()["identifiers"]))[1]
         expected_unique_id = f"{entry_id}_{device_id}_decay_status"
         assert sensor.unique_id == expected_unique_id
-        assert sensor.name == "Decay Status"
+        assert sensor.translation_key == "decay_status"
         assert sensor.native_unit_of_measurement == "%"
         assert sensor.suggested_display_precision == 1
         assert sensor.entity_category == EntityCategory.DIAGNOSTIC
@@ -494,7 +508,7 @@ class TestAllAreasSensors:
         assert sensor._area_name == ALL_AREAS_IDENTIFIER
         assert sensor._all_areas == all_areas
         assert sensor.coordinator == coordinator
-        assert sensor.name == expected_name
+        assert sensor.translation_key == _NAME_TO_TRANSLATION_KEY[expected_name]
         assert sensor.native_unit_of_measurement == "%"
 
         if has_entity_category:
