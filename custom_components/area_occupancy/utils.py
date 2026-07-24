@@ -268,10 +268,14 @@ def combined_probability(
     presence: float,
     environmental: float,
 ) -> float:
-    """Combine presence and environmental using weighted average in logit space.
+    """Combine presence and environmental as an evidence update in logit space.
 
-    This preserves the smooth sigmoid properties while combining both signals.
-    Presence is weighted more heavily (80%) than environmental (20%).
+    Environmental data adjusts the presence estimate rather than being averaged
+    with it. Averaging pulls the result toward whichever channel is less
+    confident, so a weakly-supportive environmental reading used to *lower* a
+    motion-confirmed probability. Environmental contributions are non-negative
+    by construction, so an additive update can only raise the result or leave
+    it unchanged. Environmental influence stays damped at 20%.
 
     Args:
         presence: Presence probability (0.0-1.0)
@@ -284,8 +288,8 @@ def combined_probability(
     z_presence = logit(presence)
     z_env = logit(environmental)
 
-    # Weighted combination (presence dominates at 80%, environmental at 20%)
-    z_combined = 0.8 * z_presence + 0.2 * z_env
+    # Additive update (environmental damped to 20% of its logit contribution)
+    z_combined = z_presence + 0.2 * z_env
 
     return clamp_probability(sigmoid(z_combined))
 

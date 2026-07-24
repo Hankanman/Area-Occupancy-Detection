@@ -1131,6 +1131,17 @@ class TestCombinedProbability:
         assert MIN_PROBABILITY <= result_extreme_high <= MAX_PROBABILITY
         assert MIN_PROBABILITY <= result_extreme_low <= MAX_PROBABILITY
 
+    def test_combined_probability_supporting_env_never_lowers(self) -> None:
+        """Supporting environmental evidence must never lower the presence estimate."""
+        # Environmental contributions are non-negative, so environmental >= 0.5
+        # always. Averaging used to pull confident presence back toward 0.5,
+        # so adding a supporting environmental sensor reduced the probability.
+        for presence in (0.6, 0.8, 0.9, 0.95, 0.99):
+            for environmental in (0.5, 0.505, 0.6, 0.9):
+                combined = combined_probability(presence, environmental)
+                # 1e-9 absorbs logit/sigmoid float round-trip error.
+                assert combined >= min(presence, MAX_PROBABILITY) - 1e-9
+
 
 class TestSigmoidVsBayesian:
     """Compare sigmoid vs Bayesian behavior to verify expected differences."""
