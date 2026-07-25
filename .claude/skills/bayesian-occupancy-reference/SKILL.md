@@ -82,11 +82,19 @@ Two composition layers sit on top of `sigmoid_probability()`, both also in logit
 - `environmental_confidence()` (utils.py:236) filters to `ENVIRONMENTAL_INPUT_TYPES` (temperature,
   humidity, illuminance, co2, co, sound_pressure, pressure, air_quality, voc, pm25, pm10,
   environmental) with `prior=0.5` so the result is pure environmental signal.
-- `combined_probability(presence, environmental)` (utils.py:267) blends them with an **80/20
-  logit-space weighted average**: `z = 0.8×logit(presence) + 0.2×logit(environmental)`. Called
-  from `Area._base_probability()` (`area/area.py:216`) — **skipped** (returns `presence` directly)
-  when there are zero environmental entities configured, so the 80/20 blend never needlessly
-  compresses a presence-only area toward 0.5 (`area/area.py:240-241`).
+- `combined_probability(presence, environmental)` (utils.py:267) applies environmental as an
+  **additive logit-space update damped to 20%**: `z = logit(presence) + 0.2×logit(environmental)`.
+  Called from `Area._base_probability()` (`area/area.py:216`) — short-circuited (returns
+  `presence` directly) when there are zero environmental entities configured, which is exactly
+  what the formula yields anyway since `logit(0.5) == 0` (`area/area.py:240-241`).
+  **This was an 80/20 weighted average until 2026-07 (PR "additive environmental evidence").**
+  Averaging pulled the result toward the less-confident channel, and the environmental channel is
+  structurally low-confidence (one env sensor contributes ~0.018 logits at defaults: `weight 0.1
+  × prob_given_true 0.09 × strength_multiplier 2.0`), so supporting environmental data *lowered*
+  the probability — one motion sensor gave 94.5%, adding a CO2 sensor at a normal 450 ppm dropped
+  it to 90.8%. Environmental contributions are non-negative by construction (evidence ∈ [0,1],
+  weights ≥ 0, learned correlations clamped to [0,1] at `db/correlation.py:1537,1548`), so
+  `environmental_confidence()` ≥ 0.5 always and the additive form can only raise or hold.
 
 After `_base_probability()`, `Area.probability()` (`area/area.py:245-274`) applies, in order:
 1. **Activity boost** (`apply_activity_boost`, utils.py:293) — if `detect_activity()` finds a
