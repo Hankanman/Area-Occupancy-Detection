@@ -584,8 +584,14 @@ class TestTwoPhaseActivityBoost:
         base = default_area._base_probability()
         presence = default_area.presence_probability()
 
-        # With env sensors, base should differ from raw presence (combined blend applied)
+        # With env sensors, base should differ from raw presence (calc_combined applied).
         assert base != presence
+
+        # Direction matters: the temperature sensor is inside its active range, so it
+        # is *supporting* evidence and must raise the estimate. A bare `!=` passed
+        # equally under the old averaging formula, which drove base ~3.8pp BELOW
+        # presence for exactly this configuration.
+        assert base > presence
 
     def test_detected_activity_uses_base_probability(self, default_area: Area) -> None:
         """detected_activity() should use _base_probability() for cache key."""
