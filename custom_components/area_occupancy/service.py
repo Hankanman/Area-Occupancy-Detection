@@ -15,6 +15,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_AREA_ID, DEVICE_SW_VERSION, DOMAIN
+from .data.forecast import build_area_time_priors
 from .data.prior import DEFAULT_SLOT_MINUTES
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
@@ -36,9 +37,6 @@ GET_TIME_PRIORS_SCHEMA = vol.Schema(
         vol.Optional(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
     }
 )
-
-# Decimal places used when rounding forecast priors in the service response.
-TIME_PRIORS_RESPONSE_PRECISION = 4
 
 
 def _collect_entity_states(hass: HomeAssistant, area: Area) -> dict[str, str]:
@@ -364,40 +362,6 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
     return await async_purge_area_data(hass, coordinator, area_name, area)
 
 
-def _build_time_priors(area: Area) -> dict[str, Any]:
-    """Build the learned weekly occupancy-prior forecast for one area.
-
-    Exposes all learned weekly slots (``day_of_week`` × ``time_slot``) so an
-    external consumer can read the occupancy prior for *future* slots and
-    build a forward-looking occupancy profile — something the per-area
-    ``occupancy_probability`` sensor (a current-state estimate) cannot do.
-
-    Args:
-        area: The area whose learned priors should be exported.
-
-    Returns:
-        Dict with the area's ``area_id``, learned ``global_prior``, the
-        ``slot_minutes`` resolution, and ``slots`` — a mapping of
-        ``"day,slot"`` to the forecast occupancy probability for that slot.
-        Assumes ``area.prior``'s time-prior cache is already warm (the
-        caller pre-loads it off the event loop).
-    """
-    prior = area.prior
-    matrix = prior.all_time_priors()
-    slots = {
-        f"{day},{slot}": round(
-            prior.prior_for(day, slot), TIME_PRIORS_RESPONSE_PRECISION
-        )
-        for day, slot in sorted(matrix)
-    }
-    return {
-        "area_id": area.config.area_id,
-        "global_prior": prior.global_prior,
-        "slot_minutes": DEFAULT_SLOT_MINUTES,
-        "slots": slots,
-    }
-
-
 async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Return the learned weekly occupancy-prior forecast per area.
 
@@ -429,7 +393,7 @@ async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     for area_name, area in areas_iter:
         # Warm the time-prior cache off the event loop (first access hits the DB).
         await hass.async_add_executor_job(area.prior.all_time_priors)
-        areas_data[area_name] = _build_time_priors(area)
+        areas_data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
 
     return {
         "slot_minutes": DEFAULT_SLOT_MINUTES,

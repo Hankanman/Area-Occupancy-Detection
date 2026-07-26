@@ -22,6 +22,7 @@ from ..const import (
 )
 from ..time_utils import to_local
 from ..utils import clamp_probability, combine_priors
+from .forecast import forecast_prior
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -235,11 +236,9 @@ class Prior:
         slot_time_prior = self._cached_time_priors.get(
             (day_of_week, time_slot), DEFAULT_TIME_PRIOR
         )
-        if self.global_prior is None:
-            return max(MIN_PRIOR, min(MAX_PRIOR, slot_time_prior))
-        combined = combine_priors(self.global_prior, slot_time_prior)
-        adjusted = combined * PRIOR_FACTOR
-        return max(MIN_PRIOR, min(MAX_PRIOR, adjusted))
+        return forecast_prior(
+            self.global_prior, slot_time_prior, prior_factor=PRIOR_FACTOR
+        )
 
     def set_global_prior(self, prior: float) -> None:
         """Set the global prior value.

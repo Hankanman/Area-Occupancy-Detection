@@ -15,7 +15,6 @@ from custom_components.area_occupancy.data.prior import DEFAULT_SLOT_MINUTES
 from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.service import (
     _build_analysis_data,
-    _build_time_priors,
     _collect_entity_states,
     _collect_likelihood_data,
     _find_area_by_area_id,
@@ -786,19 +785,3 @@ class TestGetTimePriors:
         services = hass.services.async_services().get(DOMAIN, {})
         assert "get_time_priors" in services
         assert services["get_time_priors"].supports_response == SupportsResponse.ONLY
-
-    def test_build_time_priors_structure(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """_build_time_priors emits area_id, global_prior, slot_minutes, slots."""
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        self._seed_prior(area, {(0, 0): 0.4, (2, 10): 0.6})
-
-        data = _build_time_priors(area)
-
-        assert data["area_id"] == area.config.area_id
-        assert data["global_prior"] == 0.5
-        assert data["slot_minutes"] == DEFAULT_SLOT_MINUTES
-        assert set(data["slots"]) == {"0,0", "2,10"}
-        assert data["slots"]["2,10"] == round(area.prior.prior_for(2, 10), 4)
