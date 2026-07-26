@@ -11,12 +11,15 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.decay import Decay as DecayClass
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.prior import DEFAULT_SLOT_MINUTES
 from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.service import (
     _build_analysis_data,
+    _build_time_priors,
     _collect_entity_states,
     _collect_likelihood_data,
     _find_area_by_area_id,
+    _get_time_priors,
     _purge_area_history,
     _run_analysis,
     async_setup_services,
@@ -695,3 +698,107 @@ class TestPurgeAreaHistory:
         miss_name, miss_area = _find_area_by_area_id(coordinator, "not_a_real_id")
         assert miss_name is None
         assert miss_area is None
+
+
+class TestGetTimePriors:
+    """Tests for the get_time_priors service (weekly occupancy forecast)."""
+
+    @staticmethod
+    def _seed_prior(area: Any, slots: dict[tuple[int, int], float]) -> None:
+        """Warm an area's prior cache so the service needs no DB access."""
+        area.prior.global_prior = 0.5
+        area.prior._cached_time_priors = dict(slots)  # noqa: SLF001
+
+    async def test_get_time_priors_all_areas(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """With no area_id, every configured area's forecast is returned."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        for area_name in coordinator.get_area_names():
+            self._seed_prior(
+                coordinator.get_area(area_name), {(0, 0): 0.4, (6, 23): 0.6}
+            )
+
+        result = await _get_time_priors(hass, _create_service_call())
+
+        assert set(result) == {"slot_minutes", "generated_at", "areas"}
+        assert result["slot_minutes"] == DEFAULT_SLOT_MINUTES
+        assert isinstance(result["generated_at"], str)
+        assert "T" in result["generated_at"]
+
+        for area_name in coordinator.get_area_names():
+            area = coordinator.get_area(area_name)
+            data = result["areas"][area_name]
+            assert set(data) == {"area_id", "global_prior", "slot_minutes", "slots"}
+            assert data["area_id"] == area.config.area_id
+            assert data["global_prior"] == 0.5
+            assert data["slot_minutes"] == DEFAULT_SLOT_MINUTES
+            # Slots keyed "day,slot"; the response wires through prior_for().
+            assert data["slots"]["0,0"] == round(area.prior.prior_for(0, 0), 4)
+            assert data["slots"]["6,23"] == round(area.prior.prior_for(6, 23), 4)
+
+    async def test_get_time_priors_single_area(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """A supplied area_id restricts the response to that area only."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        target_name = coordinator.get_area_names()[0]
+        target = coordinator.get_area(target_name)
+        self._seed_prior(target, {(1, 1): 0.5})
+
+        result = await _get_time_priors(
+            hass, _create_service_call(area_id=target.config.area_id)
+        )
+
+        assert set(result["areas"]) == {target_name}
+        assert result["areas"][target_name]["area_id"] == target.config.area_id
+
+    async def test_get_time_priors_unknown_area_raises(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """An unknown area_id raises ServiceValidationError with guidance."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        call = _create_service_call(area_id="does_not_exist")
+        with pytest.raises(ServiceValidationError) as excinfo:
+            await _get_time_priors(hass, call)
+
+        message = str(excinfo.value)
+        assert "does_not_exist" in message
+        assert "Known area_ids" in message
+
+    async def test_get_time_priors_registered_supports_response_only(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """The service registers with SupportsResponse.ONLY."""
+        hass.data[DOMAIN] = coordinator
+        await async_setup_services(hass)
+
+        services = hass.services.async_services().get(DOMAIN, {})
+        assert "get_time_priors" in services
+        assert services["get_time_priors"].supports_response == SupportsResponse.ONLY
+
+    def test_build_time_priors_structure(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """_build_time_priors emits area_id, global_prior, slot_minutes, slots."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        self._seed_prior(area, {(0, 0): 0.4, (2, 10): 0.6})
+
+        data = _build_time_priors(area)
+
+        assert data["area_id"] == area.config.area_id
+        assert data["global_prior"] == 0.5
+        assert data["slot_minutes"] == DEFAULT_SLOT_MINUTES
+        assert set(data["slots"]) == {"0,0", "2,10"}
+        assert data["slots"]["2,10"] == round(area.prior.prior_for(2, 10), 4)

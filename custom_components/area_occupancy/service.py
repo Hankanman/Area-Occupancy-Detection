@@ -15,6 +15,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_AREA_ID, DEVICE_SW_VERSION, DOMAIN
+from .data.prior import DEFAULT_SLOT_MINUTES
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
 
@@ -29,6 +30,15 @@ PURGE_AREA_HISTORY_SCHEMA = vol.Schema(
         vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
     }
 )
+
+GET_TIME_PRIORS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+    }
+)
+
+# Decimal places used when rounding forecast priors in the service response.
+TIME_PRIORS_RESPONSE_PRECISION = 4
 
 
 def _collect_entity_states(hass: HomeAssistant, area: Area) -> dict[str, str]:
@@ -354,6 +364,80 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
     return await async_purge_area_data(hass, coordinator, area_name, area)
 
 
+def _build_time_priors(area: Area) -> dict[str, Any]:
+    """Build the learned weekly occupancy-prior forecast for one area.
+
+    Exposes all learned weekly slots (``day_of_week`` × ``time_slot``) so an
+    external consumer can read the occupancy prior for *future* slots and
+    build a forward-looking occupancy profile — something the per-area
+    ``occupancy_probability`` sensor (a current-state estimate) cannot do.
+
+    Args:
+        area: The area whose learned priors should be exported.
+
+    Returns:
+        Dict with the area's ``area_id``, learned ``global_prior``, the
+        ``slot_minutes`` resolution, and ``slots`` — a mapping of
+        ``"day,slot"`` to the forecast occupancy probability for that slot.
+        Assumes ``area.prior``'s time-prior cache is already warm (the
+        caller pre-loads it off the event loop).
+    """
+    prior = area.prior
+    matrix = prior.all_time_priors()
+    slots = {
+        f"{day},{slot}": round(
+            prior.prior_for(day, slot), TIME_PRIORS_RESPONSE_PRECISION
+        )
+        for day, slot in sorted(matrix)
+    }
+    return {
+        "area_id": area.config.area_id,
+        "global_prior": prior.global_prior,
+        "slot_minutes": DEFAULT_SLOT_MINUTES,
+        "slots": slots,
+    }
+
+
+async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Return the learned weekly occupancy-prior forecast per area.
+
+    With no ``area_id`` the forecast for every configured area is returned;
+    with an ``area_id`` only that area is returned (raising
+    ``ServiceValidationError`` when it is unknown). Each area's time-prior
+    cache is loaded off the event loop before the (sync) response is built.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data.get(CONF_AREA_ID)
+
+    if area_id is not None:
+        area_name, area = _find_area_by_area_id(coordinator, area_id)
+        if area_name is None or area is None:
+            known = sorted(
+                a.config.area_id
+                for a in coordinator.areas.values()
+                if isinstance(a.config.area_id, str)
+            )
+            raise ServiceValidationError(
+                f"No configured area found for area_id '{area_id}'. "
+                f"Known area_ids: {', '.join(known) if known else '(none)'}"
+            )
+        areas_iter = [(area_name, area)]
+    else:
+        areas_iter = list(coordinator.areas.items())
+
+    areas_data: dict[str, Any] = {}
+    for area_name, area in areas_iter:
+        # Warm the time-prior cache off the event loop (first access hits the DB).
+        await hass.async_add_executor_job(area.prior.all_time_priors)
+        areas_data[area_name] = _build_time_priors(area)
+
+    return {
+        "slot_minutes": DEFAULT_SLOT_MINUTES,
+        "generated_at": dt_util.utcnow().isoformat(),
+        "areas": areas_data,
+    }
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -366,6 +450,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_purge_area_history(call: ServiceCall) -> dict[str, Any]:
         return await _purge_area_history(hass, call)
+
+    async def handle_get_time_priors(call: ServiceCall) -> dict[str, Any]:
+        return await _get_time_priors(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -390,4 +477,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         handle_purge_area_history,
         schema=PURGE_AREA_HISTORY_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "get_time_priors",
+        handle_get_time_priors,
+        schema=GET_TIME_PRIORS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )

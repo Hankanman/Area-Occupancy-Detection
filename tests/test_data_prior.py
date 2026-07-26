@@ -743,3 +743,120 @@ def test_diagnostic_snapshot_reports_no_floor_when_learned_dominates(
 
     assert snapshot["min_prior_floor_applied"] == "none"
     assert snapshot["prior_value"] == pytest.approx(0.7)
+
+
+def test_all_time_priors_loads_and_returns_copy(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """all_time_priors loads the cache once and returns an independent copy."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    test_cache = {(0, 0): 0.4, (1, 5): 0.6, (6, 23): 0.5}
+    with patch.object(
+        prior.db,
+        "get_all_time_priors",
+        return_value=test_cache.copy(),
+    ) as mock_get_all:
+        result = prior.all_time_priors()
+        mock_get_all.assert_called_once_with(
+            area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
+        )
+        assert result == test_cache
+
+        # Second access uses the warm cache (no additional DB call).
+        mock_get_all.reset_mock()
+        result2 = prior.all_time_priors()
+        mock_get_all.assert_not_called()
+        assert result2 == test_cache
+
+    # Returned dict is a copy: mutating it must not corrupt the internal cache.
+    result[(0, 0)] = 0.99
+    assert prior._cached_time_priors[(0, 0)] == 0.4
+
+
+def test_prior_for_combines_global_and_slot(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """prior_for combines global_prior with the requested slot's time prior."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    prior.global_prior = 0.5
+    prior._cached_time_priors = {(2, 10): 0.6}
+
+    expected = max(MIN_PRIOR, min(MAX_PRIOR, combine_priors(0.5, 0.6) * PRIOR_FACTOR))
+    assert prior.prior_for(2, 10) == pytest.approx(expected)
+
+
+def test_prior_for_targets_arbitrary_future_slot(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """prior_for reads any weekly slot, independent of the current wall clock.
+
+    This is the whole point of the method versus ``time_prior``: a consumer
+    can read the prior for a *future* slot to build a forward-looking profile.
+    """
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    # Distinct value in every one of the 168 slots.
+    cache = {
+        (day, slot): round(0.05 + 0.001 * (day * 24 + slot), 3)
+        for day in range(7)
+        for slot in range(24)
+    }
+    prior.global_prior = None
+    prior._cached_time_priors = cache
+
+    # Sunday 23:00 — a specific, arbitrary slot unrelated to "now".
+    target = cache[(6, 23)]
+    assert prior.prior_for(6, 23) == pytest.approx(
+        max(MIN_PRIOR, min(MAX_PRIOR, target))
+    )
+    # A different slot returns a different value (not the current-time one).
+    assert prior.prior_for(0, 0) == pytest.approx(
+        max(MIN_PRIOR, min(MAX_PRIOR, cache[(0, 0)]))
+    )
+
+
+def test_prior_for_missing_slot_uses_default(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """A slot absent from the cache falls back to DEFAULT_TIME_PRIOR."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    prior.global_prior = None
+    prior._cached_time_priors = {(2, 10): 0.6}
+
+    assert prior.prior_for(0, 0) == pytest.approx(
+        max(MIN_PRIOR, min(MAX_PRIOR, DEFAULT_TIME_PRIOR))
+    )
+
+
+def test_prior_for_without_global_returns_slot_time_prior(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """With no learned global_prior, prior_for returns the clamped slot value."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    prior.global_prior = None
+    prior._cached_time_priors = {(3, 8): 0.6}
+
+    assert prior.prior_for(3, 8) == pytest.approx(max(MIN_PRIOR, min(MAX_PRIOR, 0.6)))
+
+
+def test_prior_for_result_within_prior_bounds(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """prior_for always returns a value inside [MIN_PRIOR, MAX_PRIOR]."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    prior.global_prior = 0.99
+    prior._cached_time_priors = {(4, 12): 0.9}
+
+    result = prior.prior_for(4, 12)
+    assert MIN_PRIOR <= result <= MAX_PRIOR

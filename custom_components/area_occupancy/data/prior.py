@@ -184,6 +184,63 @@ class Prior:
         now = to_local(dt_util.utcnow())
         return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
 
+    def all_time_priors(self) -> dict[tuple[int, int], float]:
+        """Return a copy of all learned weekly time priors.
+
+        The cache is loaded from the database on first access. Values are the
+        raw per-slot time priors, bounds-clamped to
+        ``[TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND]`` (see
+        :meth:`_load_time_priors`). Keys are ``(day_of_week, time_slot)``
+        with ``day_of_week`` 0=Monday…6=Sunday and ``time_slot`` in
+        ``[0, 1440 // DEFAULT_SLOT_MINUTES)``.
+
+        Unlike :attr:`time_prior`, which is locked to the current wall-clock
+        slot, this exposes the full weekly matrix so a consumer can read
+        occupancy priors for *arbitrary* (including future) slots.
+
+        Returns:
+            Mapping of ``(day_of_week, time_slot) -> raw time prior``.
+        """
+        if self._cached_time_priors is None:
+            self._load_time_priors()
+        return dict(self._cached_time_priors)
+
+    def prior_for(self, day_of_week: int, time_slot: int) -> float:
+        """Return the learned occupancy-probability forecast for a given slot.
+
+        Unlike :attr:`time_prior` (locked to the current slot) and
+        :attr:`value` (evaluated for "now" and subject to configuration
+        floors), this computes the forecast for any weekly slot so a
+        consumer can build a forward-looking occupancy profile — for
+        example to pre-heat a room before its habitual occupancy.
+
+        The value combines the learned ``global_prior`` with the slot's
+        learned time prior and clamps to ``[MIN_PRIOR, MAX_PRIOR]``, mirroring
+        the learned term of :attr:`value`. Configuration floors
+        (``purpose.min_prior``, ``min_prior_override``) are intentionally
+        *not* applied: they are threshold-relative safety nets for the live
+        estimate and are not meaningful to project onto arbitrary future
+        slots. When ``global_prior`` has not been learned yet, the slot's
+        raw (bounds-clamped) time prior is returned as a best-effort fallback.
+
+        Args:
+            day_of_week: 0=Monday … 6=Sunday.
+            time_slot: Slot index ``(hour * 60 + minute) // DEFAULT_SLOT_MINUTES``.
+
+        Returns:
+            Forecast occupancy probability in ``[MIN_PRIOR, MAX_PRIOR]``.
+        """
+        if self._cached_time_priors is None:
+            self._load_time_priors()
+        slot_time_prior = self._cached_time_priors.get(
+            (day_of_week, time_slot), DEFAULT_TIME_PRIOR
+        )
+        if self.global_prior is None:
+            return max(MIN_PRIOR, min(MAX_PRIOR, slot_time_prior))
+        combined = combine_priors(self.global_prior, slot_time_prior)
+        adjusted = combined * PRIOR_FACTOR
+        return max(MIN_PRIOR, min(MAX_PRIOR, adjusted))
+
     def set_global_prior(self, prior: float) -> None:
         """Set the global prior value.
 
