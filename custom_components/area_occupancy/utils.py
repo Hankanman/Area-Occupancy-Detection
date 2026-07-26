@@ -292,9 +292,14 @@ def combined_probability(
     Environmental data adjusts the presence estimate rather than being averaged
     with it. Averaging pulls the result toward whichever channel is less
     confident, so a weakly-supportive environmental reading used to *lower* a
-    motion-confirmed probability. Environmental contributions are non-negative
-    by construction, so an additive update can only raise the result or leave
-    it unchanged. Environmental influence stays damped at 20%.
+    motion-confirmed probability. Environmental influence stays damped at 20%.
+
+    Direction follows ``environmental``: at 0.5 (neutral) presence passes
+    through unchanged, above 0.5 it is raised, and below 0.5 it is lowered.
+    Within this integration the lowering case does not arise —
+    ``environmental_confidence()`` builds its result from per-entity
+    contributions that are non-negative by construction, so it never returns
+    below 0.5 — but the function itself does not assume that.
 
     Args:
         presence: Presence probability (0.0-1.0)

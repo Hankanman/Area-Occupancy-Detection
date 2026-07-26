@@ -233,9 +233,10 @@ class Area:
         presence = self.presence_probability()
         env = self.environmental_confidence()
 
-        # Short-circuit when no environmental sensors are configured.
-        # environmental_confidence() returns exactly 0.5 only when there are no
-        # environmental entities. calc_combined() is continuous at that point
+        # Short-circuit on neutral environmental confidence. 0.5 is what
+        # environmental_confidence() returns whenever the environmental channel
+        # contributes nothing — no environmental sensors configured, or none of
+        # them currently active. calc_combined() is continuous at that point
         # (logit(0.5) == 0, so it returns presence unchanged) — this just skips
         # a redundant logit/sigmoid round-trip.
         if env == 0.5:
