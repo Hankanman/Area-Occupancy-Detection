@@ -14,8 +14,8 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_AREA_ID, DEVICE_SW_VERSION, DOMAIN
-from .data.forecast import build_area_time_priors
+from .const import ALL_AREAS_IDENTIFIER, CONF_AREA_ID, DEVICE_SW_VERSION, DOMAIN
+from .data.forecast import build_aggregate_time_priors, build_area_time_priors
 from .data.prior import DEFAULT_SLOT_MINUTES
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
@@ -365,35 +365,62 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
 async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Return the learned weekly occupancy-prior forecast per area.
 
-    With no ``area_id`` the forecast for every configured area is returned;
-    with an ``area_id`` only that area is returned (raising
-    ``ServiceValidationError`` when it is unknown). Each area's time-prior
-    cache is loaded off the event loop before the (sync) response is built.
+    The response includes every configured area plus the aggregate zones AOD
+    derives from them — the "All Areas" device and one per HA floor — whose
+    per-slot forecast is the clamped average of their member areas (mirroring
+    ``AllAreas.area_prior()``). Aggregates are handy for air-based devices that
+    condition a whole floor/home at once. With an ``area_id`` only the matching
+    zone (real or aggregate) is returned, raising ``ServiceValidationError``
+    when it is unknown. Time-prior caches are warmed off the event loop.
     """
     coordinator = get_coordinator(hass)
     area_id = call.data.get(CONF_AREA_ID)
 
-    if area_id is not None:
-        area_name, area = _find_area_by_area_id(coordinator, area_id)
-        if area_name is None or area is None:
-            known = sorted(
-                a.config.area_id
-                for a in coordinator.areas.values()
-                if isinstance(a.config.area_id, str)
-            )
-            raise ServiceValidationError(
-                f"No configured area found for area_id '{area_id}'. "
-                f"Known area_ids: {', '.join(known) if known else '(none)'}"
-            )
-        areas_iter = [(area_name, area)]
-    else:
-        areas_iter = list(coordinator.areas.items())
+    # Warm every configured area's cache off the event loop; the aggregate zones
+    # reuse these same caches, so this is the only DB access.
+    for area in coordinator.areas.values():
+        await hass.async_add_executor_job(area.prior.all_time_priors)
 
     areas_data: dict[str, Any] = {}
-    for area_name, area in areas_iter:
-        # Warm the time-prior cache off the event loop (first access hits the DB).
-        await hass.async_add_executor_job(area.prior.all_time_priors)
+    for area_name, area in coordinator.areas.items():
         areas_data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
+
+    # Aggregate zones: "All Areas" + one per floor (averaged member forecasts).
+    all_areas = build_aggregate_time_priors(
+        coordinator.get_all_areas().areas(),
+        DEFAULT_SLOT_MINUTES,
+        ALL_AREAS_IDENTIFIER,
+        "All Areas",
+    )
+    if all_areas is not None:
+        areas_data["All Areas"] = all_areas
+    for floor_id, floor_agg in coordinator.get_floor_aggregators().items():
+        floor_data = build_aggregate_time_priors(
+            floor_agg.areas(),
+            DEFAULT_SLOT_MINUTES,
+            f"floor_{floor_id}",
+            floor_agg.floor_name,
+        )
+        if floor_data is not None:
+            areas_data[floor_agg.floor_name] = floor_data
+
+    if area_id is not None:
+        filtered = {
+            name: data
+            for name, data in areas_data.items()
+            if data.get("area_id") == area_id
+        }
+        if not filtered:
+            known = sorted(
+                str(data["area_id"])
+                for data in areas_data.values()
+                if isinstance(data.get("area_id"), str)
+            )
+            raise ServiceValidationError(
+                f"No area found for area_id '{area_id}'. "
+                f"Known area_ids: {', '.join(known) if known else '(none)'}"
+            )
+        areas_data = filtered
 
     return {
         "slot_minutes": DEFAULT_SLOT_MINUTES,

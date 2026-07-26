@@ -1,10 +1,13 @@
 """Tests for the read-side forecast helpers (data/forecast.py)."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from custom_components.area_occupancy.const import MAX_PRIOR, MIN_PRIOR
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.forecast import (
+    build_aggregate_time_priors,
     build_area_time_priors,
     forecast_prior,
 )
@@ -59,3 +62,57 @@ def test_build_area_time_priors_structure(coordinator: AreaOccupancyCoordinator)
     assert set(data["slots"]) == {"0,0", "2,10"}
     # Response wires through Prior.prior_for (which delegates to forecast_prior).
     assert data["slots"]["2,10"] == round(area.prior.prior_for(2, 10), 4)
+
+
+def _member(area_id: str, prior_map: dict[tuple[int, int], float]):
+    """A minimal Area-like stand-in for aggregation tests."""
+    prior = SimpleNamespace(
+        all_time_priors=lambda _m=prior_map: dict(_m),
+        prior_for=lambda d, s, _m=prior_map: _m.get((d, s), 0.0),
+    )
+    return SimpleNamespace(prior=prior, config=SimpleNamespace(area_id=area_id))
+
+
+def test_build_aggregate_averages_members():
+    """The aggregate slot value is the clamped average of member forecasts."""
+    m1 = _member("a", {(0, 8): 0.8, (1, 9): 0.2})
+    m2 = _member("b", {(0, 8): 0.4, (1, 9): 0.6})
+
+    res = build_aggregate_time_priors(
+        [m1, m2], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
+    )
+
+    assert res["area_id"] == "all_areas"
+    assert res["name"] == "All Areas"
+    assert res["aggregate"] is True
+    assert set(res["members"]) == {"a", "b"}
+    assert res["slots"]["0,8"] == pytest.approx(0.6)  # (0.8 + 0.4) / 2
+    assert res["slots"]["1,9"] == pytest.approx(0.4)  # (0.2 + 0.6) / 2
+
+
+def test_build_aggregate_unions_member_slots():
+    """Slots present in any member are aggregated (missing → 0 for that member)."""
+    m1 = _member("a", {(0, 8): 0.9})
+    m2 = _member("b", {(2, 3): 0.5})
+    res = build_aggregate_time_priors(
+        [m1, m2], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
+    )
+    assert set(res["slots"]) == {"0,8", "2,3"}
+    assert res["slots"]["0,8"] == pytest.approx(0.45)  # (0.9 + 0.0) / 2
+
+
+def test_build_aggregate_empty_returns_none():
+    """No members → nothing to aggregate."""
+    assert (
+        build_aggregate_time_priors([], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas")
+        is None
+    )
+
+
+def test_build_aggregate_result_within_bounds():
+    """Aggregated values stay within [MIN_PRIOR, MAX_PRIOR]."""
+    m = _member("a", {(0, 0): 0.99})
+    res = build_aggregate_time_priors(
+        [m], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
+    )
+    assert MIN_PRIOR <= res["slots"]["0,0"] <= MAX_PRIOR

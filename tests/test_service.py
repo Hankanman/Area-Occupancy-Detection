@@ -785,3 +785,41 @@ class TestGetTimePriors:
         services = hass.services.async_services().get(DOMAIN, {})
         assert "get_time_priors" in services
         assert services["get_time_priors"].supports_response == SupportsResponse.ONLY
+
+    async def test_get_time_priors_includes_all_areas_aggregate(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """The 'All Areas' aggregate zone is included in the full response."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        for area_name in coordinator.get_area_names():
+            self._seed_prior(
+                coordinator.get_area(area_name), {(0, 0): 0.4, (6, 23): 0.6}
+            )
+
+        result = await _get_time_priors(hass, _create_service_call())
+
+        assert "All Areas" in result["areas"]
+        agg = result["areas"]["All Areas"]
+        assert agg["area_id"] == "all_areas"
+        assert agg["aggregate"] is True
+        # Single member → the aggregate equals that member's forecast.
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        assert agg["slots"]["0,0"] == round(area.prior.prior_for(0, 0), 4)
+
+    async def test_get_time_priors_filter_selects_aggregate(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """An area_id of 'all_areas' returns only the aggregate zone."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        for area_name in coordinator.get_area_names():
+            self._seed_prior(coordinator.get_area(area_name), {(0, 0): 0.5})
+
+        result = await _get_time_priors(hass, _create_service_call(area_id="all_areas"))
+
+        assert set(result["areas"]) == {"All Areas"}

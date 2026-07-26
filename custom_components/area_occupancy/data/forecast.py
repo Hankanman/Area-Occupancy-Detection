@@ -82,3 +82,39 @@ def build_area_time_priors(area: Area, slot_minutes: int) -> dict[str, Any]:
         "slot_minutes": slot_minutes,
         "slots": slots,
     }
+
+
+def build_aggregate_time_priors(
+    members: list[Area], slot_minutes: int, area_id: str, name: str
+) -> dict[str, Any] | None:
+    """Build the learned weekly forecast for an aggregate zone.
+
+    Aggregate zones (the "All Areas" device and per-floor devices) have no
+    stored priors of their own; their occupancy is derived from member areas.
+    This mirrors ``AllAreas.area_prior()`` — a clamped average across members —
+    but per weekly slot, producing a whole-floor / whole-home occupancy forecast
+    useful for air-based devices that condition several rooms at once.
+
+    Returns ``None`` when there are no members (nothing to aggregate). Assumes
+    each member's time-prior cache is already warm.
+    """
+    if not members:
+        return None
+    keys: set[tuple[int, int]] = set()
+    for member in members:
+        keys.update(member.prior.all_time_priors())
+    slots: dict[str, float] = {}
+    for day, slot in sorted(keys):
+        values = [member.prior.prior_for(day, slot) for member in members]
+        avg = sum(values) / len(values)
+        slots[f"{day},{slot}"] = round(
+            max(MIN_PRIOR, min(MAX_PRIOR, avg)), FORECAST_RESPONSE_PRECISION
+        )
+    return {
+        "area_id": area_id,
+        "name": name,
+        "aggregate": True,
+        "members": [m.config.area_id for m in members if m.config.area_id],
+        "slot_minutes": slot_minutes,
+        "slots": slots,
+    }
