@@ -1110,8 +1110,8 @@ class TestCombinedProbability:
         # High presence should result in higher overall probability
         assert result_high_presence > result_high_env
 
-        # With 80/20 weighting, presence should dominate
-        # result_high_presence should be closer to 0.8 than 0.2
+        # The environmental term is a damped logit contribution, so presence
+        # decides which side of 0.5 the result lands on.
         assert result_high_presence > 0.5
 
     def test_combined_probability_environmental_influence(self) -> None:
@@ -1119,7 +1119,7 @@ class TestCombinedProbability:
         result_env_low = combined_probability(presence=0.5, environmental=0.2)
         result_env_high = combined_probability(presence=0.5, environmental=0.8)
 
-        # Environmental should have some effect (20% weight)
+        # Environmental still moves the result via its damped logit contribution
         assert result_env_high > result_env_low
 
     def test_combined_probability_clamping(self) -> None:

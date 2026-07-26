@@ -140,7 +140,7 @@ The result is exposed as the **Environmental Confidence** diagnostic sensor.
 
 Environmental data is applied as an **additive update** to the presence estimate in **logit space**, damped to 20% of its own contribution:
 
-```
+```text
 z_combined = logit(presence) + 0.2 × logit(environmental)
 probability = sigmoid(z_combined)
 ```
