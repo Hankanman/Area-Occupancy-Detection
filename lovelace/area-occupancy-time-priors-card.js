@@ -141,7 +141,9 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
         .pctv { font-variant-numeric: tabular-nums; font-weight:600; color: var(--primary-text-color); min-width:3ch; }
         .msg { padding: 10px 16px; color: var(--secondary-text-color); font-size:.9rem; }
         .msg code { background: var(--secondary-background-color); padding:1px 5px; border-radius:5px; }
-        .room { padding: 4px 14px 14px; }
+        .rooms { display:grid; gap: 4px 16px; padding-top: 4px;
+                 grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); }
+        .room { padding: 4px 14px 14px; min-width: 0; }
         .room-head { display:flex; align-items:baseline; gap:10px; margin-bottom:6px; }
         .room-name { font-weight:600; color: var(--primary-text-color); }
         .room-id { font-size:.75rem; color: var(--secondary-text-color); font-family: var(--code-font-family, monospace); }
@@ -178,9 +180,11 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       body =
         `<div class="legend"><span>Probability</span><span class="ramp"></span>` +
         `<span>0–100%</span><span><span class="sw comfort"></span> comfort</span></div>` +
+        `<div class="rooms">` +
         Object.entries(this._data.areas)
           .map(([name, area]) => this._room(name, area, cols, hoursPerSlot))
-          .join("");
+          .join("") +
+        `</div>`;
     }
 
     this.shadowRoot.innerHTML = `${style}
