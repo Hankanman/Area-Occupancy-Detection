@@ -90,6 +90,7 @@ def _create_delegated_methods() -> dict[str, Any]:
         "get_global_prior": queries.get_global_prior,
         "get_occupied_intervals_cache": queries.get_occupied_intervals_cache,
         "is_occupied_intervals_cache_valid": queries.is_occupied_intervals_cache_valid,
+        "get_entities_without_intervals": queries.get_entities_without_intervals,
         # Sync methods
         "sync_states": sync.sync_states,
         # Aggregation methods
@@ -343,6 +344,18 @@ class AreaOccupancyDB:
             area_name,
             lookback_days,
             motion_timeout,
+        )
+
+    def get_first_interval_timestamp(self, area_name: str) -> datetime | None:
+        """Return the earliest any-state interval timestamp for this area.
+
+        Delegates to ``queries.get_first_interval_timestamp`` — see that
+        function's docstring for how this is used to distinguish "no data
+        at all" from "no occupied data" and as the warm-up-guard basis for
+        prior calculation (#520).
+        """
+        return queries.get_first_interval_timestamp(
+            self, self.coordinator.entry_id, area_name
         )
 
     @contextmanager
