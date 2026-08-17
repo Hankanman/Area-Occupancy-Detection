@@ -15,7 +15,7 @@ from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
 from ..const import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, RETENTION_DAYS
-from ..data.entity_type import InputType
+from ..data.entity_type import NUMERIC_INPUT_TYPES
 from ..time_utils import to_db_utc, to_utc
 from . import queries
 from .utils import chunked, is_valid_state
@@ -26,21 +26,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _INTERVAL_LOOKUP_BATCH = 250
 _NUMERIC_SAMPLE_LOOKUP_BATCH = 250
-_NUMERIC_INPUT_TYPES = {
-    InputType.TEMPERATURE,
-    InputType.HUMIDITY,
-    InputType.ILLUMINANCE,
-    InputType.CO2,
-    InputType.CO,
-    InputType.SOUND_PRESSURE,
-    InputType.PRESSURE,
-    InputType.AIR_QUALITY,
-    InputType.VOC,
-    InputType.PM25,
-    InputType.PM10,
-    InputType.POWER,
-    InputType.ENVIRONMENTAL,
-}
+_NUMERIC_INPUT_TYPES = NUMERIC_INPUT_TYPES
 
 
 def _normalize_db_key_datetime(value: datetime) -> datetime:

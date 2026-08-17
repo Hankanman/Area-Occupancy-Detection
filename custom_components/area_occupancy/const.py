@@ -70,6 +70,7 @@ CONF_VOC_SENSORS: Final = "voc_sensors"
 CONF_PM25_SENSORS: Final = "pm25_sensors"
 CONF_PM10_SENSORS: Final = "pm10_sensors"
 CONF_POWER_SENSORS: Final = "power_sensors"
+CONF_WIFI_CLIENTS_SENSORS: Final = "wifi_clients_sensors"
 CONF_DOOR_SENSORS: Final = "door_sensors"
 CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
@@ -108,6 +109,7 @@ CONF_WEIGHT_WINDOW: Final = "weight_window"
 CONF_WEIGHT_COVER: Final = "weight_cover"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 CONF_WEIGHT_POWER: Final = "weight_power"
+CONF_WEIGHT_WIFI_CLIENTS: Final = "weight_wifi_clients"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
 
 # Default values
@@ -157,6 +159,9 @@ DEFAULT_WEIGHT_COVER: Final = (
 )
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 DEFAULT_WEIGHT_POWER: Final = 0.3
+DEFAULT_WEIGHT_WIFI_CLIENTS: Final = (
+    0.35  # Matches DEFAULT_TYPES[InputType.WIFI_CLIENTS]
+)
 
 # Activity occupancy boost constants (logit-space magnitudes)
 ACTIVITY_BOOST_HIGH: Final[float] = 1.5  # Showering, bathing, sleeping
@@ -506,6 +511,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "sound_pressure": InputType.SOUND_PRESSURE,
             "temperature": InputType.TEMPERATURE,
             "voc": InputType.VOC,
+            "wifi_clients": InputType.WIFI_CLIENTS,
             "window": InputType.WINDOW,
         }
     return _SENSOR_TYPE_MAPPING

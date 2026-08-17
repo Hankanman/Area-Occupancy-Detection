@@ -226,8 +226,8 @@ def presence_probability(
     """Calculate presence probability from strong binary indicators.
 
     Filters entities to only include presence-related sensors (motion, media,
-    appliances, doors, windows, covers, power) and calculates probability
-    using the sigmoid model.
+    appliances, doors, windows, covers, power, wifi_clients) and calculates
+    probability using the sigmoid model.
 
     Args:
         entities: Dict of Entity objects

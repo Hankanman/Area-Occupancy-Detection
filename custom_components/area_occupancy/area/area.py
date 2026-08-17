@@ -278,8 +278,8 @@ class Area:
     def presence_probability(self) -> float:
         """Calculate presence probability from strong binary indicators.
 
-        Uses motion, media, appliances, doors, windows, covers, and power
-        sensors to determine presence likelihood.
+        Uses motion, media, appliances, doors, windows, covers, power, and
+        Wi-Fi client-count sensors to determine presence likelihood.
 
         Returns:
             Probability value (0.0-1.0)

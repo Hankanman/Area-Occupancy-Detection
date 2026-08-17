@@ -41,6 +41,7 @@ _STUCK_CHECK_TYPES: set[InputType] = BINARY_INPUT_TYPES | {
     InputType.MOTION,
     InputType.POWER,
     InputType.COVER,
+    InputType.WIFI_CLIENTS,
 }
 
 # Input types excluded from all health checks
@@ -88,6 +89,7 @@ STUCK_INACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
     InputType.WINDOW: timedelta(days=14),
     InputType.COVER: timedelta(days=14),
     InputType.POWER: timedelta(days=14),
+    InputType.WIFI_CLIENTS: timedelta(days=14),
 }
 
 # Report unavailable sensors after this duration

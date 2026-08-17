@@ -106,7 +106,9 @@ from .const import (
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_POWER,
+    CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WEIGHT_WINDOW,
+    CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
@@ -138,6 +140,7 @@ from .const import (
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_POWER,
+    DEFAULT_WEIGHT_WIFI_CLIENTS,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
@@ -285,6 +288,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_pm25_entities = []
     include_pm10_entities = []
     include_motion_entities = []
+    include_wifi_clients_entities = []
 
     door_window_classes = (
         BinarySensorDeviceClass.DOOR,
@@ -438,6 +442,13 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             if device_class in pm10_class or original_device_class in pm10_class:
                 include_pm10_entities.append(entry.entity_id)
 
+            # Wi-Fi client-count sensors have no reliable device_class to
+            # filter by, so offer every sensor-domain entity except this
+            # integration's own output sensors (probability, priors, decay,
+            # etc.) — selecting one of those would create a feedback loop.
+            if entry.platform != DOMAIN:
+                include_wifi_clients_entities.append(entry.entity_id)
+
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
         entry.entity_id
@@ -457,6 +468,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         "pm25": include_pm25_entities,
         "pm10": include_pm10_entities,
         "motion": include_motion_entities,
+        "wifi_clients": include_wifi_clients_entities,
     }
 
 
@@ -806,6 +818,45 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _create_wifi_clients_section_schema(
+    defaults: dict[str, Any], wifi_clients_entities: list[str]
+) -> vol.Schema:
+    """Create schema for the Wi-Fi client-count section.
+
+    Unlike power sensors, Wi-Fi client-count sensors (e.g. from the UniFi
+    Network integration) have no reliable SensorDeviceClass to auto-filter
+    by, so this offers every sensor-domain entity except this integration's
+    own output sensors (see ``_get_include_entities``'s ``wifi_clients`` key)
+    rather than a device_class-scanned include list.
+    """
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_WIFI_CLIENTS_SENSORS,
+                default=defaults.get(CONF_WIFI_CLIENTS_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=wifi_clients_entities,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_WIFI_CLIENTS,
+                default=defaults.get(
+                    CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+        }
+    )
+
+
 def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the wasp in box section."""
     return vol.Schema(
@@ -995,6 +1046,12 @@ def _create_sensors_step_schema(
         vol.Required("power"): section(
             _create_power_section_schema(defaults), {"collapsed": True}
         ),
+        vol.Required("wifi_clients"): section(
+            _create_wifi_clients_section_schema(
+                defaults, include_entities["wifi_clients"]
+            ),
+            {"collapsed": True},
+        ),
     }
 
 
@@ -1141,6 +1198,14 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
             power[key] = flat_config[key]
     if power:
         nested["power"] = power
+
+    # Wi-Fi clients section
+    wifi_clients: dict[str, Any] = {}
+    for key in (CONF_WIFI_CLIENTS_SENSORS, CONF_WEIGHT_WIFI_CLIENTS):
+        if key in flat_config:
+            wifi_clients[key] = flat_config[key]
+    if wifi_clients:
+        nested["wifi_clients"] = wifi_clients
 
     # Wasp in box section
     wasp: dict[str, Any] = {}
@@ -1873,6 +1938,10 @@ class BaseOccupancyFlow:
                 CONF_WEIGHT_POWER,
                 data.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
             ),
+            (
+                CONF_WEIGHT_WIFI_CLIENTS,
+                data.get(CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS),
+            ),
         ]
         for name, weight in weights:
             if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
@@ -2144,6 +2213,7 @@ class BaseOccupancyFlow:
                 "appliances",
                 "environmental",
                 "power",
+                "wifi_clients",
             }
             suggested = {k: v for k, v in nested.items() if k in sensor_sections}
             if suggested:
