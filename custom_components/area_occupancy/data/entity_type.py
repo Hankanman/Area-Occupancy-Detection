@@ -60,6 +60,7 @@ class InputType(StrEnum):
     POWER = "power"
     SLEEP = "sleep"
     ENVIRONMENTAL = "environmental"
+    WIFI_CLIENTS = "wifi_clients"
     UNKNOWN = "unknown"
 
 
@@ -196,6 +197,12 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.COVER,
     InputType.POWER,
     InputType.SLEEP,
+    # Wi-Fi client count is judged a comparably strong, direct presence
+    # signal (a device joining/leaving the network is much closer to
+    # "someone did something" than an ambient environmental reading),
+    # not a weak indirect correlate — deliberately NOT in
+    # ENVIRONMENTAL_INPUT_TYPES. See issue #515.
+    InputType.WIFI_CLIENTS,
 }
 
 BINARY_INPUT_TYPES: set[InputType] = {
@@ -372,6 +379,20 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "active_states": [STATE_ON],
         "active_range": None,
         "strength_multiplier": 3.0,
+    },
+    InputType.WIFI_CLIENTS: {
+        "weight": 0.35,
+        "prob_given_true": 0.3,
+        "prob_given_false": 0.03,
+        "active_states": None,
+        # Unbounded-above: "at least 1 connected client is evidence of
+        # presence" is the only defensible default, since the absolute
+        # client count that indicates presence varies enormously per
+        # network (a guest SSID might swing 0-1 clients, a busy office
+        # SSID 5-45). Users should be selective about which sensors they
+        # include per area rather than relying on the default range alone.
+        "active_range": (1.0, 999.0),
+        "strength_multiplier": 2.0,
     },
     InputType.ENVIRONMENTAL: {
         "weight": 0.1,

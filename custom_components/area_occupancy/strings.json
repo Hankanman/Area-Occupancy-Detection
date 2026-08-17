@@ -183,6 +183,18 @@
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
                     },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -326,6 +338,18 @@
                         "data_description": {
                             "power_sensors": "Power sensors that measure power consumption (W/kW). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }
                 }
@@ -580,6 +604,18 @@
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
                     },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -723,6 +759,18 @@
                         "data_description": {
                             "power_sensors": "Power sensors that measure power consumption (W/kW). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }
                 }

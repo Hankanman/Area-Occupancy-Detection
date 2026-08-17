@@ -2083,6 +2083,61 @@ class TestEntityFactory:
         assert "sensor.co" in mapping
         assert mapping["sensor.co"] == "co"
 
+    def test_get_entity_type_mapping_includes_wifi_clients(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that wifi_clients sensors are included in the entity type mapping."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.sensors.wifi_clients = ["sensor.wifi_clients_guest"]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        mapping = factory.get_entity_type_mapping()
+
+        assert "sensor.wifi_clients_guest" in mapping
+        assert mapping["sensor.wifi_clients_guest"] == "wifi_clients"
+
+    def test_wifi_clients_uses_own_weight_not_environmental(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """WIFI_CLIENTS must use weights.wifi_clients, not the environmental weight.
+
+        Unlike TEMPERATURE/CO2/etc. (which all share config_weight via
+        _WEIGHT_KEY_FOR_INPUT_TYPE mapping to "environmental"), WIFI_CLIENTS is
+        a presence-channel type and is NOT in that map, so it should resolve
+        its own weight key.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Environmental weight deliberately different from wifi_clients weight
+        area.config.weights.environmental = 0.7
+        area.config.weights.wifi_clients = 0.42
+
+        entity_id = "sensor.wifi_clients_office"
+        area.config.sensors.wifi_clients = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "wifi_clients")
+
+        assert entity.weight == 0.42
+        assert entity.type.input_type == InputType.WIFI_CLIENTS
+
+    def test_wifi_clients_default_active_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that a wifi_clients entity gets the (1, 999) default active_range."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        entity_id = "sensor.wifi_clients_guest"
+        area.config.sensors.wifi_clients = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "wifi_clients")
+
+        assert entity.type.active_range == (1.0, 999.0)
+        assert entity.type.active_states is None
+
     @pytest.mark.parametrize(
         ("input_type", "sensor_attr", "entity_id"),
         [

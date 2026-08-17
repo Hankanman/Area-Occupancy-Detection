@@ -47,7 +47,9 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
+    CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WEIGHT_WINDOW,
+    CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
     DEFAULT_SENSOR_PRECISION,
@@ -494,12 +496,14 @@ class TestAreaConfigProperties:
                 CONF_PM25_SENSORS: ["sensor.pm25_1"],
                 CONF_PM10_SENSORS: ["sensor.pm10_1"],
                 CONF_POWER_SENSORS: ["sensor.power_1"],
+                CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_1"],
                 CONF_WEIGHT_MOTION: 0.9,
                 CONF_WEIGHT_MEDIA: 0.7,
                 CONF_WEIGHT_APPLIANCE: 0.6,
                 CONF_WEIGHT_DOOR: 0.5,
                 CONF_WEIGHT_WINDOW: 0.4,
                 CONF_WEIGHT_ENVIRONMENTAL: 0.3,
+                CONF_WEIGHT_WIFI_CLIENTS: 0.35,
                 CONF_WASP_WEIGHT: 0.8,
             },
         )
@@ -527,6 +531,7 @@ class TestAreaConfigProperties:
             "sensor.pm25_1",
             "sensor.pm10_1",
             "sensor.power_1",
+            "sensor.wifi_clients_1",
         ]
 
         assert len(entity_ids) == len(expected_entities)
@@ -691,6 +696,7 @@ class TestAreaConfigValidation:
             ("pm25", ["sensor.pm25_1", ""]),
             ("pm10", ["sensor.pm10_1", "   "]),
             ("power", ["sensor.power1", "   "]),
+            ("wifi_clients", ["sensor.wifi_clients1", "   "]),
         ],
     )
     def test_validate_entity_configuration_invalid_entity_ids(
@@ -715,6 +721,7 @@ class TestAreaConfigValidation:
             "pm25": CONF_PM25_SENSORS,
             "pm10": CONF_PM10_SENSORS,
             "power": CONF_POWER_SENSORS,
+            "wifi_clients": CONF_WIFI_CLIENTS_SENSORS,
         }[sensor_type]
 
         # Build test data - for motion sensors, use invalid_ids directly

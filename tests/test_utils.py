@@ -1091,6 +1091,49 @@ class TestPresenceEnvironmentalSplit:
         # Should return 0.5 (neutral) when no environmental sensors
         assert result == 0.5
 
+    def test_wifi_clients_counted_in_presence_not_environmental(self) -> None:
+        """WIFI_CLIENTS is a presence-channel type, not environmental (issue #515).
+
+        This is the load-bearing assertion for the feature: wifi_clients must
+        be picked up by presence_probability() and explicitly excluded from
+        environmental_confidence(), since it was deliberately added to
+        PRESENCE_INPUT_TYPES rather than ENVIRONMENTAL_INPUT_TYPES.
+        """
+        wifi_clients = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.3,
+            prob_given_false=0.03,
+            weight=0.35,
+            input_type=InputType.WIFI_CLIENTS,
+        )
+        temperature = _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.09,
+            prob_given_false=0.01,
+            weight=0.1,
+            input_type=InputType.TEMPERATURE,
+        )
+
+        entities = {"wifi_clients": wifi_clients, "temperature": temperature}
+        prior = 0.4
+
+        # presence_probability() must include wifi_clients and ignore temperature
+        presence_result = presence_probability(entities, prior=prior)
+        presence_wifi_only = sigmoid_probability(
+            {"wifi_clients": wifi_clients}, prior=prior
+        )
+        assert abs(presence_result - presence_wifi_only) < 1e-6
+
+        # environmental_confidence() must ignore wifi_clients and only use temperature
+        env_result = environmental_confidence(entities)
+        env_temp_only = sigmoid_probability({"temperature": temperature}, prior=0.5)
+        assert abs(env_result - env_temp_only) < 1e-6
+
+        # Sanity: a wifi_clients-only entity dict must NOT be neutral under
+        # environmental_confidence() being falsely non-neutral - it must be
+        # exactly neutral (0.5) since wifi_clients contributes nothing there.
+        assert environmental_confidence({"wifi_clients": wifi_clients}) == 0.5
+
 
 class TestCombinedProbability:
     """Test combined probability function."""

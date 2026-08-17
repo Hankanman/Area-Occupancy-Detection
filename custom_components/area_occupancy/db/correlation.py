@@ -1665,6 +1665,7 @@ def get_correlatable_entities_by_area(
         InputType.CO2,
         InputType.CO,
         InputType.POWER,
+        InputType.WIFI_CLIENTS,
         InputType.SOUND_PRESSURE,
         InputType.PRESSURE,
         InputType.AIR_QUALITY,

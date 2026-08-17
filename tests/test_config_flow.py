@@ -17,6 +17,7 @@ from custom_components.area_occupancy.config_flow import (
     _create_area_selector_schema,
     _create_behavior_step_schema,
     _create_motion_step_schema,
+    _create_sensors_step_schema,
     _entity_contains_keyword,
     _find_area_by_id,
     _find_area_by_sanitized_id,
@@ -27,6 +28,7 @@ from custom_components.area_occupancy.config_flow import (
     _get_state_select_options,
     _handle_step_error,
     _is_weather_entity,
+    _nest_config_for_sections,
     _remove_area_from_list,
     _strip_adjacency_references,
     _update_area_in_list,
@@ -51,6 +53,8 @@ from custom_components.area_occupancy.const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
+    CONF_WEIGHT_WIFI_CLIENTS,
+    CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DOMAIN,
@@ -1085,6 +1089,7 @@ class TestConfigFlowIntegration:
                 "appliances": {},
                 "environmental": {},
                 "power": {},
+                "wifi_clients": {},
             }
         )
         assert result4.get("type") == FlowResultType.FORM
@@ -1605,6 +1610,38 @@ class TestNewHelperFunctions:
         assert result[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
         assert result[CONF_PURPOSE] == "social"
         assert result[CONF_WASP_ENABLED] is True
+
+    def test_flatten_sectioned_input_wifi_clients(self):
+        """Test flattening the wifi_clients section like other sensor sections."""
+        user_input = {
+            "wifi_clients": {
+                CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_guest"],
+                CONF_WEIGHT_WIFI_CLIENTS: 0.42,
+            },
+        }
+        result = _flatten_sectioned_input(user_input)
+        assert result[CONF_WIFI_CLIENTS_SENSORS] == ["sensor.wifi_clients_guest"]
+        assert result[CONF_WEIGHT_WIFI_CLIENTS] == 0.42
+
+    def test_nest_config_for_sections_wifi_clients(self):
+        """Test that wifi_clients config keys are nested under a wifi_clients section."""
+        flat_config = {
+            CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_guest"],
+            CONF_WEIGHT_WIFI_CLIENTS: 0.42,
+        }
+        nested = _nest_config_for_sections(flat_config)
+        assert nested["wifi_clients"] == {
+            CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_guest"],
+            CONF_WEIGHT_WIFI_CLIENTS: 0.42,
+        }
+
+    def test_sensors_step_schema_includes_wifi_clients_section(self, hass):
+        """Test that the sensors step schema exposes a wifi_clients section."""
+        schema_dict = _create_sensors_step_schema(hass)
+        section_names = {
+            key.schema if hasattr(key, "schema") else key for key in schema_dict
+        }
+        assert "wifi_clients" in section_names
 
     @pytest.mark.parametrize(
         ("areas", "search_name", "expected_found", "expected_name"),

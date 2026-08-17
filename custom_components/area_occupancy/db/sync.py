@@ -40,6 +40,7 @@ _NUMERIC_INPUT_TYPES = {
     InputType.PM10,
     InputType.POWER,
     InputType.ENVIRONMENTAL,
+    InputType.WIFI_CLIENTS,
 }
 
 
