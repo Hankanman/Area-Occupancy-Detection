@@ -217,8 +217,8 @@ class Area:
         """Calculate sensor-only occupancy probability (no activity boost).
 
         Combines presence probability (from strong binary indicators) with
-        environmental confidence (from environmental sensors) using weighted
-        averaging in logit space.
+        environmental confidence (from environmental sensors) as an additive
+        update in logit space.
 
         This is the first phase of the two-phase probability calculation.
         Activity detection receives this value to avoid circular dependency.
@@ -233,10 +233,12 @@ class Area:
         presence = self.presence_probability()
         env = self.environmental_confidence()
 
-        # Skip the 80/20 blend when no environmental sensors are configured.
-        # environmental_confidence() returns exactly 0.5 only when there are no
-        # environmental entities, and blending with neutral would compress
-        # presence toward 0.5 unnecessarily.
+        # Short-circuit on neutral environmental confidence. 0.5 is what
+        # environmental_confidence() returns whenever the environmental channel
+        # contributes nothing — no environmental sensors configured, or none of
+        # them currently active. calc_combined() is continuous at that point
+        # (logit(0.5) == 0, so it returns presence unchanged) — this just skips
+        # a redundant logit/sigmoid round-trip.
         if env == 0.5:
             return presence
 

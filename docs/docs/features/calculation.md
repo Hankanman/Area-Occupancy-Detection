@@ -138,14 +138,16 @@ The result is exposed as the **Environmental Confidence** diagnostic sensor.
 
 ### Combined Probability (Occupancy Probability)
 
-The two models are combined in **logit space** with an 80/20 weighting:
+Environmental data is applied as an **additive update** to the presence estimate in **logit space**, damped to 20% of its own contribution:
 
-```
-z_combined = 0.8 × logit(presence) + 0.2 × logit(environmental)
+```text
+z_combined = logit(presence) + 0.2 × logit(environmental)
 probability = sigmoid(z_combined)
 ```
 
-This means presence indicators dominate the final probability, while environmental data provides supporting or opposing evidence. The combination in logit space (rather than simple averaging) preserves the probabilistic meaning of the values.
+Presence indicators set the level; environmental data nudges it. Because environmental contributions are non-negative by construction (a sensor is either inside its active range or contributes nothing), environmental confidence never falls below 50% in practice, so environmental data can only raise the probability or leave it unchanged.
+
+An earlier version of this formula averaged the two channels (`0.8 × logit(presence) + 0.2 × logit(environmental)`). Averaging pulls the result toward whichever channel is less confident, and the environmental channel is structurally low-confidence, so adding a *supporting* environmental sensor could lower the probability — one active motion sensor gave 94.5%, and adding a CO2 sensor reading a normal 450 ppm dropped it to 90.8%. The additive form removes that.
 
 ## Output
 

@@ -1101,7 +1101,7 @@ class TestCombinedProbability:
         assert abs(result - 0.5) < 1e-6
 
     def test_combined_probability_presence_dominant(self) -> None:
-        """Test that presence is weighted more heavily (80%) than environmental."""
+        """Test that presence dominates the environmental adjustment."""
         # High presence, low environmental
         result_high_presence = combined_probability(presence=0.8, environmental=0.2)
         # Low presence, high environmental
@@ -1110,8 +1110,8 @@ class TestCombinedProbability:
         # High presence should result in higher overall probability
         assert result_high_presence > result_high_env
 
-        # With 80/20 weighting, presence should dominate
-        # result_high_presence should be closer to 0.8 than 0.2
+        # The environmental term is a damped logit contribution, so presence
+        # decides which side of 0.5 the result lands on.
         assert result_high_presence > 0.5
 
     def test_combined_probability_environmental_influence(self) -> None:
@@ -1119,7 +1119,7 @@ class TestCombinedProbability:
         result_env_low = combined_probability(presence=0.5, environmental=0.2)
         result_env_high = combined_probability(presence=0.5, environmental=0.8)
 
-        # Environmental should have some effect (20% weight)
+        # Environmental still moves the result via its damped logit contribution
         assert result_env_high > result_env_low
 
     def test_combined_probability_clamping(self) -> None:
@@ -1130,6 +1130,29 @@ class TestCombinedProbability:
         # Should be within MIN/MAX bounds
         assert MIN_PROBABILITY <= result_extreme_high <= MAX_PROBABILITY
         assert MIN_PROBABILITY <= result_extreme_low <= MAX_PROBABILITY
+
+    def test_combined_probability_neutral_env_returns_presence(self) -> None:
+        """Neutral environmental (0.5) must leave presence untouched.
+
+        Area._base_probability() short-circuits to presence when there are no
+        environmental sensors (env == 0.5 exactly). This asserts the formula
+        agrees with that short-circuit, so the two branches stay continuous.
+        """
+        for presence in (0.01, 0.2, 0.5, 0.8, 0.945, 0.99):
+            assert combined_probability(presence, 0.5) == pytest.approx(
+                presence, abs=1e-9
+            )
+
+    def test_combined_probability_supporting_env_never_lowers(self) -> None:
+        """Supporting environmental evidence must never lower the presence estimate."""
+        # Environmental contributions are non-negative, so environmental >= 0.5
+        # always. Averaging used to pull confident presence back toward 0.5,
+        # so adding a supporting environmental sensor reduced the probability.
+        for presence in (0.6, 0.8, 0.9, 0.95, 0.99):
+            for environmental in (0.5, 0.505, 0.6, 0.9):
+                combined = combined_probability(presence, environmental)
+                # 1e-9 absorbs logit/sigmoid float round-trip error.
+                assert combined >= min(presence, MAX_PROBABILITY) - 1e-9
 
 
 class TestSigmoidVsBayesian:

@@ -46,7 +46,7 @@ Two-phase calculation in `area/area.py`, all math in `utils.py`:
 1. **`_base_probability()`** — sensor-only, logit-space weighted evidence, no activity/adjacency:
    - `presence = presence_probability()` — combines MOTION/MEDIA/APPLIANCE/DOOR/WINDOW/COVER/POWER/SLEEP evidence in logit space, each entity's contribution scaled by `effective_weight (weight × information_gain) × strength_multiplier`.
    - `env = environmental_confidence()` — same mechanism over environmental sensor types; returns exactly `0.5` (neutral) when the area has zero environmental sensors configured.
-   - If `env == 0.5` exactly, `_base_probability()` returns `presence` directly — the 80/20 logit blend (`combined_probability`, weights presence 0.8 / env 0.2) is **skipped** so a no-env-sensor area is never compressed toward neutral (`area/area.py::_base_probability`, comment explains this explicitly).
+   - Otherwise `combined_probability(presence, env)` applies env as an **additive** logit-space update damped to 20%: `sigmoid(logit(presence) + 0.2×logit(env))`. It is *not* an average — averaging (the pre-2026-07 `0.8×logit(presence) + 0.2×logit(env)`) let supporting environmental data lower a motion-confirmed probability. If `env == 0.5` exactly, `_base_probability()` short-circuits and returns `presence`, which is what the formula yields anyway (`logit(0.5) == 0`).
 2. **`probability()`** — activity boost:
    - `base = _base_probability()`; `is_occupied = base >= config.threshold`.
    - `activity = detect_activity(self, base_probability=base, is_occupied=is_occupied)`.

@@ -75,7 +75,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 ## Features
 
 - **Bayesian Occupancy Detection**: Combines multiple sensor inputs using Bayesian probability for accurate occupancy detection.
-- **Dual-Model Approach**: Separates presence indicators (motion, media, appliances, doors, windows, covers, power, sleep — 80% weight) from environmental support (temperature, humidity, CO2, etc. — 20% weight) for more accurate results.
+- **Dual-Model Approach**: Separates presence indicators (motion, media, appliances, doors, windows, covers, power, sleep) from environmental support (temperature, humidity, CO2, etc.). Presence sets the probability; environmental readings adjust it, damped to 20% influence.
 - **Multiple Sensor Support**:
   - **Motion/Occupancy Sensors**: Primary input and ground truth for detecting presence.
   - **Media Devices**: TV, media players, and similar devices as activity indicators.

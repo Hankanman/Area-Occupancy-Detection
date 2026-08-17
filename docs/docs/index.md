@@ -9,7 +9,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 ### Core Features
 
 - **[Bayesian Probability Calculation](features/calculation.md)**: Uses learned sensor reliability to calculate occupancy probability
-- **[Dual-Model Approach](features/calculation.md#dual-model-approach-presence-environmental)**: Separates presence indicators (80% weight) from environmental support (20% weight) for more accurate results
+- **[Dual-Model Approach](features/calculation.md#dual-model-approach-presence-environmental)**: Presence indicators set the probability; environmental support adjusts it at 20% influence
 - **[Historical Learning](features/prior-learning.md)**: Automatically learns from your sensor history to improve accuracy
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
 - **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, cover, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
