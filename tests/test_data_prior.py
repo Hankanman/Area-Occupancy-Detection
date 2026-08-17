@@ -364,6 +364,12 @@ def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
     with patch(
         "custom_components.area_occupancy.data.prior.dt_util.utcnow", return_value=now
     ):
+        # Populate the time-prior cache via its public accessor so the
+        # assertion below proves set_global_prior actually invalidates it,
+        # rather than just confirming the cache was never populated.
+        _ = prior.time_prior
+        assert prior._cached_time_priors is not None
+
         prior.set_global_prior(0.75)
         assert prior.global_prior == 0.75
         assert prior._last_updated == now
