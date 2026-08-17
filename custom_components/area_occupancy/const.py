@@ -192,6 +192,19 @@ PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
 
+# Minimum observation span (wall-clock time since the earliest ground-truth
+# data point for an area's *current* motion/sleep/media sensors — occupied
+# or not) required before the global prior is trusted. Below this span the
+# occupied/elapsed ratio is dominated by sampling noise (e.g. a single short
+# occupied interval minutes after a sensor swap or "Reset learning" computes
+# occupied/elapsed ~= 1.0, which clamps to MAX_PRIOR every time — issue
+# #520 Bug B). 25h mirrors ``STALE_CACHE_THRESHOLD`` in data/health.py: both
+# describe "one full day plus buffer for a missed hourly analysis cycle" for
+# data fed by the same occupied-intervals pipeline, so reusing the value
+# keeps the two thresholds conceptually aligned instead of introducing an
+# unrelated second magic number.
+PRIOR_WARMUP_MIN_SPAN_HOURS: Final[float] = 25.0
+
 # Adjacent-areas / transition learning tunables (Phase 3 of feat/adjacent-areas).
 # First-pass values; tune from real data once Phase 3 is collecting transitions.
 

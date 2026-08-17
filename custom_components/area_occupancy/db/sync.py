@@ -14,7 +14,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, RETENTION_DAYS
+from ..const import (
+    HA_RECORDER_DAYS,
+    MAX_INTERVAL_SECONDS,
+    MIN_INTERVAL_SECONDS,
+    RETENTION_DAYS,
+)
 from ..data.entity_type import NUMERIC_INPUT_TYPES
 from ..time_utils import to_db_utc, to_utc
 from . import queries
@@ -313,6 +318,54 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                 minimal_response=False,
             )
         )
+
+        # Backfill entities with zero existing Intervals rows (e.g. a
+        # motion/sleep/media sensor just added or swapped into an area's
+        # config) with their available recorder history, instead of only
+        # accumulating data forward from the shared ``start_time`` watermark
+        # above — otherwise a newly-configured sensor has no ground-truth
+        # history until enough time passes for it to happen to trigger
+        # (#520 Bug A path 1). Bounded by ``HA_RECORDER_DAYS`` since that's
+        # the most a HA recorder install typically retains.
+        new_entity_ids = await hass.async_add_executor_job(
+            db.get_entities_without_intervals, entity_ids
+        )
+        if new_entity_ids:
+            backfill_start = to_utc(end_time - timedelta(days=HA_RECORDER_DAYS))
+            backfill_end = to_utc(start_time)
+            if backfill_start < backfill_end:
+                _LOGGER.info(
+                    "Backfilling recorder history for %d newly-tracked "
+                    "entity(ies) with no interval data yet: %s",
+                    len(new_entity_ids),
+                    sorted(new_entity_ids),
+                )
+                backfill_states = await recorder.async_add_executor_job(
+                    lambda: get_significant_states(
+                        hass,
+                        backfill_start,
+                        backfill_end,
+                        list(new_entity_ids),
+                        minimal_response=False,
+                    )
+                )
+                for entity_id, history in (backfill_states or {}).items():
+                    if not history:
+                        continue
+                    # Backfilled history is strictly older than anything the
+                    # main query above could have returned for this entity
+                    # (which had zero rows to begin with), so prepend it.
+                    # The two windows share a boundary (backfill_end ==
+                    # start_time) and ``get_significant_states`` can be
+                    # inclusive at both ends, so de-dupe by (state,
+                    # last_changed) to avoid double-counting a boundary
+                    # state that both queries returned.
+                    existing = states.get(entity_id, [])
+                    seen = {(s.state, s.last_changed) for s in existing}
+                    backfilled = [
+                        s for s in history if (s.state, s.last_changed) not in seen
+                    ]
+                    states[entity_id] = backfilled + existing
 
         if not states:
             return

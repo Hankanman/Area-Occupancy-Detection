@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +21,8 @@ from custom_components.area_occupancy.db.queries import (
     build_presence_query,
     get_all_time_priors,
     get_area_data,
+    get_entities_without_intervals,
+    get_first_interval_timestamp,
     get_global_prior,
     get_latest_interval,
     get_occupied_intervals,
@@ -642,6 +645,154 @@ class TestGetOccupiedIntervals:
         assert result == []
 
 
+class TestGetFirstIntervalTimestamp:
+    """Test get_first_interval_timestamp (#520 Bug A/B support query)."""
+
+    def test_no_data_returns_none(self, coordinator: AreaOccupancyCoordinator):
+        """No interval rows at all for this area -> None (Bug A Case 1)."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is None
+
+    def test_returns_earliest_any_state_row(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Returns the earliest interval regardless of state ("off" counts).
+
+        This is the key distinction from get_occupied_intervals, which only
+        looks at "on" rows -- an area can have data (this function returns
+        a timestamp) while having zero occupied time (get_occupied_intervals
+        returns []).
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        earliest = now - timedelta(hours=48)
+        middle = now - timedelta(hours=24)
+
+        with db.get_session() as session:
+            _create_test_entity(
+                session, db, "binary_sensor.motion1", "motion", area_name
+            )
+            # Earliest row is "off" -- must still be found.
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                earliest,
+                earliest + timedelta(minutes=1),
+                area_name,
+                state="off",
+            )
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                middle,
+                middle + timedelta(minutes=1),
+                area_name,
+                state="on",
+            )
+            session.commit()
+
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is not None
+        norm_result, norm_earliest = _normalize_datetime_for_comparison(
+            result, earliest
+        )
+        assert abs((norm_result - norm_earliest).total_seconds()) < 1
+
+    def test_ignores_other_entity_types(self, coordinator: AreaOccupancyCoordinator):
+        """A door/appliance-only interval history doesn't count as ground truth."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        with db.get_session() as session:
+            _create_test_entity(session, db, "binary_sensor.door1", "door", area_name)
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.door1",
+                now - timedelta(hours=1),
+                now,
+                area_name,
+                state="on",
+            )
+            session.commit()
+
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is None
+
+    def test_error_returns_none(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Database error returns None rather than raising."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        def bad_session():
+            raise SQLAlchemyError("Error")
+
+        monkeypatch.setattr(db, "get_session", bad_session)
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is None
+
+
+class TestGetEntitiesWithoutIntervals:
+    """Test get_entities_without_intervals (#520 Fix 3 backfill support)."""
+
+    def test_empty_input_returns_empty_set(self, coordinator: AreaOccupancyCoordinator):
+        """Empty entity_ids list short-circuits to an empty set."""
+        db = coordinator.db
+        assert get_entities_without_intervals(db, []) == set()
+
+    def test_identifies_entities_with_no_rows(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Entities with zero Intervals rows are returned; others are excluded."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        with db.get_session() as session:
+            _create_test_entity(
+                session, db, "binary_sensor.motion1", "motion", area_name
+            )
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                now - timedelta(hours=1),
+                now,
+                area_name,
+            )
+            session.commit()
+
+        result = get_entities_without_intervals(
+            db, ["binary_sensor.motion1", "binary_sensor.motion2"]
+        )
+        assert result == {"binary_sensor.motion2"}
+
+    def test_error_returns_empty_set(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Database error returns an empty set rather than raising."""
+        db = coordinator.db
+
+        def bad_session():
+            raise SQLAlchemyError("Error")
+
+        monkeypatch.setattr(db, "get_session", bad_session)
+        result = get_entities_without_intervals(db, ["binary_sensor.motion1"])
+        assert result == set()
+
+
 class TestBuildFilters:
     """Test filter building functions."""
 
@@ -753,6 +904,56 @@ class TestGetGlobalPrior:
         db = coordinator.db
         result = get_global_prior(db, "nonexistent_area")
         assert result is None
+
+    def test_get_global_prior_null_calculation_date(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Legacy rows with no calculation_date must not crash get_global_prior.
+
+        calculation_date is NOT NULL in the current schema (verified: SQLite
+        rejects both an INSERT and an UPDATE that attempt to set it NULL, so
+        this can't be reproduced against a freshly created test DB). But
+        create_all(checkfirst=True) never alters already-existing tables
+        (see aod-change-control), so an install whose DB predates this
+        constraint could still carry a legacy NULL row -- simulate that by
+        stubbing the session's query result directly.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        legacy_row = SimpleNamespace(
+            prior_value=0.35,
+            calculation_date=None,
+            data_period_start=dt_util.utcnow() - timedelta(days=90),
+            data_period_end=dt_util.utcnow(),
+            total_occupied_seconds=86400.0,
+            total_period_seconds=7776000.0,
+            interval_count=100,
+            confidence=None,
+            calculation_method=None,
+        )
+
+        class _FakeQuery:
+            def filter_by(self, **kwargs):
+                return self
+
+            def first(self):
+                return legacy_row
+
+        class _FakeSession:
+            def query(self, *args, **kwargs):
+                return _FakeQuery()
+
+        @contextmanager
+        def fake_get_session():
+            yield _FakeSession()
+
+        monkeypatch.setattr(db, "get_session", fake_get_session)
+
+        result = get_global_prior(db, area_name)
+        assert result is not None
+        assert result["calculation_date"] is None
+        assert result["prior_value"] == 0.35
 
 
 class TestOccupiedIntervalsCache:

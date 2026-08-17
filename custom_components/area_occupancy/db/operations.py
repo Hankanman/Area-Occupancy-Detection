@@ -266,7 +266,10 @@ async def load_data(db: AreaOccupancyDB) -> None:
                 db.get_global_prior, area_name
             )
             if global_prior_data:
-                area_data.prior.set_global_prior(global_prior_data["prior_value"])
+                area_data.prior.set_global_prior(
+                    global_prior_data["prior_value"],
+                    calculation_date=global_prior_data.get("calculation_date"),
+                )
 
             # Process entities
             if entities:
