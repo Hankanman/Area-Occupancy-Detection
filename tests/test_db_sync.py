@@ -3,6 +3,7 @@
 from datetime import timedelta
 import logging
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -474,6 +475,188 @@ class TestSyncStates:
                 .all()
             )
             assert len(intervals) == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_states_backfills_newly_tracked_entity(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """A brand-new entity (no Intervals rows yet) gets a history backfill.
+
+        Regression test for #520 Bug A path 1: previously a newly
+        (re)configured motion/sleep/media sensor only accumulated data
+        forward from the shared sync watermark, leaving it with an empty
+        occupied-interval history (and thus a frozen/skipped prior) until
+        it happened to trigger again. ``sync_states`` must now pull
+        available recorder history for entities with zero existing rows.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Restrict tracked entities to just our target so the call-count
+        # assertion isn't affected by other fixture-configured sensors that
+        # also happen to have zero interval rows.
+        for name in db.coordinator.get_area_names():
+            a = db.coordinator.get_area(name)
+            if a:
+                a.entities.entities.clear()
+
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            entity = db.Entities(
+                entity_id="binary_sensor.motion",
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="motion",
+            )
+            session.add(entity)
+            session.commit()
+
+        area = db.coordinator.get_area(area_name)
+        motion_entity = SimpleNamespace(
+            entity_id="binary_sensor.motion",
+            type=SimpleNamespace(input_type=InputType.MOTION),
+        )
+        area.entities.add_entity(motion_entity)
+
+        now = dt_util.utcnow()
+        watermark_start = now - timedelta(hours=1)
+        # Forward (main-watermark) window has no new activity.
+        forward_state = State("binary_sensor.motion", "off", last_changed=now)
+        # Backfill window (older than the watermark) has an old occupied
+        # interval that should now be pulled in. Includes both the "on"
+        # and the following "off" transition so the resulting interval is
+        # short (a single unclosed "on" spanning all the way to the
+        # forward state, ~3 days later, would exceed MAX_INTERVAL_SECONDS
+        # and get filtered out by _states_to_intervals — not what this
+        # test is checking).
+        backfill_on_time = now - timedelta(days=3)
+        backfill_off_time = backfill_on_time + timedelta(minutes=5)
+        backfill_states = [
+            State("binary_sensor.motion", "on", last_changed=backfill_on_time),
+            State("binary_sensor.motion", "off", last_changed=backfill_off_time),
+        ]
+
+        call_windows: list[tuple[Any, Any]] = []
+
+        def mock_get_significant_states(hass, start_time, end_time, entity_ids, **kw):
+            call_windows.append((start_time, end_time))
+            if start_time < watermark_start:
+                # Backfill call.
+                return {"binary_sensor.motion": backfill_states}
+            return {"binary_sensor.motion": [forward_state]}
+
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.get_significant_states",
+            mock_get_significant_states,
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.queries.get_latest_interval",
+            lambda db_instance: watermark_start,
+        )
+
+        mock_recorder = Mock()
+        mock_recorder.async_add_executor_job = AsyncMock(
+            side_effect=lambda func: func()
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.get_instance",
+            lambda hass: mock_recorder,
+        )
+
+        await sync_states(db)
+
+        # Both the forward and the backfill query should have run.
+        assert len(call_windows) == 2
+
+        with db.get_session() as session:
+            intervals = (
+                session.query(db.Intervals)
+                .filter_by(entity_id="binary_sensor.motion")
+                .all()
+            )
+        # Backfilled "on" interval must be present in addition to the
+        # forward "off" interval.
+        states_found = {interval.state for interval in intervals}
+        assert "on" in states_found
+
+    @pytest.mark.asyncio
+    async def test_sync_states_skips_backfill_for_known_entity(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """An entity with existing interval history is not backfilled again."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        # Restrict tracked entities to just our target so the assertion on
+        # call count isn't affected by other fixture-configured sensors
+        # that also happen to have zero interval rows.
+        for name in db.coordinator.get_area_names():
+            a = db.coordinator.get_area(name)
+            if a:
+                a.entities.entities.clear()
+
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        with db.get_session() as session:
+            entity = db.Entities(
+                entity_id="binary_sensor.motion",
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_type="motion",
+            )
+            session.add(entity)
+            interval = db.Intervals(
+                entry_id=db.coordinator.entry_id,
+                area_name=area_name,
+                entity_id="binary_sensor.motion",
+                state="on",
+                start_time=now - timedelta(days=1),
+                end_time=now - timedelta(hours=23),
+                duration_seconds=3600.0,
+                aggregation_level="raw",
+            )
+            session.add(interval)
+            session.commit()
+
+        area = db.coordinator.get_area(area_name)
+        motion_entity = SimpleNamespace(
+            entity_id="binary_sensor.motion",
+            type=SimpleNamespace(input_type=InputType.MOTION),
+        )
+        area.entities.add_entity(motion_entity)
+
+        call_windows: list[tuple[Any, Any]] = []
+
+        def mock_get_significant_states(hass, start_time, end_time, entity_ids, **kw):
+            call_windows.append((start_time, end_time))
+            return {
+                "binary_sensor.motion": [
+                    State("binary_sensor.motion", "off", last_changed=now)
+                ]
+            }
+
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.get_significant_states",
+            mock_get_significant_states,
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.queries.get_latest_interval",
+            lambda db_instance: now - timedelta(hours=1),
+        )
+
+        mock_recorder = Mock()
+        mock_recorder.async_add_executor_job = AsyncMock(
+            side_effect=lambda func: func()
+        )
+        monkeypatch.setattr(
+            "custom_components.area_occupancy.db.sync.get_instance",
+            lambda hass: mock_recorder,
+        )
+
+        await sync_states(db)
+
+        # Only the forward sync call, no backfill call.
+        assert len(call_windows) == 1
 
     @pytest.mark.asyncio
     async def test_sync_states_handles_empty_entity_ids(
