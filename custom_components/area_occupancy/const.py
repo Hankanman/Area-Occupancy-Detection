@@ -300,7 +300,11 @@ AGGREGATION_LEVEL_RAW: Final = "raw"
 # Correlation analysis constants
 # Minimum samples needed for reliable correlation
 # --- Trust score (#499, shadow mode) ---
-# Rolling tick-buffer depth per area: ~24h at the 10s decay cadence.
+# Rolling tick-buffer depth per area: 8640 = ~24h *if* ticks landed
+# exactly on the 10s decay cadence. In practice evidence-triggered
+# refreshes add extra ticks between decay ticks, so busy areas cover
+# less than 24h of wall-clock time; see metrics.py's time-weighting for
+# why that no longer biases the accuracy stats computed from it.
 ACCURACY_TICK_BUFFER_MAXLEN: Final = 8640
 # Hours of tick history scored against ground truth each analysis cycle.
 ACCURACY_WINDOW_HOURS: Final = 24

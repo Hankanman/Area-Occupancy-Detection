@@ -600,18 +600,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 is_occupied=is_occupied,
                 now=now,
             )
-            self._accuracy_ticks.setdefault(
-                area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
-            ).append(
-                TickSample(timestamp=now, probability=probability, occupied=is_occupied)
-            )
-            motion_active = any(
-                entity.evidence and entity.type.input_type == InputType.MOTION
-                for entity in area.entities.entities.values()
-            )
-            self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
-                motion_active=motion_active, now=now
-            )
+            self._record_shadow_tick(area_name, area, now, probability, is_occupied)
             result[area_name] = {
                 "probability": probability,
                 "occupied": is_occupied,
@@ -621,6 +610,41 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "last_updated": now,
             }
         return result
+
+    def _record_shadow_tick(
+        self,
+        area_name: str,
+        area: Area,
+        now: datetime,
+        probability: float,
+        is_occupied: bool,
+    ) -> None:
+        """Record one shadow-mode accuracy/online-prior sample for an area.
+
+        Read-only: does not touch ``self.data`` or notify listeners, so
+        calling it outside a full ``update()`` (see
+        ``_handle_decay_timer``) has no effect on entity state or the
+        production refresh cadence.
+        """
+        self._accuracy_ticks.setdefault(
+            area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
+        ).append(
+            TickSample(timestamp=now, probability=probability, occupied=is_occupied)
+        )
+        # Match db.queries.get_occupied_intervals' ground-truth definition
+        # (motion ∪ media ∪ sleep) rather than motion alone, so the online
+        # numerator and the DB-computed prior it's being diffed against
+        # measure the same thing. Motion's timeout extension isn't
+        # replicated here — see module docstring's known approximations.
+        presence_active = any(
+            entity.evidence
+            and entity.type.input_type
+            in (InputType.MOTION, InputType.MEDIA, InputType.SLEEP)
+            for entity in area.entities.entities.values()
+        )
+        self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
+            motion_active=presence_active, now=now
+        )
 
     # --- Adjacent-areas (Phase 4) accessors ---
     @property
@@ -786,6 +810,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error(
                 "Failed final save for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+
+        # Step 2b: Persist online-prior shadow state so a restart doesn't
+        # silently drop the occupied-seconds numerator while the period
+        # denominator (anchored at first_observation) keeps growing —
+        # previously this was only saved once per hour by the analysis
+        # pipeline, biasing the online prior low across every restart.
+        try:
+            await self.async_save_online_priors()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save online-prior shadow state for areas: %s: %s",
                 format_area_names(self),
                 err,
             )
@@ -1353,6 +1391,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         decay_enabled = any(area.config.decay.enabled for area in self.areas.values())
         if decay_enabled:
             await self.async_refresh()
+        else:
+            # Shadow-mode estimators (#499/#500) still need a steady tick
+            # cadence even when no area has decay enabled — without this,
+            # they'd only observe on evidence-triggered refreshes, whose
+            # gaps routinely exceed the online-prior's downtime threshold
+            # and starve its occupied-seconds numerator. Record ticks
+            # directly rather than going through ``async_refresh()`` so
+            # this doesn't change entity refresh cadence for users who
+            # disabled decay to reduce state churn.
+            now = dt_util.utcnow()
+            for area_name, area in self.areas.items():
+                probability = area.probability()
+                is_occupied = probability >= area.threshold()
+                self._record_shadow_tick(area_name, area, now, probability, is_occupied)
 
         # Reschedule the timer — but not if shutdown was signalled
         # during ``async_refresh``. Same rearm-leak avoidance as the

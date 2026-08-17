@@ -114,6 +114,61 @@ class TestComputeAccuracyMetrics:
         assert out.agreement == 1 / 6
         assert out.false_on_rate == 1.0
 
+    def test_non_uniform_ticks_are_time_weighted_not_sample_weighted(self) -> None:
+        """A burst of evidence-triggered ticks must not outweigh a long quiet span.
+
+        One correct tick spanning 990s vs nine wrong ticks crammed into the
+        following 9s (1s apart, as evidence-triggered refreshes would be).
+        Sample-weighted agreement would read 1/10 = 0.1; time-weighted
+        agreement should read ~990/999 ≈ 0.99.
+        """
+        intervals = [(T0, T0 + timedelta(seconds=990))]
+        samples = [
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+        ] + [
+            TickSample(
+                timestamp=T0 + timedelta(seconds=990 + i),
+                probability=0.9,
+                occupied=True,
+            )
+            for i in range(1, 10)
+        ]
+
+        out = compute_accuracy_metrics(samples, intervals)
+
+        assert out.sample_count == 10
+        assert out.agreement > 0.9
+        # bin_count still reflects raw sample counts for diagnostics
+        assert sum(b.count for b in out.bins) == 10
+
+    def test_last_tick_reuses_preceding_gap_as_weight(self) -> None:
+        """The final sample (no 'next tick' gap) is weighted like its predecessor."""
+        intervals = [(T0, T0 + timedelta(seconds=100))]
+        samples = [
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+            TickSample(
+                timestamp=T0 + timedelta(seconds=50), probability=0.9, occupied=True
+            ),
+        ]
+
+        out = compute_accuracy_metrics(samples, intervals)
+
+        # Both ticks correct and equally weighted (50s each) -> agreement 1.0
+        assert out.agreement == 1.0
+
+    def test_all_duplicate_timestamps_falls_back_to_uniform_weight(self) -> None:
+        """Zero-gap samples don't divide by zero; each counts equally instead."""
+        intervals = [(T0, T0 + timedelta(seconds=10))]
+        samples = [
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+        ]
+
+        out = compute_accuracy_metrics(samples, intervals)
+
+        assert out.agreement == 1.0
+        assert out.sample_count == 2
+
 
 class TestDiagnosticsShape:
     """metrics_to_diagnostics output contract."""
