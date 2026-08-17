@@ -29,6 +29,14 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sentinel distinguishing "caller didn't pass calculation_date" (fresh
+# calculation just completed -> default to now) from "caller explicitly
+# passed calculation_date=None" (loaded a legacy DB row with no recorded
+# timestamp -> must stay None, not silently become now). `None` itself
+# can't serve as the "not passed" default since it's also the valid explicit
+# value for the legacy case.
+_CALCULATION_DATE_UNSET = object()
+
 # Prior calculation constants
 PRIOR_FACTOR = 1.0
 DEFAULT_PRIOR = 0.5
@@ -192,7 +200,10 @@ class Prior:
         return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
 
     def set_global_prior(
-        self, prior: float, *, calculation_date: datetime | None = None
+        self,
+        prior: float,
+        *,
+        calculation_date: datetime | None = _CALCULATION_DATE_UNSET,  # type: ignore[assignment]
     ) -> None:
         """Set the global prior value.
 
@@ -201,20 +212,27 @@ class Prior:
 
         Args:
             prior: The prior probability value (will be clamped to valid bounds)
-            calculation_date: When this value was actually computed. Defaults
-                to now (the normal case: a fresh calculation just completed).
-                The data-load path passes the persisted
-                ``GlobalPriors.calculation_date`` instead, so
+            calculation_date: When this value was actually computed. Omitting
+                this argument defaults to now (the normal case: a fresh
+                calculation just completed). The data-load path passes the
+                persisted ``GlobalPriors.calculation_date`` instead, so
                 ``last_calculation_at`` reflects when the prior was last
                 *recomputed*, not when it was last *loaded* — otherwise a
                 restart would reset the staleness clock and mask a frozen
                 prior (#520 Bug A) until another full grace period elapsed.
+                An explicit ``None`` (a legacy DB row with no recorded
+                timestamp) is preserved as ``None`` rather than defaulting to
+                now — coercing it would make the legacy case indistinguishable
+                from a fresh calculation and defeat the staleness check
+                entirely.
         """
         self.global_prior = clamp_probability(prior)
         self._invalidate_time_prior_cache()
         now = dt_util.utcnow()
         self._last_updated = now
-        self.last_calculation_at = calculation_date or now
+        self.last_calculation_at = (
+            now if calculation_date is _CALCULATION_DATE_UNSET else calculation_date
+        )
 
     def clear_cache(self) -> None:
         """Clear all cached data to release memory.
