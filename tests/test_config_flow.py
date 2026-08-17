@@ -780,6 +780,34 @@ class TestHelperFunctions:
         assert "binary_sensor.mqtt_room_occupancy" in result["motion"]
         assert "binary_sensor.ble_monitor_person_presence" in result["motion"]
 
+    def test_get_include_entities_excludes_area_occupancy_wifi_clients(
+        self, hass, entity_registry
+    ):
+        """Wi-Fi client selector must exclude this integration's own sensors.
+
+        The selector has no device_class to filter by, so it would otherwise
+        offer this integration's own probability/priors/decay output sensors
+        for selection -- feeding them back in as WIFI_CLIENTS evidence would
+        create a feedback loop.
+        """
+        # Register an area_occupancy output sensor (should be excluded)
+        entity_registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            "living_room_probability",
+        )
+        # Register an external client-count sensor (should be included)
+        entity_registry.async_get_or_create(
+            "sensor",
+            "unifi",
+            "guest_ssid_clients",
+        )
+
+        result = _get_include_entities(hass)
+
+        assert f"sensor.{DOMAIN}_living_room_probability" not in result["wifi_clients"]
+        assert "sensor.unifi_guest_ssid_clients" in result["wifi_clients"]
+
     def test_wizard_steps_always_include_advanced_fields(self, hass, entity_registry):
         """Test that the former advanced-mode fields are always in the schema.
 

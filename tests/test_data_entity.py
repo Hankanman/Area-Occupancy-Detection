@@ -2126,7 +2126,7 @@ class TestEntityFactory:
     def test_wifi_clients_default_active_range(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test that a wifi_clients entity gets the (1, 999) default active_range."""
+        """Test that a wifi_clients entity gets the (1, inf) default active_range."""
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
         entity_id = "sensor.wifi_clients_guest"
@@ -2135,7 +2135,7 @@ class TestEntityFactory:
         factory = EntityFactory(coordinator, area_name=area_name)
         entity = factory.create_from_config_spec(entity_id, "wifi_clients")
 
-        assert entity.type.active_range == (1.0, 999.0)
+        assert entity.type.active_range == (1.0, float("inf"))
         assert entity.type.active_states is None
 
     @pytest.mark.parametrize(

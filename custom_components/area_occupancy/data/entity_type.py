@@ -227,6 +227,16 @@ ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {
     InputType.ENVIRONMENTAL,
 }
 
+# All numeric (active_range-based) input types, spanning both the
+# environmental and presence channels. Shared by db/sync.py and
+# db/correlation.py, which both need to distinguish numeric-sample storage
+# from discrete active_states storage regardless of which probability
+# channel a type feeds.
+NUMERIC_INPUT_TYPES: set[InputType] = ENVIRONMENTAL_INPUT_TYPES | {
+    InputType.POWER,
+    InputType.WIFI_CLIENTS,
+}
+
 DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
     InputType.MOTION: {
         "weight": 1,
@@ -391,7 +401,7 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         # network (a guest SSID might swing 0-1 clients, a busy office
         # SSID 5-45). Users should be selective about which sensors they
         # include per area rather than relying on the default range alone.
-        "active_range": (1.0, 999.0),
+        "active_range": (1.0, float("inf")),
         "strength_multiplier": 2.0,
     },
     InputType.ENVIRONMENTAL: {

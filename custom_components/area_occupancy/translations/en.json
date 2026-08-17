@@ -191,7 +191,7 @@
                             "weight_wifi_clients": "Wi-Fi Clients Weight"
                         },
                         "data_description": {
-                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     },
@@ -348,7 +348,7 @@
                             "weight_wifi_clients": "Wi-Fi Clients Weight"
                         },
                         "data_description": {
-                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }
@@ -613,7 +613,7 @@
                             "weight_wifi_clients": "Wi-Fi Clients Weight"
                         },
                         "data_description": {
-                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     },
@@ -770,7 +770,7 @@
                             "weight_wifi_clients": "Wi-Fi Clients Weight"
                         },
                         "data_description": {
-                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). A count above the sensor's configured range is treated as presence evidence. The useful active range varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- the default (1-999) treats any nonzero client count as evidence; tune per-area expectations by adjusting which sensors you include.",
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }

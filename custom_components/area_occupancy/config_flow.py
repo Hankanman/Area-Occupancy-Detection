@@ -288,6 +288,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_pm25_entities = []
     include_pm10_entities = []
     include_motion_entities = []
+    include_wifi_clients_entities = []
 
     door_window_classes = (
         BinarySensorDeviceClass.DOOR,
@@ -441,6 +442,13 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             if device_class in pm10_class or original_device_class in pm10_class:
                 include_pm10_entities.append(entry.entity_id)
 
+            # Wi-Fi client-count sensors have no reliable device_class to
+            # filter by, so offer every sensor-domain entity except this
+            # integration's own output sensors (probability, priors, decay,
+            # etc.) — selecting one of those would create a feedback loop.
+            if entry.platform != DOMAIN:
+                include_wifi_clients_entities.append(entry.entity_id)
+
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
         entry.entity_id
@@ -460,6 +468,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         "pm25": include_pm25_entities,
         "pm10": include_pm10_entities,
         "motion": include_motion_entities,
+        "wifi_clients": include_wifi_clients_entities,
     }
 
 
@@ -809,13 +818,16 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _create_wifi_clients_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _create_wifi_clients_section_schema(
+    defaults: dict[str, Any], wifi_clients_entities: list[str]
+) -> vol.Schema:
     """Create schema for the Wi-Fi client-count section.
 
     Unlike power sensors, Wi-Fi client-count sensors (e.g. from the UniFi
     Network integration) have no reliable SensorDeviceClass to auto-filter
-    by, so this uses a generic sensor-domain picker rather than a
-    device_class-scanned include list.
+    by, so this offers every sensor-domain entity except this integration's
+    own output sensors (see ``_get_include_entities``'s ``wifi_clients`` key)
+    rather than a device_class-scanned include list.
     """
     return vol.Schema(
         {
@@ -824,7 +836,7 @@ def _create_wifi_clients_section_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=defaults.get(CONF_WIFI_CLIENTS_SENSORS, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=Platform.SENSOR,
+                    include_entities=wifi_clients_entities,
                     multiple=True,
                 )
             ),
@@ -1035,7 +1047,10 @@ def _create_sensors_step_schema(
             _create_power_section_schema(defaults), {"collapsed": True}
         ),
         vol.Required("wifi_clients"): section(
-            _create_wifi_clients_section_schema(defaults), {"collapsed": True}
+            _create_wifi_clients_section_schema(
+                defaults, include_entities["wifi_clients"]
+            ),
+            {"collapsed": True},
         ),
     }
 
