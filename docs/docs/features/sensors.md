@@ -8,6 +8,7 @@ You will be prompted to select entities for various categories. You only need to
 | ---------------------------- | ----------------------------------- | -------------------------------------------------------------------- | -------------------- |
 | Motion Sensors               | `binary_sensor`                     | Additional motion sensors in the area such as PIR or mmWave sensors. | `on`                 |
 | Door Sensors                 | `binary_sensor`                     | Relevant door sensors.                                               | `Closed`             |
+| Lock Sensors                 | `lock`                              | Smart locks (e.g. Nuki) — unlocking is treated as activity evidence. | `Unlocked`            |
 | Window Sensors               | `binary_sensor`                     | Relevant window sensors.                                             | `Open`               |
 | Media Devices                | `media_player`                      | Relevant media players.                                              | `playing`, `paused`  |
 | Appliances                   | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances.          | `on`, `standby`      |
@@ -43,6 +44,7 @@ Weights allow you to adjust the influence of different _types_ of sensors on the
 | Appliance            | 0.40           |
 | Wi-Fi Client Sensor  | 0.35           |
 | Door Sensor          | 0.30           |
+| Lock Sensor          | 0.30           |
 | Power Sensor         | 0.30           |
 | Window Sensor        | 0.20           |
 | Environmental Sensor | 0.10           |

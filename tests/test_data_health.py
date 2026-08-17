@@ -139,6 +139,35 @@ class TestStuckActive:
         assert len(issues) == 1
         assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
 
+    def test_lock_stuck_active_below_threshold(self, monitor: HealthMonitor) -> None:
+        """Lock sensor active (unlocked) for 24h should NOT trigger (threshold is 48h)."""
+        entity = _make_entity(
+            "lock.front_door",
+            InputType.LOCK,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=24),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"lock_1": entity})
+
+        assert len(issues) == 0
+
+    def test_lock_stuck_active_above_threshold(self, monitor: HealthMonitor) -> None:
+        """Lock sensor active (unlocked) for 50h should trigger (threshold is 48h)."""
+        entity = _make_entity(
+            "lock.front_door",
+            InputType.LOCK,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=50),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"lock_1": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
 
 # --- Stuck Inactive Tests ---
 

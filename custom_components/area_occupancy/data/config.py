@@ -34,6 +34,8 @@ from ..const import (
     CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
+    CONF_LOCK_ACTIVE_STATE,
+    CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -69,6 +71,7 @@ from ..const import (
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
+    CONF_WEIGHT_LOCK,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_POWER,
@@ -85,6 +88,7 @@ from ..const import (
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_HEALTH_ENABLED,
+    DEFAULT_LOCK_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -104,6 +108,7 @@ from ..const import (
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_LOCK,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_POWER,
@@ -302,6 +307,7 @@ class Sensors:
     power: list[str] = field(default_factory=list)
     wifi_clients: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
+    lock: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
     cover: list[str] = field(default_factory=list)
     _parent_config: AreaConfig | None = field(default=None, repr=False, compare=False)
@@ -382,6 +388,7 @@ class SensorStates:
 
     motion: list[str] = field(default_factory=lambda: [STATE_ON])
     door: list[str] = field(default_factory=lambda: [DEFAULT_DOOR_ACTIVE_STATE])
+    lock: list[str] = field(default_factory=lambda: [DEFAULT_LOCK_ACTIVE_STATE])
     window: list[str] = field(default_factory=lambda: [DEFAULT_WINDOW_ACTIVE_STATE])
     cover: list[str] = field(default_factory=lambda: list(DEFAULT_COVER_ACTIVE_STATES))
     appliance: list[str] = field(
@@ -398,6 +405,7 @@ class Weights:
     media: float = DEFAULT_WEIGHT_MEDIA
     appliance: float = DEFAULT_WEIGHT_APPLIANCE
     door: float = DEFAULT_WEIGHT_DOOR
+    lock: float = DEFAULT_WEIGHT_LOCK
     window: float = DEFAULT_WEIGHT_WINDOW
     cover: float = DEFAULT_WEIGHT_COVER
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
@@ -548,6 +556,7 @@ class AreaConfig:
             power=data.get(CONF_POWER_SENSORS, []),
             wifi_clients=data.get(CONF_WIFI_CLIENTS_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
+            lock=data.get(CONF_LOCK_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
             cover=data.get(CONF_COVER_SENSORS, []),
             _parent_config=self,
@@ -556,6 +565,7 @@ class AreaConfig:
         self.sensor_states = SensorStates(
             motion=[STATE_ON],  # Motion sensors default to STATE_ON
             door=[data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)],
+            lock=[data.get(CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE)],
             window=[data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)],
             cover=data.get(CONF_COVER_ACTIVE_STATES, list(DEFAULT_COVER_ACTIVE_STATES)),
             appliance=data.get(
@@ -569,6 +579,7 @@ class AreaConfig:
             media=data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
             appliance=data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
             door=data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            lock=data.get(CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK),
             window=data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
             cover=data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER),
             environmental=data.get(
@@ -631,6 +642,7 @@ class AreaConfig:
             *self.sensors.media,
             *self.sensors.appliance,
             *self.sensors.door,
+            *self.sensors.lock,
             *self.sensors.window,
             *self.sensors.cover,
             *self.sensors.illuminance,
@@ -677,6 +689,7 @@ class AreaConfig:
             ("media", self.sensors.media),
             ("appliance", self.sensors.appliance),
             ("door", self.sensors.door),
+            ("lock", self.sensors.lock),
             ("window", self.sensors.window),
             ("illuminance", self.sensors.illuminance),
             ("humidity", self.sensors.humidity),

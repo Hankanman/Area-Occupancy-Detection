@@ -9,6 +9,7 @@ from custom_components.area_occupancy.data.entity_type import (
     EntityType,
     InputType,
 )
+from homeassistant.components.lock import LockState
 from homeassistant.const import STATE_ON
 
 
@@ -330,6 +331,30 @@ class TestEntityType:
             # Restore original DEFAULT_TYPES
             if original_value is not None:
                 DEFAULT_TYPES[test_type] = original_value
+
+    def test_lock_default_type_is_well_formed(self) -> None:
+        """Test that InputType.LOCK has a valid DEFAULT_TYPES entry.
+
+        Mirrors DOOR's shape: a discrete active_states type (not active_range),
+        with 'unlocked' as the default active state (the "in-use" state,
+        matching the pattern established for DOOR/WINDOW post-#510).
+        """
+        assert InputType.LOCK in DEFAULT_TYPES
+        config = DEFAULT_TYPES[InputType.LOCK]
+
+        assert config["active_range"] is None
+        assert config["active_states"] == [LockState.UNLOCKED]
+        assert 0 <= config["weight"] <= 1
+        assert 0 <= config["prob_given_true"] <= 1
+        assert 0 <= config["prob_given_false"] <= 1
+        # A lock should be a reliable-ish but not strong signal, roughly on
+        # par with (or a touch stronger than) DOOR since unlocking requires
+        # active intent.
+        assert config["prob_given_true"] > config["prob_given_false"]
+
+        entity_type = EntityType(InputType.LOCK)
+        assert entity_type.active_states == [LockState.UNLOCKED]
+        assert entity_type.active_range is None
 
     def test_strength_multiplier_override(self) -> None:
         """Test that strength_multiplier can be overridden from default."""

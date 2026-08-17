@@ -26,7 +26,7 @@ This integration creates several entities in Home Assistant to expose the calcul
 *   **`sensor.area_presence_confidence_<area_name>` (Presence Confidence)**
     *   **State:** Numeric value (0.0 to 100.0)
     *   **Unit:** `%`
-    *   **Description:** Shows the probability calculated from strong presence indicators only (motion, media, appliances, doors, windows, covers, power, sleep). This isolates the "hard evidence" of occupancy from environmental support.
+    *   **Description:** Shows the probability calculated from strong presence indicators only (motion, media, appliances, doors, locks, windows, covers, power, sleep). This isolates the "hard evidence" of occupancy from environmental support.
     *   **Device Class:** `power_factor`
     *   **State Class:** `measurement`
     *   **Entity Category:** `diagnostic`

@@ -1653,6 +1653,7 @@ def get_correlatable_entities_by_area(
         InputType.MEDIA,
         InputType.APPLIANCE,
         InputType.DOOR,
+        InputType.LOCK,
         InputType.WINDOW,
     }
 
