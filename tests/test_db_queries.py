@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -903,6 +904,56 @@ class TestGetGlobalPrior:
         db = coordinator.db
         result = get_global_prior(db, "nonexistent_area")
         assert result is None
+
+    def test_get_global_prior_null_calculation_date(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Legacy rows with no calculation_date must not crash get_global_prior.
+
+        calculation_date is NOT NULL in the current schema (verified: SQLite
+        rejects both an INSERT and an UPDATE that attempt to set it NULL, so
+        this can't be reproduced against a freshly created test DB). But
+        create_all(checkfirst=True) never alters already-existing tables
+        (see aod-change-control), so an install whose DB predates this
+        constraint could still carry a legacy NULL row -- simulate that by
+        stubbing the session's query result directly.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        legacy_row = SimpleNamespace(
+            prior_value=0.35,
+            calculation_date=None,
+            data_period_start=dt_util.utcnow() - timedelta(days=90),
+            data_period_end=dt_util.utcnow(),
+            total_occupied_seconds=86400.0,
+            total_period_seconds=7776000.0,
+            interval_count=100,
+            confidence=None,
+            calculation_method=None,
+        )
+
+        class _FakeQuery:
+            def filter_by(self, **kwargs):
+                return self
+
+            def first(self):
+                return legacy_row
+
+        class _FakeSession:
+            def query(self, *args, **kwargs):
+                return _FakeQuery()
+
+        @contextmanager
+        def fake_get_session():
+            yield _FakeSession()
+
+        monkeypatch.setattr(db, "get_session", fake_get_session)
+
+        result = get_global_prior(db, area_name)
+        assert result is not None
+        assert result["calculation_date"] is None
+        assert result["prior_value"] == 0.35
 
 
 class TestOccupiedIntervalsCache:

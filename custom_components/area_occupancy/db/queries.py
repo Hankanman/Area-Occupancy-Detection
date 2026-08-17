@@ -467,7 +467,15 @@ def get_global_prior(db: AreaOccupancyDB, area_name: str) -> dict[str, Any] | No
                     "prior_value": global_prior.prior_value,
                     # DB stores naive UTC; convert to aware UTC so callers can
                     # do datetime arithmetic directly (e.g. staleness checks).
-                    "calculation_date": from_db_utc(global_prior.calculation_date),
+                    # calculation_date is NOT NULL for rows created by the
+                    # current schema, but legacy rows predating that
+                    # constraint may still have NULL — guard rather than
+                    # let AttributeError escape uncaught below.
+                    "calculation_date": (
+                        from_db_utc(global_prior.calculation_date)
+                        if global_prior.calculation_date is not None
+                        else None
+                    ),
                     "data_period_start": global_prior.data_period_start,
                     "data_period_end": global_prior.data_period_end,
                     "total_occupied_seconds": global_prior.total_occupied_seconds,
