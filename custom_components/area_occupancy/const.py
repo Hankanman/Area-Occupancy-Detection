@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Final, TypedDict
 
+from homeassistant.components.lock import LockState
 from homeassistant.const import (
     STATE_BUFFERING,
     STATE_CLOSED,
@@ -73,6 +74,8 @@ CONF_POWER_SENSORS: Final = "power_sensors"
 CONF_WIFI_CLIENTS_SENSORS: Final = "wifi_clients_sensors"
 CONF_DOOR_SENSORS: Final = "door_sensors"
 CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
+CONF_LOCK_SENSORS: Final = "lock_sensors"
+CONF_LOCK_ACTIVE_STATE: Final = "lock_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
 CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
 CONF_COVER_SENSORS: Final = "cover_sensors"
@@ -105,6 +108,7 @@ CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
 CONF_WEIGHT_DOOR: Final = "weight_door"
+CONF_WEIGHT_LOCK: Final = "weight_lock"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
 CONF_WEIGHT_COVER: Final = "weight_cover"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
@@ -118,6 +122,7 @@ DEFAULT_PURPOSE: Final = "social"  # Default area purpose
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_HALF_LIFE: Final = 0  # 0 means "use purpose value"
 DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_OPEN
+DEFAULT_LOCK_ACTIVE_STATE: Final = LockState.UNLOCKED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
@@ -153,6 +158,7 @@ DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
+DEFAULT_WEIGHT_LOCK: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_COVER: Final = (
     0.5  # Covers (blinds/shades) being operated is strong activity signal
@@ -385,6 +391,21 @@ DOOR_STATES: Final[PlatformStates] = {
     "default": STATE_OPEN,
 }
 
+# Lock states configuration
+# All states from homeassistant.components.lock.LockState. Transitional
+# locking/unlocking states are omitted (too fleeting to be useful as a
+# configured active state); jammed and open are kept as operationally
+# meaningful.
+LOCK_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(LockState.UNLOCKED, "Unlocked", "mdi:lock-open-variant"),
+        StateOption(LockState.LOCKED, "Locked", "mdi:lock"),
+        StateOption(LockState.OPEN, "Open", "mdi:lock-open"),
+        StateOption(LockState.JAMMED, "Jammed", "mdi:lock-alert"),
+    ],
+    "default": LockState.UNLOCKED,
+}
+
 # Window states configuration
 # Includes transitional states for motorized blinds/shades
 WINDOW_STATES: Final[PlatformStates] = {
@@ -448,6 +469,7 @@ def get_state_options(platform_type: str) -> PlatformStates:
     """Get state options for a given platform type."""
     platform_map = {
         "door": DOOR_STATES,
+        "lock": LOCK_STATES,
         "window": WINDOW_STATES,
         "cover": COVER_STATES,
         "media": MEDIA_STATES,
@@ -501,6 +523,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "door": InputType.DOOR,
             "humidity": InputType.HUMIDITY,
             "illuminance": InputType.ILLUMINANCE,
+            "lock": InputType.LOCK,
             "media": InputType.MEDIA,
             "motion": InputType.MOTION,
             "pm10": InputType.PM10,

@@ -15,6 +15,7 @@ from custom_components.area_occupancy.data.entity import (
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.types import GaussianParams
+from homeassistant.components.lock import LockState
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -535,6 +536,46 @@ class TestEntityPropertiesAndMethods:
         try:
             assert not entity2.has_new_evidence()  # No refresh for unknown→clear
             assert entity2.previous_evidence is False
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_has_new_evidence_lock_unlocked_active(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test has_new_evidence for a LOCK entity with the default 'unlocked' active state."""
+        lock_entity_type = EntityType(
+            input_type=InputType.LOCK,
+            weight=0.3,
+            prob_given_true=0.2,
+            prob_given_false=0.02,
+            active_states=[LockState.UNLOCKED],
+        )
+        entity = create_test_entity(
+            entity_id="lock.front_door",
+            entity_type=lock_entity_type,
+            coordinator=coordinator,
+        )
+        assert entity.type.input_type == InputType.LOCK
+        assert entity.type.active_states == [LockState.UNLOCKED]
+
+        original_states = coordinator.hass.states
+        mock_state = Mock()
+        mock_state.state = LockState.UNLOCKED
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            # unknown -> unlocked is evidence of occupancy
+            assert entity.has_new_evidence()
+            assert entity.previous_evidence is True
+
+            # unlocked -> locked is a transition, should refresh
+            mock_state.state = LockState.LOCKED
+            assert entity.has_new_evidence()
+            assert entity.previous_evidence is False
+
+            # locked -> unlocked is a transition, should refresh again
+            mock_state.state = LockState.UNLOCKED
+            assert entity.has_new_evidence()
+            assert entity.previous_evidence is True
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 

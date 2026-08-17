@@ -60,6 +60,7 @@ STUCK_ACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
     InputType.MEDIA: timedelta(hours=12),
     InputType.APPLIANCE: timedelta(hours=24),
     InputType.DOOR: timedelta(hours=48),
+    InputType.LOCK: timedelta(hours=48),
     InputType.WINDOW: timedelta(hours=72),
     InputType.COVER: timedelta(hours=24),
 }
@@ -86,6 +87,7 @@ STUCK_INACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
     InputType.MEDIA: timedelta(days=14),
     InputType.APPLIANCE: timedelta(days=28),
     InputType.DOOR: timedelta(days=14),
+    InputType.LOCK: timedelta(days=14),
     InputType.WINDOW: timedelta(days=14),
     InputType.COVER: timedelta(days=14),
     InputType.POWER: timedelta(days=14),

@@ -66,6 +66,8 @@ from .const import (
     CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
+    CONF_LOCK_ACTIVE_STATE,
+    CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -103,6 +105,7 @@ from .const import (
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
+    CONF_WEIGHT_LOCK,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_POWER,
@@ -118,6 +121,7 @@ from .const import (
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_HEALTH_ENABLED,
+    DEFAULT_LOCK_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -137,6 +141,7 @@ from .const import (
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_LOCK,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_POWER,
@@ -456,10 +461,29 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         if entry.entity_id.startswith("cover.") and not entry.disabled
     ]
 
+    # Collect all lock entities (smart locks, e.g. door locks). Locks don't
+    # have meaningfully distinct device_class variants the way binary_sensor
+    # door/window entities do, so just include the whole domain. Discover
+    # via hass.states rather than the entity registry: entities without a
+    # unique_id (some MQTT-configured locks, e.g.) have no registry entry
+    # and would otherwise be silently excluded from selection. The registry
+    # is still consulted, but only to filter out disabled entities.
+    disabled_lock_entities = {
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.entity_id.startswith("lock.") and entry.disabled
+    }
+    include_lock_entities = [
+        entity_id
+        for entity_id in hass.states.async_entity_ids("lock")
+        if entity_id not in disabled_lock_entities
+    ]
+
     return {
         "appliance": include_appliance_entities,
         "window": include_window_entities,
         "door": include_door_entities,
+        "lock": include_lock_entities,
         "cover": include_cover_entities,
         "temperature": include_temperature_entities,
         "humidity": include_humidity_entities,
@@ -477,11 +501,13 @@ def _create_windows_and_doors_section_schema(
     door_entities: list[str],
     window_entities: list[str],
     cover_entities: list[str],
+    lock_entities: list[str],
     door_state_options: list[SelectOptionDict],
     window_state_options: list[SelectOptionDict],
     cover_state_options: list[SelectOptionDict],
+    lock_state_options: list[SelectOptionDict],
 ) -> vol.Schema:
-    """Create schema for the combined windows, doors, and covers section."""
+    """Create schema for the combined windows, doors, locks, and covers section."""
     return vol.Schema(
         {
             vol.Optional(
@@ -502,6 +528,32 @@ def _create_windows_and_doors_section_schema(
             vol.Optional(
                 CONF_WEIGHT_DOOR,
                 default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_LOCK_SENSORS, default=defaults.get(CONF_LOCK_SENSORS, [])
+            ): EntitySelector(
+                EntitySelectorConfig(include_entities=lock_entities, multiple=True)
+            ),
+            vol.Optional(
+                CONF_LOCK_ACTIVE_STATE,
+                default=defaults.get(CONF_LOCK_ACTIVE_STATE, get_default_state("lock")),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=lock_state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_LOCK,
+                default=defaults.get(CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -999,6 +1051,7 @@ def _create_sensors_step_schema(
 
     defaults: dict[str, Any] = {}
     door_state_options = _get_state_select_options("door")
+    lock_state_options = _get_state_select_options("lock")
     media_state_options = _get_state_select_options("media")
     window_state_options = _get_state_select_options("window")
     cover_state_options = _get_state_select_options("cover")
@@ -1011,9 +1064,11 @@ def _create_sensors_step_schema(
                 include_entities["door"],
                 include_entities["window"],
                 include_entities["cover"],
+                include_entities["lock"],
                 cast("list[SelectOptionDict]", door_state_options),
                 cast("list[SelectOptionDict]", window_state_options),
                 cast("list[SelectOptionDict]", cover_state_options),
+                cast("list[SelectOptionDict]", lock_state_options),
             ),
             {"collapsed": True},
         ),
@@ -1142,6 +1197,9 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         CONF_DOOR_SENSORS,
         CONF_DOOR_ACTIVE_STATE,
         CONF_WEIGHT_DOOR,
+        CONF_LOCK_SENSORS,
+        CONF_LOCK_ACTIVE_STATE,
+        CONF_WEIGHT_LOCK,
         CONF_WINDOW_SENSORS,
         CONF_WINDOW_ACTIVE_STATE,
         CONF_WEIGHT_WINDOW,
@@ -1349,6 +1407,7 @@ def _build_area_description_placeholders(
         "motion_count": str(len(area_config.get(CONF_MOTION_SENSORS, []))),
         "media_count": str(len(area_config.get(CONF_MEDIA_DEVICES, []))),
         "door_count": str(len(area_config.get(CONF_DOOR_SENSORS, []))),
+        "lock_count": str(len(area_config.get(CONF_LOCK_SENSORS, []))),
         "window_count": str(len(area_config.get(CONF_WINDOW_SENSORS, []))),
         "appliance_count": str(len(area_config.get(CONF_APPLIANCES, []))),
         "threshold": str(area_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)),
@@ -1371,10 +1430,16 @@ def _get_area_summary_info(area: dict[str, Any]) -> str:
     motion_count = len(area.get(CONF_MOTION_SENSORS, []))
     media_count = len(area.get(CONF_MEDIA_DEVICES, []))
     door_count = len(area.get(CONF_DOOR_SENSORS, []))
+    lock_count = len(area.get(CONF_LOCK_SENSORS, []))
     window_count = len(area.get(CONF_WINDOW_SENSORS, []))
     appliance_count = len(area.get(CONF_APPLIANCES, []))
     total_sensors = (
-        motion_count + media_count + door_count + window_count + appliance_count
+        motion_count
+        + media_count
+        + door_count
+        + lock_count
+        + window_count
+        + appliance_count
     )
 
     threshold = area.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
@@ -1907,6 +1972,12 @@ class BaseOccupancyFlow:
         if door_sensors and not door_state:
             errors[CONF_DOOR_SENSORS] = "door_state_required"
 
+        # Validate locks
+        lock_sensors = data.get(CONF_LOCK_SENSORS, [])
+        lock_state = data.get(CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE)
+        if lock_sensors and not lock_state:
+            errors[CONF_LOCK_SENSORS] = "lock_state_required"
+
         # Validate windows
         window_sensors = data.get(CONF_WINDOW_SENSORS, [])
         window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
@@ -1928,6 +1999,7 @@ class BaseOccupancyFlow:
                 data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
             ),
             (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
+            (CONF_WEIGHT_LOCK, data.get(CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK)),
             (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
             (CONF_WEIGHT_COVER, data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER)),
             (
@@ -2186,6 +2258,10 @@ class BaseOccupancyFlow:
                 CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
             ):
                 errors["base"] = "door_state_required"
+            if flattened.get(CONF_LOCK_SENSORS, []) and not flattened.get(
+                CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE
+            ):
+                errors["base"] = "lock_state_required"
             if flattened.get(CONF_WINDOW_SENSORS, []) and not flattened.get(
                 CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
             ):

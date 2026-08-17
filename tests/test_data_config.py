@@ -20,6 +20,8 @@ from custom_components.area_occupancy.const import (
     CONF_CO_SENSORS,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_SENSORS,
+    CONF_LOCK_ACTIVE_STATE,
+    CONF_LOCK_SENSORS,
     CONF_MEDIA_DEVICES,
     CONF_MOTION_SENSORS,
     CONF_PEOPLE,
@@ -45,6 +47,7 @@ from custom_components.area_occupancy.const import (
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
+    CONF_WEIGHT_LOCK,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WIFI_CLIENTS,
@@ -52,10 +55,12 @@ from custom_components.area_occupancy.const import (
     CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
+    DEFAULT_LOCK_ACTIVE_STATE,
     DEFAULT_SENSOR_PRECISION,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
+    DEFAULT_WEIGHT_LOCK,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     HA_RECORDER_DAYS,
@@ -443,6 +448,57 @@ class TestAreaConfigInitialization:
         assert config.weights.appliance == 0.5
         assert config.purpose == "social"
         assert config.decay.half_life == 300
+
+
+class TestAreaConfigLockSensors:
+    """Test AreaConfig loading of lock sensor configuration (issue #516)."""
+
+    def test_lock_sensors_and_active_state_loaded(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
+        """Test lock sensors, active state, and weight are loaded from config."""
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_LOCK_SENSORS: ["lock.front_door", "lock.back_door"],
+                CONF_LOCK_ACTIVE_STATE: "unlocked",
+                CONF_WEIGHT_LOCK: 0.4,
+            },
+        )
+
+        config = AreaConfig(coordinator, area_name=area_name)
+
+        assert config.sensors.lock == ["lock.front_door", "lock.back_door"]
+        assert config.sensor_states.lock == ["unlocked"]
+        assert config.weights.lock == 0.4
+        assert "lock.front_door" in config.entity_ids
+        assert "lock.back_door" in config.entity_ids
+
+    def test_lock_sensors_default_to_empty_and_unlocked(
+        self, coordinator: AreaOccupancyCoordinator, setup_area_registry: dict[str, str]
+    ) -> None:
+        """Test a legacy area config missing lock_sensors entirely loads without error.
+
+        Existing area configs predate the lock sensor type (#516) and have no
+        CONF_LOCK_SENSORS key at all. Loading must not raise and must default
+        to zero lock sensors with the standard defaults applied.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area_id = setup_area_registry.get(area_name, "test_area")
+
+        # No lock-related keys at all - simulates a pre-#516 stored config.
+        _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
+
+        config = AreaConfig(coordinator, area_name=area_name)
+
+        assert config.sensors.lock == []
+        assert config.sensor_states.lock == [DEFAULT_LOCK_ACTIVE_STATE]
+        assert config.sensor_states.lock == ["unlocked"]
+        assert config.weights.lock == DEFAULT_WEIGHT_LOCK
 
 
 class TestAreaConfigProperties:

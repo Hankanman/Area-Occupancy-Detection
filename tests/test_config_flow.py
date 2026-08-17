@@ -43,6 +43,8 @@ from custom_components.area_occupancy.const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_LOCK_ACTIVE_STATE,
+    CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -173,6 +175,13 @@ class TestBaseOccupancyFlow:
             ),
             (
                 {
+                    CONF_LOCK_SENSORS: ["lock.front_door"],
+                    CONF_LOCK_ACTIVE_STATE: "",
+                },
+                "lock_state_required",
+            ),
+            (
+                {
                     CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
                     CONF_WINDOW_ACTIVE_STATE: "",
                 },
@@ -214,7 +223,7 @@ class TestHelperFunctions:
 
     @pytest.mark.parametrize(
         "platform",
-        ["door", "window", "media", "appliance", "unknown"],
+        ["door", "lock", "window", "media", "appliance", "unknown"],
     )
     def test_get_state_select_options(self, platform):
         """Test _get_state_select_options function for all platforms."""
@@ -431,6 +440,54 @@ class TestHelperFunctions:
         assert "binary_sensor.test_door_1" in result["door"]
         assert "binary_sensor.test_window_1" in result["window"]
         assert "switch.test_appliance_1" in result["appliance"]
+
+    def test_get_include_entities_lock_domain(self, hass, entity_registry):
+        """Test that all lock.* domain entities are included, unfiltered by device_class.
+
+        Locks (e.g. Nuki smart locks) live in a dedicated ``lock`` domain
+        distinct from binary_sensor door/window entities, so they're
+        collected by domain the same way cover.* entities are — no
+        device_class filtering needed.
+        """
+        entity_registry.async_get_or_create("lock", "test", "front_door")
+        entity_registry.async_get_or_create("lock", "test", "back_door")
+        hass.states.async_set("lock.test_front_door", "locked")
+        hass.states.async_set("lock.test_back_door", "unlocked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock" in result
+        assert "lock.test_front_door" in result["lock"]
+        assert "lock.test_back_door" in result["lock"]
+
+    def test_get_include_entities_lock_without_registry_entry(self, hass):
+        """Locks without a unique_id have no registry entry but must still show up.
+
+        Some MQTT-configured locks never register a unique_id, so they have
+        no entity-registry entry at all. Discovery must be driven by
+        ``hass.states``, not the registry, or these locks would be silently
+        unselectable.
+        """
+        hass.states.async_set("lock.mqtt_side_door", "unlocked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock.mqtt_side_door" in result["lock"]
+
+    def test_get_include_entities_excludes_disabled_lock(self, hass, entity_registry):
+        """Disabled lock entities must not be offered for selection."""
+        from homeassistant.helpers import entity_registry as er
+
+        entry = entity_registry.async_get_or_create("lock", "test", "disabled_lock")
+        entity_registry.async_update_entity(
+            entry.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        hass.states.async_set("lock.test_enabled_lock", "locked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock.test_disabled_lock" not in result["lock"]
+        assert "lock.test_enabled_lock" in result["lock"]
 
     def test_get_include_entities_window_by_original_device_class(
         self, hass, entity_registry
@@ -1151,6 +1208,55 @@ class TestConfigFlowIntegration:
             assert area_data.get(CONF_AREA_ID) == expected_area_id
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert area_data.get(CONF_THRESHOLD) == 60
+
+    async def test_complete_config_flow_with_lock_sensors(
+        self,
+        config_flow_flow,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test the wizard persists CONF_LOCK_SENSORS/CONF_LOCK_ACTIVE_STATE (#516)."""
+        expected_area_id = setup_area_registry.get("Living Room", "living_room")
+
+        await config_flow_flow.async_step_user()
+        await config_flow_flow.async_step_area_basics(
+            {CONF_AREA_ID: expected_area_id, CONF_PURPOSE: "social"}
+        )
+        await config_flow_flow.async_step_area_motion(
+            {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
+        )
+
+        result4 = await config_flow_flow.async_step_area_sensors(
+            {
+                "windows_and_doors": {
+                    CONF_LOCK_SENSORS: ["lock.front_door"],
+                    CONF_LOCK_ACTIVE_STATE: "unlocked",
+                },
+                "media": {},
+                "appliances": {},
+                "environmental": {},
+                "power": {},
+            }
+        )
+        assert result4.get("type") == FlowResultType.FORM
+        assert result4.get("step_id") == "area_behavior"
+
+        await config_flow_flow.async_step_area_behavior(
+            {CONF_THRESHOLD: 60, CONF_DECAY_ENABLED: True, CONF_WASP_ENABLED: False}
+        )
+
+        with (
+            patch.object(
+                config_flow_flow, "async_set_unique_id", new_callable=AsyncMock
+            ),
+            patch.object(config_flow_flow, "_abort_if_unique_id_configured"),
+        ):
+            result6 = await config_flow_flow.async_step_finish_setup()
+
+            assert result6.get("type") == FlowResultType.CREATE_ENTRY
+            areas_list = result6.get("data", {})[CONF_AREAS]
+            area_data = areas_list[0]
+            assert area_data.get(CONF_LOCK_SENSORS) == ["lock.front_door"]
+            assert area_data.get(CONF_LOCK_ACTIVE_STATE) == "unlocked"
 
     async def test_config_flow_with_existing_entry(
         self, config_flow_flow, hass: HomeAssistant, setup_area_registry: dict[str, str]

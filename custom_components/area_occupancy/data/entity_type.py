@@ -4,6 +4,7 @@ from enum import StrEnum
 import logging
 from typing import Any
 
+from homeassistant.components.lock import LockState
 from homeassistant.const import (
     STATE_CLOSING,
     STATE_ON,
@@ -43,6 +44,7 @@ class InputType(StrEnum):
     MEDIA = "media"
     APPLIANCE = "appliance"
     DOOR = "door"
+    LOCK = "lock"
     WINDOW = "window"
     COVER = "cover"
     TEMPERATURE = "temperature"
@@ -192,6 +194,7 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
     InputType.APPLIANCE,
     InputType.DOOR,
+    InputType.LOCK,
     InputType.WINDOW,
     InputType.COVER,
     InputType.POWER,
@@ -208,6 +211,7 @@ BINARY_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
     InputType.APPLIANCE,
     InputType.DOOR,
+    InputType.LOCK,
     InputType.WINDOW,
 }
 
@@ -266,6 +270,14 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
         "active_states": [STATE_OPEN],
+        "active_range": None,
+        "strength_multiplier": 2.0,
+    },
+    InputType.LOCK: {
+        "weight": 0.3,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": [LockState.UNLOCKED],
         "active_range": None,
         "strength_multiplier": 2.0,
     },

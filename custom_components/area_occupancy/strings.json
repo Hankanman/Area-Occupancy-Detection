@@ -75,12 +75,15 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -91,6 +94,8 @@
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -250,12 +255,15 @@
                 "description": "Configure doors, windows, media players, appliances, environmental, and power sensors. All sections are optional.",
                 "sections": {
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -266,6 +274,8 @@
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -414,6 +424,7 @@
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
+            "lock_state_required": "Lock active state is required when lock sensors are configured.",
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
             "person_entity_required": "A person entity is required.",
@@ -496,12 +507,15 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -512,6 +526,8 @@
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -671,12 +687,15 @@
                 "description": "Configure doors, windows, media players, appliances, environmental, and power sensors. All sections are optional.",
                 "sections": {
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -687,6 +706,8 @@
                         "data_description": {
                             "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -901,6 +922,7 @@
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
+            "lock_state_required": "Lock active state is required when lock sensors are configured.",
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
             "person_entity_required": "A person entity is required.",
