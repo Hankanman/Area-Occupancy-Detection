@@ -119,7 +119,6 @@ class PriorsSensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_PRIORS_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -187,7 +186,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_PROBABILITY_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -339,7 +337,6 @@ class DecaySensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_DECAY_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -412,7 +409,6 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_PRESENCE_PROBABILITY_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -447,7 +443,6 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -531,7 +526,6 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_ACTIVITY_CONFIDENCE_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
