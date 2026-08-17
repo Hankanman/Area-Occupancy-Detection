@@ -5,7 +5,6 @@ import logging
 from typing import Any
 
 from homeassistant.const import (
-    STATE_CLOSED,
     STATE_CLOSING,
     STATE_ON,
     STATE_OPEN,
@@ -249,7 +248,7 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "weight": 0.3,
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
-        "active_states": [STATE_CLOSED],
+        "active_states": [STATE_OPEN],
         "active_range": None,
         "strength_multiplier": 2.0,
     },
