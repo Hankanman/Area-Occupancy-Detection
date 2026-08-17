@@ -463,11 +463,20 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
 
     # Collect all lock entities (smart locks, e.g. door locks). Locks don't
     # have meaningfully distinct device_class variants the way binary_sensor
-    # door/window entities do, so just include the whole domain.
-    include_lock_entities = [
+    # door/window entities do, so just include the whole domain. Discover
+    # via hass.states rather than the entity registry: entities without a
+    # unique_id (some MQTT-configured locks, e.g.) have no registry entry
+    # and would otherwise be silently excluded from selection. The registry
+    # is still consulted, but only to filter out disabled entities.
+    disabled_lock_entities = {
         entry.entity_id
         for entry in registry.entities.values()
-        if entry.entity_id.startswith("lock.") and not entry.disabled
+        if entry.entity_id.startswith("lock.") and entry.disabled
+    }
+    include_lock_entities = [
+        entity_id
+        for entity_id in hass.states.async_entity_ids("lock")
+        if entity_id not in disabled_lock_entities
     ]
 
     return {

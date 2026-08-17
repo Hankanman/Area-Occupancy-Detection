@@ -460,6 +460,35 @@ class TestHelperFunctions:
         assert "lock.test_front_door" in result["lock"]
         assert "lock.test_back_door" in result["lock"]
 
+    def test_get_include_entities_lock_without_registry_entry(self, hass):
+        """Locks without a unique_id have no registry entry but must still show up.
+
+        Some MQTT-configured locks never register a unique_id, so they have
+        no entity-registry entry at all. Discovery must be driven by
+        ``hass.states``, not the registry, or these locks would be silently
+        unselectable.
+        """
+        hass.states.async_set("lock.mqtt_side_door", "unlocked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock.mqtt_side_door" in result["lock"]
+
+    def test_get_include_entities_excludes_disabled_lock(self, hass, entity_registry):
+        """Disabled lock entities must not be offered for selection."""
+        from homeassistant.helpers import entity_registry as er
+
+        entry = entity_registry.async_get_or_create("lock", "test", "disabled_lock")
+        entity_registry.async_update_entity(
+            entry.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        hass.states.async_set("lock.test_enabled_lock", "locked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock.test_disabled_lock" not in result["lock"]
+        assert "lock.test_enabled_lock" in result["lock"]
+
     def test_get_include_entities_window_by_original_device_class(
         self, hass, entity_registry
     ):
