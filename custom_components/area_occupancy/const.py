@@ -115,7 +115,7 @@ DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_PURPOSE: Final = "social"  # Default area purpose
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_HALF_LIFE: Final = 0  # 0 means "use purpose value"
-DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
+DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
@@ -377,7 +377,7 @@ DOOR_STATES: Final[PlatformStates] = {
         StateOption(STATE_CLOSED, "Closed", "mdi:door"),
         StateOption(STATE_CLOSING, "Closing", "mdi:door"),
     ],
-    "default": STATE_CLOSED,
+    "default": STATE_OPEN,
 }
 
 # Window states configuration

@@ -89,7 +89,7 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
@@ -252,7 +252,7 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
@@ -486,7 +486,7 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
@@ -649,7 +649,7 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
