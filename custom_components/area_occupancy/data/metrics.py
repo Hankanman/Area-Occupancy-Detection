@@ -3,7 +3,10 @@
 Pure math over two inputs the coordinator already produces:
 
 * **Tick samples** — the per-refresh ``(timestamp, probability, occupied)``
-  triples the coordinator records for each area (10s decay-timer cadence).
+  triples the coordinator records for each area, at roughly the 10s
+  decay-timer cadence plus extra ticks on evidence-triggered refreshes.
+  Every metric below is time-weighted (see ``_tick_weights``) so that
+  irregular cadence doesn't bias the result.
 * **Occupied intervals** — the motion-confirmed ground truth the prior
   learning already uses (``db.get_occupied_intervals``).
 
@@ -65,7 +68,7 @@ class AccuracyMetrics:
     # Calibration
     expected_calibration_error: float | None = None
     bins: list[CalibrationBin] = field(default_factory=list)
-    # Decision stability (sample-weighted at the fixed tick cadence)
+    # Decision stability (time-weighted — see _tick_weights)
     decision_transitions: int = 0
     truth_transitions: int = 0
     false_on_rate: float | None = None  # P(decision on | truth off)
@@ -82,6 +85,36 @@ def _is_occupied_at(ts: datetime, intervals: list[tuple[datetime, datetime]]) ->
     return any(start <= ts < end for start, end in intervals)
 
 
+def _tick_weights(samples: list[TickSample]) -> list[float]:
+    """Return each sample's duration weight (seconds it represents).
+
+    Ticks do not land at a fixed cadence — the coordinator also ticks on
+    every evidence-triggered refresh, on top of the decay timer — so a
+    busy period (frequent evidence changes) contributes disproportionately
+    many samples relative to the wall-clock time it spans. Weighting each
+    sample by the gap to the next tick (piecewise-constant, matching
+    ``OnlinePriorEstimator.observe``'s assumption) makes every metric
+    below a time-weighted average instead of a sample-weighted one.
+
+    The last sample has no "next tick" to measure a gap to; it reuses the
+    preceding gap as an estimate. Out-of-order or duplicate timestamps
+    clamp to a zero gap. If every gap is zero (e.g. a single sample, or
+    all samples share one timestamp), falls back to uniform weight-1 per
+    sample so callers never divide by zero.
+    """
+    n = len(samples)
+    if n == 1:
+        return [1.0]
+    weights = [0.0] * n
+    for i in range(n - 1):
+        gap = (samples[i + 1].timestamp - samples[i].timestamp).total_seconds()
+        weights[i] = max(gap, 0.0)
+    weights[-1] = weights[-2]
+    if not any(weights):
+        return [1.0] * n
+    return weights
+
+
 def compute_accuracy_metrics(
     samples: list[TickSample],
     occupied_intervals: list[tuple[datetime, datetime]],
@@ -94,7 +127,9 @@ def compute_accuracy_metrics(
         samples: Tick observations ordered oldest-first. Samples outside
             the intervals' coverage are still scored (truth = not
             occupied), matching how the prior denominator treats
-            quiet time (#483 lesson: unobserved-quiet counts).
+            quiet time (#483 lesson: unobserved-quiet counts). Every
+            metric is time-weighted (see ``_tick_weights``), not
+            sample-weighted, since ticks land at an irregular cadence.
         occupied_intervals: Motion-confirmed ``(start, end)`` ground
             truth, same source the prior learning uses.
         bins: Number of equal-width probability bands for calibration.
@@ -111,36 +146,47 @@ def compute_accuracy_metrics(
     out.window_start = samples[0].timestamp
     out.window_end = samples[-1].timestamp
 
-    bin_count = [0] * bins
-    bin_prob_sum = [0.0] * bins
-    bin_hits = [0] * bins
+    weights = _tick_weights(samples)
+    total_weight = sum(weights)
 
-    true_on = true_off = false_on = false_off = 0
+    bin_count = [0] * bins
+    bin_weight = [0.0] * bins
+    bin_prob_weight_sum = [0.0] * bins
+    bin_hit_weight = [0.0] * bins
+
+    true_on = true_off = false_on = false_off = 0.0
     prev_decision: bool | None = None
     prev_truth: bool | None = None
 
-    for sample in samples:
+    for sample, weight in zip(samples, weights, strict=True):
         truth = _is_occupied_at(sample.timestamp, occupied_intervals)
 
-        # Calibration accumulation
+        # Calibration accumulation. ``bin_count`` stays a raw sample
+        # count for diagnostics readability; the reliability stats below
+        # (mean_probability, observed_rate, ECE) use the time-weighted
+        # sum so an evidence-triggered burst of ticks doesn't outweigh a
+        # single quiet-hour decay tick that spans the same wall-clock time.
         p = min(max(sample.probability, 0.0), 1.0)
         idx = min(int(p * bins), bins - 1)
         bin_count[idx] += 1
-        bin_prob_sum[idx] += p
+        bin_weight[idx] += weight
+        bin_prob_weight_sum[idx] += p * weight
         if truth:
-            bin_hits[idx] += 1
+            bin_hit_weight[idx] += weight
 
         # Confusion accumulation
         if sample.occupied and truth:
-            true_on += 1
+            true_on += weight
         elif sample.occupied and not truth:
-            false_on += 1
+            false_on += weight
         elif not sample.occupied and truth:
-            false_off += 1
+            false_off += weight
         else:
-            true_off += 1
+            true_off += weight
 
-        # Flip counting
+        # Flip counting — event counts, not time-weighted: each flip is a
+        # discrete occurrence regardless of how long the tick before it
+        # lasted.
         if prev_decision is not None and sample.occupied != prev_decision:
             out.decision_transitions += 1
         if prev_truth is not None and truth != prev_truth:
@@ -153,10 +199,10 @@ def compute_accuracy_metrics(
     for i in range(bins):
         row = CalibrationBin(lower=i / bins, upper=(i + 1) / bins)
         row.count = bin_count[i]
-        if row.count:
-            row.mean_probability = bin_prob_sum[i] / row.count
-            row.observed_rate = bin_hits[i] / row.count
-            ece += (row.count / out.sample_count) * abs(
+        if bin_count[i] and bin_weight[i]:
+            row.mean_probability = bin_prob_weight_sum[i] / bin_weight[i]
+            row.observed_rate = bin_hit_weight[i] / bin_weight[i]
+            ece += (bin_weight[i] / total_weight) * abs(
                 row.mean_probability - row.observed_rate
             )
         out.bins.append(row)
@@ -168,7 +214,7 @@ def compute_accuracy_metrics(
         out.false_on_rate = false_on / truth_off_total
     if truth_on_total:
         out.false_off_rate = false_off / truth_on_total
-    out.agreement = (true_on + true_off) / out.sample_count
+    out.agreement = (true_on + true_off) / total_weight
 
     return out
 

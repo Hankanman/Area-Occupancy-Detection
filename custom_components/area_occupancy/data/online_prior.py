@@ -20,9 +20,12 @@ Promotion routes through #500's 30-day shadow-diff gate.
 Known, accepted approximations vs the DB path (they bound the expected
 diff; see #500 step 2 for how the diff is judged):
 
-* **Sampling**: occupied time accrues in tick-sized quanta (~10s)
-  from live motion evidence, vs the DB's exact interval boundaries
-  replayed from the recorder.
+* **Sampling**: occupied time accrues in tick-sized quanta from live
+  presence evidence (piecewise-constant between ticks), vs the DB's
+  exact interval boundaries replayed from the recorder. Ticks are not
+  perfectly uniform — see ``coordinator._record_shadow_tick`` and
+  ``_handle_decay_timer`` for how a steady cadence is maintained even
+  when decay is disabled for every area.
 * **No motion-timeout extension**: the DB path extends each motion
   interval by the area's motion timeout during merging; the online
   numerator does not, so it reads slightly low on areas with sparse
@@ -30,6 +33,12 @@ diff; see #500 step 2 for how the diff is judged):
 * **Retention**: the DB period re-anchors as old intervals are pruned
   (365-day retention); the online period anchor is fixed at first
   observation. Irrelevant inside the 30-day shadow window.
+
+The numerator's presence definition mirrors
+``db.queries.get_occupied_intervals``'s ground truth — motion ∪ media ∪
+sleep evidence, not motion alone (see the ``observe`` caller in
+``coordinator.py``) — so the two paths are measuring the same thing
+modulo the two approximations above.
 """
 
 from __future__ import annotations

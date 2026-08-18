@@ -1,9 +1,13 @@
 """Tests for the shadow-mode online prior estimator (#500)."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
 
 from custom_components.area_occupancy.const import MAX_PRIOR, MIN_PRIOR
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.data.online_prior import (
     MAX_TICK_GAP_SECONDS,
     OnlinePriorEstimator,
@@ -137,3 +141,68 @@ class TestCoordinatorShadowWiring:
         estimator.state.occupied_seconds = 999999.0
 
         assert area.probability() == before
+
+    async def test_async_shutdown_persists_online_prior_state(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Shutdown must save shadow state, not just the hourly pipeline.
+
+        Regression test: previously only the hourly analysis pipeline
+        called ``async_save_online_priors``, so a restart between pipeline
+        runs silently dropped the occupied-seconds numerator while the
+        period denominator (anchored at ``first_observation``, reloaded
+        from the DB-backed prior on next setup) kept growing — biasing
+        the online prior low across every restart.
+        """
+        area_name = coordinator.get_area_names()[0]
+        await coordinator.update()
+        estimator = coordinator.online_prior_for(area_name)
+        assert estimator is not None
+        # Force a known nonzero numerator so this test can't pass by
+        # "saving zero" — asserting equality with whatever update() happened
+        # to accrue wouldn't catch a save that silently dropped the value.
+        estimator.state.occupied_seconds = 42.0
+        occupied_seconds_before = estimator.state.occupied_seconds
+        first_observation_before = estimator.state.first_observation
+
+        await coordinator.async_shutdown()
+
+        stored = await coordinator._online_prior_store.async_load()
+        assert area_name in stored
+        restored = OnlinePriorState.from_dict(stored[area_name])
+        assert restored.occupied_seconds == occupied_seconds_before
+        assert restored.first_observation == first_observation_before
+
+    @pytest.mark.parametrize("input_type", [InputType.MEDIA, InputType.SLEEP])
+    async def test_presence_definition_includes_media_and_sleep(
+        self, coordinator: AreaOccupancyCoordinator, input_type: InputType
+    ) -> None:
+        """Numerator must match get_occupied_intervals' truth: motion ∪ media ∪ sleep.
+
+        Regression test: previously only ``InputType.MOTION`` evidence
+        counted, so an area occupied purely by media/sleep evidence (no
+        motion sensor firing) would silently accrue zero occupied_seconds
+        even though the DB ground truth it's diffed against counts it as
+        occupied.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        evidence_only_entity = SimpleNamespace(
+            evidence=True,
+            type=SimpleNamespace(input_type=input_type),
+        )
+
+        # way to stub one evidence-bearing entity without a full config.
+        original_entities = area.entities._entities
+        area.entities._entities = {"fake.entity": evidence_only_entity}
+        try:
+            coordinator._record_shadow_tick(
+                area_name, area, T0, probability=0.5, is_occupied=True
+            )
+        finally:
+            area.entities._entities = original_entities
+
+        estimator = coordinator.online_prior_for(area_name)
+        assert estimator is not None
+        assert estimator.state.last_motion_active is True

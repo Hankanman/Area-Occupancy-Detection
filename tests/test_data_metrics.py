@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 import json
 from unittest.mock import patch
 
+import pytest
+
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
 from custom_components.area_occupancy.data.metrics import (
@@ -113,6 +115,72 @@ class TestComputeAccuracyMetrics:
 
         assert out.agreement == 1 / 6
         assert out.false_on_rate == 1.0
+
+    def test_non_uniform_ticks_are_time_weighted_not_sample_weighted(self) -> None:
+        """A burst of evidence-triggered ticks must not outweigh a long quiet span.
+
+        One correct tick spanning 990s vs nine wrong ticks crammed into the
+        following 9s (1s apart, as evidence-triggered refreshes would be).
+        Sample-weighted agreement would read 1/10 = 0.1; time-weighted
+        agreement should read ~990/999 ≈ 0.99.
+        """
+        intervals = [(T0, T0 + timedelta(seconds=990))]
+        samples = [
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+        ] + [
+            TickSample(
+                timestamp=T0 + timedelta(seconds=990 + i),
+                probability=0.9,
+                occupied=True,
+            )
+            for i in range(1, 10)
+        ]
+
+        out = compute_accuracy_metrics(samples, intervals)
+
+        assert out.sample_count == 10
+        assert out.agreement > 0.9
+        assert out.false_on_rate == 1.0  # all 9 wrong ticks predict occupied=True
+        # All 10 samples share one calibration bin (p=0.9). Sample-weighted,
+        # observed_rate would be 1/10 = 0.1 (only the first tick is truth=True);
+        # time-weighted it should be ~990/999 ≈ 0.991, since that first tick
+        # covers nearly the whole window.
+        populated = [b for b in out.bins if b.count]
+        assert len(populated) == 1
+        assert populated[0].observed_rate == pytest.approx(990 / 999, abs=1e-5)
+        # ECE = |mean_probability(0.9) - observed_rate(~0.991)| ≈ 0.091, far
+        # below the ~0.8 a sample-weighted computation would produce.
+        assert out.expected_calibration_error == pytest.approx(0.0910, abs=1e-3)
+        # bin_count still reflects raw sample counts for diagnostics
+        assert sum(b.count for b in out.bins) == 10
+
+    def test_last_tick_reuses_preceding_gap_as_weight(self) -> None:
+        """The final sample (no 'next tick' gap) is weighted like its predecessor."""
+        intervals = [(T0, T0 + timedelta(seconds=100))]
+        samples = [
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+            TickSample(
+                timestamp=T0 + timedelta(seconds=50), probability=0.9, occupied=True
+            ),
+        ]
+
+        out = compute_accuracy_metrics(samples, intervals)
+
+        # Both ticks correct and equally weighted (50s each) -> agreement 1.0
+        assert out.agreement == 1.0
+
+    def test_all_duplicate_timestamps_falls_back_to_uniform_weight(self) -> None:
+        """Zero-gap samples don't divide by zero; each counts equally instead."""
+        intervals = [(T0, T0 + timedelta(seconds=10))]
+        samples = [
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+            TickSample(timestamp=T0, probability=0.9, occupied=True),
+        ]
+
+        out = compute_accuracy_metrics(samples, intervals)
+
+        assert out.agreement == 1.0
+        assert out.sample_count == 2
 
 
 class TestDiagnosticsShape:
