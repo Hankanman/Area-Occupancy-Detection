@@ -20,12 +20,12 @@ export.
 ## When NOT to use this
 
 For the underlying Bayesian math those numbers come from (sigmoid pipeline,
-logit combination, decay formula), use `bayesian-occupancy-reference`. For
+logit combination, decay formula), use `aod-math-reference`. For
 *why* a number is wrong and how to fix the code, use
-`aod-debugging-playbook`. For interpreting DB schema/columns in general
-(not diagnostics-specific), see `aod-architecture-contract`. For the
+`aod-debugging-and-history`. For interpreting DB schema/columns in general
+(not diagnostics-specific), see `aod-architecture-and-config`. For the
 open-ended campaign to actually improve prior/likelihood accuracy using
-these tools, see `aod-learning-accuracy-campaign`.
+these tools, see `aod-debugging-and-history`.
 
 ---
 
@@ -130,7 +130,7 @@ from a genuinely learned value, not the floor.
 
 Sensor counts (not entity IDs) per type, decay settings, wasp-in-box
 settings, per-type weights, `min_prior_override`, `motion_timeout`. Shape
-only — cross-reference `aod-config-and-flags` for what each value means.
+only — cross-reference `aod-architecture-and-config` for what each value means.
 
 #### `entities[]`
 
@@ -358,7 +358,7 @@ the MkDocs site (`docs/docs/simulator/simulator.html`). Workflow:
 
 Until 2026.8.1, the simulator's sensor-fusion step called the legacy
 dead-code `bayesian_probability()` path, not the live sigmoid/logit
-pipeline — a divergence documented at length in `aod-run-and-operate` §6
+pipeline — a divergence documented at length in `aod-build-run-and-release` §6
 before the fix. PR #529 (2026.8.1) rewired `calculate_probability_breakdown`
 in `simulator/app.py` onto `presence_probability()` /
 `environmental_confidence()` / `combined_probability()`, mirroring
