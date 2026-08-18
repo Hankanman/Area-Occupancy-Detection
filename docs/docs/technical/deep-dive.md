@@ -27,7 +27,7 @@ The system consists of several conceptual components:
 - **Coordinator:** Central orchestrator that tracks entity states, schedules updates, handles decay and stores configuration.
 - **Entity Manager:** Creates and maintains entity objects with evidence, likelihoods and decay data.
 - **Prior Manager:** Handles learning priors and likelihoods from historical recorder data and exposes time-based priors.
-- **Bayesian Calculator:** Performs log-space probability calculations combining evidence with priors.
+- **Sigmoid Calculator:** Performs logit-space probability calculations, additively combining evidence with priors.
 - **Database:** Stores historical state intervals used for learning.
 - **Services:** Exposes services such as `run_analysis` for manual analysis triggers.
 
@@ -37,7 +37,7 @@ For visual representations of data flow, see [Data Flow Diagrams](data-flow.md).
 
 1. **Initialization:** System loads configuration, sets up entities and loads any stored priors from the database.
 2. **State Updates:** When a monitored entity changes state, the system updates the corresponding entity object and triggers a probability recalculation.
-3. **Probability Calculation:** Bayesian probability calculation combines entity evidence with the area and time priors in log space, applying the configured weights.
+3. **Probability Calculation:** A sigmoid/logit-space calculation combines entity evidence with the area and time priors additively, applying the configured weights.
 4. **Decay Handling:** If probability decreases, entity decay gradually reduces their influence until new evidence appears.
 5. **Learning Priors:** Periodically or via `run_analysis` service, the system analyses recorder history to update priors and likelihoods which are stored in the database.
 6. **Outputs:** The system updates Home Assistant entities (probability, status, priors, evidence, decay, threshold) with the latest values.

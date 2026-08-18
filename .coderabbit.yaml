@@ -1,0 +1,154 @@
+language: en-US
+
+reviews:
+  profile: chill
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Use TYPE_CHECKING blocks for type annotations in Home Assistant custom
+        components to avoid circular import dependencies. Move actual imports
+        inside functions if needed to resolve circular import problems.
+
+        Integration assumptions guaranteed by architecture and validation —
+        defensive checks against these are unnecessary noise, not safety:
+        - At least one area is guaranteed to exist once the integration is
+          installed.
+        - Each area is guaranteed to have at least one motion sensor
+          (validated in config_flow.py before installation).
+        - Areas are initialized before use; platform entities are created
+          after initialization.
+        - When `area_name` is None, `get_area_or_default(None)` always
+          returns the first area — no defensive None check needed after
+          calling it.
+        - After `_validate_area_exists()` succeeds, the area is guaranteed to
+          exist — no redundant None check needed after validation.
+
+        Avoid raising exceptions within try blocks that catch those same
+        exceptions (ruff TRY301). Extract validation logic into a helper
+        function defined outside the try block, with the raise statement
+        inside that helper, not directly in the try block.
+
+        Run `ruff format .` and `ruff check . --fix` after edits.
+
+        All database operations must run in an executor
+        (`hass.async_add_executor_job`) to avoid blocking Home Assistant's
+        event loop. Never hold database sessions across async boundaries —
+        manage sessions with context managers (`with db.get_session() as
+        session:`).
+
+        Use timezone-aware datetimes throughout. Store UTC in the database
+        via `to_utc()`; convert to local time via `to_local()` for
+        day/hour-slot bucketing and display.
+
+        Use full type annotations throughout. Use Google-style docstrings for
+        public APIs. Use ruff for formatting and linting, matching Home
+        Assistant core standards — this repo's `[tool.ruff] target-version`
+        is pinned to `py313` (the runtime floor for older supported HA
+        installs) even though the dev/test environment runs a newer Python;
+        do not raise it without raising the minimum supported HA version in
+        step with it.
+
+        Use module-level `_LOGGER = logging.getLogger(__name__)`. Log at
+        appropriate levels: debug for internals, info for user-visible
+        events, warning/error for issues.
+
+    - path: "custom_components/area_occupancy/*.py"
+      instructions: |
+        All constants and configuration keys must be defined in const.py, not
+        inline in the module that uses them.
+
+    - path: "custom_components/area_occupancy/{db/__init__,db/aggregation,db/constants,db/core,db/correlation,db/maintenance,db/operations,db/queries,db/relationships,db/schema,db/sync,db/transitions,db/utils,__init__,coordinator,config_flow,migrations,service,utils,const,manifest}.{py,json}"
+      instructions: |
+        Integration-level code: responsible for overall coordination of the
+        integration, overall configuration, and overall data flow/storage in
+        the database. Data and configuration should flow from this layer
+        down to the area layer, then to helper classes — not the reverse.
+
+    - path: "custom_components/area_occupancy/area/*.py"
+      instructions: |
+        Area-level code: responsible for one area's specific configuration,
+        data flow, and calculation logic (presence/environmental probability,
+        activity boost, adjacency boost). Depends on integration-level state
+        (coordinator, db) and helper classes (data/*), not the reverse.
+
+    - path: "custom_components/area_occupancy/data/*.py"
+      instructions: |
+        Helper classes and functions used throughout the codebase, following
+        the pattern of one module per concern (config, entity, entity_type,
+        prior, decay, purpose, analysis, adjacency, trajectory, metrics,
+        online_prior). Should not import from area/ or coordinator.py.
+
+    - path: "custom_components/area_occupancy/coordinator.py"
+      instructions: |
+        The Coordinator must serve as the central orchestrator managing all
+        component state and calculations. Storage helpers (HA `Store`
+        instances) should be initialized once during coordinator setup, not
+        per-call. Properly clean up any `Store`-backed state on config-entry
+        removal (see `__init__.py::async_remove_entry`) — a Store left
+        behind survives forever since HA's storage layer has no automatic
+        per-entry garbage collection.
+
+    - path: "custom_components/area_occupancy/{coordinator,data/prior}.py"
+      instructions: |
+        Cache prior-learning results (e.g. `Prior._cached_time_priors`)
+        rather than recomputing or re-querying on every access; invalidate
+        the cache explicitly when the underlying data changes.
+
+    - path: "custom_components/area_occupancy/{coordinator,data/entity}.py"
+      instructions: |
+        Only trigger a coordinator refresh when entity evidence actually
+        changes (`Entity.has_new_evidence()`), not on every state event.
+
+    - path: "tests/test_*.py"
+      instructions: |
+        Use centralized fixtures from tests/conftest.py rather than local,
+        one-off fixtures for shared concerns. One test file per production
+        module, named `tests/test_<module_name>.py` (e.g.
+        `tests/test_coordinator.py` for `coordinator.py`).
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Fixture usage:
+        - Prefer real coordinators/databases over mocks — use the
+          `coordinator` fixture by default; use `coordinator_with_sensors`
+          when pre-configured mock entities are needed.
+        - Use `default_area` to avoid re-deriving
+          `coordinator.get_area_or_default(coordinator.get_area_names()[0])`.
+        - Always get `area_name` dynamically via
+          `coordinator.get_area_names()[0]` — never hardcode an area name.
+        - Always use area-based access patterns:
+          `area = coordinator.get_area_or_default(area_name); area.entities`,
+          not direct `coordinator.entities`/`coordinator.config`.
+        - Pass `area_name` explicitly to coordinator methods that require it
+          (e.g. `coordinator.probability(area_name)`).
+        - Use the `patch_area_method()` context manager (not
+          `patch.object()` on an instance) for methods that must survive
+          area reloads.
+        - Use `create_test_area(coordinator, area_name=..., entity_ids=...,
+          **config_overrides)` for standardized test-area creation.
+        - Use the `hass` fixture from `pytest-homeassistant-custom-component`
+          directly; import `HomeAssistant` from `homeassistant.core`.
+        - Use the `device_registry`/`entity_registry` fixtures from
+          `pytest-homeassistant-custom-component` for registry interactions
+          instead of manual mocking.
+
+        Database testing:
+        - Access ORM models via `AreaOccupancyDB.Areas`,
+          `AreaOccupancyDB.Entities`, etc.
+        - Use `db.get_session()` as a context manager for direct DB access —
+          don't manually create engines/sessions.
+        - Rely on the existing session/engine fixtures for connection
+          cleanup rather than bypassing them.
+
+        Coverage: 85% enforced globally (`pyproject.toml` `fail_under`); aim
+        for 90%+ on core calculation modules. Run tests via `uv run pytest`
+        or `scripts/test`, not a bare `pytest` invocation.
+
+    - path: "docs/docs/**"
+      instructions: |
+        Documentation lives under docs/docs/, hosted via mkdocs at
+        https://hankanman.github.io/Area-Occupancy-Detection/ (nav config in
+        docs/mkdocs.yml). Avoid duplicating content that already has a home
+        elsewhere in the site; add new pages to the nav; keep documentation
+        in sync with the code it describes rather than describing prior
+        behavior.

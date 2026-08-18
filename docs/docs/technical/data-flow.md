@@ -80,7 +80,7 @@ sequenceDiagram
     participant Entity as Entity Object
     participant Area as Area
     participant Prior as Prior
-    participant Bayes as Bayesian Calc
+    participant Bayes as Sigmoid Calc
     participant Output as Output Sensors
 
     Sensor->>HA: State Change Event
@@ -101,10 +101,10 @@ sequenceDiagram
         Prior->>Prior: Get Time Prior
         Prior->>Prior: combine_priors()
         Prior-->>Area: Combined Prior
-        Area->>Bayes: bayesian_probability()
+        Area->>Bayes: presence_probability() / environmental_confidence()
         Bayes->>Entity: Get Evidence & Likelihoods
         Entity-->>Bayes: Evidence Data
-        Bayes->>Bayes: Calculate in Log Space
+        Bayes->>Bayes: Combine in Logit Space (sigmoid_probability)
         Bayes-->>Area: Final Probability
         Area->>Output: Update Probability Sensor
         Area->>Output: Update Status Binary
@@ -204,7 +204,7 @@ graph TB
         end
 
         subgraph "Calculation"
-            Utils[Bayesian Utils]
+            Utils[Sigmoid/Logit Utils]
             Decay[Decay Model]
         end
 
