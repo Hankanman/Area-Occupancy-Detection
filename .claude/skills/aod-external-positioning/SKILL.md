@@ -32,7 +32,7 @@ not implementation.
 | Min HA version declared | 2024.8.0 | `hacs.json`: `"homeassistant": "2024.8.0"` |
 | HA version actually tested against | 2026.7.1 | `pyproject.toml` pins `homeassistant==2026.7.1` (dependency refresh, PR #496, merged 2026-07-06) |
 | Docs site | `hankanman.github.io/Area-Occupancy-Detection/` | `gh repo view` `homepageUrl` |
-| Release scheme | CalVer `YYYY.M.N` (not the SemVer CLAUDE.md's release section describes) | `gh release list`, e.g. `2026.5.17` |
+| Release scheme | CalVer `YYYY.M.N` (not the SemVer AGENTS.md's release section describes) | `gh release list`, e.g. `2026.5.17` |
 
 Do not describe AOD as "part of Home Assistant" or "an HA core feature" — it
 is a third-party custom component installed via HACS, competing/complementing

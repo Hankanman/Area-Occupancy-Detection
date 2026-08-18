@@ -103,7 +103,7 @@ When a feature ships: move its bullet from `## Planned Features` to `## Features
 
 ## Docstring convention
 
-Google-style docstrings, full type annotations (Python 3.13+), as directed by `CLAUDE.md`. Verified against the actual codebase (`custom_components/area_occupancy/data/prior.py`, `utils.py`):
+Google-style docstrings, full type annotations (Python 3.13+), as directed by `AGENTS.md`. Verified against the actual codebase (`custom_components/area_occupancy/data/prior.py`, `utils.py`):
 
 ```python
 def clamp_probability(
@@ -118,7 +118,7 @@ def clamp_probability(
     """
 ```
 
-Module-level docstrings are one-liners or a short paragraph (`prior.py`'s module docstring: `"""Area baseline prior (P(room occupied) *before* current evidence).` followed by a two-sentence elaboration). Not every function needs an `Args`/`Returns` block — trivial one-liners (`format_percentage`, `format_value`) get a single-line docstring only. Add the full `Args:`/`Returns:` block once a function has more than one parameter or a non-obvious return, and always for anything touching the Bayesian calculation (per `CLAUDE.md`'s "100% coverage for calculation changes" instruction — docs and tests should match that rigor).
+Module-level docstrings are one-liners or a short paragraph (`prior.py`'s module docstring: `"""Area baseline prior (P(room occupied) *before* current evidence).` followed by a two-sentence elaboration). Not every function needs an `Args`/`Returns` block — trivial one-liners (`format_percentage`, `format_value`) get a single-line docstring only. Add the full `Args:`/`Returns:` block once a function has more than one parameter or a non-obvious return, and always for anything touching the Bayesian calculation (per `AGENTS.md`'s "100% coverage for calculation changes" instruction — docs and tests should match that rigor).
 
 ## Commit / PR conventions
 
@@ -146,16 +146,16 @@ These are documents that describe (or described) a process the repo no longer fo
 | Doc | What it said | Status as of 2026-07-06 | Re-verify with |
 |---|---|---|---|
 | `CONTRIBUTING.md:16` | "Fork the repo and create your branch from `dev`." | **SETTLED** (PR #495, merged 2026-07-06): now reads "Fork the repo and create your branch from `main`." No `dev` branch exists on the remote; all recent feature/fix branches (`fix/global-prior-quiet-tail`, `feat/adjacent-areas`, `fix/bedroom-half-life-override`, etc.) targeted `main` directly, and the doc now matches. | `git branch -r` (look for absence of `dev`/`preview`); `sed -n '16p' CONTRIBUTING.md` |
-| `CLAUDE.md` "Branch and Release Strategy" section | "Development happens on `dev` branch. PR from `dev` to `preview` for prereleases. PR from `preview` to `main` for full releases." | **STILL A LIVE LANDMINE** — CLAUDE.md is unchanged and still says dev→preview→main. The repo has no open PRs as of this sweep (the 2026-07-06 wave, #454/#491/#492/#493/#494/#495/#496, all merged direct to `main`), and `.github/workflows/release.yml` triggers on `release: published` (a manually-created GitHub Release), not a branch-merge event. There is no `preview` branch either. | `git branch -r`; `cat .github/workflows/release.yml`; `gh pr list --json baseRefName` |
-| `pyproject.toml` (line 114, now line 113) | Inline comment `fail_under = 85 # Enforce 90% coverage minimum` — the enforced number and the comment's stated number disagreed with each other in the same line. | **SETTLED** (PR #495, merged 2026-07-06): now reads `fail_under = 85 # Enforced global minimum; aim for 90%+ on core calculation modules (CLAUDE.md)` — internally consistent and cross-references `CLAUDE.md`'s "85%+ coverage requirement (90% for core calculations)" line instead of contradicting it. | `grep -n fail_under pyproject.toml` |
+| `AGENTS.md` "Branch and Release Strategy" section | "Development happens on `dev` branch. PR from `dev` to `preview` for prereleases. PR from `preview` to `main` for full releases." | **STILL A LIVE LANDMINE** — AGENTS.md is unchanged and still says dev→preview→main. The repo has no open PRs as of this sweep (the 2026-07-06 wave, #454/#491/#492/#493/#494/#495/#496, all merged direct to `main`), and `.github/workflows/release.yml` triggers on `release: published` (a manually-created GitHub Release), not a branch-merge event. There is no `preview` branch either. | `git branch -r`; `cat .github/workflows/release.yml`; `gh pr list --json baseRefName` |
+| `pyproject.toml` (line 114, now line 113) | Inline comment `fail_under = 85 # Enforce 90% coverage minimum` — the enforced number and the comment's stated number disagreed with each other in the same line. | **SETTLED** (PR #495, merged 2026-07-06): now reads `fail_under = 85 # Enforced global minimum; aim for 90%+ on core calculation modules (AGENTS.md)` — internally consistent and cross-references `AGENTS.md`'s "85%+ coverage requirement (90% for core calculations)" line instead of contradicting it. | `grep -n fail_under pyproject.toml` |
 
-Do not silently "fix" `CLAUDE.md`'s branch-strategy section as a drive-by edit — it's explicit project instruction content; flag it to the maintainer or fold the correction into a PR whose primary purpose is a docs/process cleanup, per `aod-change-control`'s rules on touching CLAUDE.md. (The other two rows show this is a real, fixable pattern once someone owns it — CLAUDE.md's branch-strategy section is the one that hasn't been picked up yet.)
+Do not silently "fix" `AGENTS.md`'s branch-strategy section as a drive-by edit — it's explicit project instruction content; flag it to the maintainer or fold the correction into a PR whose primary purpose is a docs/process cleanup, per `aod-change-control`'s rules on touching AGENTS.md. (The other two rows show this is a real, fixable pattern once someone owns it — AGENTS.md's branch-strategy section is the one that hasn't been picked up yet.)
 
 ## Keeping docs in sync when code changes — the #491 cautionary example
 
 **Cautionary example (PR #491, `fix(prior): keep quiet tail in global prior denominator`, merged 2026-07-06 — verify with `gh pr view 491`):** the code change altered how `PriorAnalyzer.calculate_and_update_prior()` picks the end of its observation period (previously truncated to `last_interval_end` when the area had been quiet >1h; now always `now` — this is the current, permanent behavior on `main`, i.e. `actual_period_end` is always `now`, not conditionally truncated). `docs/docs/technical/global-prior-flow.md` documented the *old* (buggy) behavior in prose — "If last interval is more than 1 hour old: Use `last_interval_end` / Otherwise: Use current time" — and had to be edited in the same PR (7 additions, 16 deletions) to stop describing the bug as intended behavior. This was caught as a review nitpick, not by the original author remembering to update the doc.
 
-**Rule extracted:** when a change touches `data/analysis.py`, `data/prior.py`, `data/decay.py`, or `utils.py`'s sigmoid/logit pipeline (the files `CLAUDE.md` names under "Modifying Probability Calculation"), grep `docs/docs/technical/` and `docs/docs/features/` for any prose description of the specific mechanism you changed before opening the PR:
+**Rule extracted:** when a change touches `data/analysis.py`, `data/prior.py`, `data/decay.py`, or `utils.py`'s sigmoid/logit pipeline (the files `AGENTS.md` names under "Modifying Probability Calculation"), grep `docs/docs/technical/` and `docs/docs/features/` for any prose description of the specific mechanism you changed before opening the PR:
 
 ```bash
 grep -rn "last_interval_end\|actual_period_end\|<your changed concept>" docs/docs/
@@ -170,7 +170,7 @@ Use this checklist before deciding a PR doesn't need a doc touch:
 - [ ] Does it change a formula, threshold, default, or constant a technical page states as fact? → update the relevant `technical/*.md`.
 - [ ] Does it change what a user configures, sees, or can do (new sensor type, new service, new config field, new sensor entity)? → update the relevant `features/*.md` and, if user-visible enough, the README `## Features` bullet list.
 - [ ] Does it ship something previously listed under README `## Planned Features`? → move the bullet.
-- [ ] Does it change a config-flow step, migration behavior, or anything `CONTRIBUTING.md`/`CLAUDE.md` describes procedurally? → flag for a separate docs/process PR rather than silently drifting further (see landmines above).
+- [ ] Does it change a config-flow step, migration behavior, or anything `CONTRIBUTING.md`/`AGENTS.md` describes procedurally? → flag for a separate docs/process PR rather than silently drifting further (see landmines above).
 - [ ] Is it a pure internal refactor with no behavior change (e.g. `refactor(analysis): hoist step helpers to module level for C901`)? → no doc update needed; say so explicitly in the PR description so a reviewer doesn't go looking for one.
 - [ ] Did you add a new feature? → write the features/ + technical/ pair together (see adjacent-areas.md / transition-learning.md above), and add both to `mkdocs.yml`'s `nav:`.
 

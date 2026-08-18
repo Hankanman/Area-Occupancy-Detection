@@ -227,7 +227,7 @@ Rule of thumb: **a purely additive, `.get()`-defaulted key never needs a `CONF_V
 | `== 17` | Pure version bump to 18 for `CONF_EXCLUDE_FROM_ALL_AREAS` — no data mutation | yes |
 | `< 13` (true legacy single-area entries) | `_combine_config_entries()` merges every such entry into one target entry's `CONF_AREAS` list (deterministic target = lowest `entry_id`); invalid areas dropped; old entries marked deleted, registries cleaned | yes (only entries still `< 13` are touched) |
 
-All numeric-version branches are gated with `if config_entry.version == N` (or a range check), so re-running the whole function on an already-migrated entry is a no-op — this is the idempotency guarantee CLAUDE.md requires. When you add a new migration step: gate it the same way, mutate both `data` and `options` dicts if the key could live in either, and log what you did.
+All numeric-version branches are gated with `if config_entry.version == N` (or a range check), so re-running the whole function on an already-migrated entry is a no-op — this is the idempotency guarantee AGENTS.md requires. When you add a new migration step: gate it the same way, mutate both `data` and `options` dicts if the key could live in either, and log what you did.
 
 ## Checklist: adding a new config option
 

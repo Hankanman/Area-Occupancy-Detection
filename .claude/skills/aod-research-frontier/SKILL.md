@@ -43,7 +43,7 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 | Runtime pip requirements | `[]` (none) | `grep -A2 '"requirements"' custom_components/area_occupancy/manifest.json` |
 | Test coverage gate | `fail_under = 85` in pyproject, comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules" — the old stale-comment mismatch was fixed by #495 (CI hygiene) | `grep -n fail_under pyproject.toml` |
 | Live probability engine | sigmoid/logit pipeline in `utils.py` (`sigmoid_probability`, `presence_probability`, `environmental_confidence`, `combined_probability`), driven from `area/area.py::Area._base_probability/probability` | `grep -n "def sigmoid_probability\|def presence_probability\|def combined_probability" custom_components/area_occupancy/utils.py` |
-| Legacy engine, now removed | `utils.py::bayesian_probability()` (classic log-odds accumulator) had zero production call sites for its whole life and was deleted in PR #529 (2026.8.1), one release after the codebase audit (#506) flagged it and the maintainer chose to keep it dormant as a revert safety net first. CLAUDE.md's "Modifying Probability Calculation" workflow now starts from `sigmoid_probability`/`presence_probability` directly. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (should return nothing) |
+| Legacy engine, now removed | `utils.py::bayesian_probability()` (classic log-odds accumulator) had zero production call sites for its whole life and was deleted in PR #529 (2026.8.1), one release after the codebase audit (#506) flagged it and the maintainer chose to keep it dormant as a revert safety net first. AGENTS.md's "Modifying Probability Calculation" workflow now starts from `sigmoid_probability`/`presence_probability` directly. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (should return nothing) |
 | Adjacent-areas feature (frontier #2 asset) | **Merged 2026-07-06** — PR #454 merged into `main` (squash), superseding PR #456 which was closed as merged into it. `data/adjacency.py`, `data/trajectory.py`, `db/transitions.py`, the `AreaTransitions` table, and all `ADJACENCY_*` constants are on `main` now. Still **unvalidated on real homes** — candidate/open labeling for the research question stays even though the code shipped. | `gh pr view 454 --json state,mergeStateStatus` |
 | Prior/decay/sleep accuracy fixes | PRs #491 (prior quiet-tail), #492 (sleep unknown-presence), #493 (bedroom half-life), #494 (README link) — **all merged 2026-07-06, on `main`** | `gh pr view 491` / `492` / `493` / `494` |
 
@@ -267,7 +267,7 @@ target.
   core's strong preference against adding new third-party packages.
 - Google-style docstrings enforced by ruff's `pydocstyle` convention
   (`pyproject.toml`, `[tool.ruff.lint.pydocstyle] convention = "google"`).
-- Full type annotations required per CLAUDE.md, Python 3.14+ (`pyproject.toml`
+- Full type annotations required per AGENTS.md, Python 3.14+ (`pyproject.toml`
   `requires-python = ">=3.14.2"`, bumped via #496 2026-07-06 alongside the
   HA 2026.7.1 dependency refresh).
 
@@ -278,7 +278,7 @@ these move over time):**
 | No `quality_scale.yaml` rule-by-rule justification file (core integrations at gold/platinum carry one) | `find custom_components/area_occupancy -iname '*quality_scale*'` (empty as of this writing) | aod-config-and-flags / aod-architecture-contract |
 | Coverage gate stale-comment mismatch — **fixed by #495 (merged 2026-07-06)**; comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules", matching the enforced `fail_under = 85` | `grep -n fail_under pyproject.toml` | aod-validation-and-qa |
 | No `mypy`/`pyright` static-type gate found in `pyproject.toml` or `scripts/` (only ruff) — core increasingly expects strict typing enforcement, not just annotations-present. Still an open gap as of 2026-07-06. | `grep -n 'mypy\|pyright' pyproject.toml scripts/*` | aod-build-and-env |
-| Branch strategy documented in CLAUDE.md (`dev`→`preview`/`rc`→`main`) is stale — CI now triggers lint/test/validate on `main` only (rc/dev removed, per #495), and `dev`/`preview`/`rc` branches no longer exist on the remote; CLAUDE.md itself has not been corrected yet | `git ls-remote --heads origin \| grep -E 'dev$\|preview$\|rc$'` (expect empty) | aod-change-control |
+| Branch strategy documented in AGENTS.md (`dev`→`preview`/`rc`→`main`) is stale — CI now triggers lint/test/validate on `main` only (rc/dev removed, per #495), and `dev`/`preview`/`rc` branches no longer exist on the remote; AGENTS.md itself has not been corrected yet | `git ls-remote --heads origin \| grep -E 'dev$\|preview$\|rc$'` (expect empty) | aod-change-control |
 
 **First three concrete steps in this repo:**
 1. Pull HA's current Integration Quality Scale rubric (it is versioned and
@@ -288,8 +288,8 @@ these move over time):**
 2. Add a static type-checking gate (`mypy` or `pyright`) to `scripts/lint`
    or CI, scoped narrowly at first (e.g. `utils.py`, `data/prior.py`, the
    calculation hot path) since full-repo strict typing is a bigger lift.
-3. File the CLAUDE.md branch-strategy correction as its own small PR (docs
-   only, low risk) — this is a "the repo shows CLAUDE.md is stale" case
+3. File the AGENTS.md branch-strategy correction as its own small PR (docs
+   only, low risk) — this is a "the repo shows AGENTS.md is stale" case
    explicitly called out for correction, not a silent change.
 
 **You have a result when:** a rule-by-rule `quality_scale.yaml` exists and

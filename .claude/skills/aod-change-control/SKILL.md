@@ -9,7 +9,7 @@ description: Use before opening, reviewing, or merging any PR against Area Occup
 
 How changes get classified, validated, and merged in this project: the three
 non-negotiable rules the retiring maintainer stated explicitly (with the
-incident behind each), how CI gates actually work today (not what CLAUDE.md
+incident behind each), how CI gates actually work today (not what AGENTS.md
 says), the version-bump and release mechanics, and the CodeRabbit-reply
 convention. This is the skill for "am I allowed to ship this, and how" —
 process, not implementation detail.
@@ -30,7 +30,7 @@ CodeRabbit convention.
 
 ## 0. Orientation trap — read this first (SETTLED 2026-07-06)
 
-The environment banner and CLAUDE.md may both claim you're on `main` with a
+The environment banner and AGENTS.md may both claim you're on `main` with a
 clean tree. **Verify, don't trust**: `git status` and `git branch
 --show-current`. This was a live trap through 2026-07-06: the repo was
 checked out on `feat/adjacent-areas` (PR #454) for an extended period, and an
@@ -293,7 +293,7 @@ against the actual bump commit `704c89e` "chore: bump version to 2026.5.17
 the config-entry migration ladder (`migrations.py`) and are a completely
 separate axis from the release version. Bumping one does not bump the other.
 
-**Version scheme is CalVer (`YYYY.M.N`), not SemVer** — CLAUDE.md's line "Use
+**Version scheme is CalVer (`YYYY.M.N`), not SemVer** — AGENTS.md's line "Use
 semantic versioning (MAJOR.MINOR.PATCH)" is stale. Actual releases (`gh
 release list`) run `2026.5.17`, `2026.5.2`, `2026.5.1`, `2026.4.1`,
 `2026.3.4`... — year.month.increment, not major.minor.patch.
@@ -326,9 +326,9 @@ in release 2026.5.x" until a new version is actually cut; they're merged to
 
 ---
 
-## 5. Branch reality (CLAUDE.md is stale here)
+## 5. Branch reality (AGENTS.md is stale here)
 
-**CLAUDE.md says**: "Development happens on `dev` branch. PR from `dev` to
+**AGENTS.md says**: "Development happens on `dev` branch. PR from `dev` to
 `preview` for prereleases. PR from `preview` to `main` for full releases."
 
 **The repo shows this is no longer true.** Verified:
@@ -351,7 +351,7 @@ in release 2026.5.x" until a new version is actually cut; they're merged to
 
 **Practical instruction**: open PRs directly against `main` from a
 feature/fix branch (e.g. `feat/<name>`, `fix/<name>`, `chore/<name>`). Ignore
-CLAUDE.md's dev/preview/rc branching section — it describes a workflow this
+AGENTS.md's dev/preview/rc branching section — it describes a workflow this
 project stopped using about five months before this skill was written.
 `CONTRIBUTING.md` is consistent with this: it explicitly says to "Fork the
 repo and create your branch from `main`."

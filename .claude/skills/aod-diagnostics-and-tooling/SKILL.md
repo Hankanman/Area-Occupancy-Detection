@@ -250,7 +250,7 @@ to `stuck_active`): `SLEEPING` ×6 (8h→48h), `RELAXING` ×4 (8h→32h),
 
 ## 3. Debug log interpretation
 
-Enable per CLAUDE.md's standard snippet:
+Enable per AGENTS.md's standard snippet:
 
 ```yaml
 logger:

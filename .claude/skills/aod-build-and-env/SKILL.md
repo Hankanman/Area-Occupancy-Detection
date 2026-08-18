@@ -82,7 +82,7 @@ scripts/test
 uv run pytest --cov=custom_components/area_occupancy --cov-report=xml --cov-report=term-missing
 ```
 
-Coverage gate: `[tool.coverage.report] fail_under = 85` in `pyproject.toml` (line 113). **SETTLED (2026-07-06):** the adjacent comment used to read `# Enforce 90% coverage minimum`, which was stale and contradicted the actual `fail_under = 85` — that mismatch was fixed as part of the 2026-07-06 merge wave and now reads `# Enforced global minimum; aim for 90%+ on core calculation modules (CLAUDE.md)`, correctly distinguishing the enforced 85% floor from the 90% aspiration. CLAUDE.md's "85%+ coverage requirement (90% for core calculations)" phrasing is consistent with this: 85 is the enforced CI gate, 90 remains an unenforced aspiration for calculation-critical files, not a tool-config gate.
+Coverage gate: `[tool.coverage.report] fail_under = 85` in `pyproject.toml` (line 113). **SETTLED (2026-07-06):** the adjacent comment used to read `# Enforce 90% coverage minimum`, which was stale and contradicted the actual `fail_under = 85` — that mismatch was fixed as part of the 2026-07-06 merge wave and now reads `# Enforced global minimum; aim for 90%+ on core calculation modules (AGENTS.md)`, correctly distinguishing the enforced 85% floor from the 90% aspiration. AGENTS.md's "85%+ coverage requirement (90% for core calculations)" phrasing is consistent with this: 85 is the enforced CI gate, 90 remains an unenforced aspiration for calculation-critical files, not a tool-config gate.
 
 CI's `test.yml` runs the identical pytest invocation but additionally sets `AREA_OCCUPANCY_AUTO_INIT_DB: "1"` as a job-level env var (see trap below — `tests/conftest.py` already sets this for you locally, so you don't normally need to set it by hand).
 
@@ -159,7 +159,7 @@ if os.getenv("AREA_OCCUPANCY_AUTO_INIT_DB") == "1":
 
 - `tests/conftest.py` sets it unconditionally at import time: `os.environ["AREA_OCCUPANCY_AUTO_INIT_DB"] = "1"` — this is why you don't need to export it yourself for `scripts/test` to work locally.
 - CI's `test.yml` also sets it explicitly as a job-level `env:` (belt-and-suspenders with conftest).
-- **Never** gate this env var into any code path that isn't test setup. If you're tempted to reach for it to "quickly init the DB" in a script or a migration, use `hass.async_add_executor_job(...)` instead, per CLAUDE.md's "Database Operations" rule — this var exists purely to let synchronous test fixtures avoid needing an event loop for DB setup, not as a general sync/async escape hatch.
+- **Never** gate this env var into any code path that isn't test setup. If you're tempted to reach for it to "quickly init the DB" in a script or a migration, use `hass.async_add_executor_job(...)` instead, per AGENTS.md's "Database Operations" rule — this var exists purely to let synchronous test fixtures avoid needing an event loop for DB setup, not as a general sync/async escape hatch.
 
 ### 5. uv.lock churn from `uv run`/`uv sync`
 

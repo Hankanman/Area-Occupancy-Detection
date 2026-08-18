@@ -34,8 +34,8 @@ the function and every reference to it are gone. If you see it mentioned elsewhe
 stale comment, another skill's cached text), it's describing history, not current code.
 
 **Why this mattered**: before the removal, patching `bayesian_probability()` in response to "fix
-the Bayesian calculation" would have changed nothing in the running integration — CLAUDE.md's
-"Modifying Bayesian Calculation" section used to point at it. CLAUDE.md's equivalent section is now
+the Bayesian calculation" would have changed nothing in the running integration — AGENTS.md's
+"Modifying Bayesian Calculation" section used to point at it. AGENTS.md's equivalent section is now
 named "Modifying Probability Calculation" and points at `sigmoid_probability()` and its callers
 directly.
 
@@ -227,7 +227,7 @@ if factor < 0.05: return 0.0          # practical-zero cutoff
 `age` is `dt_util.utcnow() − decay_start`, always UTC (no local-time conversion needed here — pure
 elapsed duration). `tick()` (`data/decay.py:154-170`) is what actually stops `is_decaying` once the
 factor drops below the 5% floor, called from the coordinator's 10-second decay timer (per
-CLAUDE.md's Timers section).
+AGENTS.md's Timers section).
 
 ### Purpose-based half-lives (`data/purpose.py:160-236`) — full table
 
