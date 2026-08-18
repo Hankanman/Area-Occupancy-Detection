@@ -37,88 +37,37 @@ The prior combination process:
 
 The default time weight is 0.2, meaning 20% of the prior comes from time-based patterns and 80% from the global area prior.
 
-### 3. Adjust Likelihoods
+### 3. Combine Evidence in Logit Space
 
-For each entity, the learned likelihoods `P(Active | Occupied)` and `P(Active | Not Occupied)` are adjusted based on the entity's current state:
-
-#### Active Entities
-
-When an entity is active (or decaying), it uses the learned likelihoods directly:
-
-- `p_t = prob_given_true`
-- `p_f = prob_given_false`
-
-If the entity is decaying, the likelihoods are interpolated between their learned values and neutral (0.5) based on the decay factor:
+Rather than adjusting per-entity likelihoods and running a Bayes'-theorem-style update, the integration builds one running total in **logit (log-odds) space**, starting from the prior and adding one weighted term per entity:
 
 ```
-p_t_adjusted = 0.5 + (p_t_learned - 0.5) * decay_factor
-p_f_adjusted = 0.5 + (p_f_learned - 0.5) * decay_factor
+z = logit(prior)
+for each entity with weight > 0:
+    evidence = 1.0 if active
+             else entity.decay_factor if decaying
+             else 0.0   # inactive contributes nothing, not negative evidence
+    strength = entity.prob_given_true * entity.type.strength_multiplier
+    z += entity.effective_weight * evidence * correlation * strength
+
+probability = sigmoid(z) = 1 / (1 + exp(-z))
 ```
 
-This gradually reduces the influence of stale evidence as decay progresses.
+Where `correlation` is a learned 0.0-1.0 multiplier from the correlation-analysis pipeline (defaults to `1.0` until enough data exists), and `strength_multiplier` is a per-`InputType` constant (`3.0` for motion, `2.0` for most other types) that gives ground-truth-quality sensors a stronger say.
 
-#### Inactive Entities
+An **inactive** entity contributes exactly `0.0` — it drops out of the sum entirely rather than pushing the probability down. This is a deliberate difference from a classic Bayesian likelihood-ratio update, where an inactive sensor that's usually active when occupied would actively count *against* occupancy.
 
-When an entity is inactive (not providing evidence), it uses **inverse likelihoods**:
+A **decaying** entity's evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole contribution shrinks smoothly toward zero as decay progresses — see [Decay Interpolation](#decay-interpolation) below.
+
+### 4. Final Probability
+
+`z` is passed through the sigmoid function and clamped to `[MIN_PROBABILITY, MAX_PROBABILITY]`:
 
 ```
-p_t = 1.0 - prob_given_true  # P(Inactive | Occupied)
-p_f = 1.0 - prob_given_false  # P(Inactive | Not Occupied)
+probability = clamp(sigmoid(z))
 ```
 
-This ensures inactive sensors provide proper negative evidence. For example, if a sensor is usually active when occupied (`prob_given_true = 0.8`), then when it's inactive, it suggests the area is likely not occupied (`p_t = 0.2`). This prevents inactive sensors from diluting the effect of active sensors.
-
-The decay factor is calculated using exponential decay: `decay_factor = 0.5^(age / half_life)`, where `age` is the time since evidence became inactive.
-
-### 4. Log-Space Combination
-
-The calculation is performed in log space for numerical stability. For each entity the log probabilities for the "occupied" and "not occupied" hypotheses are accumulated and weighted according to the entity type's configured weight.
-
-The process:
-
-1. **Entity Filtering**: Removes entities with zero weight or invalid likelihoods
-2. **Prior Clamping**: Ensures prior is in valid range [MIN_PROBABILITY, MAX_PROBABILITY]
-3. **Log-Space Initialization**:
-
-   ```
-   log_true = log(prior)
-   log_false = log(1 - prior)
-   ```
-
-4. **Entity Processing**: For each entity:
-   - Determines effective evidence (current or decaying)
-   - Gets adjusted likelihoods (with decay if applicable)
-   - Clamps likelihoods to avoid log(0) or log(1)
-   - Calculates weighted log contributions:
-
-     ```
-     contribution_true = log(p_t) * entity.weight
-     contribution_false = log(p_f) * entity.weight
-     ```
-
-   - Accumulates into log probabilities:
-
-     ```
-     log_true += contribution_true
-     log_false += contribution_false
-     ```
-
-### 5. Final Probability
-
-The log probabilities are exponentiated and normalised to produce the final occupancy probability.
-
-The normalization process:
-
-1. Finds maximum log value: `max_log = max(log_true, log_false)`
-2. Subtracts maximum to prevent overflow:
-
-   ```
-   true_prob = exp(log_true - max_log)
-   false_prob = exp(log_false - max_log)
-   ```
-
-3. Normalises: `probability = true_prob / (true_prob + false_prob)`
-4. Handles edge case where both probabilities are zero (returns prior)
+Because contributions are summed additively before a single sigmoid call, there's no separate "occupied" vs. "not occupied" running total to normalize between — the sigmoid's output is already a valid probability in `(0, 1)`.
 
 ## Dual-Model Approach: Presence + Environmental
 
@@ -157,16 +106,14 @@ The **Occupancy Status** binary sensor compares this probability to the configur
 
 ## Mathematical Foundation
 
-The calculation uses Bayes' theorem to combine evidence from multiple sensors. The system works in log space for numerical stability when combining many probabilities. For detailed mathematical explanations, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md).
+The calculation combines a learned prior with sensor evidence in **logit (log-odds) space**: each entity adds one weighted, additive term to a running sum, and a single `sigmoid()` call converts that sum back to a probability at the end. This is not classic Bayes'-theorem likelihood-ratio multiplication — see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md) for the full formula, derivation, and a worked example.
 
 ## Entity Weight Application
 
-Each entity type has a configured weight (0.0-1.0) that determines how much its evidence contributes to the final probability.
+Each entity type has a configured weight (0.0-1.0, `effective_weight` after adjustment for learned information gain) that scales how much its evidence contributes to the running logit-space sum.
 
-The weight is applied as a multiplier to the log probability contribution:
-
-- Weight 1.0: Full contribution (entity fully influences the result)
-- Weight 0.5: Half contribution (entity has moderate influence)
+- Weight 1.0: Full contribution
+- Weight 0.5: Half contribution
 - Weight 0.0: No contribution (entity is excluded from calculation)
 
 Default weights by entity type:
@@ -175,16 +122,18 @@ Default weights by entity type:
 - Sleep: 0.90 (very high reliability)
 - Media players: 0.85 (high reliability)
 - Wasp in Box: 0.80 (high reliability)
+- Wi-Fi client count: 0.35 (moderate reliability)
 - Cover sensors: 0.50 (moderate reliability)
 - Appliances: 0.40 (moderate reliability)
 - Door sensors: 0.30 (lower reliability)
+- Lock: 0.30 (lower reliability)
 - Power sensors: 0.30 (lower reliability)
 - Window sensors: 0.20 (low reliability)
 - Environmental sensors: 0.10 (very low reliability) - includes temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors
 
 ## Decay Interpolation
 
-When [Probability Decay](../features/decay.md) is active, likelihoods are interpolated between their learned values and neutral probabilities (0.5) based on the decay factor. As decay progresses, the likelihoods move toward neutral, gradually reducing their influence on the final probability. For the mathematical formula, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#decay-interpolation).
+When [Probability Decay](../features/decay.md) is active, a decaying entity's evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole logit-space contribution shrinks smoothly toward zero as decay progresses — not an interpolation of the likelihood toward a neutral value. For the mathematical formula, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#decay-interpolation).
 
 ## Edge Case Handling
 
@@ -192,8 +141,7 @@ The calculation handles several edge cases to ensure robust operation:
 
 - **Unavailable Entities**: Entities with unavailable states are skipped unless they're decaying
 - **Zero Weight Entities**: Entities with zero weight are excluded from the calculation
-- **Invalid Likelihoods**: Entities with invalid likelihoods are excluded to prevent calculation errors
-- **No Entities**: If no valid entities are available, the calculation returns the prior probability
+- **No Entities**: If no entities are available, the calculation returns the prior probability
 - **Numerical Stability**: The system uses various techniques to prevent numerical overflow and underflow
 
 For detailed technical information about edge case handling, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#numerical-stability-techniques).
@@ -203,56 +151,46 @@ For detailed technical information about edge case handling, see [Bayesian Calcu
 Consider an area with:
 
 - Prior: 0.3 (30% baseline occupancy)
-- Motion sensor: Active, weight 0.85, `P(Active|Occupied)=0.9`, `P(Active|Not Occupied)=0.1`
-- Media player: Inactive, weight 0.70, `P(Active|Occupied)=0.6`, `P(Active|Not Occupied)=0.2`
+- Motion sensor: Active, weight 1.0, `prob_given_true=0.95`, `strength_multiplier=3.0`
+- Media player: Inactive (not decaying), weight 0.85, `prob_given_true=0.65`, `strength_multiplier=2.0`
+- Door sensor: Active, weight 0.3, `prob_given_true=0.2`, `strength_multiplier=2.0`
 
-Step 1: Initialize log probabilities
+Assume no learned correlations yet (multiplier `1.0` for all).
 
-```
-log_true = log(0.3) = -1.204
-log_false = log(0.7) = -0.357
-```
-
-Step 2: Process motion sensor (active)
+Step 1: Initialize from the prior
 
 ```
-p_t = 0.9, p_f = 0.1
-log_true += log(0.9) * 0.85 = -1.204 + (-0.105) * 0.85 = -1.293
-log_false += log(0.1) * 0.85 = -0.357 + (-2.303) * 0.85 = -2.315
+z = logit(0.3) = ln(0.3 / 0.7) ≈ -0.8473
 ```
 
-Step 3: Process media player (inactive)
-
-For inactive entities, we use **inverse likelihoods**:
+Step 2: Motion sensor (active)
 
 ```
-p_t = 1 - 0.6 = 0.4  # P(Inactive | Occupied) = 1 - P(Active | Occupied)
-p_f = 1 - 0.2 = 0.8  # P(Inactive | Not Occupied) = 1 - P(Active | Not Occupied)
-
-log_true += log(0.4) * 0.70 = -1.293 + (-0.916) * 0.70 = -1.934
-log_false += log(0.8) * 0.70 = -2.315 + (-0.223) * 0.70 = -2.471
+1.0 * 1.0 * 1.0 * (0.95 * 3.0) = 2.85
+z ≈ 2.0027
 ```
 
-The inverse likelihoods provide negative evidence (the inactive media player suggests the area might not be occupied), but the motion sensor's strong positive evidence dominates the calculation.
-
-Step 4: Process door sensor (active)
+Step 3: Media player (inactive, not decaying → evidence = 0)
 
 ```
-p_t = 0.4, p_f = 0.3
-log_true += log(0.4) * 0.25 = -1.934 + (-0.916) * 0.25 = -2.163
-log_false += log(0.3) * 0.25 = -2.471 + (-1.204) * 0.25 = -2.772
+0.85 * 0.0 * 1.0 * (0.65 * 2.0) = 0
+z ≈ 2.0027 (unchanged) — the inactive sensor drops out entirely, it does not count against occupancy
 ```
 
-Step 5: Normalize
+Step 4: Door sensor (active)
 
 ```
-max_log = max(-2.163, -2.772) = -2.163
-true_prob = exp(-2.163 - (-2.163)) = exp(0) = 1.0
-false_prob = exp(-2.772 - (-2.163)) = exp(-0.609) = 0.544
-probability = 1.0 / (1.0 + 0.544) = 0.648 (64.8%)
+0.3 * 1.0 * 1.0 * (0.2 * 2.0) = 0.12
+z ≈ 2.1227
 ```
 
-The motion sensor's strong positive evidence (active with high `P(Active|Occupied)`) significantly increases the probability from the 30% prior to 67.6%.
+Step 5: Sigmoid
+
+```
+probability = sigmoid(2.1227) ≈ 0.8931 (89.3%)
+```
+
+The active, high-reliability motion sensor dominates (`+2.85` in logit space, vs. the door's `+0.12`), pulling the result from the 30% prior up to ~89%. The inactive media player contributes nothing to the result, rather than pulling it down.
 
 ## See Also
 
