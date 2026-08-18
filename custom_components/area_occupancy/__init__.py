@@ -22,7 +22,16 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DB_NAME, DOMAIN, PLATFORMS
+from .const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_VERSION,
+    DB_NAME,
+    DOMAIN,
+    ONLINE_PRIOR_STORE_KEY_PREFIX,
+    ONLINE_PRIOR_STORE_VERSION,
+    PLATFORMS,
+)
 from .coordinator import AreaOccupancyCoordinator
 from .db.operations import delete_area_data as _delete_area_data
 from .db.schema import (
@@ -411,7 +420,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # files, so a stale one would otherwise survive removal forever.
         try:
             await Store(
-                hass, 1, f"{DOMAIN}.online_prior.{entry.entry_id}"
+                hass,
+                ONLINE_PRIOR_STORE_VERSION,
+                f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{entry.entry_id}",
             ).async_remove()
         except Exception:
             _LOGGER.exception(

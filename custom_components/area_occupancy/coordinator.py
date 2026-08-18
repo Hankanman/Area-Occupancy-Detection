@@ -37,6 +37,8 @@ from .const import (
     CONF_AREAS,
     DEFAULT_NAME,
     DOMAIN,
+    ONLINE_PRIOR_STORE_KEY_PREFIX,
+    ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
 )
 from .data.adjacency import (
@@ -139,7 +141,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # prior each analysis cycle. Never read by the probability path.
         self._online_priors: dict[str, OnlinePriorEstimator] = {}
         self._online_prior_store: Store[dict[str, dict]] = Store(
-            hass, 1, f"{DOMAIN}.online_prior.{self.entry_id}"
+            hass,
+            ONLINE_PRIOR_STORE_VERSION,
+            f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
         )
 
     async def async_init_database(self) -> None:

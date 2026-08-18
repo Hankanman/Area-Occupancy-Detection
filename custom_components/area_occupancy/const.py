@@ -309,6 +309,13 @@ ACCURACY_TICK_BUFFER_MAXLEN: Final = 8640
 # Hours of tick history scored against ground truth each analysis cycle.
 ACCURACY_WINDOW_HOURS: Final = 24
 
+# --- Online prior (#500, shadow mode) ---
+# Store version and key prefix for the per-entry online-prior estimator
+# state. Shared between the coordinator (persistence) and __init__.py
+# (removal cleanup) so the two never drift apart.
+ONLINE_PRIOR_STORE_VERSION: Final = 1
+ONLINE_PRIOR_STORE_KEY_PREFIX: Final = f"{DOMAIN}.online_prior"
+
 MIN_CORRELATION_SAMPLES: Final = 50
 # Minimum confidence for correlation to be considered significant
 CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7

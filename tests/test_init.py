@@ -22,6 +22,8 @@ from custom_components.area_occupancy.const import (
     CONF_VERSION,
     DB_NAME,
     DOMAIN as DOMAIN_CONST,
+    ONLINE_PRIOR_STORE_KEY_PREFIX,
+    ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
@@ -790,17 +792,25 @@ class TestAsyncRemoveEntry:
         object.__setattr__(mock_config_entry, "options", {})
         hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
 
-        store_key = f"{DOMAIN_CONST}.online_prior.{entry_id}"
-        store: Store[dict[str, dict]] = Store(hass, 1, store_key)
+        store_key = f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{entry_id}"
+        store: Store[dict[str, dict]] = Store(
+            hass, ONLINE_PRIOR_STORE_VERSION, store_key
+        )
         await store.async_save({"Kitchen": {"occupied_seconds": 10.0}})
         # A fresh Store instance avoids Store's own load-result cache, so this
         # actually re-reads the backing (mocked) storage rather than the
         # in-memory value from the async_save above.
-        assert await Store(hass, 1, store_key).async_load() is not None
+        assert (
+            await Store(hass, ONLINE_PRIOR_STORE_VERSION, store_key).async_load()
+            is not None
+        )
 
         await async_remove_entry(hass, mock_config_entry)
 
-        assert await Store(hass, 1, store_key).async_load() is None
+        assert (
+            await Store(hass, ONLINE_PRIOR_STORE_VERSION, store_key).async_load()
+            is None
+        )
 
     async def test_never_raises_even_when_db_missing(
         self,
