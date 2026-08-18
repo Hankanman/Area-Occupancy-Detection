@@ -43,7 +43,7 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 | Runtime pip requirements | `[]` (none) | `grep -A2 '"requirements"' custom_components/area_occupancy/manifest.json` |
 | Test coverage gate | `fail_under = 85` in pyproject, comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules" — the old stale-comment mismatch was fixed by #495 (CI hygiene) | `grep -n fail_under pyproject.toml` |
 | Live probability engine | sigmoid/logit pipeline in `utils.py` (`sigmoid_probability`, `presence_probability`, `environmental_confidence`, `combined_probability`), driven from `area/area.py::Area._base_probability/probability` | `grep -n "def sigmoid_probability\|def presence_probability\|def combined_probability" custom_components/area_occupancy/utils.py` |
-| Dead legacy engine | `utils.py::bayesian_probability()` (classic log-odds accumulator) has **zero production call sites** — only unit tests in `tests/test_utils.py` still exercise it. CLAUDE.md's "Modifying Bayesian Calculation" workflow points at this function first — that pointer is stale; start from `sigmoid_probability`/`presence_probability` instead. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (only the `def` line should show) |
+| Legacy engine, now removed | `utils.py::bayesian_probability()` (classic log-odds accumulator) had zero production call sites for its whole life and was deleted in PR #529 (2026.8.1), one release after the codebase audit (#506) flagged it and the maintainer chose to keep it dormant as a revert safety net first. CLAUDE.md's "Modifying Probability Calculation" workflow now starts from `sigmoid_probability`/`presence_probability` directly. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (should return nothing) |
 | Adjacent-areas feature (frontier #2 asset) | **Merged 2026-07-06** — PR #454 merged into `main` (squash), superseding PR #456 which was closed as merged into it. `data/adjacency.py`, `data/trajectory.py`, `db/transitions.py`, the `AreaTransitions` table, and all `ADJACENCY_*` constants are on `main` now. Still **unvalidated on real homes** — candidate/open labeling for the research question stays even though the code shipped. | `gh pr view 454 --json state,mergeStateStatus` |
 | Prior/decay/sleep accuracy fixes | PRs #491 (prior quiet-tail), #492 (sleep unknown-presence), #493 (bedroom half-life), #494 (README link) — **all merged 2026-07-06, on `main`** | `gh pr view 491` / `492` / `493` / `494` |
 
@@ -341,7 +341,7 @@ gh pr view 491 --json state,mergeStateStatus
 gh pr view 492 --json state,mergeStateStatus
 gh pr view 493 --json state,mergeStateStatus
 
-# Is bayesian_probability() still dead code?
+# Confirm bayesian_probability() removal (PR #529, 2026.8.1) hasn't regressed
 grep -rn "bayesian_probability(" custom_components/area_occupancy/
 
 # Do the near-frontier issues still carry the same labels/state?

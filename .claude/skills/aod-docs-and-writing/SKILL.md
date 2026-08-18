@@ -155,7 +155,7 @@ Do not silently "fix" `CLAUDE.md`'s branch-strategy section as a drive-by edit �
 
 **Cautionary example (PR #491, `fix(prior): keep quiet tail in global prior denominator`, merged 2026-07-06 — verify with `gh pr view 491`):** the code change altered how `PriorAnalyzer.calculate_and_update_prior()` picks the end of its observation period (previously truncated to `last_interval_end` when the area had been quiet >1h; now always `now` — this is the current, permanent behavior on `main`, i.e. `actual_period_end` is always `now`, not conditionally truncated). `docs/docs/technical/global-prior-flow.md` documented the *old* (buggy) behavior in prose — "If last interval is more than 1 hour old: Use `last_interval_end` / Otherwise: Use current time" — and had to be edited in the same PR (7 additions, 16 deletions) to stop describing the bug as intended behavior. This was caught as a review nitpick, not by the original author remembering to update the doc.
 
-**Rule extracted:** when a change touches `data/analysis.py`, `data/prior.py`, `data/decay.py`, or `utils.py::bayesian_probability()` (the files `CLAUDE.md` names under "Modifying Bayesian Calculation"), grep `docs/docs/technical/` and `docs/docs/features/` for any prose description of the specific mechanism you changed before opening the PR:
+**Rule extracted:** when a change touches `data/analysis.py`, `data/prior.py`, `data/decay.py`, or `utils.py`'s sigmoid/logit pipeline (the files `CLAUDE.md` names under "Modifying Probability Calculation"), grep `docs/docs/technical/` and `docs/docs/features/` for any prose description of the specific mechanism you changed before opening the PR:
 
 ```bash
 grep -rn "last_interval_end\|actual_period_end\|<your changed concept>" docs/docs/

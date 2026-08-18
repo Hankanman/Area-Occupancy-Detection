@@ -16,9 +16,9 @@ process, not implementation detail.
 
 ## When NOT to use this
 
-For *how* the Bayesian pipeline actually computes (sigmoid/logit math, what
-`bayesian_probability()` in utils.py is and why it's dead code) use
-`bayesian-occupancy-reference`. For the historical blow-by-blow of specific
+For *how* the Bayesian pipeline actually computes (sigmoid/logit math; the
+now-deleted `bayesian_probability()` legacy engine and its removal in PR #529)
+use `bayesian-occupancy-reference`. For the historical blow-by-blow of specific
 incidents (full saga narratives, root causes, stale branches) use
 `aod-failure-archaeology`. For how to run tests/lint/CI locally use
 `aod-build-and-env`. For what "beyond SOTA" claims are and aren't earned yet,

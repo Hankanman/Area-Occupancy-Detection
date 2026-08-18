@@ -19,22 +19,25 @@ regressions on real data, use `aod-learning-accuracy-campaign`. For config keys/
 these formulas, use `aod-config-and-flags`. For the module dependency graph and where these files
 sit in the pipeline, use `aod-architecture-contract`.
 
-## 0. Two different "Bayesian" functions exist — know which one is live
+## 0. There used to be two "Bayesian" functions — only one survived
 
-`utils.py` defines **two** probability-combination functions. Only one is wired into production.
+`utils.py` used to define **two** probability-combination functions, only one of which was ever
+wired into production.
 
-| Function | Space | Status (2026-07-06) | Called from |
+| Function | Space | Status | Called from |
 |---|---|---|---|
-| `sigmoid_probability()` (utils.py:136) | **logit space**, additive weighted terms | **LIVE** (2026-07-06) — this is the actual engine | `presence_probability()`, `environmental_confidence()` → `area/area.py::Area._base_probability()` → `Area.probability()` → `sensor.py` state |
-| `bayesian_probability()` (utils.py:451) | log-probability space, per-entity log-likelihood accumulation (mathematically a weighted naive-Bayes update) | **DEAD CODE** — defined, unit-tested, never called from any production path | only `tests/test_utils.py` |
+| `sigmoid_probability()` (utils.py:136) | **logit space**, additive weighted terms | **LIVE** — this is the actual engine, and has been since PR #353 (2026.2.1) | `presence_probability()`, `environmental_confidence()` → `area/area.py::Area._base_probability()` → `Area.probability()` → `sensor.py` state |
+| `bayesian_probability()` | log-probability space, per-entity log-likelihood accumulation (mathematically a weighted naive-Bayes update) | **DELETED** (PR #529, 2026.8.1) — had zero production call sites for its entire lifetime; kept dormant as a revert safety net through the 2026.7.1 GA release, then removed along with its three private helpers once that window elapsed | historical only |
 
-Verified: `grep -rn "bayesian_probability" custom_components/ tests/` returns only `utils.py`
-(definition) and `tests/test_utils.py`.
+Verified (2026.8.1): `grep -rn "bayesian_probability" custom_components/ tests/` returns nothing —
+the function and every reference to it are gone. If you see it mentioned elsewhere (an old PR, a
+stale comment, another skill's cached text), it's describing history, not current code.
 
-**Why this matters**: if asked to "fix the Bayesian calculation" and you patch
-`bayesian_probability()`, you change nothing in the running integration. CLAUDE.md's "Modifying
-Bayesian Calculation" section points at `bayesian_probability()`, which is now stale — the live
-formula is `sigmoid_probability()`. Flag this if you update CLAUDE.md.
+**Why this mattered**: before the removal, patching `bayesian_probability()` in response to "fix
+the Bayesian calculation" would have changed nothing in the running integration — CLAUDE.md's
+"Modifying Bayesian Calculation" section used to point at it. CLAUDE.md's equivalent section is now
+named "Modifying Probability Calculation" and points at `sigmoid_probability()` and its callers
+directly.
 
 ## 1. Logit space: what it is and why the engine uses it
 

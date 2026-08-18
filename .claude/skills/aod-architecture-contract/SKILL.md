@@ -58,9 +58,9 @@ Two-phase calculation in `area/area.py`, all math in `utils.py`:
 
 Every probability value is clamped through `clamp_probability()` (`utils.py::clamp_probability`) to `[MIN_PROBABILITY=0.01, MAX_PROBABILITY=0.99]` before use; `logit()` clamps its input first so `logit(0)`/`logit(1)` never raise. NaN clamps to MAX (with a warning log), ±inf clamps to MAX/MIN respectively.
 
-### Dead code trap: `utils.py::bayesian_probability()` is NOT the live calculation
+### Resolved dead-code trap: `bayesian_probability()` is gone (PR #529, 2026.8.1)
 
-`utils.py` still defines a classic naive-Bayes log-odds function `bayesian_probability()`, and CLAUDE.md's own "Modifying Bayesian Calculation" workflow points at it — but it has **zero production call sites**. It was superseded by the sigmoid/logit pipeline above (introduced in PR #353, "Add sigmoid-based occupancy detection framework"). It survives only because ~25 unit tests in `tests/test_utils.py` still exercise it directly. If you're asked to "modify the Bayesian calculation," the real entry points are `presence_probability()`, `environmental_confidence()`, `combined_probability()`, `apply_activity_boost()` in `utils.py`, plus `Area._base_probability()`/`Area.probability()` in `area/area.py` — not `bayesian_probability()`.
+`utils.py` used to also define a classic naive-Bayes log-odds function, `bayesian_probability()`, left in place as a revert safety net after the sigmoid/logit pipeline above superseded it (PR #353, "Add sigmoid-based occupancy detection framework"). It had zero production call sites for that entire window and was deleted in PR #529 (2026.8.1) along with its three private helpers, once the deprecation window the maintainer asked for had elapsed. CLAUDE.md's "Modifying Probability Calculation" workflow now points at the real entry points: `presence_probability()`, `environmental_confidence()`, `combined_probability()`, `apply_activity_boost()` in `utils.py`, plus `Area._base_probability()`/`Area.probability()` in `area/area.py`. If you're reading old context (a stale docstring, an old PR, a previous session's notes) that references `bayesian_probability()`, treat it as historical — the function no longer exists.
 
 ### Phase 3 (merged PR #454, 2026-07-06): adjacency boost
 
