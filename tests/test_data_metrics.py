@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 import json
 from unittest.mock import patch
 
+import pytest
+
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
 from custom_components.area_occupancy.data.metrics import (
@@ -138,6 +140,17 @@ class TestComputeAccuracyMetrics:
 
         assert out.sample_count == 10
         assert out.agreement > 0.9
+        assert out.false_on_rate == 1.0  # all 9 wrong ticks predict occupied=True
+        # All 10 samples share one calibration bin (p=0.9). Sample-weighted,
+        # observed_rate would be 1/10 = 0.1 (only the first tick is truth=True);
+        # time-weighted it should be ~990/999 ≈ 0.991, since that first tick
+        # covers nearly the whole window.
+        populated = [b for b in out.bins if b.count]
+        assert len(populated) == 1
+        assert populated[0].observed_rate == pytest.approx(990 / 999, abs=1e-5)
+        # ECE = |mean_probability(0.9) - observed_rate(~0.991)| ≈ 0.091, far
+        # below the ~0.8 a sample-weighted computation would produce.
+        assert out.expected_calibration_error == pytest.approx(0.0910, abs=1e-3)
         # bin_count still reflects raw sample counts for diagnostics
         assert sum(b.count for b in out.bins) == 10
 

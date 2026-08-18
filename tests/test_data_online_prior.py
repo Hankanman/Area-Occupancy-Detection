@@ -3,6 +3,8 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.area_occupancy.const import MAX_PRIOR, MIN_PRIOR
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.entity_type import InputType
@@ -156,6 +158,10 @@ class TestCoordinatorShadowWiring:
         await coordinator.update()
         estimator = coordinator.online_prior_for(area_name)
         assert estimator is not None
+        # Force a known nonzero numerator so this test can't pass by
+        # "saving zero" — asserting equality with whatever update() happened
+        # to accrue wouldn't catch a save that silently dropped the value.
+        estimator.state.occupied_seconds = 42.0
         occupied_seconds_before = estimator.state.occupied_seconds
         first_observation_before = estimator.state.first_observation
 
@@ -167,8 +173,9 @@ class TestCoordinatorShadowWiring:
         assert restored.occupied_seconds == occupied_seconds_before
         assert restored.first_observation == first_observation_before
 
+    @pytest.mark.parametrize("input_type", [InputType.MEDIA, InputType.SLEEP])
     async def test_presence_definition_includes_media_and_sleep(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, input_type: InputType
     ) -> None:
         """Numerator must match get_occupied_intervals' truth: motion ∪ media ∪ sleep.
 
@@ -181,14 +188,14 @@ class TestCoordinatorShadowWiring:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
-        media_only_entity = SimpleNamespace(
+        evidence_only_entity = SimpleNamespace(
             evidence=True,
-            type=SimpleNamespace(input_type=InputType.MEDIA),
+            type=SimpleNamespace(input_type=input_type),
         )
 
         # way to stub one evidence-bearing entity without a full config.
         original_entities = area.entities._entities
-        area.entities._entities = {"media.fake": media_only_entity}
+        area.entities._entities = {"fake.entity": evidence_only_entity}
         try:
             coordinator._record_shadow_tick(
                 area_name, area, T0, probability=0.5, is_occupied=True
