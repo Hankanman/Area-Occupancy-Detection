@@ -123,7 +123,7 @@ AreaOccupancyCoordinator (global singleton)
 - `data/adjacency.py` + `data/trajectory.py` + `db/transitions.py`: Adjacent-areas transition learning — Bayesian boost and decay modifier from learned room-to-room movement
 - `db/core.py`: Database initialization, connection management
 - `db/correlation.py`: Statistical analysis of sensor-occupancy relationships (660+ lines)
-- `utils.py`: Bayesian probability calculations, state mapping utilities
+- `utils.py`: Sigmoid/logit-space probability calculations, state mapping utilities
 
 ### Configuration Flow
 
@@ -239,13 +239,13 @@ Pre-commit runs ruff formatting and linting automatically. If it fails:
 7. Update database schema if needed (add correlation tracking)
 8. Write tests
 
-### Modifying Bayesian Calculation
+### Modifying Probability Calculation
 
-1. Core calculation is in `utils.py::bayesian_probability()`
+1. Core calculation is a sigmoid/logit-space model in `utils.py::sigmoid_probability()`, combined via `presence_probability()`, `environmental_confidence()`, and `combined_probability()`; entrypoint is `Area._base_probability()` in `area/area.py`
 2. Prior calculation in `data/prior.py`
 3. Decay implementation in `data/decay.py`
 4. Evidence detection in `data/entity.py::Entity.has_new_evidence()`
-5. Update tests in `tests/test_calculate_prob.py` or similar
+5. Update tests in `tests/test_utils.py` or similar
 6. Ensure 100% coverage for calculation changes
 
 ### Debugging Database Issues
