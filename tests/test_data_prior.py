@@ -410,7 +410,7 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
         # Initially cache is None
         assert prior._cached_time_priors is None
 
-        # Mock database get_all_time_priors to return test data.
+        # Mock database get_stored_time_priors to return test data.
         # Derive "other" slot keys relative to current time so they never collide
         # with the current slot (avoids time-dependent test failures).
         current_day = prior.day_of_week
@@ -421,21 +421,19 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
         missing_day = (current_day + 3) % 7
         missing_slot = (current_slot + 7) % 24
         test_cache = {
-            slot_key: 0.6,
-            (other_day, other_slot): 0.4,
-            ((current_day + 2) % 7, (current_slot + 5) % 24): 0.3,
+            slot_key: (0.6, 4),
+            (other_day, other_slot): (0.4, 4),
+            ((current_day + 2) % 7, (current_slot + 5) % 24): (0.3, 2),
         }
 
         with patch.object(
             prior.db,
-            "get_all_time_priors",
+            "get_stored_time_priors",
             return_value=test_cache.copy(),
         ) as mock_get_all:
             # First access should trigger _load_time_priors
             result = prior.time_prior
-            mock_get_all.assert_called_once_with(
-                area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
-            )
+            mock_get_all.assert_called_once_with(area_name=area_name)
             # Cache should now be populated
             assert prior._cached_time_priors is not None
             assert result == 0.6  # Should return value for current slot
@@ -452,7 +450,7 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
         # Build a datetime that maps to (other_day, other_slot)
         # Monday 2024-01-01 is weekday=0, so add other_day days
         other_dt = datetime(2024, 1, 1 + other_day, other_slot, 0, 0, tzinfo=UTC)
-        prior._cached_time_priors = test_cache.copy()
+        prior._cached_time_priors = {k: v[0] for k, v in test_cache.items()}
         with patch(
             "custom_components.area_occupancy.data.prior.dt_util.utcnow",
             return_value=other_dt,
@@ -460,15 +458,21 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
             result3 = prior.time_prior
             assert result3 == 0.4  # Should return value for the other slot
 
-        # Test accessing a slot not in cache (should return DEFAULT_TIME_PRIOR)
+        # A slot absent from the cache falls back to unlearned_slot_prior, which
+        # is DEFAULT_TIME_PRIOR only while no global prior has been learned.
         missing_dt = datetime(2024, 1, 1 + missing_day, missing_slot, 0, 0, tzinfo=UTC)
-        prior._cached_time_priors = test_cache.copy()
+        prior._cached_time_priors = {k: v[0] for k, v in test_cache.items()}
         with patch(
             "custom_components.area_occupancy.data.prior.dt_util.utcnow",
             return_value=missing_dt,
         ):
-            result4 = prior.time_prior
-            assert result4 == DEFAULT_TIME_PRIOR
+            assert prior.global_prior is None
+            assert prior.time_prior == DEFAULT_TIME_PRIOR
+            # Once a global prior exists it becomes the neutral fallback.
+            prior.global_prior = 0.12
+            prior._cached_time_priors = {k: v[0] for k, v in test_cache.items()}
+            assert prior.time_prior == pytest.approx(0.12)
+            prior.global_prior = None
     finally:
         dt_util.set_default_time_zone(original_tz)
 
@@ -480,16 +484,16 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
 
     # Test data with values outside bounds
     test_data = {
-        (0, 0): 0.02,  # Below TIME_PRIOR_MIN_BOUND (0.03).
-        (0, 1): 0.95,  # Above TIME_PRIOR_MAX_BOUND (0.9).
-        (0, 2): 0.5,  # Within bounds.
-        (1, 0): TIME_PRIOR_MIN_BOUND,  # At minimum bound.
-        (1, 1): TIME_PRIOR_MAX_BOUND,  # At maximum bound.
+        (0, 0): (0.02, 4),  # Below TIME_PRIOR_MIN_BOUND (0.03).
+        (0, 1): (0.95, 4),  # Above TIME_PRIOR_MAX_BOUND (0.9).
+        (0, 2): (0.5, 4),  # Within bounds.
+        (1, 0): (TIME_PRIOR_MIN_BOUND, 4),  # At minimum bound.
+        (1, 1): (TIME_PRIOR_MAX_BOUND, 4),  # At maximum bound.
     }
 
     with patch.object(
         prior.db,
-        "get_all_time_priors",
+        "get_stored_time_priors",
         return_value=test_data.copy(),
     ):
         # Trigger _load_time_priors by accessing time_prior
@@ -502,18 +506,18 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
         assert prior._cached_time_priors[(1, 0)] == TIME_PRIOR_MIN_BOUND
         assert prior._cached_time_priors[(1, 1)] == TIME_PRIOR_MAX_BOUND
 
-    # Test default fallback when slot not in database
+    # Test default fallback when nothing is stored: the grid is still fully
+    # populated, every slot carrying the unlearned fallback and zero data points.
     with patch.object(
         prior.db,
-        "get_all_time_priors",
+        "get_stored_time_priors",
         return_value={},  # Empty dict - no data in database
     ):
         prior._load_time_priors()
-        # Cache should be empty dict
-        assert prior._cached_time_priors == {}
-        # Accessing time_prior should return DEFAULT_TIME_PRIOR
-        result = prior.time_prior
-        assert result == DEFAULT_TIME_PRIOR
+        assert len(prior._cached_time_priors) == 168
+        assert set(prior._cached_time_priors.values()) == {DEFAULT_TIME_PRIOR}
+        assert set(prior._cached_time_prior_points.values()) == {0}
+        assert prior.time_prior == DEFAULT_TIME_PRIOR
 
 
 def test_time_prior_cache_invalidation(coordinator: AreaOccupancyCoordinator):
@@ -526,10 +530,10 @@ def test_time_prior_cache_invalidation(coordinator: AreaOccupancyCoordinator):
     slot_key = (current_day, current_slot)
 
     # First cache load
-    cache1 = {slot_key: 0.6}
+    cache1 = {slot_key: (0.6, 4)}
     with patch.object(
         prior.db,
-        "get_all_time_priors",
+        "get_stored_time_priors",
         return_value=cache1.copy(),
     ) as mock_get_all:
         result1 = prior.time_prior
@@ -541,10 +545,10 @@ def test_time_prior_cache_invalidation(coordinator: AreaOccupancyCoordinator):
     assert prior._cached_time_priors is None
 
     # Second cache load (should trigger reload)
-    cache2 = {slot_key: 0.7}
+    cache2 = {slot_key: (0.7, 4)}
     with patch.object(
         prior.db,
-        "get_all_time_priors",
+        "get_stored_time_priors",
         return_value=cache2.copy(),
     ) as mock_get_all2:
         result2 = prior.time_prior
@@ -560,6 +564,13 @@ def test_time_prior_cache_invalidation(coordinator: AreaOccupancyCoordinator):
     prior._cached_time_priors = {slot_key: 0.4}
     prior.clear_cache()
     assert prior._cached_time_priors is None
+
+    # The public invalidator drops both the values and the sample counts.
+    prior._cached_time_priors = {slot_key: 0.4}
+    prior._cached_time_prior_points = {slot_key: 3}
+    prior.invalidate_time_prior_cache()
+    assert prior._cached_time_priors is None
+    assert prior._cached_time_prior_points is None
 
 
 def test_clear_cache(coordinator: AreaOccupancyCoordinator):
@@ -752,23 +763,29 @@ def test_all_time_priors_loads_and_returns_copy(
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
 
-    test_cache = {(0, 0): 0.4, (1, 5): 0.6, (6, 23): 0.5}
+    stored = {(0, 0): (0.4, 4), (1, 5): (0.6, 3), (6, 23): (0.5, 1)}
     with patch.object(
         prior.db,
-        "get_all_time_priors",
-        return_value=test_cache.copy(),
+        "get_stored_time_priors",
+        return_value=stored.copy(),
     ) as mock_get_all:
         result = prior.all_time_priors()
-        mock_get_all.assert_called_once_with(
-            area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
-        )
-        assert result == test_cache
+        mock_get_all.assert_called_once_with(area_name=area_name)
+        # The full weekly grid is returned, stored slots carrying their values.
+        assert len(result) == 168
+        for key, (value, _points) in stored.items():
+            assert result[key] == value
+        # Unstored slots carry the neutral fallback and zero data points.
+        points = prior.all_time_prior_points()
+        assert points[(0, 0)] == 4
+        assert points[(3, 12)] == 0
+        assert result[(3, 12)] == prior.unlearned_slot_prior
 
         # Second access uses the warm cache (no additional DB call).
         mock_get_all.reset_mock()
         result2 = prior.all_time_priors()
         mock_get_all.assert_not_called()
-        assert result2 == test_cache
+        assert result2 == result
 
     # Returned dict is a copy: mutating it must not corrupt the internal cache.
     result[(0, 0)] = 0.99

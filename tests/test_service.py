@@ -731,7 +731,18 @@ class TestGetTimePriors:
         for area_name in coordinator.get_area_names():
             area = coordinator.get_area(area_name)
             data = result["areas"][area_name]
-            assert set(data) == {"area_id", "global_prior", "slot_minutes", "slots"}
+            assert set(data) == {
+                "area_id",
+                "global_prior",
+                "slot_minutes",
+                "slots",
+                "slots_raw",
+                "data_points",
+            }
+            # The three per-slot maps are parallel: same keys, one entry each.
+            assert (
+                set(data["slots"]) == set(data["slots_raw"]) == set(data["data_points"])
+            )
             assert data["area_id"] == area.config.area_id
             assert data["global_prior"] == 0.5
             assert data["slot_minutes"] == DEFAULT_SLOT_MINUTES

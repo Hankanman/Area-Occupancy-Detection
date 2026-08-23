@@ -19,6 +19,7 @@ from custom_components.area_occupancy.db.queries import (
     build_motion_query,
     build_presence_query,
     get_all_time_priors,
+    get_stored_time_priors,
     get_area_data,
     get_global_prior,
     get_latest_interval,
@@ -1308,3 +1309,73 @@ class TestGetTotalOccupiedSeconds:
         )
         expected_duration = (expected_end - start).total_seconds()
         assert abs(result - expected_duration) < 1.0
+
+
+class TestGetStoredTimePriors:
+    """Test get_stored_time_priors — the learned-slots-only reader."""
+
+    def _seed(self, db, area_name: str) -> None:
+        """Insert one area and two learned slots."""
+        with db.get_session() as session:
+            session.add(
+                db.Areas(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    area_id="test",
+                    purpose="living",
+                    threshold=0.5,
+                )
+            )
+            session.add_all(
+                [
+                    db.Priors(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        day_of_week=0,
+                        time_slot=8,
+                        prior_value=0.6,
+                        data_points=10,
+                    ),
+                    db.Priors(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        day_of_week=1,
+                        time_slot=14,
+                        prior_value=0.35,
+                        data_points=3,
+                    ),
+                ]
+            )
+            session.commit()
+
+    def test_returns_only_stored_slots_with_points(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Only learned slots come back, each with its sample count."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        self._seed(db, area_name)
+
+        result = get_stored_time_priors(db, db.coordinator.entry_id, area_name)
+
+        # Unlike get_all_time_priors, the grid is NOT filled: the caller needs
+        # to tell "learned to be empty" from "never observed".
+        assert len(result) == 2
+        assert result[(0, 8)] == (0.6, 10)
+        assert result[(1, 14)] == (0.35, 3)
+        assert (2, 3) not in result
+
+    def test_error_returns_empty(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A database failure degrades to 'nothing learned', never raises."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        def _boom():
+            raise SQLAlchemyError("boom")
+
+        monkeypatch.setattr(db, "get_session", _boom)
+        assert get_stored_time_priors(db, db.coordinator.entry_id, area_name) == {}

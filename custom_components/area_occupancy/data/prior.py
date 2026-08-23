@@ -75,6 +75,10 @@ class Prior:
         self._last_updated: datetime | None = None
         # Cache for all 168 time priors: (day_of_week, time_slot) -> prior_value
         self._cached_time_priors: dict[tuple[int, int], float] | None = None
+        # Sample counts for the same slots: (day_of_week, time_slot) -> weeks
+        # of data behind the value. 0 means the slot was never learned and the
+        # cached value is the neutral fallback, not an observation.
+        self._cached_time_prior_points: dict[tuple[int, int], int] | None = None
 
     @property
     def value(self) -> float:
@@ -172,7 +176,7 @@ class Prior:
         slot_key = (current_day, current_slot)
 
         # Get from cache (guaranteed to exist after _load_time_priors)
-        return self._cached_time_priors.get(slot_key, DEFAULT_TIME_PRIOR)
+        return self._cached_time_priors.get(slot_key, self.unlearned_slot_prior)
 
     @property
     def day_of_week(self) -> int:
@@ -206,6 +210,22 @@ class Prior:
             self._load_time_priors()
         return dict(self._cached_time_priors)
 
+    def all_time_prior_points(self) -> dict[tuple[int, int], int]:
+        """Return the sample count behind each weekly slot.
+
+        Keys match :meth:`all_time_priors`. A value of ``0`` means the slot has
+        never been learned and its prior is the neutral fallback rather than an
+        observation — consumers should render or weight it differently instead
+        of treating it as a real probability.
+
+        Returns:
+            Dict mapping ``(day_of_week, time_slot)`` to the number of distinct
+            weeks of data behind that slot.
+        """
+        if self._cached_time_prior_points is None:
+            self._load_time_priors()
+        return dict(self._cached_time_prior_points or {})
+
     def prior_for(self, day_of_week: int, time_slot: int) -> float:
         """Return the learned occupancy-probability forecast for a given slot.
 
@@ -234,7 +254,7 @@ class Prior:
         if self._cached_time_priors is None:
             self._load_time_priors()
         slot_time_prior = self._cached_time_priors.get(
-            (day_of_week, time_slot), DEFAULT_TIME_PRIOR
+            (day_of_week, time_slot), self.unlearned_slot_prior
         )
         return forecast_prior(
             self.global_prior, slot_time_prior, prior_factor=PRIOR_FACTOR
@@ -265,23 +285,69 @@ class Prior:
         self.global_prior = None
         self._last_updated = None
 
+    def invalidate_time_prior_cache(self) -> None:
+        """Drop the cached weekly priors so the next read reloads from the DB.
+
+        Public because the analysis pipeline must invalidate *after* it writes
+        new priors, not only when the global prior changes.
+        """
+        self._invalidate_time_prior_cache()
+
     def _invalidate_time_prior_cache(self) -> None:
         """Invalidate the time_prior cache."""
         self._cached_time_priors = None
+        self._cached_time_prior_points = None
+
+    @property
+    def unlearned_slot_prior(self) -> float:
+        """Return the value to use for a slot that was never learned.
+
+        A slot with no stored row means "no observation", which is *not* the
+        same as "empty". Filling it with :data:`DEFAULT_TIME_PRIOR` (0.5) makes
+        the unknown outrank every genuinely low-occupancy slot and silently
+        inflates the live prior — an area with ``global_prior = 0.04`` was
+        being pushed to ~0.12 purely by unlearned slots.
+
+        The area's own ``global_prior`` is the neutral choice: it is the
+        identity of :func:`combine_priors` (combining a prior with itself
+        returns it unchanged), so an unlearned slot contributes no opinion in
+        either direction. Before any global prior exists there is nothing
+        neutral to fall back to, so the historical default is kept.
+
+        Returns:
+            The fallback time prior for unlearned slots.
+        """
+        if self.global_prior is None:
+            return DEFAULT_TIME_PRIOR
+        return max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, self.global_prior))
 
     def _load_time_priors(self) -> None:
         """Load all 168 time priors from database into cache.
 
-        This method loads time priors for the area in a single database query,
-        eliminating the need for individual queries when accessing time priors.
+        Reads the stored slots in a single query and fills the rest of the
+        weekly grid with :attr:`unlearned_slot_prior`, keeping a parallel map
+        of sample counts so callers can tell learned slots from filled ones.
         """
-        self._cached_time_priors = self.db.get_all_time_priors(
-            area_name=self.area_name,
-            default_prior=DEFAULT_TIME_PRIOR,
-        )
-        # Apply safety bounds to all cached values
-        for slot_key, prior_value in self._cached_time_priors.items():
-            self._cached_time_priors[slot_key] = max(
-                TIME_PRIOR_MIN_BOUND,
-                min(TIME_PRIOR_MAX_BOUND, prior_value),
-            )
+        stored = self.db.get_stored_time_priors(area_name=self.area_name)
+        fallback = self.unlearned_slot_prior
+
+        priors: dict[tuple[int, int], float] = {}
+        points: dict[tuple[int, int], int] = {}
+        slots_per_day = 1440 // DEFAULT_SLOT_MINUTES
+        for day_of_week in range(7):
+            for time_slot in range(slots_per_day):
+                slot_key = (day_of_week, time_slot)
+                record = stored.get(slot_key)
+                if record is None:
+                    priors[slot_key] = fallback
+                    points[slot_key] = 0
+                    continue
+                prior_value, data_points = record
+                priors[slot_key] = max(
+                    TIME_PRIOR_MIN_BOUND,
+                    min(TIME_PRIOR_MAX_BOUND, prior_value),
+                )
+                points[slot_key] = data_points
+
+        self._cached_time_priors = priors
+        self._cached_time_prior_points = points

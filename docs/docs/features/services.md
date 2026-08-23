@@ -52,6 +52,84 @@ The `analysis_error` field in each entity's likelihood data indicates why correl
 - Services that query historical data can be resource-intensive.
 - Analysis results (including `analysis_error` values) are persisted to the database and will be restored when entities are reloaded. This ensures that `analysis_error` values are preserved across Home Assistant restarts and entity reloads.
 
+## `area_occupancy.get_time_priors`
+
+Returns the learned **weekly occupancy forecast** for every area: 7 days × 24
+hourly slots (168 per area). Unlike `occupancy_probability`, which estimates the
+present, this can be queried for *future* slots — so a climate controller can
+pre-heat a room before its habitual occupancy instead of reacting to it.
+
+This is a response-only service (`SupportsResponse.ONLY`): it reads state and
+never modifies it.
+
+**Example:**
+
+```yaml
+action: area_occupancy.get_time_priors
+data:
+  area_id: studio   # optional; omit for every area
+response_variable: forecast
+```
+
+**Returns:**
+
+- `slot_minutes`: Slot resolution in minutes (60)
+- `areas`: Dictionary mapping area name to:
+    - `area_id`: The area's Home Assistant area id
+    - `global_prior`: The area's learned area-wide prior (absent on aggregate zones)
+    - `slot_minutes`: Slot resolution, echoed per area
+    - `slots`: `"day,slot"` → forecast probability, comparable to the area's
+      occupancy threshold. `day` is 0=Monday…6=Sunday, `slot` is the hour index
+    - `slots_raw`: `"day,slot"` → the learned time prior itself, uncombined
+    - `data_points`: `"day,slot"` → weeks of observation behind the slot
+    - `aggregate`, `members`, `name`: present only on aggregate zones
+      (*All Areas*, per-floor devices), listing the member area ids
+
+**Which map should I use?**
+
+`slots` is blended with the area's global prior, which keeps 60% of the weight —
+so its dynamic range is compressed and an area with a low global prior can never
+reach a high forecast value. Use `slots` when you need a number on the same scale
+as the occupancy threshold, and `slots_raw` when you need to know *which hours*
+the area is habitually busy. The derivation is in
+[Occupancy Forecast](../technical/occupancy-forecast.md#dynamic-range).
+
+!!! warning "Always check `data_points`"
+    A slot with `data_points: 0` was never observed. Its prior is a neutral
+    placeholder, not a measurement — skip it rather than acting on it. Freshly
+    installed areas, and hours the analysis window never covered, report zero.
+
+**Example automation** — pre-heat when the next hour is habitually occupied:
+
+```yaml
+triggers:
+  - trigger: time_pattern
+    minutes: "0"
+actions:
+  - action: area_occupancy.get_time_priors
+    data:
+      area_id: studio
+    response_variable: forecast
+  - variables:
+      slot: >-
+        {{ (now() + timedelta(hours=1)).weekday() }},{{ (now() + timedelta(hours=1)).hour }}
+      area: "{{ forecast.areas['Studio'] }}"
+  - condition: template
+    value_template: >-
+      {{ area.data_points[slot] | int > 0 and area.slots_raw[slot] | float > 0.5 }}
+  - action: climate.set_temperature
+    target:
+      entity_id: climate.studio
+    data:
+      temperature: 21
+```
+
+**Notes:**
+
+- The learned matrix is refreshed by the hourly analysis; calling this service
+  more often than that returns the same values.
+- A companion Lovelace card visualises the matrix — see `lovelace/README.md`.
+
 ## `area_occupancy.export_config`
 
 Exports the complete integration configuration as YAML. This is useful for debugging, sharing your setup when reporting issues, or backing up your configuration.

@@ -64,10 +64,20 @@ def test_build_area_time_priors_structure(coordinator: AreaOccupancyCoordinator)
     assert data["slots"]["2,10"] == round(area.prior.prior_for(2, 10), 4)
 
 
-def _member(area_id: str, prior_map: dict[tuple[int, int], float]):
-    """A minimal Area-like stand-in for aggregation tests."""
+def _member(
+    area_id: str,
+    prior_map: dict[tuple[int, int], float],
+    points_map: dict[tuple[int, int], int] | None = None,
+):
+    """A minimal Area-like stand-in for aggregation tests.
+
+    ``points_map`` defaults to "every known slot has one week of data" so tests
+    that don't care about sample counts stay readable.
+    """
+    points = points_map if points_map is not None else dict.fromkeys(prior_map, 1)
     prior = SimpleNamespace(
         all_time_priors=lambda _m=prior_map: dict(_m),
+        all_time_prior_points=lambda _p=points: dict(_p),
         prior_for=lambda d, s, _m=prior_map: _m.get((d, s), 0.0),
     )
     return SimpleNamespace(prior=prior, config=SimpleNamespace(area_id=area_id))
@@ -116,3 +126,27 @@ def test_build_aggregate_result_within_bounds():
         [m], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
     )
     assert MIN_PRIOR <= res["slots"]["0,0"] <= MAX_PRIOR
+
+
+def test_build_aggregate_data_points_take_member_minimum():
+    """An aggregate is only as well-learned as its least-observed member."""
+    m1 = _member("a", {(0, 8): 0.8}, {(0, 8): 4})
+    m2 = _member("b", {(0, 8): 0.4}, {(0, 8): 1})
+
+    res = build_aggregate_time_priors(
+        [m1, m2], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
+    )
+
+    assert res["data_points"]["0,8"] == 1
+
+
+def test_build_aggregate_exposes_raw_average():
+    """slots_raw averages the members' uncombined time priors."""
+    m1 = _member("a", {(0, 8): 0.8})
+    m2 = _member("b", {(0, 8): 0.4})
+
+    res = build_aggregate_time_priors(
+        [m1, m2], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
+    )
+
+    assert res["slots_raw"]["0,8"] == pytest.approx(0.6)
