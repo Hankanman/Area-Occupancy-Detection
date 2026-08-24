@@ -15,16 +15,21 @@
  * Options (all optional):
  *   title:           string  (default "Occupancy forecast")
  *   threshold:       number  0–100, comfort cutoff (default 50)
- *   refresh_minutes: number  re-poll interval (default 10)
+ *   refresh_minutes: number  re-poll interval (default 3; the "live" metric
+ *                    moves with the evidence, so a long interval shows stale
+ *                    lit slots)
  *   area_id:         string  limit to one area
  *   columns:         "auto" | 1 | 2  area layout (default "auto": 2 columns
  *                    only when the card itself is wider than 1100px)
- *   metric:          "raw" | "combined"  which number to plot (default "raw").
- *                    "raw"      = the learned time prior — carries the weekly
- *                                 shape, best for reading habits.
- *                    "combined" = time prior blended with the area's global
- *                                 prior; comparable to the occupancy threshold
- *                                 but with a compressed dynamic range.
+ *   metric:          "live" | "baseline" | "raw"  which series to plot
+ *                    (default "live").
+ *                    "live"     = evidence-conditioned forecast: the current and
+ *                                 next slots light up while the area is actually
+ *                                 occupied, relaxing back to habit after that.
+ *                    "baseline" = the same forecast without live evidence — the
+ *                                 stable weekly schedule.
+ *                    "raw"      = the learned time prior alone; carries the
+ *                                 weekly shape at full dynamic range.
  *   scale:           "area" | "absolute"  colour ramp (default "area"):
  *                    "area" stretches the ramp over the area's own min..max,
  *                    "absolute" pins it to 0..100%.
@@ -71,10 +76,10 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     this._config = {
       title: "Occupancy forecast",
       threshold: 50,
-      refresh_minutes: 10,
+      refresh_minutes: 3,
       area_id: null,
       columns: "auto",
-      metric: "raw",
+      metric: "live",
       scale: "area",
       ...config,
     };
@@ -184,6 +189,10 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
               height: var(--cell-h); }
         .cell { height: var(--cell-h); border-radius:3px; }
         .cell.comfort { box-shadow: inset 0 0 0 2px var(--primary-color); }
+        /* "Now" has to stay findable in a 168-cell grid, and readable whether or
+           not the slot is also comfort — hence an outline, not a background. */
+        .cell.now { outline: 2px solid var(--primary-text-color); outline-offset: 1px; }
+        .cell.now.eco { opacity: .6; }
         .cell.eco { opacity:.28; }
         /* "Never observed" must not look like a low probability — it isn't a
            probability at all. Hatched neutral, distinct from every ramp colour. */
@@ -196,6 +205,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
                 background: linear-gradient(90deg, ${RAMP[0]}, ${RAMP[1]} 34%, ${RAMP[2]} 64%, ${RAMP[3]}); }
         .sw { display:inline-block; width:13px; height:13px; border-radius:3px; vertical-align:-2px; }
         .sw.comfort { box-shadow: inset 0 0 0 2px var(--primary-color); }
+        .sw.now { outline: 2px solid var(--primary-text-color); outline-offset: 1px; }
         .sw.nodata { opacity:.5;
           background: repeating-linear-gradient(45deg,
             var(--secondary-text-color) 0 3px, transparent 3px 6px); }
@@ -223,7 +233,8 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
           (this._config?.scale ?? "area") === "area" ? "area min–max" : "0–100%"
         }</span><span><span class="sw comfort"></span> comfort</span>` +
         `<span><span class="sw nodata"></span> no data</span>` +
-        `<span>metric: ${esc(this._config?.metric ?? "raw")}</span></div>` +
+        `<span><span class="sw now"></span> now</span>` +
+        `<span>metric: ${esc(this._config?.metric ?? "live")}</span></div>` +
         `<div class="rooms ${this._roomsClass()}">` +
         Object.entries(this._data.areas)
           .map(([name, area]) => this._room(name, area, cols, hoursPerSlot))
@@ -258,11 +269,13 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     return c === "1" || c === "2" ? `cols-${c}` : "cols-auto";
   }
 
-  /** Per-slot values for the configured metric, falling back to the combined
-   *  map when an older integration build doesn't send slots_raw. */
+  /** Per-slot values for the configured metric. Each falls back down the chain
+   *  so an older integration build that only sends `slots` still renders. */
   _slotsOf(area) {
-    const wantRaw = (this._config?.metric ?? "raw") === "raw";
-    return (wantRaw && area.slots_raw) || area.slots || {};
+    const metric = this._config?.metric ?? "live";
+    if (metric === "raw") return area.slots_raw || area.slots_baseline || area.slots || {};
+    if (metric === "baseline") return area.slots_baseline || area.slots || {};
+    return area.slots || {};
   }
 
   /** Slots with zero weeks of data behind them: filled with a neutral
@@ -281,6 +294,8 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       .map(([, v]) => v);
     // Stretch the ramp over what this area actually spans, otherwise a room
     // whose values all sit in 7..43% reads as uniformly cold and looks untrained.
+    const nowKey = area.current_slot;
+    const baseline = area.slots_baseline || {};
     const perArea = (this._config?.scale ?? "area") === "area" && known.length > 1;
     const lo = perArea ? Math.min(...known) : 0;
     const hi = perArea ? Math.max(...known) : 1;
@@ -320,12 +335,17 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
           continue;
         }
         const comfort = p >= cutoff;
-        const title = `${DAYS[d]} ${hh}:00 · ${Math.round(p * 100)}% · ${
-          comfort ? "comfort" : "eco/off"
-        }`;
-        rows += `<div class="cell ${comfort ? "comfort" : "eco"}" title="${esc(
-          title
-        )}" style="background:${thermal(norm(p))}"></div>`;
+        const isNow = key === nowKey;
+        // Showing the habit next to the live value answers the question the
+        // heatmap otherwise begs: lit because someone is here, or out of habit?
+        const b = baseline[key];
+        const habit = b === undefined ? "" : ` · habit ${Math.round(b * 100)}%`;
+        const title = `${DAYS[d]} ${hh}:00${isNow ? " · now" : ""} · ${Math.round(
+          p * 100
+        )}%${habit} · ${comfort ? "comfort" : "eco/off"}`;
+        rows += `<div class="cell ${comfort ? "comfort" : "eco"}${
+          isNow ? " now" : ""
+        }" title="${esc(title)}" style="background:${thermal(norm(p))}"></div>`;
       }
     }
     const hrs = Math.round(climatized * 10) / 10;

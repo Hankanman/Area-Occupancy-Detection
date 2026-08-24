@@ -17,11 +17,15 @@ profile of how often each area is occupied at each hour. `data/forecast.py`
 exposes that profile for arbitrary — including future — slots.
 
 !!! info "Scope: the integration is a pure oracle"
-    The forecast answers exactly one question: *P(area occupied at slot T)*.
-    It deliberately does **not** choose a horizon, apply a trust gate, or decide
-    when to actuate. Those belong to the consuming control system, which already
-    owns its own control loop; duplicating them here would create two sets of
-    tuning knobs fighting each other.
+    The forecast answers exactly one question: *P(area occupied at slot T, given
+    everything known now)*. It deliberately does **not** choose a horizon, apply
+    a trust gate, or decide when to actuate. Those belong to the consuming
+    control system, which already owns its own control loop; duplicating them
+    here would create two sets of tuning knobs fighting each other.
+
+    Note the conditioning. Reporting the unconditional climatology while the
+    integration *knows* the room is occupied right now would be throwing away
+    information — the oracle is supposed to answer with everything it has.
 
 ## Module map
 
@@ -50,9 +54,27 @@ threshold-relative safety nets for the live estimate and are not meaningful to
 project onto a future slot. When `global_prior` is `None` (never learned) the
 slot's own bounds-clamped time prior is returned as a best-effort fallback.
 
+#### `persistence_tau_slots(purpose_half_life, slot_minutes) -> float`
+
+How many slots the current evidence keeps influencing the forecast. See
+[Persistence](#persistence) for why the purpose half-life is remapped rather than
+used directly.
+
+#### `conditioned_forecast(posterior, slot_forecast, slots_ahead, tau) -> float`
+
+Blends the live posterior into a future slot's baseline, with the evidence weight
+decaying as `exp(-slots_ahead / tau)`. Slot 0 returns the posterior unchanged;
+distant slots return the baseline untouched.
+
+#### `slots_ahead_of(day, slot, now_day, now_slot, slots_per_day) -> int`
+
+Forward distance from the current slot, wrapping the week. A slot earlier in the
+week is that slot *next* week, so the value is never negative and past slots land
+far enough ahead that the evidence weight vanishes.
+
 #### `build_area_time_priors(area, slot_minutes) -> dict`
 
-One real area's weekly forecast, as three parallel per-slot maps keyed
+One real area's weekly forecast, as four parallel per-slot maps keyed
 `"day,slot"` (`day` 0=Monday…6=Sunday, `slot` = `hour * 60 // slot_minutes`).
 
 #### `build_aggregate_time_priors(members, slot_minutes, area_id, name) -> dict | None`
@@ -134,9 +156,59 @@ legal range:
 
 **This is why the service returns `slots_raw`.** The raw time prior carries the
 weekly *shape* without the compression, so it is the right input for ranking
-hours against each other. Use `slots` when you need a number comparable to the
-area's occupancy threshold; use `slots_raw` when you need to know *when* the area
-is habitually busy.
+hours against each other.
+
+### Step 5 — Conditioning on what is happening now
+
+Everything above is *climatology*: the average of past weeks, blind to whether
+anyone is in the room right now. Occupancy is strongly autocorrelated, so the live
+posterior is real information about the next few slots:
+
+```text
+w = exp(-k / tau)                      # k = slots ahead of now
+slots[k] = sigmoid( w · logit(posterior) + (1 - w) · logit(baseline[k]) )
+```
+
+At `k = 0` the result is the posterior itself, so `slots[current_slot]` equals the
+area's `occupancy_probability` sensor exactly — which is what lets a consumer treat
+this one series as its only source instead of reconciling two.
+
+It cuts both ways, which matters more than the obvious direction: a room that just
+emptied reads *below* its habit, so a controller does not pre-heat for a routine
+that today is not happening.
+
+| | posterior 0.98 (occupied) | posterior 0.03 (just emptied) |
+|---|---|---|
+| now | 98% | 3% |
+| +1 slot | 76% | 16% |
+| +2 slots | 51% | 27% |
+| +3 slots | 41% | 32% |
+| +5 slots | 36% | 35% ← habit |
+
+(Studio, `tau = 1`, baseline 35%.)
+
+### Persistence
+
+`tau` comes from the area's purpose, but **not** from its half-life directly.
+`Purpose.half_life` is an *evidence-decay* constant in seconds — 45 s for a
+passageway, 1200 s for a bedroom — describing how fast a motion event stops
+justifying the live estimate, not how long a room stays occupied. Used as-is it
+would give `tau < 0.35` slots everywhere, collapsing every future slot onto the
+baseline and making the whole step a no-op.
+
+What the half-life *does* get right is the **ordering**: a corridor empties fast, a
+bedroom does not. So it is remapped monotonically onto a plausible persistence
+range:
+
+```text
+tau = clamp(half_life / 600, 0.5, 3.0)   # slots, at 60-minute resolution
+```
+
+giving passageway 0.5, working 1.0, sleeping 2.0. This is a heuristic, not a
+measurement, and it is deliberately visible: `tau_slots` is echoed in the service
+response so a consumer can see what was assumed. Learning `tau` per area from the
+median occupied-run length — data the integration already has — is the principled
+successor.
 
 ## Service response
 
@@ -149,15 +221,32 @@ areas:
     area_id: studio
     global_prior: 0.1294
     slot_minutes: 60
-    slots:       { "0,0": 0.0735, "0,9": 0.3512, ... }   # combined, threshold-comparable
-    slots_raw:   { "0,0": 0.0300, "0,9": 0.6100, ... }   # learned time prior, full range
-    data_points: { "0,0": 4,      "0,9": 4,      ... }   # weeks of evidence; 0 = unlearned
+    current_slot: "6,21"        # the slot covering "now" — anchor to the grid
+    threshold: 0.5              # the area's occupancy threshold
+    tau_slots: 1.0              # evidence persistence assumed for this area
+    slots:          { "6,21": 0.9848, "6,22": 0.7593, ... }  # conditioned: act on this
+    slots_baseline: { "6,21": 0.3512, "6,22": 0.3390, ... }  # stable weekly schedule
+    slots_raw:      { "6,21": 0.6100, "6,22": 0.5800, ... }  # learned time prior alone
+    data_points:    { "6,21": 4,      "6,22": 4,      ... }  # weeks of evidence; 0 = unlearned
   Piano Terra:
     area_id: piano_terra
     aggregate: true
     members: [salotto, cucina, sala_da_pranzo]
     ...
 ```
+
+**Which series do I want?**
+
+| Goal | Field |
+|---|---|
+| Act now — heat if the room is, or is about to be, occupied | `slots` |
+| Program a thermostat schedule that must not move between polls | `slots_baseline` |
+| Rank hours, audit the learned shape | `slots_raw` |
+| Decide whether to trust a slot at all | `data_points` |
+
+`slots` is a forecast *issued at the moment of the call*: two calls a minute apart
+can differ, by design. `slots_baseline` only changes when the hourly analysis
+relearns, which is what a weekly programme needs.
 
 Always check `data_points`. A slot with `0` is a filled placeholder, not a
 measurement, and should be skipped or treated as unknown rather than acted upon.
@@ -179,11 +268,17 @@ only raw intervals — so 28 days is the real ceiling.
 ## Lovelace card
 
 `lovelace/area-occupancy-time-priors-card.js` renders the weekly matrix as a 7×24
-heatmap. It defaults to `metric: "raw"` and `scale: "area"` — plotting the
-uncompressed time prior, with the colour ramp stretched over the area's own
-min–max — because absolute-scaled combined values make every low-prior room look
-uniformly cold. Slots with `data_points = 0` are hatched as *no data* and are
-excluded from both the ramp and the comfort-hours total.
+heatmap. It defaults to `metric: "live"` and `scale: "area"`, so the current slot —
+outlined as *now* — and the next one light up while the area is actually occupied,
+then relax back to habit. The tooltip shows the baseline next to the live value,
+which is what distinguishes "lit because someone is here" from "lit out of habit".
+`metric: "baseline"` and `metric: "raw"` plot the other two series; the ramp is
+stretched over the area's own min–max because absolute scaling makes every
+low-prior room look uniformly cold. Slots with `data_points = 0` are hatched as
+*no data* and excluded from both the ramp and the comfort-hours total.
+
+Because the live metric moves with the evidence, the card polls every 3 minutes by
+default rather than the 10 a static matrix would need.
 
 See `lovelace/README.md` for installation and the full option list.
 

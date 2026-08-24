@@ -9,7 +9,10 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.forecast import (
     build_aggregate_time_priors,
     build_area_time_priors,
+    conditioned_forecast,
     forecast_prior,
+    persistence_tau_slots,
+    slots_ahead_of,
 )
 from custom_components.area_occupancy.data.prior import (
     DEFAULT_SLOT_MINUTES,
@@ -68,6 +71,7 @@ def _member(
     area_id: str,
     prior_map: dict[tuple[int, int], float],
     points_map: dict[tuple[int, int], int] | None = None,
+    probability: float = 0.5,
 ):
     """A minimal Area-like stand-in for aggregation tests.
 
@@ -79,8 +83,17 @@ def _member(
         all_time_priors=lambda _m=prior_map: dict(_m),
         all_time_prior_points=lambda _p=points: dict(_p),
         prior_for=lambda d, s, _m=prior_map: _m.get((d, s), 0.0),
+        # Anchor "now" far from the tested slots so the evidence weight vanishes
+        # and aggregation maths can be asserted against the plain baseline.
+        day_of_week=3,
+        time_slot=12,
     )
-    return SimpleNamespace(prior=prior, config=SimpleNamespace(area_id=area_id))
+    return SimpleNamespace(
+        prior=prior,
+        config=SimpleNamespace(area_id=area_id, threshold=0.5),
+        purpose=SimpleNamespace(half_life=600.0),
+        probability=lambda _p=probability: _p,
+    )
 
 
 def test_build_aggregate_averages_members():
@@ -108,7 +121,9 @@ def test_build_aggregate_unions_member_slots():
         [m1, m2], DEFAULT_SLOT_MINUTES, "all_areas", "All Areas"
     )
     assert set(res["slots"]) == {"0,8", "2,3"}
-    assert res["slots"]["0,8"] == pytest.approx(0.45)  # (0.9 + 0.0) / 2
+    # (0.9 + MIN_PRIOR) / 2: a member missing the slot contributes the floor,
+    # not a literal zero — forecast_prior never returns an unclamped probability.
+    assert res["slots"]["0,8"] == pytest.approx((0.9 + MIN_PRIOR) / 2)
 
 
 def test_build_aggregate_empty_returns_none():
@@ -150,3 +165,51 @@ def test_build_aggregate_exposes_raw_average():
     )
 
     assert res["slots_raw"]["0,8"] == pytest.approx(0.6)
+
+
+def test_persistence_tau_follows_purpose_ordering():
+    """Tau ranks purposes the way their half-lives do, within sane bounds."""
+    passageway = persistence_tau_slots(45.0, DEFAULT_SLOT_MINUTES)
+    working = persistence_tau_slots(600.0, DEFAULT_SLOT_MINUTES)
+    sleeping = persistence_tau_slots(1200.0, DEFAULT_SLOT_MINUTES)
+
+    assert passageway < working < sleeping
+    # Raw half-lives are evidence-decay seconds, far too short to be used as
+    # persistence directly; the remap floors them instead of collapsing to ~0.
+    assert passageway == pytest.approx(0.5)
+    assert working == pytest.approx(1.0)
+    assert sleeping == pytest.approx(2.0)
+
+
+def test_conditioned_forecast_anchors_on_now_and_relaxes_to_baseline():
+    """Slot 0 is the posterior; distant slots are the untouched baseline."""
+    posterior, baseline = 0.9848, 0.3512
+
+    assert conditioned_forecast(posterior, baseline, 0, 1.0) == pytest.approx(
+        posterior, abs=1e-6
+    )
+    # The next slot is lifted well above the baseline but not to the posterior.
+    nxt = conditioned_forecast(posterior, baseline, 1, 1.0)
+    assert baseline < nxt < posterior
+    assert nxt == pytest.approx(0.759, abs=0.002)
+    # Far ahead, the evidence has no say left.
+    assert conditioned_forecast(posterior, baseline, 40, 1.0) == pytest.approx(
+        baseline, abs=1e-6
+    )
+
+
+def test_conditioned_forecast_suppresses_when_area_just_emptied():
+    """Evidence cuts both ways: empty now means less likely than the habit."""
+    baseline = 0.3512
+    nxt = conditioned_forecast(0.03, baseline, 1, 1.0)
+
+    assert nxt < baseline
+    assert nxt == pytest.approx(0.159, abs=0.002)
+
+
+def test_slots_ahead_wraps_the_week():
+    """A slot earlier in the week is that slot next week, never negative."""
+    assert slots_ahead_of(3, 12, 3, 12, 24) == 0
+    assert slots_ahead_of(3, 13, 3, 12, 24) == 1
+    assert slots_ahead_of(3, 11, 3, 12, 24) == 167
+    assert slots_ahead_of(0, 0, 6, 23, 24) == 1

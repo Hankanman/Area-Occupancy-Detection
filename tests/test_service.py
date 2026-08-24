@@ -735,13 +735,20 @@ class TestGetTimePriors:
                 "area_id",
                 "global_prior",
                 "slot_minutes",
+                "current_slot",
+                "threshold",
+                "tau_slots",
                 "slots",
+                "slots_baseline",
                 "slots_raw",
                 "data_points",
             }
-            # The three per-slot maps are parallel: same keys, one entry each.
+            # The four per-slot maps are parallel: same keys, one entry each.
             assert (
-                set(data["slots"]) == set(data["slots_raw"]) == set(data["data_points"])
+                set(data["slots"])
+                == set(data["slots_baseline"])
+                == set(data["slots_raw"])
+                == set(data["data_points"])
             )
             assert data["area_id"] == area.config.area_id
             assert data["global_prior"] == 0.5
