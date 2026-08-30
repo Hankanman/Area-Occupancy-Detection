@@ -200,6 +200,28 @@
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Configure custom entities that don't fit any other sensor type (e.g. an MQTT or HASS.Agent sensor). No domain or device_class filter is applied.",
+                        "data": {
+                            "custom_binary_sensors": "Custom Binary Sensors",
+                            "custom_binary_active_states": "Custom Binary Active States",
+                            "weight_custom_binary": "Custom Binary Weight",
+                            "custom_numeric_sensors": "Custom Numeric Sensors",
+                            "custom_numeric_active_min": "Custom Numeric Active Minimum",
+                            "custom_numeric_active_max": "Custom Numeric Active Maximum",
+                            "weight_custom_numeric": "Custom Numeric Weight"
+                        },
+                        "data_description": {
+                            "custom_binary_sensors": "Any entity with no domain or device_class filter, for sensors today's typed sections reject (e.g. an MQTT or HASS.Agent sensor reporting a custom on/off-style state).",
+                            "custom_binary_active_states": "Which state(s) count as 'active' evidence of occupancy for these entities. Type a custom value if your sensor doesn't report on/off.",
+                            "weight_custom_binary": "The weight given to custom binary sensor inputs in the occupancy calculation.",
+                            "custom_numeric_sensors": "Any numeric entity with no domain or device_class filter, for sensors today's typed sections reject.",
+                            "custom_numeric_active_min": "The minimum value (inclusive) that counts as presence evidence.",
+                            "custom_numeric_active_max": "The maximum value (inclusive) that counts as presence evidence.",
+                            "weight_custom_numeric": "The weight given to custom numeric sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -361,6 +383,28 @@
                             "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
+                    },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Configure custom entities that don't fit any other sensor type (e.g. an MQTT or HASS.Agent sensor). No domain or device_class filter is applied.",
+                        "data": {
+                            "custom_binary_sensors": "Custom Binary Sensors",
+                            "custom_binary_active_states": "Custom Binary Active States",
+                            "weight_custom_binary": "Custom Binary Weight",
+                            "custom_numeric_sensors": "Custom Numeric Sensors",
+                            "custom_numeric_active_min": "Custom Numeric Active Minimum",
+                            "custom_numeric_active_max": "Custom Numeric Active Maximum",
+                            "weight_custom_numeric": "Custom Numeric Weight"
+                        },
+                        "data_description": {
+                            "custom_binary_sensors": "Any entity with no domain or device_class filter, for sensors today's typed sections reject (e.g. an MQTT or HASS.Agent sensor reporting a custom on/off-style state).",
+                            "custom_binary_active_states": "Which state(s) count as 'active' evidence of occupancy for these entities. Type a custom value if your sensor doesn't report on/off.",
+                            "weight_custom_binary": "The weight given to custom binary sensor inputs in the occupancy calculation.",
+                            "custom_numeric_sensors": "Any numeric entity with no domain or device_class filter, for sensors today's typed sections reject.",
+                            "custom_numeric_active_min": "The minimum value (inclusive) that counts as presence evidence.",
+                            "custom_numeric_active_max": "The maximum value (inclusive) that counts as presence evidence.",
+                            "weight_custom_numeric": "The weight given to custom numeric sensor inputs in the occupancy calculation."
+                        }
                     }
                 }
             },
@@ -427,6 +471,8 @@
             "lock_state_required": "Lock active state is required when lock sensors are configured.",
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
+            "custom_binary_states_required": "Custom binary active states are required when custom binary sensors are configured.",
+            "custom_numeric_range_invalid": "Custom numeric active minimum must be less than the active maximum.",
             "person_entity_required": "A person entity is required.",
             "person_already_configured": "This person is already configured.",
             "sleep_sensor_required": "At least one sleep sensor is required.",
@@ -633,6 +679,28 @@
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Configure custom entities that don't fit any other sensor type (e.g. an MQTT or HASS.Agent sensor). No domain or device_class filter is applied.",
+                        "data": {
+                            "custom_binary_sensors": "Custom Binary Sensors",
+                            "custom_binary_active_states": "Custom Binary Active States",
+                            "weight_custom_binary": "Custom Binary Weight",
+                            "custom_numeric_sensors": "Custom Numeric Sensors",
+                            "custom_numeric_active_min": "Custom Numeric Active Minimum",
+                            "custom_numeric_active_max": "Custom Numeric Active Maximum",
+                            "weight_custom_numeric": "Custom Numeric Weight"
+                        },
+                        "data_description": {
+                            "custom_binary_sensors": "Any entity with no domain or device_class filter, for sensors today's typed sections reject (e.g. an MQTT or HASS.Agent sensor reporting a custom on/off-style state).",
+                            "custom_binary_active_states": "Which state(s) count as 'active' evidence of occupancy for these entities. Type a custom value if your sensor doesn't report on/off.",
+                            "weight_custom_binary": "The weight given to custom binary sensor inputs in the occupancy calculation.",
+                            "custom_numeric_sensors": "Any numeric entity with no domain or device_class filter, for sensors today's typed sections reject.",
+                            "custom_numeric_active_min": "The minimum value (inclusive) that counts as presence evidence.",
+                            "custom_numeric_active_max": "The maximum value (inclusive) that counts as presence evidence.",
+                            "weight_custom_numeric": "The weight given to custom numeric sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -794,6 +862,28 @@
                             "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
+                    },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Configure custom entities that don't fit any other sensor type (e.g. an MQTT or HASS.Agent sensor). No domain or device_class filter is applied.",
+                        "data": {
+                            "custom_binary_sensors": "Custom Binary Sensors",
+                            "custom_binary_active_states": "Custom Binary Active States",
+                            "weight_custom_binary": "Custom Binary Weight",
+                            "custom_numeric_sensors": "Custom Numeric Sensors",
+                            "custom_numeric_active_min": "Custom Numeric Active Minimum",
+                            "custom_numeric_active_max": "Custom Numeric Active Maximum",
+                            "weight_custom_numeric": "Custom Numeric Weight"
+                        },
+                        "data_description": {
+                            "custom_binary_sensors": "Any entity with no domain or device_class filter, for sensors today's typed sections reject (e.g. an MQTT or HASS.Agent sensor reporting a custom on/off-style state).",
+                            "custom_binary_active_states": "Which state(s) count as 'active' evidence of occupancy for these entities. Type a custom value if your sensor doesn't report on/off.",
+                            "weight_custom_binary": "The weight given to custom binary sensor inputs in the occupancy calculation.",
+                            "custom_numeric_sensors": "Any numeric entity with no domain or device_class filter, for sensors today's typed sections reject.",
+                            "custom_numeric_active_min": "The minimum value (inclusive) that counts as presence evidence.",
+                            "custom_numeric_active_max": "The maximum value (inclusive) that counts as presence evidence.",
+                            "weight_custom_numeric": "The weight given to custom numeric sensor inputs in the occupancy calculation."
+                        }
                     }
                 }
             },
@@ -926,6 +1016,8 @@
             "lock_state_required": "Lock active state is required when lock sensors are configured.",
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
+            "custom_binary_states_required": "Custom binary active states are required when custom binary sensors are configured.",
+            "custom_numeric_range_invalid": "Custom numeric active minimum must be less than the active maximum.",
             "person_entity_required": "A person entity is required.",
             "person_already_configured": "This person is already configured.",
             "sleep_sensor_required": "At least one sleep sensor is required.",

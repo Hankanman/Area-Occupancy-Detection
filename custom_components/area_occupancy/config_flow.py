@@ -58,6 +58,11 @@ from .const import (
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -103,6 +108,8 @@ from .const import (
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_LOCK,
@@ -116,6 +123,9 @@ from .const import (
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_COVER_ACTIVE_STATES,
+    DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -139,6 +149,8 @@ from .const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM_BINARY,
+    DEFAULT_WEIGHT_CUSTOM_NUMERIC,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -294,6 +306,8 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_pm10_entities = []
     include_motion_entities = []
     include_wifi_clients_entities = []
+    include_custom_binary_entities = []
+    include_custom_numeric_entities = []
 
     door_window_classes = (
         BinarySensorDeviceClass.DOOR,
@@ -339,6 +353,13 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
         if entry.domain == Platform.BINARY_SENSOR:
+            # Custom binary sensors have no device_class/domain filter at
+            # all — every binary_sensor or sensor entity (except this
+            # integration's own outputs) is offered, since the whole point
+            # is supporting entities today's typed sections reject (#531).
+            if entry.platform != DOMAIN:
+                include_custom_binary_entities.append(entry.entity_id)
+
             device_class = entry.device_class
             original_device_class = entry.original_device_class
 
@@ -453,6 +474,12 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             # etc.) — selecting one of those would create a feedback loop.
             if entry.platform != DOMAIN:
                 include_wifi_clients_entities.append(entry.entity_id)
+                # `sensor.` entities can report discrete/string states too
+                # (e.g. a HASS.Agent sensor reporting "on"/"off"), not just
+                # numeric values, so they're valid custom-binary candidates
+                # alongside custom-numeric ones.
+                include_custom_binary_entities.append(entry.entity_id)
+                include_custom_numeric_entities.append(entry.entity_id)
 
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
@@ -493,6 +520,8 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         "pm10": include_pm10_entities,
         "motion": include_motion_entities,
         "wifi_clients": include_wifi_clients_entities,
+        "custom_binary": include_custom_binary_entities,
+        "custom_numeric": include_custom_numeric_entities,
     }
 
 
@@ -909,6 +938,97 @@ def _create_wifi_clients_section_schema(
     )
 
 
+def _create_custom_section_schema(
+    defaults: dict[str, Any],
+    custom_binary_entities: list[str],
+    custom_numeric_entities: list[str],
+    custom_state_options: list[SelectOptionDict],
+) -> vol.Schema:
+    """Create schema for the custom entities section (#531).
+
+    Unlike every other section, these have no domain/device_class filter
+    at all — the whole point is supporting entities today's typed sections
+    reject (e.g. an MQTT/HASS.Agent sensor with no matching device_class).
+    Binary and numeric are separate InputTypes (not one flexible type)
+    because the rest of the codebase classifies InputTypes statically as
+    binary or numeric (DB storage, health checks, probability channel).
+    """
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_CUSTOM_BINARY_SENSORS,
+                default=defaults.get(CONF_CUSTOM_BINARY_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=custom_binary_entities,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_CUSTOM_BINARY_ACTIVE_STATES,
+                default=defaults.get(
+                    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+                    list(DEFAULT_CUSTOM_BINARY_ACTIVE_STATES),
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=custom_state_options,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_CUSTOM_BINARY,
+                default=defaults.get(
+                    CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_CUSTOM_NUMERIC_SENSORS,
+                default=defaults.get(CONF_CUSTOM_NUMERIC_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=custom_numeric_entities,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+                default=defaults.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+                ),
+            ): NumberSelector(NumberSelectorConfig(mode=NumberSelectorMode.BOX)),
+            vol.Optional(
+                CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+                default=defaults.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX
+                ),
+            ): NumberSelector(NumberSelectorConfig(mode=NumberSelectorMode.BOX)),
+            vol.Optional(
+                CONF_WEIGHT_CUSTOM_NUMERIC,
+                default=defaults.get(
+                    CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+        }
+    )
+
+
 def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Create schema for the wasp in box section."""
     return vol.Schema(
@@ -1056,6 +1176,7 @@ def _create_sensors_step_schema(
     window_state_options = _get_state_select_options("window")
     cover_state_options = _get_state_select_options("cover")
     appliance_state_options = _get_state_select_options("appliance")
+    custom_state_options = _get_state_select_options("custom")
 
     return {
         vol.Required("windows_and_doors"): section(
@@ -1104,6 +1225,15 @@ def _create_sensors_step_schema(
         vol.Required("wifi_clients"): section(
             _create_wifi_clients_section_schema(
                 defaults, include_entities["wifi_clients"]
+            ),
+            {"collapsed": True},
+        ),
+        vol.Required("custom"): section(
+            _create_custom_section_schema(
+                defaults,
+                include_entities["custom_binary"],
+                include_entities["custom_numeric"],
+                cast("list[SelectOptionDict]", custom_state_options),
             ),
             {"collapsed": True},
         ),
@@ -1264,6 +1394,22 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
             wifi_clients[key] = flat_config[key]
     if wifi_clients:
         nested["wifi_clients"] = wifi_clients
+
+    # Custom entities section (binary + numeric, unfiltered — #531)
+    custom: dict[str, Any] = {}
+    for key in (
+        CONF_CUSTOM_BINARY_SENSORS,
+        CONF_CUSTOM_BINARY_ACTIVE_STATES,
+        CONF_WEIGHT_CUSTOM_BINARY,
+        CONF_CUSTOM_NUMERIC_SENSORS,
+        CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+        CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+        CONF_WEIGHT_CUSTOM_NUMERIC,
+    ):
+        if key in flat_config:
+            custom[key] = flat_config[key]
+    if custom:
+        nested["custom"] = custom
 
     # Wasp in box section
     wasp: dict[str, Any] = {}
@@ -1990,6 +2136,25 @@ class BaseOccupancyFlow:
         if cover_sensors and not cover_states:
             errors[CONF_COVER_SENSORS] = "cover_states_required"
 
+        # Validate custom binary sensors
+        custom_binary_sensors = data.get(CONF_CUSTOM_BINARY_SENSORS, [])
+        custom_binary_states = data.get(
+            CONF_CUSTOM_BINARY_ACTIVE_STATES, DEFAULT_CUSTOM_BINARY_ACTIVE_STATES
+        )
+        if custom_binary_sensors and not custom_binary_states:
+            errors[CONF_CUSTOM_BINARY_SENSORS] = "custom_binary_states_required"
+
+        # Validate custom numeric sensors
+        custom_numeric_sensors = data.get(CONF_CUSTOM_NUMERIC_SENSORS, [])
+        custom_numeric_min = data.get(
+            CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+        )
+        custom_numeric_max = data.get(
+            CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX
+        )
+        if custom_numeric_sensors and custom_numeric_min >= custom_numeric_max:
+            errors[CONF_CUSTOM_NUMERIC_SENSORS] = "custom_numeric_range_invalid"
+
         # Validate weights
         weights = [
             (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
@@ -2013,6 +2178,14 @@ class BaseOccupancyFlow:
             (
                 CONF_WEIGHT_WIFI_CLIENTS,
                 data.get(CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS),
+            ),
+            (
+                CONF_WEIGHT_CUSTOM_BINARY,
+                data.get(CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY),
+            ),
+            (
+                CONF_WEIGHT_CUSTOM_NUMERIC,
+                data.get(CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC),
             ),
         ]
         for name, weight in weights:
