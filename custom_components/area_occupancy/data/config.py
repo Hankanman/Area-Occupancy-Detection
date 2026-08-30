@@ -26,6 +26,11 @@ from ..const import (
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -69,6 +74,8 @@ from ..const import (
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_LOCK,
@@ -83,6 +90,9 @@ from ..const import (
     DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_COVER_ACTIVE_STATES,
+    DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -106,6 +116,8 @@ from ..const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM_BINARY,
+    DEFAULT_WEIGHT_CUSTOM_NUMERIC,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -306,6 +318,8 @@ class Sensors:
     pm10: list[str] = field(default_factory=list)
     power: list[str] = field(default_factory=list)
     wifi_clients: list[str] = field(default_factory=list)
+    custom_binary: list[str] = field(default_factory=list)
+    custom_numeric: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     lock: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
@@ -395,6 +409,9 @@ class SensorStates:
         default_factory=lambda: list(DEFAULT_APPLIANCE_ACTIVE_STATES)
     )
     media: list[str] = field(default_factory=lambda: list(DEFAULT_MEDIA_ACTIVE_STATES))
+    custom_binary: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CUSTOM_BINARY_ACTIVE_STATES)
+    )
 
 
 @dataclass
@@ -408,6 +425,8 @@ class Weights:
     lock: float = DEFAULT_WEIGHT_LOCK
     window: float = DEFAULT_WEIGHT_WINDOW
     cover: float = DEFAULT_WEIGHT_COVER
+    custom_binary: float = DEFAULT_WEIGHT_CUSTOM_BINARY
+    custom_numeric: float = DEFAULT_WEIGHT_CUSTOM_NUMERIC
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
     power: float = DEFAULT_WEIGHT_POWER
     wifi_clients: float = DEFAULT_WEIGHT_WIFI_CLIENTS
@@ -555,6 +574,8 @@ class AreaConfig:
             pm10=data.get(CONF_PM10_SENSORS, []),
             power=data.get(CONF_POWER_SENSORS, []),
             wifi_clients=data.get(CONF_WIFI_CLIENTS_SENSORS, []),
+            custom_binary=data.get(CONF_CUSTOM_BINARY_SENSORS, []),
+            custom_numeric=data.get(CONF_CUSTOM_NUMERIC_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             lock=data.get(CONF_LOCK_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
@@ -572,6 +593,10 @@ class AreaConfig:
                 CONF_APPLIANCE_ACTIVE_STATES, list(DEFAULT_APPLIANCE_ACTIVE_STATES)
             ),
             media=data.get(CONF_MEDIA_ACTIVE_STATES, list(DEFAULT_MEDIA_ACTIVE_STATES)),
+            custom_binary=data.get(
+                CONF_CUSTOM_BINARY_ACTIVE_STATES,
+                list(DEFAULT_CUSTOM_BINARY_ACTIVE_STATES),
+            ),
         )
 
         self.weights = Weights(
@@ -589,7 +614,30 @@ class AreaConfig:
             wifi_clients=data.get(
                 CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS
             ),
+            custom_binary=data.get(
+                CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY
+            ),
+            custom_numeric=data.get(
+                CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC
+            ),
             wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+        )
+
+        # Generic per-InputType active_range override hook (see
+        # data/entity.py's `f"{input_type.value}_active_range"` lookup).
+        # custom_numeric is the first InputType to actually populate it —
+        # every other numeric type still relies on DEFAULT_TYPES.
+        self.custom_numeric_active_range: tuple[float, float] = (
+            float(
+                data.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+                )
+            ),
+            float(
+                data.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX
+                )
+            ),
         )
 
         # Resolve half-life: if 0 or not set, use purpose-based value
@@ -658,6 +706,8 @@ class AreaConfig:
             *self.sensors.pm10,
             *self.sensors.power,
             *self.sensors.wifi_clients,
+            *self.sensors.custom_binary,
+            *self.sensors.custom_numeric,
         ]
 
     def validate_entity_configuration(self) -> list[str]:
@@ -704,6 +754,8 @@ class AreaConfig:
             ("pm10", self.sensors.pm10),
             ("power", self.sensors.power),
             ("wifi_clients", self.sensors.wifi_clients),
+            ("custom_binary", self.sensors.custom_binary),
+            ("custom_numeric", self.sensors.custom_numeric),
         ]:
             if entity_list and not all(
                 isinstance(eid, str) and eid.strip() for eid in entity_list
