@@ -1579,3 +1579,111 @@ class TestSlidingCutoffMerge:
                 .count()
             )
             assert hourlies_left == 0
+
+
+class TestAggregationEntryIsolation:
+    """Regression tests for #533: aggregation must scope by entry_id.
+
+    Two different config entries can each have an area whose sensors happen
+    to share a physical HA entity_id (the same motion sensor assigned to two
+    overlapping areas). Aggregation must keep their rows separate instead of
+    merging them into one.
+    """
+
+    def test_raw_to_daily_keeps_entries_separate(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Same entity_id/state/day across two entries aggregates into two rows."""
+        db = coordinator.db
+        entry_id_a = db.coordinator.entry_id
+        entry_id_b = "second-config-entry-id"
+        area_a = db.coordinator.get_area_names()[0]
+        area_b = "Second Entry Area"
+        shared_entity_id = "binary_sensor.shared_motion"
+
+        old_date = (
+            dt_util.as_local(_get_old_date(RETENTION_RAW_INTERVALS_DAYS))
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .astimezone(dt_util.UTC)
+        )
+
+        with db.get_session() as session:
+            for entry_id, area_name in ((entry_id_a, area_a), (entry_id_b, area_b)):
+                session.add(
+                    db.Intervals(
+                        entry_id=entry_id,
+                        area_name=area_name,
+                        entity_id=shared_entity_id,
+                        state="on",
+                        start_time=old_date,
+                        end_time=old_date + timedelta(minutes=30),
+                        duration_seconds=1800.0,
+                        aggregation_level="raw",
+                    )
+                )
+            session.commit()
+
+        # No area_name filter: exercises the same all-areas path the
+        # periodic analysis run uses (data/analysis.py run_interval_aggregation).
+        result_count, _ = aggregate_raw_to_daily(db)
+        assert result_count == 2
+
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.IntervalAggregates)
+                .filter_by(entity_id=shared_entity_id, aggregation_period="daily")
+                .all()
+            )
+            assert len(aggregates) == 2
+            entry_ids = {agg.entry_id for agg in aggregates}
+            assert entry_ids == {entry_id_a, entry_id_b}
+            for agg in aggregates:
+                # Each entry's row reflects only its own single interval,
+                # not a merge of both entries' intervals.
+                assert agg.interval_count == 1
+                assert agg.total_duration_seconds == 1800.0
+
+    def test_hourly_numeric_keeps_entries_separate(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Same entity_id/hour across two entries aggregates into two rows."""
+        db = coordinator.db
+        entry_id_a = db.coordinator.entry_id
+        entry_id_b = "second-config-entry-id"
+        area_a = db.coordinator.get_area_names()[0]
+        area_b = "Second Entry Area"
+        shared_entity_id = "sensor.shared_temperature"
+
+        old_date = _get_old_date(RETENTION_RAW_NUMERIC_SAMPLES_DAYS)
+
+        with db.get_session() as session:
+            for entry_id, area_name, value in (
+                (entry_id_a, area_a, 20.0),
+                (entry_id_b, area_b, 30.0),
+            ):
+                session.add(
+                    db.NumericSamples(
+                        entry_id=entry_id,
+                        area_name=area_name,
+                        entity_id=shared_entity_id,
+                        timestamp=old_date,
+                        value=value,
+                        unit_of_measurement="°C",
+                    )
+                )
+            session.commit()
+
+        result_count, _ = aggregate_numeric_samples_to_hourly(db)
+        assert result_count == 2
+
+        with db.get_session() as session:
+            aggregates = (
+                session.query(db.NumericAggregates)
+                .filter_by(entity_id=shared_entity_id, aggregation_period="hourly")
+                .all()
+            )
+            assert len(aggregates) == 2
+            by_entry = {agg.entry_id: agg for agg in aggregates}
+            assert by_entry.keys() == {entry_id_a, entry_id_b}
+            assert by_entry[entry_id_a].avg_value == pytest.approx(20.0)
+            assert by_entry[entry_id_b].avg_value == pytest.approx(30.0)

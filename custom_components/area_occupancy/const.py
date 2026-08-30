@@ -31,7 +31,14 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.8.1"
-CONF_VERSION: Final = 18
+# v18->v19: widened the aggregation/interval/numeric-sample unique constraints
+# and grouping keys to include entry_id (#533) — two config entries sharing a
+# physical entity_id no longer collide. This is a genuine constraint change,
+# not additive, so it intentionally triggers the destructive
+# _ensure_schema_up_to_date path (delete + recreate the DB) — unlike the
+# adjacent_areas case documented in migrations.py, an in-place ALTER isn't
+# possible here since the old constraint is narrower than the new one.
+CONF_VERSION: Final = 19
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
