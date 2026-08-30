@@ -12,15 +12,19 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AllAreas, AreaDeviceHandle, FloorAreas
 from .const import ALL_AREAS_IDENTIFIER, DEFAULT_SENSOR_PRECISION
 from .data.activity import ActivityId
 from .data.entity_type import InputType
-from .utils import format_float, format_percentage, generate_entity_unique_id
+from .utils import (
+    assign_device_to_ha_area,
+    format_float,
+    format_percentage,
+    generate_entity_unique_id,
+)
 
 if TYPE_CHECKING:
     from .area import Area
@@ -78,14 +82,7 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
         # Assign device to Home Assistant area if area_id is configured.
         # Only for specific areas, not "All Areas" or floor aggregates.
         if self._area_handle is not None and (area := self._get_area()) is not None:
-            if area.config.area_id and self.device_info:
-                device_registry = dr.async_get(self.hass)
-                identifiers = self.device_info.get("identifiers", set())
-                device = device_registry.async_get_device(identifiers=identifiers)
-                if device and device.area_id != area.config.area_id:
-                    device_registry.async_update_device(
-                        device.id, area_id=area.config.area_id
-                    )
+            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""
@@ -115,14 +112,13 @@ class PriorsSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the priors sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_PRIORS_SENSOR
+        self._attr_translation_key = "prior_probability"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
             NAME_PRIORS_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -183,14 +179,13 @@ class ProbabilitySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the probability sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_PROBABILITY_SENSOR
+        self._attr_translation_key = "occupancy_probability"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
             NAME_PROBABILITY_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -235,11 +230,6 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             "decaying_entities": decaying_entities,
         }
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        super()._handle_coordinator_update()
-
 
 class EvidenceSensor(AreaOccupancySensorBase):
     """Sensor for all evidence."""
@@ -253,7 +243,7 @@ class EvidenceSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the entities sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_EVIDENCE_SENSOR
+        self._attr_translation_key = "evidence"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
@@ -340,14 +330,13 @@ class DecaySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the decay sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_DECAY_SENSOR
+        self._attr_translation_key = "decay_status"
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
             NAME_DECAY_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -414,13 +403,12 @@ class PresenceProbabilitySensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the presence probability sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_PRESENCE_PROBABILITY_SENSOR
+        self._attr_translation_key = "presence_confidence"
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
             NAME_PRESENCE_PROBABILITY_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -449,13 +437,12 @@ class EnvironmentalConfidenceSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the environmental confidence sensor."""
         super().__init__(area_handle, all_areas)
-        self._attr_name = NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR
+        self._attr_translation_key = "environmental_confidence"
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,
             NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -539,7 +526,6 @@ class ActivityConfidenceSensor(AreaOccupancySensorBase):
             self.device_info,
             NAME_ACTIVITY_CONFIDENCE_SENSOR,
         )
-        self._attr_device_class = SensorDeviceClass.POWER_FACTOR
         self._attr_native_unit_of_measurement = PERCENTAGE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -568,7 +554,7 @@ class SensorHealthSensor(AreaOccupancySensorBase):
     ) -> None:
         """Initialize the sensor health sensor."""
         super().__init__(area_handle=area_handle)
-        self._attr_name = NAME_SENSOR_HEALTH_SENSOR
+        self._attr_translation_key = "sensor_health"
         self._attr_unique_id = generate_entity_unique_id(
             self._entry_id,
             self.device_info,

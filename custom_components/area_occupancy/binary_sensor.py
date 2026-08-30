@@ -21,7 +21,6 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -52,7 +51,7 @@ from .const import (
     NAME_SLEEP_PRESENCE,
     NAME_WASP_IN_BOX,
 )
-from .utils import generate_entity_unique_id
+from .utils import assign_device_to_ha_area, generate_entity_unique_id
 
 if TYPE_CHECKING:
     from .area import Area
@@ -101,7 +100,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
             ),
             NAME_BINARY_SENSOR,
         )
-        self._attr_name = NAME_BINARY_SENSOR
+        self._attr_translation_key = "occupancy_status"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         # Get device_info directly from Area or AllAreas
         self._attr_device_info = (
@@ -116,17 +115,7 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         # Let the coordinator know our entity_id. Only for per-area entities, not aggregates.
         if self._handle is not None and (area := self._get_area()) is not None:
             area.occupancy_entity_id = self.entity_id
-
-            # Assign device to Home Assistant area if area_id is configured
-            if area.config.area_id and self.device_info:
-                device_registry = dr.async_get(self.hass)
-                # DeviceInfo is a TypedDict, access identifiers directly
-                identifiers = self.device_info.get("identifiers", set())
-                device = device_registry.async_get_device(identifiers=identifiers)
-                if device and device.area_id != area.config.area_id:
-                    device_registry.async_update_device(
-                        device.id, area_id=area.config.area_id
-                    )
+            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
@@ -166,11 +155,6 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
             return None
         return self._handle.area
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        super()._handle_coordinator_update()
-
 
 class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
     """Wasp in Box binary sensor implementation.
@@ -209,7 +193,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             raise ValueError(f"Area '{area_handle.area_name}' is not available")
         self._config = area.config
         self._motion_timeout = self._config.wasp_in_box.motion_timeout
-        self._weight = self._config.wasp_in_box.weight
         self._max_duration = self._config.wasp_in_box.max_duration
         self._verification_delay = self._config.wasp_in_box.verification_delay
 
@@ -221,7 +204,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             area.device_info(),
             NAME_WASP_IN_BOX,
         )
-        self._attr_name = NAME_WASP_IN_BOX
+        self._attr_translation_key = "wasp_in_box"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         # Get device_info directly from Area
         self._attr_device_info = area.device_info() if area is not None else None
@@ -362,11 +345,6 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             ATTR_VERIFICATION_PENDING: self._verification_pending,
         }
 
-    @property
-    def weight(self) -> float:
-        """Return the sensor weight for probability calculation."""
-        return self._weight
-
     def _setup_entity_tracking(self) -> None:
         """Set up state tracking for door and motion entities."""
         if not self._door_entities and not self._motion_entities:
@@ -429,13 +407,11 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if not self._door_entities:
             return DOOR_CLOSED
 
-        # Check all door sensors
+        # If ANY door is open, return DOOR_OPEN
         for entity_id in self._door_entities:
             state = self.hass.states.get(entity_id)
-            if state and state.state not in ["unknown", "unavailable"]:
-                # If ANY door is open, return DOOR_OPEN
-                if state.state == DOOR_OPEN:
-                    return DOOR_OPEN
+            if state and state.state == DOOR_OPEN:
+                return DOOR_OPEN
 
         # All doors are closed (or unavailable/unknown)
         return DOOR_CLOSED
@@ -453,13 +429,11 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         if not self._motion_entities:
             return STATE_OFF
 
-        # Check all motion sensors
+        # If ANY motion sensor is active, return STATE_ON
         for entity_id in self._motion_entities:
             state = self.hass.states.get(entity_id)
-            if state and state.state not in ["unknown", "unavailable"]:
-                # If ANY motion sensor is active, return STATE_ON
-                if state.state == STATE_ON:
-                    return STATE_ON
+            if state and state.state == STATE_ON:
+                return STATE_ON
 
         # All motion sensors are off (or unavailable/unknown)
         return STATE_OFF
@@ -787,7 +761,7 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
             area.device_info(),
             NAME_SLEEP_PRESENCE,
         )
-        self._attr_name = NAME_SLEEP_PRESENCE
+        self._attr_translation_key = "sleeping"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         self._attr_icon = "mdi:sleep"
         self._attr_device_info = area.device_info()

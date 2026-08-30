@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard library imports
+from collections import deque
 import contextlib
 from datetime import datetime, timedelta
 import logging
@@ -24,12 +25,22 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
 )
 from homeassistant.helpers.start import async_at_started
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
-from .const import CONF_AREA_ID, CONF_AREAS, DEFAULT_NAME, DOMAIN, SAVE_INTERVAL
+from .const import (
+    ACCURACY_TICK_BUFFER_MAXLEN,
+    CONF_AREA_ID,
+    CONF_AREAS,
+    DEFAULT_NAME,
+    DOMAIN,
+    ONLINE_PRIOR_STORE_KEY_PREFIX,
+    ONLINE_PRIOR_STORE_VERSION,
+    SAVE_INTERVAL,
+)
 from .data.adjacency import (
     BoostContribution,
     DecayModifierContribution,
@@ -39,6 +50,9 @@ from .data.adjacency import (
 )
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
+from .data.entity_type import InputType
+from .data.metrics import AccuracyMetrics, TickSample
+from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
 from .db.transitions import build_adjacency_index, lookup_transition_probability
@@ -115,6 +129,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Decay modifiers (Option 3a) precomputed alongside the boosts
         # and applied to each entity's ``Decay.modifier_factor``.
         self._adjacency_decay_modifiers: dict[str, DecayModifierContribution] = {}
+        # Trust-score epic (#499), shadow mode: rolling per-area tick
+        # observations scored hourly against motion-confirmed ground
+        # truth. maxlen bounds memory to ~24h at the 10s decay cadence.
+        # Nothing here feeds back into probability or thresholds.
+        self._accuracy_ticks: dict[str, deque[TickSample]] = {}
+        self._accuracy_metrics: dict[str, AccuracyMetrics] = {}
+        # DB-retirement epic (#500), shadow mode: per-area online prior
+        # estimators fed from live motion evidence each tick, persisted
+        # via the HA storage helper, and diffed against the DB-computed
+        # prior each analysis cycle. Never read by the probability path.
+        self._online_priors: dict[str, OnlinePriorEstimator] = {}
+        self._online_prior_store: Store[dict[str, dict]] = Store(
+            hass,
+            ONLINE_PRIOR_STORE_VERSION,
+            f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -311,11 +341,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not area.config.area_id:
                 continue
             area_entry = area_reg.async_get_area(area.config.area_id)
-            if area_entry and area_entry.floor_id:
-                if area_entry.floor_id not in seen_floors:
-                    floor_entry = floor_reg.async_get_floor(area_entry.floor_id)
-                    if floor_entry:
-                        seen_floors[area_entry.floor_id] = floor_entry.name
+            if (
+                area_entry
+                and area_entry.floor_id
+                and area_entry.floor_id not in seen_floors
+            ):
+                floor_entry = floor_reg.async_get_floor(area_entry.floor_id)
+                if floor_entry:
+                    seen_floors[area_entry.floor_id] = floor_entry.name
 
         self._floor_aggregators = {
             floor_id: FloorAreas(self, floor_id, floor_name)
@@ -430,6 +463,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
             self._validate_areas_configured()
+
+            # Restore online-prior shadow state (#500) for known areas
+            stored_priors = await self._online_prior_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_priors:
+                    self._online_priors[area_name] = OnlinePriorEstimator(
+                        OnlinePriorState.from_dict(stored_priors[area_name])
+                    )
 
             _LOGGER.info(
                 "Initializing Area Occupancy for %d area(s): %s",
@@ -563,6 +604,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 is_occupied=is_occupied,
                 now=now,
             )
+            self._record_shadow_tick(area_name, area, now, probability, is_occupied)
             result[area_name] = {
                 "probability": probability,
                 "occupied": is_occupied,
@@ -572,6 +614,41 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "last_updated": now,
             }
         return result
+
+    def _record_shadow_tick(
+        self,
+        area_name: str,
+        area: Area,
+        now: datetime,
+        probability: float,
+        is_occupied: bool,
+    ) -> None:
+        """Record one shadow-mode accuracy/online-prior sample for an area.
+
+        Read-only: does not touch ``self.data`` or notify listeners, so
+        calling it outside a full ``update()`` (see
+        ``_handle_decay_timer``) has no effect on entity state or the
+        production refresh cadence.
+        """
+        self._accuracy_ticks.setdefault(
+            area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
+        ).append(
+            TickSample(timestamp=now, probability=probability, occupied=is_occupied)
+        )
+        # Match db.queries.get_occupied_intervals' ground-truth definition
+        # (motion ∪ media ∪ sleep) rather than motion alone, so the online
+        # numerator and the DB-computed prior it's being diffed against
+        # measure the same thing. Motion's timeout extension isn't
+        # replicated here — see module docstring's known approximations.
+        presence_active = any(
+            entity.evidence
+            and entity.type.input_type
+            in (InputType.MOTION, InputType.MEDIA, InputType.SLEEP)
+            for entity in area.entities.entities.values()
+        )
+        self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
+            motion_active=presence_active, now=now
+        )
 
     # --- Adjacent-areas (Phase 4) accessors ---
     @property
@@ -599,6 +676,34 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> DecayModifierContribution | None:
         """Return the cached decay modifier for ``area_name`` this tick."""
         return self._adjacency_decay_modifiers.get(area_name)
+
+    # --- Trust score (#499, shadow mode) accessors ---
+    def accuracy_samples_for(self, area_name: str) -> list[TickSample]:
+        """Return the rolling tick observations for an area, oldest first."""
+        return list(self._accuracy_ticks.get(area_name, ()))
+
+    def accuracy_metrics_for(self, area_name: str) -> AccuracyMetrics | None:
+        """Return the most recent shadow accuracy snapshot for an area.
+
+        ``None`` until the hourly analysis pipeline has scored the area
+        at least once (or when the area has no tick history yet).
+        """
+        return self._accuracy_metrics.get(area_name)
+
+    def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
+        """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
+        self._accuracy_metrics[area_name] = metrics
+
+    # --- Online prior (#500, shadow mode) accessors ---
+    def online_prior_for(self, area_name: str) -> OnlinePriorEstimator | None:
+        """Return the area's shadow online-prior estimator, if any ticks seen."""
+        return self._online_priors.get(area_name)
+
+    async def async_save_online_priors(self) -> None:
+        """Persist online-prior shadow state via the HA storage helper."""
+        await self._online_prior_store.async_save(
+            {name: est.state.to_dict() for name, est in self._online_priors.items()}
+        )
 
     def _compute_adjacency_state(
         self, now: datetime
@@ -709,6 +814,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.error(
                 "Failed final save for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+
+        # Step 2b: Persist online-prior shadow state so a restart doesn't
+        # silently drop the occupied-seconds numerator while the period
+        # denominator (anchored at first_observation) keeps growing —
+        # previously this was only saved once per hour by the analysis
+        # pipeline, biasing the online prior low across every restart.
+        try:
+            await self.async_save_online_priors()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save online-prior shadow state for areas: %s: %s",
                 format_area_names(self),
                 err,
             )
@@ -1276,6 +1395,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         decay_enabled = any(area.config.decay.enabled for area in self.areas.values())
         if decay_enabled:
             await self.async_refresh()
+        else:
+            # Shadow-mode estimators (#499/#500) still need a steady tick
+            # cadence even when no area has decay enabled — without this,
+            # they'd only observe on evidence-triggered refreshes, whose
+            # gaps routinely exceed the online-prior's downtime threshold
+            # and starve its occupied-seconds numerator. Record ticks
+            # directly rather than going through ``async_refresh()`` so
+            # this doesn't change entity refresh cadence for users who
+            # disabled decay to reduce state churn.
+            now = dt_util.utcnow()
+            for area_name, area in self.areas.items():
+                probability = area.probability()
+                is_occupied = probability >= area.threshold()
+                self._record_shadow_tick(area_name, area, now, probability, is_occupied)
 
         # Reschedule the timer — but not if shutdown was signalled
         # during ``async_refresh``. Same rearm-leak avoidance as the

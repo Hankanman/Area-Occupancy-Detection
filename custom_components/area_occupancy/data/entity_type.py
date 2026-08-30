@@ -4,8 +4,8 @@ from enum import StrEnum
 import logging
 from typing import Any
 
+from homeassistant.components.lock import LockState
 from homeassistant.const import (
-    STATE_CLOSED,
     STATE_CLOSING,
     STATE_ON,
     STATE_OPEN,
@@ -44,6 +44,7 @@ class InputType(StrEnum):
     MEDIA = "media"
     APPLIANCE = "appliance"
     DOOR = "door"
+    LOCK = "lock"
     WINDOW = "window"
     COVER = "cover"
     TEMPERATURE = "temperature"
@@ -60,6 +61,7 @@ class InputType(StrEnum):
     POWER = "power"
     SLEEP = "sleep"
     ENVIRONMENTAL = "environmental"
+    WIFI_CLIENTS = "wifi_clients"
     UNKNOWN = "unknown"
 
 
@@ -97,25 +99,23 @@ class EntityType:
         self.input_type = input_type
 
         # Validate weight if provided
-        if weight is not None:
-            if not isinstance(weight, (int, float)) or not 0 <= weight <= 1:
-                raise ValueError(f"Invalid weight for {input_type}: {weight}")
+        if weight is not None and (
+            not isinstance(weight, (int, float)) or not 0 <= weight <= 1
+        ):
+            raise ValueError(f"Invalid weight for {input_type}: {weight}")
 
         # Validate active_states if provided
-        if active_states is not None:
-            if not isinstance(active_states, list) or not all(
-                isinstance(s, str) for s in active_states
-            ):
-                raise ValueError(
-                    f"Invalid active states for {input_type}: {active_states}"
-                )
+        if active_states is not None and (
+            not isinstance(active_states, list)
+            or not all(isinstance(s, str) for s in active_states)
+        ):
+            raise ValueError(f"Invalid active states for {input_type}: {active_states}")
 
         # Validate active_range if provided
-        if active_range is not None:
-            if not isinstance(active_range, tuple) or len(active_range) != 2:
-                raise ValueError(
-                    f"Invalid active range for {input_type}: {active_range}"
-                )
+        if active_range is not None and (
+            not isinstance(active_range, tuple) or len(active_range) != 2
+        ):
+            raise ValueError(f"Invalid active range for {input_type}: {active_range}")
 
         # Get defaults from DEFAULT_TYPES with safe fallback
         default_type = DEFAULT_TYPES.get(input_type)
@@ -194,16 +194,24 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
     InputType.APPLIANCE,
     InputType.DOOR,
+    InputType.LOCK,
     InputType.WINDOW,
     InputType.COVER,
     InputType.POWER,
     InputType.SLEEP,
+    # Wi-Fi client count is judged a comparably strong, direct presence
+    # signal (a device joining/leaving the network is much closer to
+    # "someone did something" than an ambient environmental reading),
+    # not a weak indirect correlate — deliberately NOT in
+    # ENVIRONMENTAL_INPUT_TYPES. See issue #515.
+    InputType.WIFI_CLIENTS,
 }
 
 BINARY_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
     InputType.APPLIANCE,
     InputType.DOOR,
+    InputType.LOCK,
     InputType.WINDOW,
 }
 
@@ -220,6 +228,16 @@ ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {
     InputType.PM25,
     InputType.PM10,
     InputType.ENVIRONMENTAL,
+}
+
+# All numeric (active_range-based) input types, spanning both the
+# environmental and presence channels. Shared by db/sync.py and
+# db/correlation.py, which both need to distinguish numeric-sample storage
+# from discrete active_states storage regardless of which probability
+# channel a type feeds.
+NUMERIC_INPUT_TYPES: set[InputType] = ENVIRONMENTAL_INPUT_TYPES | {
+    InputType.POWER,
+    InputType.WIFI_CLIENTS,
 }
 
 DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
@@ -251,7 +269,15 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "weight": 0.3,
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
-        "active_states": [STATE_CLOSED],
+        "active_states": [STATE_OPEN],
+        "active_range": None,
+        "strength_multiplier": 2.0,
+    },
+    InputType.LOCK: {
+        "weight": 0.3,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": [LockState.UNLOCKED],
         "active_range": None,
         "strength_multiplier": 2.0,
     },
@@ -374,6 +400,20 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "active_states": [STATE_ON],
         "active_range": None,
         "strength_multiplier": 3.0,
+    },
+    InputType.WIFI_CLIENTS: {
+        "weight": 0.35,
+        "prob_given_true": 0.3,
+        "prob_given_false": 0.03,
+        "active_states": None,
+        # Unbounded-above: "at least 1 connected client is evidence of
+        # presence" is the only defensible default, since the absolute
+        # client count that indicates presence varies enormously per
+        # network (a guest SSID might swing 0-1 clients, a busy office
+        # SSID 5-45). Users should be selective about which sensors they
+        # include per area rather than relying on the default range alone.
+        "active_range": (1.0, float("inf")),
+        "strength_multiplier": 2.0,
     },
     InputType.ENVIRONMENTAL: {
         "weight": 0.1,

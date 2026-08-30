@@ -26,7 +26,7 @@ from ..const import (
     MIN_CORRELATION_SAMPLES,
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
 )
-from ..data.entity_type import CorrelationType, InputType
+from ..data.entity_type import NUMERIC_INPUT_TYPES, CorrelationType, InputType
 from ..time_utils import from_db_utc, to_db_utc, to_local, to_utc
 from ..utils import clamp_probability, map_binary_state_to_semantic
 from .utils import (
@@ -1653,25 +1653,12 @@ def get_correlatable_entities_by_area(
         InputType.MEDIA,
         InputType.APPLIANCE,
         InputType.DOOR,
+        InputType.LOCK,
         InputType.WINDOW,
     }
 
     # Numeric sensors
-    numeric_inputs = {
-        InputType.TEMPERATURE,
-        InputType.HUMIDITY,
-        InputType.ILLUMINANCE,
-        InputType.ENVIRONMENTAL,
-        InputType.CO2,
-        InputType.CO,
-        InputType.POWER,
-        InputType.SOUND_PRESSURE,
-        InputType.PRESSURE,
-        InputType.AIR_QUALITY,
-        InputType.VOC,
-        InputType.PM25,
-        InputType.PM10,
-    }
+    numeric_inputs = NUMERIC_INPUT_TYPES
 
     correlatable_entities: dict[str, dict[str, dict[str, Any]]] = {}
 

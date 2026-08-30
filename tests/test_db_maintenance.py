@@ -28,7 +28,6 @@ from custom_components.area_occupancy.db.maintenance import (
     delete_db,
     ensure_db_exists,
     get_db_version,
-    get_last_prune_time,
     get_missing_tables,
     init_db,
     periodic_health_check,
@@ -737,28 +736,11 @@ class TestPeriodicHealthCheck:
             assert result is False
 
 
-class TestGetLastPruneTime:
-    """Test get_last_prune_time function."""
-
-    def test_get_last_prune_time_success(self, coordinator: AreaOccupancyCoordinator):
-        """Test getting last prune time successfully."""
-        db = coordinator.db
-        db.init_db()
-
-        # Initially should be None
-        result = get_last_prune_time(db)
-        assert result is None
-
-        # Set a prune time
-        prune_time = dt_util.utcnow()
-        set_last_prune_time(db, prune_time)
-
-        # Verify retrieved time matches
-        result = get_last_prune_time(db)
-        assert result is not None
-        assert isinstance(result, datetime)
-        # Allow small time difference due to database storage precision
-        assert abs((result - prune_time).total_seconds()) < 1
+def _read_last_prune_time(db):
+    """Read the stored last-prune timestamp straight from Metadata."""
+    with db.get_session() as session:
+        row = session.query(db.Metadata).filter_by(key="last_prune_time").first()
+        return datetime.fromisoformat(row.value) if row else None
 
 
 class TestSetLastPruneTime:
@@ -773,7 +755,7 @@ class TestSetLastPruneTime:
 
         set_last_prune_time(db, prune_time)
 
-        result = get_last_prune_time(db)
+        result = _read_last_prune_time(db)
         assert result is not None
 
     def test_set_last_prune_time_with_external_session(
@@ -793,7 +775,7 @@ class TestSetLastPruneTime:
             session.commit()
 
         # Verify prune time was set
-        result = get_last_prune_time(db)
+        result = _read_last_prune_time(db)
         assert result is not None
         assert abs((result - prune_time).total_seconds()) < 1
 
@@ -815,7 +797,7 @@ class TestSetLastPruneTime:
             session.commit()
 
         # Verify updated time
-        result = get_last_prune_time(db)
+        result = _read_last_prune_time(db)
         assert result is not None
         assert abs((result - new_time).total_seconds()) < 1
         assert abs((result - initial_time).total_seconds()) > 0

@@ -18,8 +18,10 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_VERSION, CONF_VERSION_MINOR, DEVICE_SW_VERSION
+from .data.metrics import metrics_to_diagnostics
 from .db import queries
 
 if TYPE_CHECKING:
@@ -98,9 +100,11 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
         "media": len(sensors.media),
         "appliance": len(sensors.appliance),
         "door": len(sensors.door),
+        "lock": len(sensors.lock),
         "window": len(sensors.window),
         "cover": len(sensors.cover),
         "power": len(sensors.power),
+        "wifi_clients": len(sensors.wifi_clients),
         "illuminance": len(sensors.illuminance),
         "humidity": len(sensors.humidity),
         "temperature": len(sensors.temperature),
@@ -127,10 +131,12 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
             "media": weights.media,
             "appliance": weights.appliance,
             "door": weights.door,
+            "lock": weights.lock,
             "window": weights.window,
             "cover": weights.cover,
             "environmental": weights.environmental,
             "power": weights.power,
+            "wifi_clients": weights.wifi_clients,
             "wasp": weights.wasp,
         },
         "min_prior_override": getattr(config, "min_prior_override", None),
@@ -252,6 +258,24 @@ def _area_snapshot(
         adjacency = _adjacency_snapshot(coordinator, area_name)
         if adjacency:
             current["adjacency"] = adjacency
+        accuracy = coordinator.accuracy_metrics_for(area_name)
+        if accuracy is not None:
+            current["accuracy"] = metrics_to_diagnostics(accuracy)
+        estimator = coordinator.online_prior_for(area_name)
+        if estimator is not None:
+            now = dt_util.utcnow()
+            online_value = estimator.prior(now)
+            if online_value is not None:
+                db_prior = area.prior.global_prior
+                current["online_prior"] = {
+                    "shadow_mode": True,
+                    "value": round(online_value, 4),
+                    "db_prior": round(db_prior, 4) if db_prior is not None else None,
+                    "diff": round(online_value - db_prior, 4)
+                    if db_prior is not None
+                    else None,
+                    "observed_days": round(estimator.observed_days(now), 2),
+                }
         snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
         _LOGGER.warning(

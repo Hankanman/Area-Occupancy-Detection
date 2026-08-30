@@ -76,9 +76,12 @@ class TrajectoryTracker:
         same-area entry — keeps the deque from collapsing when a flaky
         sensor flips occupancy on/off rapidly.
         """
-        if was_occupied and not is_occupied:
-            if not self._recent or self._recent[-1].area_name != area_name:
-                self._recent.append(_RecentEnd(area_name=area_name, end_time=now))
+        if (
+            was_occupied
+            and not is_occupied
+            and (not self._recent or self._recent[-1].area_name != area_name)
+        ):
+            self._recent.append(_RecentEnd(area_name=area_name, end_time=now))
         self._prune(now)
 
     def _prune(self, now: datetime) -> None:

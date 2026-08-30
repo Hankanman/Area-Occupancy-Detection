@@ -9,10 +9,10 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 ### Core Features
 
 - **[Bayesian Probability Calculation](features/calculation.md)**: Uses learned sensor reliability to calculate occupancy probability
-- **[Dual-Model Approach](features/calculation.md#dual-model-approach-presence-environmental)**: Separates presence indicators (80% weight) from environmental support (20% weight) for more accurate results
+- **[Dual-Model Approach](features/calculation.md#dual-model-approach-presence-environmental)**: Presence indicators set the probability; environmental support adjusts it at 20% influence
 - **[Historical Learning](features/prior-learning.md)**: Automatically learns from your sensor history to improve accuracy
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
-- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, window, cover, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
+- **[Multiple Sensor Types](features/entities.md)**: Supports motion, media, door, lock, window, cover, appliance, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)
 - **[Wasp in Box](features/wasp-in-box.md)**: Special logic for rooms with single entry/exit points
 - **[Adjacent Areas](features/adjacent-areas.md)**: Learns transitions between physically-connected rooms to boost neighbouring probabilities and slow decay when the only known exit has been quiet
 - **[All Areas Aggregation](features/entities.md#all-areas-aggregation-device)**: Automatically aggregates occupancy data across all configured areas for whole-home detection
@@ -64,6 +64,7 @@ The integration supports multiple sensor types with different default weights:
 - **Cover Sensors** (0.50): Moderate reliability for blinds, shades, shutters, garage doors
 - **Appliances** (0.40): Moderate reliability
 - **Door Sensors** (0.30): Lower reliability, but useful for entry/exit
+- **Lock Sensors** (0.30): Smart locks (e.g. Nuki) — unlocking indicates active entry/exit
 - **Power Sensors** (0.30): Power consumption indicating active device usage
 - **Window Sensors** (0.20): Minimal influence
 - **Environmental Sensors** (0.10): Very low influence (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10)

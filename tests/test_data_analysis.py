@@ -22,7 +22,6 @@ from custom_components.area_occupancy.data.analysis import (
     run_numeric_aggregation,
     start_prior_analysis,
 )
-from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.utils import (
     apply_motion_timeout,
     find_overlapping_motion_intervals,
@@ -166,42 +165,155 @@ class TestPriorAnalyzerWithRealDB:
 class TestPriorAnalyzerCalculateAndUpdatePrior:
     """Test PriorAnalyzer.calculate_and_update_prior method."""
 
-    def test_empty_intervals_returns_early(
+    def test_no_data_at_all_logs_warning_and_preserves_prior(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
     ) -> None:
-        """Test that empty intervals cause early return without prior update."""
+        """Test #520 Bug A Case 1: no interval data of any kind for this area.
+
+        Regression test for the silent freeze: when
+        ``get_first_interval_timestamp`` finds zero rows at all (not just
+        zero occupied rows) for the area's current ground-truth sensors,
+        the old code's ``_LOGGER.debug(...); return`` silently no-op'd with
+        no trace. This must now be visible: at minimum, a WARNING-level log
+        line, not DEBUG. The pre-existing prior (if any) is left untouched
+        this cycle (not reset to a default) -- but crucially,
+        ``last_calculation_at`` is NOT advanced, which is what lets
+        ``HealthMonitor``'s staleness check eventually flag a freeze that
+        persists across many cycles (see test_data_health.py's
+        test_stale_prior_recalculation_flagged).
+        """
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Store original prior value
         original_prior = area.prior.global_prior
+        original_calc_at = area.prior.last_calculation_at
 
-        # Mock get_occupied_intervals to return empty list
-        with patch.object(analyzer, "get_occupied_intervals", return_value=[]):
+        with (
+            patch.object(analyzer, "get_occupied_intervals", return_value=[]),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=None
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis._LOGGER"
+            ) as mock_logger,
+        ):
             analyzer.calculate_and_update_prior()
 
-        # Prior should not be updated
+        # Prior value and calculation timestamp are both untouched.
+        assert area.prior.global_prior == original_prior
+        assert area.prior.last_calculation_at == original_calc_at
+        # Must be visible at WARNING, not silently swallowed at DEBUG.
+        assert mock_logger.warning.called
+        warning_text = str(mock_logger.warning.call_args_list).lower()
+        assert "no interval data" in warning_text
+
+    def test_data_exists_zero_occupied_computes_low_prior(
+        self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
+    ) -> None:
+        """Test #520 Bug A Case 2: data exists but none of it is occupied.
+
+        This is a genuinely different situation from "no data at all" and
+        must NOT be treated the same way: the area has been observed for
+        long enough (clears the warm-up guard) and is legitimately quiet,
+        so the prior should move toward MIN_PRIOR rather than staying
+        frozen or being skipped.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        analyzer = PriorAnalyzer(coordinator, area_name)
+
+        now = freeze_time
+        first_seen = now - timedelta(hours=48)  # data exists for 48h
+
+        with (
+            patch.object(analyzer, "get_occupied_intervals", return_value=[]),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
+                return_value=now,
+            ),
+        ):
+            analyzer.calculate_and_update_prior()
+
+        # occupied_duration=0 over a 48h span -> clamps to MIN_PRIOR (0.01),
+        # and last_calculation_at IS advanced (this was a real calculation,
+        # not a skip).
+        assert area.prior.global_prior == 0.01
+        assert area.prior.last_calculation_at is not None
+
+    def test_warmup_guard_defers_instead_of_clamping_to_max(
+        self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
+    ) -> None:
+        """Test #520 Bug B: a near-empty dataset must not clamp to MAX_PRIOR.
+
+        Before the fix, a single occupied interval starting minutes after a
+        sensor swap/reset computed occupied/elapsed ~= 1.0, which clamped
+        straight to 0.99 (MAX_PRIOR) every time. With the warm-up guard,
+        an observation span below PRIOR_WARMUP_MIN_SPAN_HOURS (25h) defers
+        the update entirely rather than trusting the noisy ratio.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        analyzer = PriorAnalyzer(coordinator, area_name)
+
+        now = freeze_time
+        # Sensor first seen only 10 minutes ago; its one interval so far is
+        # almost entirely occupied -- the exact shape that used to clamp to
+        # 0.99.
+        first_seen = now - timedelta(minutes=10)
+        occupied_start = first_seen
+        occupied_end = now - timedelta(minutes=1)
+        intervals = [(occupied_start, occupied_end)]
+
+        original_prior = area.prior.global_prior
+
+        with (
+            patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
+                return_value=now,
+            ),
+        ):
+            analyzer.calculate_and_update_prior()
+
+        # Must NOT be clamped to 0.99 -- the update is deferred entirely.
+        assert area.prior.global_prior != 0.99
         assert area.prior.global_prior == original_prior
 
     def test_invalid_period_duration_sets_fallback_prior(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
     ) -> None:
-        """Test that invalid period duration (zero/negative) sets fallback prior 0.01."""
+        """Test the clock-skew defensive fallback: observation start after 'now'.
+
+        ``get_first_interval_timestamp`` returning a timestamp *after* now
+        can only happen from severe clock skew or a timezone bug -- the
+        defensive branch sets the safe MIN_PRIOR fallback rather than
+        computing a nonsensical negative-duration ratio.
+        """
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Create intervals with invalid period (same start and end)
         now = freeze_time
-        invalid_intervals = [(now, now)]  # Zero duration interval
+        future_first_seen = now + timedelta(hours=1)
 
-        with patch.object(
-            analyzer, "get_occupied_intervals", return_value=invalid_intervals
+        with (
+            patch.object(analyzer, "get_occupied_intervals", return_value=[]),
+            patch.object(
+                analyzer.db,
+                "get_first_interval_timestamp",
+                return_value=future_first_seen,
+            ),
         ):
             analyzer.calculate_and_update_prior()
 
-        # Should set fallback prior of 0.01
+        # Should set fallback prior of 0.01 (MIN_PRIOR)
         assert area.prior.global_prior == 0.01
 
     def test_valid_calculation_sets_correct_prior(
@@ -212,16 +324,19 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Create intervals: 2 hours occupied
-        # Period calculation uses first_interval_start to actual_period_end
+        # Create intervals: 4 hours occupied, sensor first seen 32h ago
+        # (clears the 25h warm-up-guard minimum from #520 Bug B).
         now = freeze_time
-        occupied_start = now - timedelta(hours=8)
-        occupied_end = now - timedelta(hours=6)
+        first_seen = now - timedelta(hours=32)
+        occupied_start = now - timedelta(hours=32)
+        occupied_end = now - timedelta(hours=28)
         intervals = [(occupied_start, occupied_end)]
 
-        # Mock get_occupied_intervals
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now,
@@ -231,12 +346,12 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
             analyzer.calculate_and_update_prior()
 
         # Period calculation:
-        # - first_interval_start = occupied_start (now - 8h)
-        # - actual_period_end = now (quiet tail stays in the denominator, #483)
-        # - actual_period_duration = 8 hours
-        # - occupied_duration = 2 hours
-        # - prior = 2h / 8h = 0.25
-        assert area.prior.global_prior == 0.25
+        # - period_start = max(lookback_start, first_seen) = first_seen (now - 32h)
+        # - period_end = now (quiet tail stays in the denominator, #483)
+        # - observation_span = 32 hours
+        # - occupied_duration = 4 hours
+        # - prior = 4h / 32h = 0.125
+        assert area.prior.global_prior == pytest.approx(0.125)
 
     def test_quiet_tail_included_in_denominator(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
@@ -246,20 +361,26 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         Regression test: the period previously ended at last_interval_end
         whenever the area had been quiet for >1h, which dropped the
         known-unoccupied tail from the denominator and inflated the prior
-        on every overnight recalculation.
+        on every overnight recalculation. The observation span here (30h)
+        also clears the #520 warm-up-guard minimum (25h).
         """
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # 6 hours occupied, ending 18 hours ago (e.g. overnight quiet period)
+        # 6 hours occupied, ending 24 hours ago (long overnight quiet tail);
+        # sensor first seen 30 hours ago.
         now = freeze_time
-        occupied_start = now - timedelta(hours=24)
-        occupied_end = now - timedelta(hours=18)
+        first_seen = now - timedelta(hours=30)
+        occupied_start = now - timedelta(hours=30)
+        occupied_end = now - timedelta(hours=24)
         intervals = [(occupied_start, occupied_end)]
 
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now,
@@ -267,8 +388,8 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         ):
             analyzer.calculate_and_update_prior()
 
-        # prior = 6h occupied / 24h period = 0.25, NOT 6h / 6h = 0.99
-        assert area.prior.global_prior == 0.25
+        # prior = 6h occupied / 30h period = 0.2, NOT 6h / 6h = 0.99
+        assert area.prior.global_prior == pytest.approx(0.2)
 
     def test_prior_bounds_clamping_min(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
@@ -278,7 +399,7 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Create intervals: very small occupancy (1 minute) in large period (100 hours)
+        # Create intervals: very small occupancy (1 minute) in large period (50 hours)
         now = freeze_time
         occupied_start = now - timedelta(hours=50)
         occupied_end = now - timedelta(hours=50, minutes=1)
@@ -286,6 +407,11 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
 
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db,
+                "get_first_interval_timestamp",
+                return_value=occupied_start,
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now,
@@ -304,8 +430,10 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Create intervals with one invalid interval (start > end)
+        # Create intervals with one invalid interval (start > end). First
+        # seen 26h ago to clear the #520 warm-up-guard minimum (25h).
         now = freeze_time
+        first_seen = now - timedelta(hours=26)
         valid_start = now - timedelta(hours=2)
         valid_end = now - timedelta(hours=1)
         invalid_start = now - timedelta(hours=1)
@@ -316,7 +444,16 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
             (invalid_start, invalid_end),  # Invalid interval (start > end)
         ]
 
-        with patch.object(analyzer, "get_occupied_intervals", return_value=intervals):
+        with (
+            patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
+                return_value=now,
+            ),
+        ):
             analyzer.calculate_and_update_prior()
 
         # Should filter out invalid interval and calculate based on valid one
@@ -332,45 +469,55 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Create only invalid intervals (start > end)
+        # Create only invalid intervals (start > end). First seen 30h ago
+        # to clear the #520 warm-up-guard minimum (25h).
         now = freeze_time
+        first_seen = now - timedelta(hours=30)
         invalid_intervals = [
             (now - timedelta(hours=1), now - timedelta(hours=2)),  # start > end
             (now - timedelta(hours=3), now - timedelta(hours=4)),  # start > end
         ]
 
-        with patch.object(
-            analyzer, "get_occupied_intervals", return_value=invalid_intervals
+        with (
+            patch.object(
+                analyzer, "get_occupied_intervals", return_value=invalid_intervals
+            ),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
+                return_value=now,
+            ),
         ):
             analyzer.calculate_and_update_prior()
 
-        # Should use fallback prior of 0.01
+        # All intervals filtered out -> zero occupied duration -> fallback 0.01
         assert area.prior.global_prior == 0.01
 
     def test_period_end_before_first_interval_start_uses_now(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
     ) -> None:
-        """Test that when actual_period_end < first_interval_start, 'now' is used instead."""
+        """Test normal calculation with multiple valid intervals."""
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
         analyzer = PriorAnalyzer(coordinator, area_name)
 
-        # Create intervals where last_interval_end would be before first_interval_start
-        # This can happen with timezone issues
+        # Create valid intervals; first seen 30h ago to clear the #520
+        # warm-up-guard minimum (25h).
         now = freeze_time
-        # Create valid intervals
+        first_seen = now - timedelta(hours=30)
         start1 = now - timedelta(hours=8)
         end1 = now - timedelta(hours=7)
         start2 = now - timedelta(hours=6)
         end2 = now - timedelta(hours=5)
         intervals = [(start1, end1), (start2, end2)]
 
-        # Mock dt_util.utcnow to return a time that would make last_interval_end
-        # appear before first_interval_start (simulating timezone issue)
-        # Actually, with valid intervals, this shouldn't happen unless there's
-        # a timezone conversion issue. Let's test the defensive check instead.
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now,
@@ -396,6 +543,7 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         est = tz(timedelta(hours=-5))
         now_utc = freeze_time
         now_est = now_utc.astimezone(est)
+        first_seen = now_utc - timedelta(hours=26)
 
         # Create intervals in EST
         start_est = (now_est - timedelta(hours=2)).replace(tzinfo=est)
@@ -404,6 +552,9 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
 
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now_utc,
@@ -432,6 +583,9 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
 
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=start
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now,
@@ -470,11 +624,15 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         analyzer = PriorAnalyzer(coordinator, area_name)
 
         now = freeze_time
+        first_seen = now - timedelta(hours=30)
         start = now - timedelta(hours=10)
         intervals = [(start, now - timedelta(hours=8))]
 
         with (
             patch.object(analyzer, "get_occupied_intervals", return_value=intervals),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
+            ),
             patch(
                 "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
                 return_value=now,
@@ -518,11 +676,18 @@ class TestPriorAnalyzerCalculateAndUpdatePrior:
         """Test that errors during calculation are logged but don't crash."""
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
+        now = dt_util.utcnow()
+        first_seen = now - timedelta(hours=30)
 
-        # Cause an error by making get_occupied_intervals raise ValueError
+        # Cause an error by making get_occupied_intervals raise ValueError.
+        # first_seen must clear the warm-up guard so execution actually
+        # reaches the get_occupied_intervals call.
         with (
             patch.object(
                 analyzer, "get_occupied_intervals", side_effect=ValueError("Test error")
+            ),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=first_seen
             ),
             patch(
                 "custom_components.area_occupancy.data.analysis._LOGGER"
@@ -728,53 +893,6 @@ class TestPriorAnalyzerCalculateTimePriors:
         # Should only be in slot 10 (not slot 11 since end is exclusive at 11:00)
         assert (0, 10) in time_priors
         assert (0, 11) not in time_priors
-
-
-class TestPriorAnalyzerGetEntityIdsByType:
-    """Test PriorAnalyzer._get_entity_ids_by_type method."""
-
-    def test_get_motion_entity_ids(self, coordinator: AreaOccupancyCoordinator) -> None:
-        """Test getting entity IDs for motion type."""
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.get_area(area_name)
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        # Add a motion entity using the area's entity manager
-        # Entities are already created from config, so we can check existing ones
-        # or add one directly to the entities dict
-        from custom_components.area_occupancy.data.decay import Decay
-        from custom_components.area_occupancy.data.entity import Entity
-        from custom_components.area_occupancy.data.entity_type import EntityType
-
-        entity_type = EntityType(
-            input_type=InputType.MOTION,
-            weight=0.85,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            active_states=["on"],
-        )
-        motion_entity = Entity(
-            entity_id="binary_sensor.motion1",
-            type=entity_type,
-            prob_given_true=0.8,
-            prob_given_false=0.1,
-            decay=Decay(half_life=60.0),
-            hass=coordinator.hass,
-        )
-        area.entities.entities["binary_sensor.motion1"] = motion_entity
-
-        entity_ids = analyzer._get_entity_ids_by_type(InputType.MOTION)
-        assert "binary_sensor.motion1" in entity_ids
-
-    def test_get_empty_result_for_type_with_no_entities(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        """Test that empty result is returned for type with no entities."""
-        area_name = coordinator.get_area_names()[0]
-        analyzer = PriorAnalyzer(coordinator, area_name)
-
-        entity_ids = analyzer._get_entity_ids_by_type(InputType.CO2)
-        assert entity_ids == []
 
 
 class TestOrchestrationFunctions:

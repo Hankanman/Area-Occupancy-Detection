@@ -104,13 +104,9 @@ Before entities are used in probability calculation, they are filtered to exclud
 
 Entities with zero weight are excluded from the calculation. Entities with `weight == 0.0` contribute nothing to the calculation, so they are filtered out early.
 
-### Invalid Likelihood Exclusion
+### Likelihood Clamping
 
-Entities with invalid likelihoods are excluded. Invalid likelihoods are:
-- `prob_given_true <= 0.0` or `>= 1.0`
-- `prob_given_false <= 0.0` or `>= 1.0`
-
-These would cause `log(0)` or `log(1)` errors in log-space calculations, so they are excluded.
+`prob_given_true` feeds into the sigmoid model's strength factor (`prob_given_true × strength_multiplier`) rather than a per-hypothesis likelihood ratio, so there's no separate "invalid likelihood" exclusion step. The prior and final probability are clamped to `[MIN_PROBABILITY, MAX_PROBABILITY]` before `logit()` is called on them, which is what actually prevents `log(0)`/`log(1)` errors — see [Bayesian Calculation Deep Dive](bayesian-calculation.md).
 
 ### Unavailable Entity Handling
 

@@ -15,6 +15,7 @@ from custom_components.area_occupancy.data.entity import (
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.types import GaussianParams
+from homeassistant.components.lock import LockState
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -535,6 +536,46 @@ class TestEntityPropertiesAndMethods:
         try:
             assert not entity2.has_new_evidence()  # No refresh for unknown→clear
             assert entity2.previous_evidence is False
+        finally:
+            object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_has_new_evidence_lock_unlocked_active(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test has_new_evidence for a LOCK entity with the default 'unlocked' active state."""
+        lock_entity_type = EntityType(
+            input_type=InputType.LOCK,
+            weight=0.3,
+            prob_given_true=0.2,
+            prob_given_false=0.02,
+            active_states=[LockState.UNLOCKED],
+        )
+        entity = create_test_entity(
+            entity_id="lock.front_door",
+            entity_type=lock_entity_type,
+            coordinator=coordinator,
+        )
+        assert entity.type.input_type == InputType.LOCK
+        assert entity.type.active_states == [LockState.UNLOCKED]
+
+        original_states = coordinator.hass.states
+        mock_state = Mock()
+        mock_state.state = LockState.UNLOCKED
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        try:
+            # unknown -> unlocked is evidence of occupancy
+            assert entity.has_new_evidence()
+            assert entity.previous_evidence is True
+
+            # unlocked -> locked is a transition, should refresh
+            mock_state.state = LockState.LOCKED
+            assert entity.has_new_evidence()
+            assert entity.previous_evidence is False
+
+            # locked -> unlocked is a transition, should refresh again
+            mock_state.state = LockState.UNLOCKED
+            assert entity.has_new_evidence()
+            assert entity.previous_evidence is True
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
@@ -2082,6 +2123,61 @@ class TestEntityFactory:
         assert mapping["sensor.co2"] == "co2"
         assert "sensor.co" in mapping
         assert mapping["sensor.co"] == "co"
+
+    def test_get_entity_type_mapping_includes_wifi_clients(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that wifi_clients sensors are included in the entity type mapping."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.sensors.wifi_clients = ["sensor.wifi_clients_guest"]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        mapping = factory.get_entity_type_mapping()
+
+        assert "sensor.wifi_clients_guest" in mapping
+        assert mapping["sensor.wifi_clients_guest"] == "wifi_clients"
+
+    def test_wifi_clients_uses_own_weight_not_environmental(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """WIFI_CLIENTS must use weights.wifi_clients, not the environmental weight.
+
+        Unlike TEMPERATURE/CO2/etc. (which all share config_weight via
+        _WEIGHT_KEY_FOR_INPUT_TYPE mapping to "environmental"), WIFI_CLIENTS is
+        a presence-channel type and is NOT in that map, so it should resolve
+        its own weight key.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        # Environmental weight deliberately different from wifi_clients weight
+        area.config.weights.environmental = 0.7
+        area.config.weights.wifi_clients = 0.42
+
+        entity_id = "sensor.wifi_clients_office"
+        area.config.sensors.wifi_clients = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "wifi_clients")
+
+        assert entity.weight == 0.42
+        assert entity.type.input_type == InputType.WIFI_CLIENTS
+
+    def test_wifi_clients_default_active_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that a wifi_clients entity gets the (1, inf) default active_range."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        entity_id = "sensor.wifi_clients_guest"
+        area.config.sensors.wifi_clients = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "wifi_clients")
+
+        assert entity.type.active_range == (1.0, float("inf"))
+        assert entity.type.active_states is None
 
     @pytest.mark.parametrize(
         ("input_type", "sensor_attr", "entity_id"),

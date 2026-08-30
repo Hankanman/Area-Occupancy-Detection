@@ -75,12 +75,15 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -89,8 +92,10 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -183,6 +188,18 @@
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
                     },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -238,12 +255,15 @@
                 "description": "Configure doors, windows, media players, appliances, environmental, and power sensors. All sections are optional.",
                 "sections": {
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -252,8 +272,10 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -327,6 +349,18 @@
                             "power_sensors": "Power sensors that measure power consumption (W/kW). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
+                    },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
+                        }
                     }
                 }
             },
@@ -390,6 +424,7 @@
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
+            "lock_state_required": "Lock active state is required when lock sensors are configured.",
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
             "person_entity_required": "A person entity is required.",
@@ -473,12 +508,15 @@
                         }
                     },
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -487,8 +525,10 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -581,6 +621,18 @@
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
                         }
                     },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
+                        }
+                    },
                     "parameters": {
                         "name": "Advanced Parameters",
                         "description": "Configure advanced parameters for occupancy detection",
@@ -636,12 +688,15 @@
                 "description": "Configure doors, windows, media players, appliances, environmental, and power sensors. All sections are optional.",
                 "sections": {
                     "windows_and_doors": {
-                        "name": "Windows, Doors & Covers",
-                        "description": "Configure door, window, and cover sensors and their states",
+                        "name": "Windows, Doors, Locks & Covers",
+                        "description": "Configure door, window, lock, and cover sensors and their states",
                         "data": {
                             "door_sensors": "Door Sensors",
                             "door_active_state": "Door Active State",
                             "weight_door": "Door Weight",
+                            "lock_sensors": "Lock Sensors",
+                            "lock_active_state": "Lock Active State",
+                            "weight_lock": "Lock Weight",
                             "window_sensors": "Window Sensors",
                             "window_active_state": "Window Active State",
                             "weight_window": "Window Weight",
@@ -650,8 +705,10 @@
                             "weight_cover": "Cover Weight"
                         },
                         "data_description": {
-                            "door_active_state": "This is the value your sensors report when the door is closed.",
+                            "door_active_state": "This is the state of the door that will be used to detect occupancy.",
                             "weight_door": "The weight given to door sensor inputs in the occupancy calculation.",
+                            "lock_active_state": "This is the state of the lock that will be used to detect occupancy.",
+                            "weight_lock": "The weight given to lock sensor inputs in the occupancy calculation.",
                             "window_active_state": "This is the state of the window that will be used to detect occupancy.",
                             "weight_window": "The weight given to window sensor inputs in the occupancy calculation.",
                             "cover_sensors": "Cover entities (blinds, shades, garage doors, shutters) that indicate occupancy when their state changes.",
@@ -724,6 +781,18 @@
                         "data_description": {
                             "power_sensors": "Power sensors that measure power consumption (W/kW). When consumption is above baseline levels, it indicates active device usage and potential occupancy.",
                             "weight_power": "The weight given to power sensor inputs in the occupancy calculation."
+                        }
+                    },
+                    "wifi_clients": {
+                        "name": "Wi-Fi Client Sensors",
+                        "description": "Configure Wi-Fi client-count sensors (e.g. UniFi connected-clients sensors)",
+                        "data": {
+                            "wifi_clients_sensors": "Wi-Fi Client Count Sensors",
+                            "weight_wifi_clients": "Wi-Fi Clients Weight"
+                        },
+                        "data_description": {
+                            "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
+                            "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }
                 }
@@ -854,6 +923,7 @@
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
+            "lock_state_required": "Lock active state is required when lock sensors are configured.",
             "window_state_required": "Window active state is required when window sensors are configured.",
             "cover_states_required": "Cover active states are required when cover sensors are configured.",
             "person_entity_required": "A person entity is required.",
@@ -904,6 +974,18 @@
             },
             "activity_confidence": {
                 "name": "Activity Confidence"
+            },
+            "evidence": {
+                "name": "Evidence"
+            },
+            "presence_confidence": {
+                "name": "Presence Confidence"
+            },
+            "environmental_confidence": {
+                "name": "Environmental Confidence"
+            },
+            "sensor_health": {
+                "name": "Sensor Health"
             }
         },
         "number": {

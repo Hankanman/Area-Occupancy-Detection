@@ -8,6 +8,7 @@ You will be prompted to select entities for various categories. You only need to
 | ---------------------------- | ----------------------------------- | -------------------------------------------------------------------- | -------------------- |
 | Motion Sensors               | `binary_sensor`                     | Additional motion sensors in the area such as PIR or mmWave sensors. | `on`                 |
 | Door Sensors                 | `binary_sensor`                     | Relevant door sensors.                                               | `Closed`             |
+| Lock Sensors                 | `lock`                              | Smart locks (e.g. Nuki) — unlocking is treated as activity evidence. | `Unlocked`            |
 | Window Sensors               | `binary_sensor`                     | Relevant window sensors.                                             | `Open`               |
 | Media Devices                | `media_player`                      | Relevant media players.                                              | `playing`, `paused`  |
 | Appliances                   | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances.          | `on`, `standby`      |
@@ -24,6 +25,10 @@ You will be prompted to select entities for various categories. You only need to
 | PM10 Sensors                 | `sensor`                            | Particulate matter sensors measuring PM10 levels (µg/m³)             | `55.0 - 155.0`       |
 | Cover Sensors                | `cover`                             | Blinds, shades, shutters, garage doors being operated                | `opening`, `closing`  |
 | Power Sensors                | `sensor`                            | Power sensors measuring power consumption (W/kW)                     | `0.1 - 10.0`         |
+| Wi-Fi Client Sensors          | `sensor`                            | Sensors reporting connected Wi-Fi client counts (e.g. UniFi Network's connected-clients sensors) for an SSID/AP | `1+` (no upper bound) |
+
+!!! note
+    Wi-Fi client count is treated as a **presence-channel** signal (like motion, media, or power), not an environmental one — a device joining a network is a much stronger, more direct sign of a person than an ambient reading like temperature. The default active range (`1` and up, unbounded) treats any nonzero client count as evidence of presence, but the useful range varies enormously between networks (a guest SSID might swing 0-1 clients while a busy office SSID swings 5-45), so you will likely want to be selective about which sensors you include per area rather than relying on the raw count alone.
 
 ## Sensor Weights
 
@@ -37,7 +42,9 @@ Weights allow you to adjust the influence of different _types_ of sensors on the
 | Wasp in Box          | 0.80           |
 | Cover Sensor         | 0.50           |
 | Appliance            | 0.40           |
+| Wi-Fi Client Sensor  | 0.35           |
 | Door Sensor          | 0.30           |
+| Lock Sensor          | 0.30           |
 | Power Sensor         | 0.30           |
 | Window Sensor        | 0.20           |
 | Environmental Sensor | 0.10           |

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Final, TypedDict
 
+from homeassistant.components.lock import LockState
 from homeassistant.const import (
     STATE_BUFFERING,
     STATE_CLOSED,
@@ -29,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.7.1"
+DEVICE_SW_VERSION: Final = "2026.8.1"
 CONF_VERSION: Final = 18
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
@@ -42,10 +43,6 @@ ALL_AREAS_IDENTIFIER: Final = (
 
 # Config flow action constants
 CONF_ACTION_ADD_AREA: Final = "add_area"
-CONF_ACTION_FINISH_SETUP: Final = "finish_setup"
-CONF_ACTION_EDIT: Final = "edit"
-CONF_ACTION_REMOVE: Final = "remove"
-CONF_ACTION_CANCEL: Final = "cancel"
 CONF_ACTION_GLOBAL_SETTINGS: Final = "global_settings"
 CONF_ACTION_MANAGE_PEOPLE: Final = "manage_people"
 CONF_OPTION_PREFIX_AREA: Final = "area_"
@@ -74,8 +71,11 @@ CONF_VOC_SENSORS: Final = "voc_sensors"
 CONF_PM25_SENSORS: Final = "pm25_sensors"
 CONF_PM10_SENSORS: Final = "pm10_sensors"
 CONF_POWER_SENSORS: Final = "power_sensors"
+CONF_WIFI_CLIENTS_SENSORS: Final = "wifi_clients_sensors"
 CONF_DOOR_SENSORS: Final = "door_sensors"
 CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
+CONF_LOCK_SENSORS: Final = "lock_sensors"
+CONF_LOCK_ACTIVE_STATE: Final = "lock_active_state"
 CONF_WINDOW_SENSORS: Final = "window_sensors"
 CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
 CONF_COVER_SENSORS: Final = "cover_sensors"
@@ -84,10 +84,7 @@ CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
 CONF_THRESHOLD: Final = "threshold"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
-CONF_DEVICE_STATES: Final = "device_states"
 CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
-CONF_SENSORS: Final = "sensors"
-CONF_ENTITY_ID: Final = "entity_id"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
@@ -111,10 +108,12 @@ CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
 CONF_WEIGHT_DOOR: Final = "weight_door"
+CONF_WEIGHT_LOCK: Final = "weight_lock"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
 CONF_WEIGHT_COVER: Final = "weight_cover"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 CONF_WEIGHT_POWER: Final = "weight_power"
+CONF_WEIGHT_WIFI_CLIENTS: Final = "weight_wifi_clients"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
 
 # Default values
@@ -122,13 +121,13 @@ DEFAULT_THRESHOLD: Final = 50.0
 DEFAULT_PURPOSE: Final = "social"  # Default area purpose
 DEFAULT_DECAY_ENABLED: Final = True
 DEFAULT_DECAY_HALF_LIFE: Final = 0  # 0 means "use purpose value"
-DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_CLOSED
+DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_OPEN
+DEFAULT_LOCK_ACTIVE_STATE: Final = LockState.UNLOCKED
 DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_COVER_ACTIVE_STATES: Final[list[str]] = [STATE_OPENING, STATE_CLOSING]
 DEFAULT_NAME: Final = "Area Occupancy"
-DEFAULT_PRIOR_UPDATE_INTERVAL: Final = 1  # hours
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
@@ -140,7 +139,6 @@ DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
 DEFAULT_HEALTH_ENABLED: Final = True
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
-DEFAULT_SLEEP_WEIGHT: Final = 0.9
 SLEEP_PRESENCE_HALF_LIFE: Final = (
     7200  # 2 hour half-life for sleep (persistent presence)
 )
@@ -151,17 +149,25 @@ DEFAULT_MAX_RECOVERY_ATTEMPTS: Final = 3
 DEFAULT_ENABLE_PERIODIC_BACKUPS: Final = True
 DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
 
-# Default weights
+# Default weights. These are authoritative: config Weights always pass
+# them as config_weight, so the "weight" values in DEFAULT_TYPES
+# (data/entity_type.py) are fallback-only and effectively shadowed.
+# Media intentionally differs there (0.85) — do not "align" either value
+# without a deliberate, tested decision.
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_DOOR: Final = 0.3
+DEFAULT_WEIGHT_LOCK: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
 DEFAULT_WEIGHT_COVER: Final = (
     0.5  # Covers (blinds/shades) being operated is strong activity signal
 )
 DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 DEFAULT_WEIGHT_POWER: Final = 0.3
+DEFAULT_WEIGHT_WIFI_CLIENTS: Final = (
+    0.35  # Matches DEFAULT_TYPES[InputType.WIFI_CLIENTS]
+)
 
 # Activity occupancy boost constants (logit-space magnitudes)
 ACTIVITY_BOOST_HIGH: Final[float] = 1.5  # Showering, bathing, sleeping
@@ -185,6 +191,19 @@ PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 # Time Prior Bounds
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
+
+# Minimum observation span (wall-clock time since the earliest ground-truth
+# data point for an area's *current* motion/sleep/media sensors — occupied
+# or not) required before the global prior is trusted. Below this span the
+# occupied/elapsed ratio is dominated by sampling noise (e.g. a single short
+# occupied interval minutes after a sensor swap or "Reset learning" computes
+# occupied/elapsed ~= 1.0, which clamps to MAX_PRIOR every time — issue
+# #520 Bug B). 25h mirrors ``STALE_CACHE_THRESHOLD`` in data/health.py: both
+# describe "one full day plus buffer for a missed hourly analysis cycle" for
+# data fed by the same occupied-intervals pipeline, so reusing the value
+# keeps the two thresholds conceptually aligned instead of introducing an
+# unrelated second magic number.
+PRIOR_WARMUP_MIN_SPAN_HOURS: Final[float] = 25.0
 
 # Adjacent-areas / transition learning tunables (Phase 3 of feat/adjacent-areas).
 # First-pass values; tune from real data once Phase 3 is collecting transitions.
@@ -221,48 +240,8 @@ ADJACENCY_N_CHAIN: Final[int] = 50  # chain un-bucketed
 ADJACENCY_N_PAIR: Final[int] = 20  # 1-hop pair un-bucketed
 
 # Default prior probabilities
-DEFAULT_PROB_GIVEN_TRUE: Final[float] = 0.5
-DEFAULT_PROB_GIVEN_FALSE: Final[float] = 0.1
+# (Per-type probabilities/priors live in data/entity_type.py DEFAULT_TYPES.)
 DEFAULT_TIME_PRIOR: Final[float] = 0.5
-
-# Door sensor defaults
-DOOR_PROB_GIVEN_TRUE: Final[float] = 0.2
-DOOR_PROB_GIVEN_FALSE: Final[float] = 0.02
-DOOR_DEFAULT_PRIOR: Final[float] = 0.1356
-
-# Window sensor defaults
-WINDOW_PROB_GIVEN_TRUE: Final[float] = 0.2
-WINDOW_PROB_GIVEN_FALSE: Final[float] = 0.02
-WINDOW_DEFAULT_PRIOR: Final[float] = 0.1569
-
-# Media device defaults
-MEDIA_PROB_GIVEN_TRUE: Final[float] = 0.25
-MEDIA_PROB_GIVEN_FALSE: Final[float] = 0.02
-MEDIA_DEFAULT_PRIOR: Final[float] = 0.30
-
-# Appliance defaults
-APPLIANCE_PROB_GIVEN_TRUE: Final[float] = 0.2
-APPLIANCE_PROB_GIVEN_FALSE: Final[float] = 0.02
-APPLIANCE_DEFAULT_PRIOR: Final[float] = 0.2356
-
-# Cover defaults (blinds, shades, garage doors being operated)
-COVER_PROB_GIVEN_TRUE: Final[float] = 0.35
-COVER_PROB_GIVEN_FALSE: Final[float] = 0.02
-COVER_DEFAULT_PRIOR: Final[float] = 0.25
-
-# Environmental defaults
-ENVIRONMENTAL_PROB_GIVEN_TRUE: Final[float] = 0.09
-ENVIRONMENTAL_PROB_GIVEN_FALSE: Final[float] = 0.01
-ENVIRONMENTAL_DEFAULT_PRIOR: Final[float] = 0.0769
-
-# Wasp in Box defaults (High confidence when active)
-WASP_PROB_GIVEN_TRUE: Final[float] = 0.95
-WASP_PROB_GIVEN_FALSE: Final[float] = 0.05
-WASP_DEFAULT_PRIOR: Final[float] = 0.60
-
-# Sleep presence defaults (High confidence when active)
-SLEEP_PROB_GIVEN_TRUE: Final[float] = 0.95
-SLEEP_PROB_GIVEN_FALSE: Final[float] = 0.02
 
 # Helper constants
 ROUNDING_PRECISION: Final = 2
@@ -320,6 +299,23 @@ AGGREGATION_LEVEL_RAW: Final = "raw"
 
 # Correlation analysis constants
 # Minimum samples needed for reliable correlation
+# --- Trust score (#499, shadow mode) ---
+# Rolling tick-buffer depth per area: 8640 = ~24h *if* ticks landed
+# exactly on the 10s decay cadence. In practice evidence-triggered
+# refreshes add extra ticks between decay ticks, so busy areas cover
+# less than 24h of wall-clock time; see metrics.py's time-weighting for
+# why that no longer biases the accuracy stats computed from it.
+ACCURACY_TICK_BUFFER_MAXLEN: Final = 8640
+# Hours of tick history scored against ground truth each analysis cycle.
+ACCURACY_WINDOW_HOURS: Final = 24
+
+# --- Online prior (#500, shadow mode) ---
+# Store version and key prefix for the per-entry online-prior estimator
+# state. Shared between the coordinator (persistence) and __init__.py
+# (removal cleanup) so the two never drift apart.
+ONLINE_PRIOR_STORE_VERSION: Final = 1
+ONLINE_PRIOR_STORE_KEY_PREFIX: Final = f"{DOMAIN}.online_prior"
+
 MIN_CORRELATION_SAMPLES: Final = 50
 # Minimum confidence for correlation to be considered significant
 CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
@@ -416,7 +412,22 @@ DOOR_STATES: Final[PlatformStates] = {
         StateOption(STATE_CLOSED, "Closed", "mdi:door"),
         StateOption(STATE_CLOSING, "Closing", "mdi:door"),
     ],
-    "default": STATE_CLOSED,
+    "default": STATE_OPEN,
+}
+
+# Lock states configuration
+# All states from homeassistant.components.lock.LockState. Transitional
+# locking/unlocking states are omitted (too fleeting to be useful as a
+# configured active state); jammed and open are kept as operationally
+# meaningful.
+LOCK_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(LockState.UNLOCKED, "Unlocked", "mdi:lock-open-variant"),
+        StateOption(LockState.LOCKED, "Locked", "mdi:lock"),
+        StateOption(LockState.OPEN, "Open", "mdi:lock-open"),
+        StateOption(LockState.JAMMED, "Jammed", "mdi:lock-alert"),
+    ],
+    "default": LockState.UNLOCKED,
 }
 
 # Window states configuration
@@ -482,6 +493,7 @@ def get_state_options(platform_type: str) -> PlatformStates:
     """Get state options for a given platform type."""
     platform_map = {
         "door": DOOR_STATES,
+        "lock": LOCK_STATES,
         "window": WINDOW_STATES,
         "cover": COVER_STATES,
         "media": MEDIA_STATES,
@@ -535,6 +547,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "door": InputType.DOOR,
             "humidity": InputType.HUMIDITY,
             "illuminance": InputType.ILLUMINANCE,
+            "lock": InputType.LOCK,
             "media": InputType.MEDIA,
             "motion": InputType.MOTION,
             "pm10": InputType.PM10,
@@ -545,6 +558,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "sound_pressure": InputType.SOUND_PRESSURE,
             "temperature": InputType.TEMPERATURE,
             "voc": InputType.VOC,
+            "wifi_clients": InputType.WIFI_CLIENTS,
             "window": InputType.WINDOW,
         }
     return _SENSOR_TYPE_MAPPING
