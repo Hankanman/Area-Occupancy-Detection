@@ -320,6 +320,25 @@ class AreaOccupancyDB:
             default_prior,
         )
 
+    def get_stored_time_priors(
+        self,
+        area_name: str,
+    ) -> dict[tuple[int, int], tuple[float, int]]:
+        """Get only the slots actually stored for an area, with their sample counts.
+
+        Args:
+            area_name: The area name to filter by
+
+        Returns:
+            Dictionary mapping (day_of_week, time_slot) to
+            (prior_value, data_points). Unlearned slots are absent.
+        """
+        return queries.get_stored_time_priors(
+            self,
+            self.coordinator.entry_id,
+            area_name,
+        )
+
     def get_occupied_intervals(
         self,
         area_name: str,

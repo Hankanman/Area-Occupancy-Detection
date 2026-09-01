@@ -666,13 +666,18 @@ class PriorAnalyzer:
                         data_points_per_slot=data_points_per_slot,
                     )
                     if success:
+                        # Invalidate *after* the write, not before. set_global_prior()
+                        # above already invalidated, but this method runs in an
+                        # executor thread while the event loop can read prior.value
+                        # in between — that read would repopulate the cache from the
+                        # pre-write rows and leave it stale until the next hourly
+                        # run. Invalidating here closes that window.
+                        self.area.prior.invalidate_time_prior_cache()
                         _LOGGER.info(
                             "Time priors saved for area %s: %d slots populated",
                             self.area_name,
                             len(time_priors),
                         )
-                        # Cache will be automatically reloaded on next time_prior access
-                        # since it was invalidated when global_prior was set above
                     else:
                         _LOGGER.warning(
                             "Failed to save time priors for area %s", self.area_name
@@ -803,10 +808,17 @@ class PriorAnalyzer:
         time_priors: dict[tuple[int, int], float] = {}
         data_points: dict[tuple[int, int], int] = {}
 
-        for slot_key, occupied_seconds in slot_occupied_seconds.items():
-            total_slot_seconds = slot_total_seconds.get(slot_key, 0.0)
+        # Iterate the *denominators*, not the occupied buckets: a slot that the
+        # analysis period covered but that saw zero occupancy is a real learned
+        # observation ("this area is empty on Tuesdays at 04:00") and must be
+        # persisted. Iterating slot_occupied_seconds instead left those slots
+        # unwritten, so they read back as DEFAULT_TIME_PRIOR — a neutral-high
+        # value that outranks genuinely low-occupancy slots and biases both the
+        # forecast and the live prior.
+        for slot_key, total_slot_seconds in slot_total_seconds.items():
             if total_slot_seconds <= 0:
                 continue
+            occupied_seconds = slot_occupied_seconds.get(slot_key, 0.0)
 
             prior_value = occupied_seconds / total_slot_seconds
             prior_value = max(
@@ -816,9 +828,11 @@ class PriorAnalyzer:
             data_points[slot_key] = len(slot_weeks_total.get(slot_key, set()))
 
         _LOGGER.debug(
-            "Time priors calculated for area %s: %d slots populated out of 168 total",
+            "Time priors calculated for area %s: %d slots populated out of 168 total "
+            "(%d with observed occupancy)",
             self.area_name,
             len(time_priors),
+            len(slot_occupied_seconds),
         )
 
         return time_priors, data_points
