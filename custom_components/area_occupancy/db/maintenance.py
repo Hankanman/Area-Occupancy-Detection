@@ -385,23 +385,25 @@ def _handle_database_corruption(db: AreaOccupancyDB) -> bool:
     # Only restore from existing backup if one exists.
 
     # Try database recovery first
-    if _attempt_database_recovery(db):
-        if _check_database_integrity(db):
-            _LOGGER.info("Database recovery successful")
-            return True
+    if _attempt_database_recovery(db) and _check_database_integrity(db):
+        _LOGGER.info("Database recovery successful")
+        return True
 
     # If recovery failed, try to restore from backup
-    if db.enable_periodic_backups and _restore_database_from_backup(db):
-        if _check_database_integrity(db):
-            # After restore, ensure all tables exist (backup might be from before all tables were created)
-            if not verify_all_tables_exist(db):
-                _LOGGER.warning(
-                    "Restored database missing tables, reinitializing database schema"
-                )
-                init_db(db)
-                _set_db_version(db)
-            _LOGGER.info("Database restore from backup successful")
-            return True
+    if (
+        db.enable_periodic_backups
+        and _restore_database_from_backup(db)
+        and _check_database_integrity(db)
+    ):
+        # After restore, ensure all tables exist (backup might be from before all tables were created)
+        if not verify_all_tables_exist(db):
+            _LOGGER.warning(
+                "Restored database missing tables, reinitializing database schema"
+            )
+            init_db(db)
+            _set_db_version(db)
+        _LOGGER.info("Database restore from backup successful")
+        return True
 
     # If all else fails, delete and recreate the database
     _LOGGER.warning("All recovery attempts failed, recreating database")
@@ -551,22 +553,6 @@ def delete_db(db: AreaOccupancyDB) -> None:
             _LOGGER.error("Failed to delete database file: %s", e)
 
 
-def get_last_prune_time(db: AreaOccupancyDB) -> datetime | None:
-    """Get timestamp of last successful prune operation.
-
-    Returns:
-        datetime of last prune, or None if not recorded
-    """
-    try:
-        with db.get_session() as session:
-            result = session.query(db.Metadata).filter_by(key="last_prune_time").first()
-            if result:
-                return datetime.fromisoformat(result.value)
-    except (ValueError, AttributeError, SQLAlchemyError, OSError) as e:
-        _LOGGER.debug("Failed to get last prune time: %s", e)
-    return None
-
-
 def set_last_prune_time(
     db: AreaOccupancyDB, timestamp: datetime, session: Any = None
 ) -> None:
@@ -660,8 +646,7 @@ def _create_tables_individually(db: AreaOccupancyDB) -> None:
         try:
             table.create(db.engine, checkfirst=True)
         except sa.exc.OperationalError as err:
-            if err.orig and hasattr(err.orig, "sqlite_errno"):
-                if err.orig.sqlite_errno == 1:
-                    _LOGGER.debug("Table %s already exists, skipping", table.name)
-                    continue
+            if err.orig and getattr(err.orig, "sqlite_errno", None) == 1:
+                _LOGGER.debug("Table %s already exists, skipping", table.name)
+                continue
             raise

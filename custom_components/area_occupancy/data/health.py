@@ -41,6 +41,8 @@ _STUCK_CHECK_TYPES: set[InputType] = BINARY_INPUT_TYPES | {
     InputType.MOTION,
     InputType.POWER,
     InputType.COVER,
+    InputType.WIFI_CLIENTS,
+    InputType.CUSTOM_NUMERIC,
 }
 
 # Input types excluded from all health checks
@@ -59,6 +61,7 @@ STUCK_ACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
     InputType.MEDIA: timedelta(hours=12),
     InputType.APPLIANCE: timedelta(hours=24),
     InputType.DOOR: timedelta(hours=48),
+    InputType.LOCK: timedelta(hours=48),
     InputType.WINDOW: timedelta(hours=72),
     InputType.COVER: timedelta(hours=24),
 }
@@ -85,9 +88,11 @@ STUCK_INACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
     InputType.MEDIA: timedelta(days=14),
     InputType.APPLIANCE: timedelta(days=28),
     InputType.DOOR: timedelta(days=14),
+    InputType.LOCK: timedelta(days=14),
     InputType.WINDOW: timedelta(days=14),
     InputType.COVER: timedelta(days=14),
     InputType.POWER: timedelta(days=14),
+    InputType.WIFI_CLIENTS: timedelta(days=14),
 }
 
 # Report unavailable sensors after this duration
@@ -107,6 +112,13 @@ PRIORS_TRAINING_GRACE_PERIOD: timedelta = timedelta(days=7)
 # Occupied-intervals cache is rebuilt hourly; flag if it's older than this
 # (a slightly larger margin than the 24h validity window in db.queries).
 STALE_CACHE_THRESHOLD: timedelta = timedelta(hours=25)
+
+# The global prior is recomputed every hourly analysis cycle alongside the
+# occupied-intervals cache above, from the same underlying data — reuse the
+# same 25h margin (one day plus buffer for a missed cycle) to flag a prior
+# that has stopped updating (#520 Bug A: a silent no-op previously left a
+# frozen value in place indefinitely with no signal anything had stopped).
+PRIOR_RECALCULATION_STALE_THRESHOLD: timedelta = STALE_CACHE_THRESHOLD
 
 # Last full analysis cycle is flagged as "slow" if it took longer than this.
 # Set conservatively to 3 minutes for now — large installations with many
@@ -475,6 +487,7 @@ class HealthMonitor:
         last_analysis_duration_ms: float | None,
         correlation_failure_count: int,
         correlatable_entity_count: int,
+        last_prior_calculation_hours_ago: float | None = None,
     ) -> list[HealthIssue]:
         """Run pipeline-scope checks and merge results with sensor issues.
 
@@ -502,7 +515,9 @@ class HealthMonitor:
             if issue.issue_type not in _PIPELINE_ISSUE_TYPES
         ]
 
-        issue = self._check_insufficient_priors(area_age_hours, has_global_prior, now)
+        issue = self._check_insufficient_priors(
+            area_age_hours, has_global_prior, last_prior_calculation_hours_ago, now
+        )
         if issue:
             new_issues.append(issue)
 
@@ -684,36 +699,69 @@ class HealthMonitor:
         self,
         area_age_hours: float | None,
         has_global_prior: bool,
+        last_prior_calculation_hours_ago: float | None,
         now: datetime,
     ) -> HealthIssue | None:
-        """Flag areas past the warm-up period that still have no global prior.
+        """Flag areas whose global prior is missing or has stopped updating.
 
-        ``global_prior`` is None until enough occupied-vs-total time has
-        accumulated for the prior calculator to produce a value. If the
-        area has been running for longer than ``PRIORS_TRAINING_GRACE_PERIOD``
-        and the global prior is still missing, the user should know — the
-        integration is silently falling back to ``MIN_PRIOR`` for every
-        Bayesian update.
+        Two distinct conditions share this issue type (both mean the same
+        thing to the user: "the learned prior can't be trusted right now"):
+
+        - ``global_prior`` is still ``None`` after
+          ``PRIORS_TRAINING_GRACE_PERIOD`` — the prior calculator has never
+          produced a value (original behavior).
+        - A prior *was* computed at some point, but hasn't been recomputed
+          in over ``PRIOR_RECALCULATION_STALE_THRESHOLD``. Before #520 this
+          case was invisible: ``PriorAnalyzer.calculate_and_update_prior``
+          silently no-ops (at DEBUG level) whenever the occupied-intervals
+          query returns empty — e.g. after a motion/presence sensor swap
+          wipes that area's interval history — and the stale in-memory
+          value persists indefinitely with no signal that recalculation
+          has stopped. ``last_prior_calculation_hours_ago`` is ``None``
+          only when a prior exists but was never accompanied by a
+          calculation timestamp (legacy data) — that's deliberately not
+          flagged, since we can't tell how stale it is.
         """
         if area_age_hours is None:
             return None
-        if has_global_prior:
-            return None
         grace_hours = PRIORS_TRAINING_GRACE_PERIOD.total_seconds() / 3600
-        if area_age_hours < grace_hours:
-            return None
-        return HealthIssue(
-            entity_id=None,
-            issue_type=HealthIssueType.INSUFFICIENT_PRIORS,
-            input_type=None,
-            since=now,
-            duration_hours=round(area_age_hours, 1),
-            details=(
-                f"Area has been running for {area_age_hours / 24:.0f} days "
-                f"but no global prior has been learned yet "
-                f"(grace period: {grace_hours / 24:.0f} days)"
-            ),
-        )
+
+        if not has_global_prior:
+            if area_age_hours < grace_hours:
+                return None
+            return HealthIssue(
+                entity_id=None,
+                issue_type=HealthIssueType.INSUFFICIENT_PRIORS,
+                input_type=None,
+                since=now,
+                duration_hours=round(area_age_hours, 1),
+                details=(
+                    f"Area has been running for {area_age_hours / 24:.0f} days "
+                    f"but no global prior has been learned yet "
+                    f"(grace period: {grace_hours / 24:.0f} days)"
+                ),
+            )
+
+        stale_hours = PRIOR_RECALCULATION_STALE_THRESHOLD.total_seconds() / 3600
+        if (
+            last_prior_calculation_hours_ago is not None
+            and last_prior_calculation_hours_ago >= stale_hours
+        ):
+            return HealthIssue(
+                entity_id=None,
+                issue_type=HealthIssueType.INSUFFICIENT_PRIORS,
+                input_type=None,
+                since=now,
+                duration_hours=round(last_prior_calculation_hours_ago, 1),
+                details=(
+                    f"Global prior hasn't been recalculated in "
+                    f"{last_prior_calculation_hours_ago:.0f}h (threshold: "
+                    f"{stale_hours:.0f}h) — recalculation may be silently "
+                    f"failing, e.g. no occupied-interval data for this "
+                    f"area's currently configured sensors"
+                ),
+            )
+        return None
 
     def _check_stale_cache(
         self,

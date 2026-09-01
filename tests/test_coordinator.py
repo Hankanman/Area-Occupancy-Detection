@@ -497,6 +497,39 @@ class TestAreaOccupancyCoordinator:
             else:
                 mock_refresh.assert_not_called()
 
+    async def test_handle_decay_timer_still_ticks_shadow_estimators_when_decay_disabled(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """With decay disabled everywhere, shadow estimators must still tick.
+
+        Regression test: previously the timer only recorded accuracy/
+        online-prior samples as a side effect of ``async_refresh``, which
+        this path skips entirely when no area has decay enabled — starving
+        the online-prior numerator on any home that disables decay.
+        """
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._global_decay_timer = Mock()
+
+        area_name = "Test Area"
+        area = create_test_area(coordinator, area_name=area_name)
+        coordinator.get_area = Mock(return_value=area)
+        area.config.decay.enabled = False
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+
+        mock_refresh.assert_not_called()
+        assert len(coordinator.accuracy_samples_for(area_name)) == 1
+        assert coordinator.online_prior_for(area_name) is not None
+
     async def test_run_analysis(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:

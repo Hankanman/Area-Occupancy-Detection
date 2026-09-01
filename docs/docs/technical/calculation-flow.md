@@ -110,27 +110,22 @@ The combination uses logit space for better interpolation:
 - Weighted combination: `combined_logit = area_weight * area_logit + time_weight * time_logit`
 - Converts back: `combined_prior = 1 / (1 + exp(-combined_logit))`
 
-### Bayesian Probability Calculation
+### Sigmoid/Logit Probability Calculation
 
-The core calculation combines all entity evidence with the prior using Bayesian inference.
+The core calculation combines all entity evidence with the prior in **logit (log-odds) space** via `sigmoid_probability()` — not classic Bayes'-theorem likelihood-ratio inference.
 
 Process:
 
-1. **Entity Filtering**: Removes entities with zero weight or invalid likelihoods
-2. **Prior Clamping**: Ensures prior is in valid range
-3. **Log-Space Initialization**: Starts with log probabilities for occupied and not-occupied hypotheses
-4. **Entity Processing**: For each entity:
-   - Determines effective evidence (current or decaying)
-   - Gets likelihoods based on evidence state:
-     - **Active entities**: Uses `prob_given_true` and `prob_given_false` directly
-     - **Inactive entities**: Uses inverse likelihoods (`1 - prob_given_true`, `1 - prob_given_false`)
-   - Applies decay interpolation if entity is decaying
-   - Calculates log contributions weighted by entity weight
-   - Accumulates into log probabilities
-5. **Normalization**: Converts log probabilities back to probability space
-6. **Result**: Final probability between 0.0 and 1.0
+1. **Entity Filtering**: Skips entities with zero weight
+2. **Prior Clamping**: Ensures prior is in valid range, then converted to a logit-space bias (`z = logit(prior)`)
+3. **Entity Processing**: For each remaining entity:
+   - Determines evidence: `1.0` if active, `entity.decay_factor` if decaying, `0.0` if inactive (inactive entities contribute nothing — they don't count against occupancy)
+   - Looks up learned correlation strength (defaults to `1.0`)
+   - Computes a strength factor: `prob_given_true × strength_multiplier` (a per-type constant, `3.0` for motion)
+   - Adds `effective_weight × evidence × correlation × strength` to the running sum `z`
+4. **Sigmoid**: `probability = clamp(sigmoid(z))` — one pass, no separate normalization step
 
-See [Bayesian Calculation Deep Dive](bayesian-calculation.md) for detailed mathematical explanation.
+See [Bayesian Calculation Deep Dive](bayesian-calculation.md) for the full formula, derivation, and a worked example.
 
 ### Final Probability Output
 
@@ -150,13 +145,13 @@ See [Data Flow Diagrams](data-flow.md) for visual representations of these proce
 
 ## Key Concepts
 
-### Log-Space Calculation
+### Logit-Space Calculation
 
-All probability calculations use log space for numerical stability. This prevents underflow/overflow when multiplying many small probabilities together.
+Probability contributions are combined additively in logit (log-odds) space for numerical stability and to avoid renormalization — one `sigmoid()` call converts the accumulated sum back to a probability at the end.
 
 ### Decay Interpolation
 
-When an entity is decaying, its likelihoods are interpolated between their learned values and neutral (0.5) based on the decay factor. This gradually reduces the influence of stale evidence.
+When an entity is decaying, its evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole logit-space contribution shrinks smoothly toward zero as decay progresses. This gradually reduces the influence of stale evidence.
 
 ### Entity Weights
 

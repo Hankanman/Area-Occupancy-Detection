@@ -19,18 +19,18 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 ## When NOT to use this
 
 - Actively fixing a specific prior/likelihood accuracy bug or running the
-  ongoing accuracy-improvement campaign → **aod-learning-accuracy-campaign**.
+  ongoing accuracy-improvement campaign → **aod-debugging-and-history**.
 - You need the exact Bayesian formula, a constant's value, or the calculation
-  pipeline's call graph → **bayesian-occupancy-reference** (and
-  **aod-architecture-contract** for the module map).
+  pipeline's call graph → **aod-math-reference** (and
+  **aod-architecture-and-config** for the module map).
 - You need the story of a past incident (prior pinned at 0.99, decay
-  half-life bugs, timezone/DST bugs) → **aod-failure-archaeology**.
+  half-life bugs, timezone/DST bugs) → **aod-debugging-and-history**.
 - You're about to change calculation code and need the process/guardrails →
-  **aod-change-control**.
+  **aod-change-and-validation**.
 - You want existing scripts/tools to run an analysis, not to invent a new
-  one → **aod-proof-and-analysis-toolkit**.
+  one → **aod-math-reference**.
 - You want marketing/competitor-comparison framing for README or docs →
-  **aod-external-positioning**.
+  **aod-docs-and-positioning**.
 
 ---
 
@@ -43,7 +43,7 @@ prove (or falsify) the idea — without re-deriving any of this from scratch.
 | Runtime pip requirements | `[]` (none) | `grep -A2 '"requirements"' custom_components/area_occupancy/manifest.json` |
 | Test coverage gate | `fail_under = 85` in pyproject, comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules" — the old stale-comment mismatch was fixed by #495 (CI hygiene) | `grep -n fail_under pyproject.toml` |
 | Live probability engine | sigmoid/logit pipeline in `utils.py` (`sigmoid_probability`, `presence_probability`, `environmental_confidence`, `combined_probability`), driven from `area/area.py::Area._base_probability/probability` | `grep -n "def sigmoid_probability\|def presence_probability\|def combined_probability" custom_components/area_occupancy/utils.py` |
-| Dead legacy engine | `utils.py::bayesian_probability()` (classic log-odds accumulator) has **zero production call sites** — only unit tests in `tests/test_utils.py` still exercise it. CLAUDE.md's "Modifying Bayesian Calculation" workflow points at this function first — that pointer is stale; start from `sigmoid_probability`/`presence_probability` instead. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (only the `def` line should show) |
+| Legacy engine, now removed | `utils.py::bayesian_probability()` (classic log-odds accumulator) had zero production call sites for its whole life and was deleted in PR #529 (2026.8.1), one release after the codebase audit (#506) flagged it and the maintainer chose to keep it dormant as a revert safety net first. AGENTS.md's "Modifying Probability Calculation" workflow now starts from `sigmoid_probability`/`presence_probability` directly. | `grep -rn "bayesian_probability(" custom_components/area_occupancy/` (should return nothing) |
 | Adjacent-areas feature (frontier #2 asset) | **Merged 2026-07-06** — PR #454 merged into `main` (squash), superseding PR #456 which was closed as merged into it. `data/adjacency.py`, `data/trajectory.py`, `db/transitions.py`, the `AreaTransitions` table, and all `ADJACENCY_*` constants are on `main` now. Still **unvalidated on real homes** — candidate/open labeling for the research question stays even though the code shipped. | `gh pr view 454 --json state,mergeStateStatus` |
 | Prior/decay/sleep accuracy fixes | PRs #491 (prior quiet-tail), #492 (sleep unknown-presence), #493 (bedroom half-life), #494 (README link) — **all merged 2026-07-06, on `main`** | `gh pr view 491` / `492` / `493` / `494` |
 
@@ -88,7 +88,7 @@ There is no learned baseline, no fusion across sensor types, and no decay
 curve — every clear event is a potential false transition, and users patch
 this today with ad-hoc automation timeout hacks (this is literally the
 comparison table AOD's own README already draws — see
-**aod-external-positioning** for that framing; this skill is about proving
+**aod-docs-and-positioning** for that framing; this skill is about proving
 the claim with a number, not stating it).
 
 **This project's specific asset:** a full pipeline already deployed on real
@@ -111,7 +111,7 @@ Nothing today, however, measures *false transition rate* — this is unbuilt.
    window. Write this definition down in a design note before touching code
    — it is the single most falsifiable choice in this whole skill.
 2. Build a comparator harness as an offline script (see
-   **aod-proof-and-analysis-toolkit** for where existing analysis scripts
+   **aod-math-reference** for where existing analysis scripts
    like `scripts/visualize_distributions.py` and the `simulator/` web app
    already replay analysis output — extend one of those rather than
    starting cold) that replays recorder history through both "raw motion
@@ -177,14 +177,14 @@ live on `main`):**
    (all four files exist on `main` and pass as of this writing).
 2. Instrument a calibration comparison: for areas with adjacency configured,
    compare predicted-probability calibration (e.g. reliability diagram —
-   see **bayesian-occupancy-reference** for how probability outputs are
+   see **aod-math-reference** for how probability outputs are
    already clamped/computed) against otherwise-similar areas with no
    adjacency configured, using the same recorder-history replay approach as
    Frontier 1's harness.
 3. Because `ADJACENCY_*` constants in `const.py` (lines 194–221) are
    explicitly commented as "first-pass values; tune from real data once
    Phase 3 is collecting transitions" — treat them as hypotheses, not
-   defaults to trust. Any tuning must go through **aod-change-control**
+   defaults to trust. Any tuning must go through **aod-change-and-validation**
    (no silent math changes) since they affect every configured-adjacent
    area's live probability.
 
@@ -267,7 +267,7 @@ target.
   core's strong preference against adding new third-party packages.
 - Google-style docstrings enforced by ruff's `pydocstyle` convention
   (`pyproject.toml`, `[tool.ruff.lint.pydocstyle] convention = "google"`).
-- Full type annotations required per CLAUDE.md, Python 3.14+ (`pyproject.toml`
+- Full type annotations required per AGENTS.md, Python 3.14+ (`pyproject.toml`
   `requires-python = ">=3.14.2"`, bumped via #496 2026-07-06 alongside the
   HA 2026.7.1 dependency refresh).
 
@@ -275,10 +275,10 @@ target.
 these move over time):**
 | Gap | How to check | Owning skill for the fix itself |
 |---|---|---|
-| No `quality_scale.yaml` rule-by-rule justification file (core integrations at gold/platinum carry one) | `find custom_components/area_occupancy -iname '*quality_scale*'` (empty as of this writing) | aod-config-and-flags / aod-architecture-contract |
-| Coverage gate stale-comment mismatch — **fixed by #495 (merged 2026-07-06)**; comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules", matching the enforced `fail_under = 85` | `grep -n fail_under pyproject.toml` | aod-validation-and-qa |
-| No `mypy`/`pyright` static-type gate found in `pyproject.toml` or `scripts/` (only ruff) — core increasingly expects strict typing enforcement, not just annotations-present. Still an open gap as of 2026-07-06. | `grep -n 'mypy\|pyright' pyproject.toml scripts/*` | aod-build-and-env |
-| Branch strategy documented in CLAUDE.md (`dev`→`preview`/`rc`→`main`) is stale — CI now triggers lint/test/validate on `main` only (rc/dev removed, per #495), and `dev`/`preview`/`rc` branches no longer exist on the remote; CLAUDE.md itself has not been corrected yet | `git ls-remote --heads origin \| grep -E 'dev$\|preview$\|rc$'` (expect empty) | aod-change-control |
+| No `quality_scale.yaml` rule-by-rule justification file (core integrations at gold/platinum carry one) | `find custom_components/area_occupancy -iname '*quality_scale*'` (empty as of this writing) | aod-architecture-and-config |
+| Coverage gate stale-comment mismatch — **fixed by #495 (merged 2026-07-06)**; comment now reads "Enforced global minimum; aim for 90%+ on core calculation modules", matching the enforced `fail_under = 85` | `grep -n fail_under pyproject.toml` | aod-change-and-validation |
+| No `mypy`/`pyright` static-type gate found in `pyproject.toml` or `scripts/` (only ruff) — core increasingly expects strict typing enforcement, not just annotations-present. Still an open gap as of 2026-07-06. | `grep -n 'mypy\|pyright' pyproject.toml scripts/*` | aod-build-run-and-release |
+| Branch strategy documented in AGENTS.md (`dev`→`preview`/`rc`→`main`) is stale — CI now triggers lint/test/validate on `main` only (rc/dev removed, per #495), and `dev`/`preview`/`rc` branches no longer exist on the remote; AGENTS.md itself has not been corrected yet | `git ls-remote --heads origin \| grep -E 'dev$\|preview$\|rc$'` (expect empty) | aod-change-and-validation |
 
 **First three concrete steps in this repo:**
 1. Pull HA's current Integration Quality Scale rubric (it is versioned and
@@ -288,8 +288,8 @@ these move over time):**
 2. Add a static type-checking gate (`mypy` or `pyright`) to `scripts/lint`
    or CI, scoped narrowly at first (e.g. `utils.py`, `data/prior.py`, the
    calculation hot path) since full-repo strict typing is a bigger lift.
-3. File the CLAUDE.md branch-strategy correction as its own small PR (docs
-   only, low risk) — this is a "the repo shows CLAUDE.md is stale" case
+3. File the AGENTS.md branch-strategy correction as its own small PR (docs
+   only, low risk) — this is a "the repo shows AGENTS.md is stale" case
    explicitly called out for correction, not a silent change.
 
 **You have a result when:** a rule-by-rule `quality_scale.yaml` exists and
@@ -341,7 +341,7 @@ gh pr view 491 --json state,mergeStateStatus
 gh pr view 492 --json state,mergeStateStatus
 gh pr view 493 --json state,mergeStateStatus
 
-# Is bayesian_probability() still dead code?
+# Confirm bayesian_probability() removal (PR #529, 2026.8.1) hasn't regressed
 grep -rn "bayesian_probability(" custom_components/area_occupancy/
 
 # Do the near-frontier issues still carry the same labels/state?

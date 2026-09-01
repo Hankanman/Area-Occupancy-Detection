@@ -15,6 +15,9 @@ from custom_components.area_occupancy.config_flow import (
     _apply_symmetric_adjacency,
     _build_area_description_placeholders,
     _create_area_selector_schema,
+    _create_behavior_step_schema,
+    _create_motion_step_schema,
+    _create_sensors_step_schema,
     _entity_contains_keyword,
     _find_area_by_id,
     _find_area_by_sanitized_id,
@@ -25,10 +28,10 @@ from custom_components.area_occupancy.config_flow import (
     _get_state_select_options,
     _handle_step_error,
     _is_weather_entity,
+    _nest_config_for_sections,
     _remove_area_from_list,
     _strip_adjacency_references,
     _update_area_in_list,
-    create_schema,
 )
 from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
@@ -36,10 +39,14 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_LOCK_ACTIVE_STATE,
+    CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -50,16 +57,18 @@ from custom_components.area_occupancy.const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
+    CONF_WEIGHT_WIFI_CLIENTS,
+    CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
-    DEFAULT_PURPOSE,
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 from homeassistant.exceptions import HomeAssistantError
-from tests.conftest import create_area_config, patch_create_schema_context
+from tests.conftest import create_area_config
 
 
 # ruff: noqa: SLF001, TID251, PLC0415
@@ -169,6 +178,13 @@ class TestBaseOccupancyFlow:
             ),
             (
                 {
+                    CONF_LOCK_SENSORS: ["lock.front_door"],
+                    CONF_LOCK_ACTIVE_STATE: "",
+                },
+                "lock_state_required",
+            ),
+            (
+                {
                     CONF_WINDOW_SENSORS: ["binary_sensor.window1"],
                     CONF_WINDOW_ACTIVE_STATE: "",
                 },
@@ -210,7 +226,7 @@ class TestHelperFunctions:
 
     @pytest.mark.parametrize(
         "platform",
-        ["door", "window", "media", "appliance", "unknown"],
+        ["door", "lock", "window", "media", "appliance", "unknown"],
     )
     def test_get_state_select_options(self, platform):
         """Test _get_state_select_options function for all platforms."""
@@ -427,6 +443,54 @@ class TestHelperFunctions:
         assert "binary_sensor.test_door_1" in result["door"]
         assert "binary_sensor.test_window_1" in result["window"]
         assert "switch.test_appliance_1" in result["appliance"]
+
+    def test_get_include_entities_lock_domain(self, hass, entity_registry):
+        """Test that all lock.* domain entities are included, unfiltered by device_class.
+
+        Locks (e.g. Nuki smart locks) live in a dedicated ``lock`` domain
+        distinct from binary_sensor door/window entities, so they're
+        collected by domain the same way cover.* entities are — no
+        device_class filtering needed.
+        """
+        entity_registry.async_get_or_create("lock", "test", "front_door")
+        entity_registry.async_get_or_create("lock", "test", "back_door")
+        hass.states.async_set("lock.test_front_door", "locked")
+        hass.states.async_set("lock.test_back_door", "unlocked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock" in result
+        assert "lock.test_front_door" in result["lock"]
+        assert "lock.test_back_door" in result["lock"]
+
+    def test_get_include_entities_lock_without_registry_entry(self, hass):
+        """Locks without a unique_id have no registry entry but must still show up.
+
+        Some MQTT-configured locks never register a unique_id, so they have
+        no entity-registry entry at all. Discovery must be driven by
+        ``hass.states``, not the registry, or these locks would be silently
+        unselectable.
+        """
+        hass.states.async_set("lock.mqtt_side_door", "unlocked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock.mqtt_side_door" in result["lock"]
+
+    def test_get_include_entities_excludes_disabled_lock(self, hass, entity_registry):
+        """Disabled lock entities must not be offered for selection."""
+        from homeassistant.helpers import entity_registry as er
+
+        entry = entity_registry.async_get_or_create("lock", "test", "disabled_lock")
+        entity_registry.async_update_entity(
+            entry.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        hass.states.async_set("lock.test_enabled_lock", "locked")
+
+        result = _get_include_entities(hass)
+
+        assert "lock.test_disabled_lock" not in result["lock"]
+        assert "lock.test_enabled_lock" in result["lock"]
 
     def test_get_include_entities_window_by_original_device_class(
         self, hass, entity_registry
@@ -776,113 +840,91 @@ class TestHelperFunctions:
         assert "binary_sensor.mqtt_room_occupancy" in result["motion"]
         assert "binary_sensor.ble_monitor_person_presence" in result["motion"]
 
-    @pytest.mark.parametrize(
-        ("defaults", "is_options", "expected_name_present", "test_schema_validation"),
-        [
-            (None, False, True, False),  # defaults test
-            (
-                {
-                    CONF_AREA_ID: "test_area",
-                    CONF_MOTION_SENSORS: ["binary_sensor.motion_1"],
-                },
-                False,
-                True,  # CONF_AREA_ID is always present in schema now
-                True,
-            ),  # with_defaults test
-            (
-                None,
-                True,
-                True,
-                False,
-            ),  # options_mode test - CONF_AREA_ID is always present
-        ],
-    )
-    def test_create_schema(
-        self,
-        hass,
-        entity_registry,
-        defaults,
-        is_options,
-        expected_name_present,
-        test_schema_validation,
+    def test_get_include_entities_excludes_area_occupancy_wifi_clients(
+        self, hass, entity_registry
     ):
-        """Test creating schema with different configurations."""
-        # Use real entity registry via fixture
-        schema_dict = create_schema(hass, defaults, is_options)
-        schema = vol.Schema(schema_dict)
+        """Wi-Fi client selector must exclude this integration's own sensors.
 
-        expected_sections = [
-            "motion",
-            "windows_and_doors",
-            "media",
-            "appliances",
-            "environmental",
-            "power",
-            "wasp_in_box",
-            "parameters",
-        ]
-        assert isinstance(schema_dict, dict)
-        for section in expected_sections:
-            assert section in schema_dict
-
-        # Check if CONF_AREA_ID is present in schema_dict
-        # Schema dict uses vol.Required/vol.Optional markers as keys, so we need to check the .schema attribute
-        area_id_present = any(
-            hasattr(key, "schema") and key.schema == CONF_AREA_ID for key in schema_dict
+        The selector has no device_class to filter by, so it would otherwise
+        offer this integration's own probability/priors/decay output sensors
+        for selection -- feeding them back in as WIFI_CLIENTS evidence would
+        create a feedback loop.
+        """
+        # Register an area_occupancy output sensor (should be excluded)
+        entity_registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            "living_room_probability",
         )
-        if expected_name_present:
-            assert area_id_present, (
-                "CONF_AREA_ID should be present in schema but was not found"
-            )
-        else:
-            assert not area_id_present, (
-                "CONF_AREA_ID should not be present in schema but was found"
-            )
+        # Register an external client-count sensor (should be included)
+        entity_registry.async_get_or_create(
+            "sensor",
+            "unifi",
+            "guest_ssid_clients",
+        )
 
-        if test_schema_validation:
-            # Test schema instantiation
-            # Note: purpose is a string, not a dict section
-            data = schema(
-                {
-                    CONF_AREA_ID: "test_area",
-                    "purpose": DEFAULT_PURPOSE,  # purpose is a string value, not a section
-                    "motion": {},
-                    "windows_and_doors": {},
-                    "media": {},
-                    "appliances": {},
-                    "environmental": {},
-                    "power": {},
-                    "wasp_in_box": {},
-                    "parameters": {},
-                }
-            )
-            assert data[CONF_AREA_ID] == "test_area"
+        result = _get_include_entities(hass)
 
-    @pytest.mark.parametrize("is_options", [False, True])
-    def test_create_schema_always_includes_advanced_fields(
-        self, hass, entity_registry, is_options
+        assert f"sensor.{DOMAIN}_living_room_probability" not in result["wifi_clients"]
+        assert "sensor.unifi_guest_ssid_clients" in result["wifi_clients"]
+
+    def test_get_include_entities_custom_has_no_domain_filter(
+        self, hass, entity_registry
     ):
+        """Custom sensor selectors must accept entities every typed section rejects.
+
+        The whole point of #531 is supporting entities with no device_class
+        that fit no other section -- e.g. an MQTT/HASS.Agent sensor. Unlike
+        every other selector, no device_class filtering is applied at all.
+        """
+        # An entity with no recognizable device_class -- appliance/motion/etc
+        # selectors would all reject this.
+        entity_registry.async_get_or_create(
+            "sensor",
+            "hassagent",
+            "pc_active_window",
+        )
+        # A binary_sensor with no recognizable device_class either.
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "mqtt",
+            "custom_flag",
+        )
+        # This integration's own output sensor must still be excluded.
+        entity_registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            "living_room_probability",
+        )
+
+        result = _get_include_entities(hass)
+
+        assert "sensor.hassagent_pc_active_window" in result["custom_binary"]
+        assert "sensor.hassagent_pc_active_window" in result["custom_numeric"]
+        assert "binary_sensor.mqtt_custom_flag" in result["custom_binary"]
+        assert f"sensor.{DOMAIN}_living_room_probability" not in result["custom_binary"]
+        assert (
+            f"sensor.{DOMAIN}_living_room_probability" not in result["custom_numeric"]
+        )
+
+    def test_wizard_steps_always_include_advanced_fields(self, hass, entity_registry):
         """Test that the former advanced-mode fields are always in the schema.
 
         show_advanced_options gating was removed (deprecated in HA, removal
-        2027.6), so these fields must be present unconditionally.
+        2027.6), so these fields must be present unconditionally in the
+        wizard step schemas users actually see.
         """
 
-        def section_field_names(schema_dict, section_name):
-            for key, value in schema_dict.items():
-                if getattr(key, "schema", None) == section_name:
-                    return {marker.schema for marker in value.schema.schema}
-            raise AssertionError(f"Section {section_name} not found in schema")
+        def field_names(schema_dict):
+            return {getattr(key, "schema", None) for key in schema_dict}
 
-        schema_dict = create_schema(hass, None, is_options)
-
-        motion_fields = section_field_names(schema_dict, "motion")
+        motion_fields = field_names(_create_motion_step_schema(hass))
         assert CONF_MOTION_PROB_GIVEN_TRUE in motion_fields
         assert CONF_MOTION_PROB_GIVEN_FALSE in motion_fields
 
-        parameter_fields = section_field_names(schema_dict, "parameters")
-        assert CONF_DECAY_HALF_LIFE in parameter_fields
-        assert CONF_MIN_PRIOR_OVERRIDE in parameter_fields
+        behavior_fields = field_names(_create_behavior_step_schema())
+        assert CONF_DECAY_HALF_LIFE in behavior_fields
+        assert CONF_MIN_PRIOR_OVERRIDE in behavior_fields
 
 
 class TestAreaOccupancyConfigFlow:
@@ -929,8 +971,7 @@ class TestAreaOccupancyConfigFlow:
         config_flow_flow._areas = areas
 
         if patch_type == "schema":
-            with patch_create_schema_context():
-                result = await config_flow_flow.async_step_user(user_input)
+            result = await config_flow_flow.async_step_user(user_input)
         elif patch_type == "unique_id":
             with (
                 patch.object(
@@ -1071,14 +1112,13 @@ class TestAreaOccupancyConfigFlow:
         config_flow_flow._area_being_edited = area_being_edited
         config_flow_flow._area_to_remove = area_to_remove
 
-        with patch_create_schema_context():
-            method = getattr(config_flow_flow, step_method)
-            result = await method()
-            if expected_step_id == "user":
-                assert result.get("type") == FlowResultType.MENU
-            else:
-                assert result.get("type") == FlowResultType.FORM
-            assert result.get("step_id") == expected_step_id
+        method = getattr(config_flow_flow, step_method)
+        result = await method()
+        if expected_step_id == "user":
+            assert result.get("type") == FlowResultType.MENU
+        else:
+            assert result.get("type") == FlowResultType.FORM
+        assert result.get("step_id") == expected_step_id
 
     async def test_config_flow_remove_area_shows_menu(
         self,
@@ -1176,6 +1216,7 @@ class TestConfigFlowIntegration:
                 "appliances": {},
                 "environmental": {},
                 "power": {},
+                "wifi_clients": {},
             }
         )
         assert result4.get("type") == FlowResultType.FORM
@@ -1209,6 +1250,55 @@ class TestConfigFlowIntegration:
             assert area_data.get(CONF_AREA_ID) == expected_area_id
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert area_data.get(CONF_THRESHOLD) == 60
+
+    async def test_complete_config_flow_with_lock_sensors(
+        self,
+        config_flow_flow,
+        setup_area_registry: dict[str, str],
+    ):
+        """Test the wizard persists CONF_LOCK_SENSORS/CONF_LOCK_ACTIVE_STATE (#516)."""
+        expected_area_id = setup_area_registry.get("Living Room", "living_room")
+
+        await config_flow_flow.async_step_user()
+        await config_flow_flow.async_step_area_basics(
+            {CONF_AREA_ID: expected_area_id, CONF_PURPOSE: "social"}
+        )
+        await config_flow_flow.async_step_area_motion(
+            {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
+        )
+
+        result4 = await config_flow_flow.async_step_area_sensors(
+            {
+                "windows_and_doors": {
+                    CONF_LOCK_SENSORS: ["lock.front_door"],
+                    CONF_LOCK_ACTIVE_STATE: "unlocked",
+                },
+                "media": {},
+                "appliances": {},
+                "environmental": {},
+                "power": {},
+            }
+        )
+        assert result4.get("type") == FlowResultType.FORM
+        assert result4.get("step_id") == "area_behavior"
+
+        await config_flow_flow.async_step_area_behavior(
+            {CONF_THRESHOLD: 60, CONF_DECAY_ENABLED: True, CONF_WASP_ENABLED: False}
+        )
+
+        with (
+            patch.object(
+                config_flow_flow, "async_set_unique_id", new_callable=AsyncMock
+            ),
+            patch.object(config_flow_flow, "_abort_if_unique_id_configured"),
+        ):
+            result6 = await config_flow_flow.async_step_finish_setup()
+
+            assert result6.get("type") == FlowResultType.CREATE_ENTRY
+            areas_list = result6.get("data", {})[CONF_AREAS]
+            area_data = areas_list[0]
+            assert area_data.get(CONF_LOCK_SENSORS) == ["lock.front_door"]
+            assert area_data.get(CONF_LOCK_ACTIVE_STATE) == "unlocked"
 
     async def test_config_flow_with_existing_entry(
         self, config_flow_flow, hass: HomeAssistant, setup_area_registry: dict[str, str]
@@ -1346,7 +1436,7 @@ class TestConfigFlowIntegration:
                 "pm10": ["sensor.pm10_1"],
                 "motion": ["binary_sensor.motion1"],
             }
-            schema_dict = create_schema(hass)
+            schema_dict = _create_motion_step_schema(hass)
             assert isinstance(schema_dict, dict)
             assert len(schema_dict) > 0
 
@@ -1696,6 +1786,74 @@ class TestNewHelperFunctions:
         assert result[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
         assert result[CONF_PURPOSE] == "social"
         assert result[CONF_WASP_ENABLED] is True
+
+    def test_flatten_sectioned_input_wifi_clients(self):
+        """Test flattening the wifi_clients section like other sensor sections."""
+        user_input = {
+            "wifi_clients": {
+                CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_guest"],
+                CONF_WEIGHT_WIFI_CLIENTS: 0.42,
+            },
+        }
+        result = _flatten_sectioned_input(user_input)
+        assert result[CONF_WIFI_CLIENTS_SENSORS] == ["sensor.wifi_clients_guest"]
+        assert result[CONF_WEIGHT_WIFI_CLIENTS] == 0.42
+
+    def test_nest_config_for_sections_wifi_clients(self):
+        """Test that wifi_clients config keys are nested under a wifi_clients section."""
+        flat_config = {
+            CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_guest"],
+            CONF_WEIGHT_WIFI_CLIENTS: 0.42,
+        }
+        nested = _nest_config_for_sections(flat_config)
+        assert nested["wifi_clients"] == {
+            CONF_WIFI_CLIENTS_SENSORS: ["sensor.wifi_clients_guest"],
+            CONF_WEIGHT_WIFI_CLIENTS: 0.42,
+        }
+
+    def test_sensors_step_schema_includes_wifi_clients_section(self, hass):
+        """Test that the sensors step schema exposes a wifi_clients section."""
+        schema_dict = _create_sensors_step_schema(hass)
+        section_names = {
+            key.schema if hasattr(key, "schema") else key for key in schema_dict
+        }
+        assert "wifi_clients" in section_names
+
+    def test_flatten_sectioned_input_custom(self):
+        """Test flattening the custom section like other sensor sections."""
+        user_input = {
+            "custom": {
+                CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+                CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+                CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+            },
+        }
+        result = _flatten_sectioned_input(user_input)
+        assert result[CONF_CUSTOM_BINARY_SENSORS] == ["binary_sensor.custom_flag"]
+        assert result[CONF_CUSTOM_NUMERIC_SENSORS] == ["sensor.custom_metric"]
+        assert result[CONF_WEIGHT_CUSTOM_NUMERIC] == 0.25
+
+    def test_nest_config_for_sections_custom(self):
+        """Test that custom config keys are nested under a custom section."""
+        flat_config = {
+            CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+            CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+            CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+        }
+        nested = _nest_config_for_sections(flat_config)
+        assert nested["custom"] == {
+            CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+            CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+            CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+        }
+
+    def test_sensors_step_schema_includes_custom_section(self, hass):
+        """Test that the sensors step schema exposes a custom section."""
+        schema_dict = _create_sensors_step_schema(hass)
+        section_names = {
+            key.schema if hasattr(key, "schema") else key for key in schema_dict
+        }
+        assert "custom" in section_names
 
     @pytest.mark.parametrize(
         ("areas", "search_name", "expected_found", "expected_name"),

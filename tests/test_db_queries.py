@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,13 +22,13 @@ from custom_components.area_occupancy.db.queries import (
     get_all_time_priors,
     get_stored_time_priors,
     get_area_data,
+    get_entities_without_intervals,
+    get_first_interval_timestamp,
     get_global_prior,
     get_latest_interval,
     get_occupied_intervals,
     get_occupied_intervals_cache,
-    get_time_bounds,
     get_time_prior,
-    get_total_occupied_seconds,
     is_occupied_intervals_cache_valid,
 )
 from homeassistant.util import dt as dt_util
@@ -645,84 +646,152 @@ class TestGetOccupiedIntervals:
         assert result == []
 
 
-class TestGetTimeBounds:
-    """Test get_time_bounds function."""
+class TestGetFirstIntervalTimestamp:
+    """Test get_first_interval_timestamp (#520 Bug A/B support query)."""
 
-    def test_get_time_bounds_with_data(self, coordinator: AreaOccupancyCoordinator):
-        """Test get_time_bounds when intervals exist."""
+    def test_no_data_returns_none(self, coordinator: AreaOccupancyCoordinator):
+        """No interval rows at all for this area -> None (Bug A Case 1)."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is None
 
-        # Ensure area exists first (foreign key requirement)
-        db.save_area_data(area_name)
-
-        end = dt_util.utcnow()
-        start = end - timedelta(hours=1)
-
-        with db.get_session() as session:
-            _create_test_entity(
-                session, db, "binary_sensor.motion1", "motion", area_name
-            )
-            _create_test_interval(
-                session, db, "binary_sensor.motion1", start, end, area_name
-            )
-            session.commit()
-
-        first, last = get_time_bounds(db, db.coordinator.entry_id, area_name)
-        assert first is not None
-        assert last is not None
-
-    def test_get_time_bounds_no_data(self, coordinator: AreaOccupancyCoordinator):
-        """Test get_time_bounds when no intervals exist."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        first, last = get_time_bounds(db, db.coordinator.entry_id, area_name)
-        assert first is None
-        assert last is None
-
-    def test_get_time_bounds_with_entity_ids(
+    def test_returns_earliest_any_state_row(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test get_time_bounds with entity_ids parameter."""
+        """Returns the earliest interval regardless of state ("off" counts).
+
+        This is the key distinction from get_occupied_intervals, which only
+        looks at "on" rows -- an area can have data (this function returns
+        a timestamp) while having zero occupied time (get_occupied_intervals
+        returns []).
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         db.save_area_data(area_name)
 
-        end = dt_util.utcnow()
-        start1 = end - timedelta(hours=2)
-        start2 = end - timedelta(hours=1)
+        now = dt_util.utcnow()
+        earliest = now - timedelta(hours=48)
+        middle = now - timedelta(hours=24)
 
         with db.get_session() as session:
             _create_test_entity(
                 session, db, "binary_sensor.motion1", "motion", area_name
             )
-            _create_test_entity(
-                session, db, "binary_sensor.motion2", "motion", area_name
+            # Earliest row is "off" -- must still be found.
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                earliest,
+                earliest + timedelta(minutes=1),
+                area_name,
+                state="off",
             )
             _create_test_interval(
-                session, db, "binary_sensor.motion1", start1, end, area_name
-            )
-            _create_test_interval(
-                session, db, "binary_sensor.motion2", start2, end, area_name
+                session,
+                db,
+                "binary_sensor.motion1",
+                middle,
+                middle + timedelta(minutes=1),
+                area_name,
+                state="on",
             )
             session.commit()
 
-        # Test with specific entity_ids
-        first, last = get_time_bounds(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            entity_ids=["binary_sensor.motion1"],
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is not None
+        norm_result, norm_earliest = _normalize_datetime_for_comparison(
+            result, earliest
         )
-        assert first is not None
-        assert last is not None
-        # Handle timezone-aware vs naive datetime comparison
-        first_normalized, start1_normalized = _normalize_datetime_for_comparison(
-            first, start1
+        assert abs((norm_result - norm_earliest).total_seconds()) < 1
+
+    def test_ignores_other_entity_types(self, coordinator: AreaOccupancyCoordinator):
+        """A door/appliance-only interval history doesn't count as ground truth."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        with db.get_session() as session:
+            _create_test_entity(session, db, "binary_sensor.door1", "door", area_name)
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.door1",
+                now - timedelta(hours=1),
+                now,
+                area_name,
+                state="on",
+            )
+            session.commit()
+
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is None
+
+    def test_error_returns_none(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Database error returns None rather than raising."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        def bad_session():
+            raise SQLAlchemyError("Error")
+
+        monkeypatch.setattr(db, "get_session", bad_session)
+        result = get_first_interval_timestamp(db, db.coordinator.entry_id, area_name)
+        assert result is None
+
+
+class TestGetEntitiesWithoutIntervals:
+    """Test get_entities_without_intervals (#520 Fix 3 backfill support)."""
+
+    def test_empty_input_returns_empty_set(self, coordinator: AreaOccupancyCoordinator):
+        """Empty entity_ids list short-circuits to an empty set."""
+        db = coordinator.db
+        assert get_entities_without_intervals(db, []) == set()
+
+    def test_identifies_entities_with_no_rows(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Entities with zero Intervals rows are returned; others are excluded."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+
+        now = dt_util.utcnow()
+        with db.get_session() as session:
+            _create_test_entity(
+                session, db, "binary_sensor.motion1", "motion", area_name
+            )
+            _create_test_interval(
+                session,
+                db,
+                "binary_sensor.motion1",
+                now - timedelta(hours=1),
+                now,
+                area_name,
+            )
+            session.commit()
+
+        result = get_entities_without_intervals(
+            db, ["binary_sensor.motion1", "binary_sensor.motion2"]
         )
-        last_normalized, end_normalized = _normalize_datetime_for_comparison(last, end)
-        assert first_normalized == start1_normalized
-        assert last_normalized == end_normalized
+        assert result == {"binary_sensor.motion2"}
+
+    def test_error_returns_empty_set(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Database error returns an empty set rather than raising."""
+        db = coordinator.db
+
+        def bad_session():
+            raise SQLAlchemyError("Error")
+
+        monkeypatch.setattr(db, "get_session", bad_session)
+        result = get_entities_without_intervals(db, ["binary_sensor.motion1"])
+        assert result == set()
 
 
 class TestBuildFilters:
@@ -836,6 +905,56 @@ class TestGetGlobalPrior:
         db = coordinator.db
         result = get_global_prior(db, "nonexistent_area")
         assert result is None
+
+    def test_get_global_prior_null_calculation_date(
+        self, coordinator: AreaOccupancyCoordinator, monkeypatch
+    ):
+        """Legacy rows with no calculation_date must not crash get_global_prior.
+
+        calculation_date is NOT NULL in the current schema (verified: SQLite
+        rejects both an INSERT and an UPDATE that attempt to set it NULL, so
+        this can't be reproduced against a freshly created test DB). But
+        create_all(checkfirst=True) never alters already-existing tables
+        (see aod-change-control), so an install whose DB predates this
+        constraint could still carry a legacy NULL row -- simulate that by
+        stubbing the session's query result directly.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        legacy_row = SimpleNamespace(
+            prior_value=0.35,
+            calculation_date=None,
+            data_period_start=dt_util.utcnow() - timedelta(days=90),
+            data_period_end=dt_util.utcnow(),
+            total_occupied_seconds=86400.0,
+            total_period_seconds=7776000.0,
+            interval_count=100,
+            confidence=None,
+            calculation_method=None,
+        )
+
+        class _FakeQuery:
+            def filter_by(self, **kwargs):
+                return self
+
+            def first(self):
+                return legacy_row
+
+        class _FakeSession:
+            def query(self, *args, **kwargs):
+                return _FakeQuery()
+
+        @contextmanager
+        def fake_get_session():
+            yield _FakeSession()
+
+        monkeypatch.setattr(db, "get_session", fake_get_session)
+
+        result = get_global_prior(db, area_name)
+        assert result is not None
+        assert result["calculation_date"] is None
+        assert result["prior_value"] == 0.35
 
 
 class TestOccupiedIntervalsCache:
@@ -1104,211 +1223,6 @@ class TestGetAllTimePriors:
         for day_of_week in range(7):
             for time_slot in range(24):
                 assert result[(day_of_week, time_slot)] == 0.5
-
-
-class TestGetTotalOccupiedSeconds:
-    """Test get_total_occupied_seconds function."""
-
-    def test_get_total_occupied_seconds_single_interval(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test get_total_occupied_seconds with single interval."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        db.save_area_data(area_name)
-
-        end = dt_util.utcnow()
-        start = end - timedelta(hours=1)
-
-        with db.get_session() as session:
-            _create_test_entity(
-                session, db, "binary_sensor.motion1", "motion", area_name
-            )
-            _create_test_interval(
-                session, db, "binary_sensor.motion1", start, end, area_name
-            )
-            session.commit()
-
-        result = get_total_occupied_seconds(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            lookback_days=90,
-            motion_timeout_seconds=0,
-        )
-
-        # Should be approximately 3600 seconds (1 hour)
-        assert abs(result - 3600.0) < 1.0
-
-    def test_get_total_occupied_seconds_multiple_intervals(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test get_total_occupied_seconds with multiple intervals."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        db.save_area_data(area_name)
-
-        now = dt_util.utcnow()
-        intervals_data = [
-            (now - timedelta(hours=3), now - timedelta(hours=2)),  # 1 hour
-            (now - timedelta(hours=1), now - timedelta(minutes=30)),  # 0.5 hours
-        ]
-
-        with db.get_session() as session:
-            _create_test_entity(
-                session, db, "binary_sensor.motion1", "motion", area_name
-            )
-            for start, end in intervals_data:
-                _create_test_interval(
-                    session, db, "binary_sensor.motion1", start, end, area_name
-                )
-            session.commit()
-
-        result = get_total_occupied_seconds(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            lookback_days=90,
-            motion_timeout_seconds=0,
-        )
-
-        # Should be sum of both intervals: 3600 + 1800 = 5400 seconds
-        expected = 5400.0
-        assert abs(result - expected) < 1.0
-
-    def test_get_total_occupied_seconds_overlapping_intervals(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test get_total_occupied_seconds with overlapping intervals (should not double-count)."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        db.save_area_data(area_name)
-
-        now = dt_util.utcnow()
-        # Overlapping intervals: first from 0-2h, second from 1-3h
-        # Merged result should be 0-3h = 3 hours
-        start1 = now - timedelta(hours=3)
-        end1 = now - timedelta(hours=1)
-        start2 = now - timedelta(hours=2)
-        end2 = now
-
-        with db.get_session() as session:
-            _create_test_entity(
-                session, db, "binary_sensor.motion1", "motion", area_name
-            )
-            _create_test_interval(
-                session, db, "binary_sensor.motion1", start1, end1, area_name
-            )
-            _create_test_interval(
-                session, db, "binary_sensor.motion1", start2, end2, area_name
-            )
-            session.commit()
-
-        result = get_total_occupied_seconds(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            lookback_days=90,
-            motion_timeout_seconds=0,
-        )
-
-        # Should be merged to 3 hours = 10800 seconds (not 4 hours = 14400)
-        expected = 10800.0
-        assert abs(result - expected) < 1.0
-
-    def test_get_total_occupied_seconds_empty(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test get_total_occupied_seconds with no intervals."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-
-        result = get_total_occupied_seconds(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            lookback_days=90,
-            motion_timeout_seconds=0,
-        )
-
-        # Should return 0.0
-        assert result == 0.0
-
-    def test_get_total_occupied_seconds_with_timeout(
-        self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test get_total_occupied_seconds with motion timeout."""
-        db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
-        db.save_area_data(area_name)
-
-        now = dt_util.utcnow()
-        start = now - timedelta(hours=2)
-        # Motion interval ends 15 minutes before "now"
-        motion_end = now - timedelta(minutes=15)
-        # Second motion interval starts after first ends (with a gap)
-        # The timeout should bridge the gap, and merged_end will be the end of second interval
-        # This ensures motion_end < merged_end, allowing timeout extension to be tested
-        # motion_end + timeout = now - 15m + 10m = now - 5m
-        # Set merged_end = now - 8m, so motion_end + timeout (now - 5m) > merged_end (now - 8m)
-        # This means timeout IS clamped to merged_end (now - 8m)
-        # Set second_motion_start to overlap with first motion, so they're in the same merged interval
-        # Then the timeout extension from motion_end is clamped to merged_end
-        # The segments will merge, and result[0][1] = merged_end (now - 8m)
-        # This equals min(motion_end + timeout, merged_end) = min(now - 5m, now - 8m) = now - 8m
-        merged_end = now - timedelta(
-            minutes=8
-        )  # Before motion_end + timeout, so timeout is clamped
-        second_motion_start = now - timedelta(
-            minutes=16
-        )  # Overlaps with first motion (ends at now - 15m)
-
-        with db.get_session() as session:
-            entity = db.Entities(
-                entity_id="binary_sensor.motion1",
-                entry_id=db.coordinator.entry_id,
-                area_name=area_name,
-                entity_type="motion",
-            )
-            session.add(entity)
-
-            # Create first motion interval that ends before the merged interval end
-            _create_test_interval(
-                session, db, "binary_sensor.motion1", start, motion_end, area_name
-            )
-            # Create second motion interval that starts after first ends (gap)
-            # The timeout will bridge the gap, and merged_end will be the end of second interval
-            _create_test_interval(
-                session,
-                db,
-                "binary_sensor.motion1",
-                second_motion_start,
-                merged_end,
-                area_name,
-            )
-            session.commit()
-
-        # With 10 minute timeout, motion segment should be extended
-        motion_timeout_seconds = 600  # 10 minutes
-        result = get_total_occupied_seconds(
-            db,
-            db.coordinator.entry_id,
-            area_name,
-            lookback_days=90,
-            motion_timeout_seconds=motion_timeout_seconds,
-        )
-
-        # Timeout extends motion segments from motion_end, but is clamped to merged_end
-        # Since motion_end < merged_end, timeout should extend to min(motion_end + timeout, merged_end)
-        # motion_end + timeout = now - 15m + 10m = now - 5m
-        # merged_end = now - 8m
-        # So expected_end = min(now - 5m, now - 8m) = now - 8m (timeout is clamped to merged_end)
-        # The duration should be from start to min(motion_end + timeout, merged_end) = merged_end
-        expected_end = min(
-            motion_end + timedelta(seconds=motion_timeout_seconds), merged_end
-        )
-        expected_duration = (expected_end - start).total_seconds()
-        assert abs(result - expected_duration) < 1.0
 
 
 class TestGetStoredTimePriors:

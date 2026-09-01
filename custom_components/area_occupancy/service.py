@@ -477,3 +477,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=GET_TIME_PRIORS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
+
+
+def async_unload_services(hass: HomeAssistant) -> None:
+    """Remove the domain services.
+
+    Called when the last config entry unloads; otherwise the handlers
+    linger and raise once the coordinator is gone.
+    """
+    for service in (
+        "run_analysis",
+        "export_config",
+        "purge_area_history",
+        "get_time_priors",
+    ):
+        hass.services.async_remove(DOMAIN, service)

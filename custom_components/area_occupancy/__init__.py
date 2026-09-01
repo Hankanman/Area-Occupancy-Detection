@@ -19,9 +19,19 @@ from homeassistant.helpers import (
     config_validation as cv,
     device_registry as dr,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AREA_ID, CONF_AREAS, CONF_VERSION, DB_NAME, DOMAIN, PLATFORMS
+from .const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_VERSION,
+    DB_NAME,
+    DOMAIN,
+    ONLINE_PRIOR_STORE_KEY_PREFIX,
+    ONLINE_PRIOR_STORE_VERSION,
+    PLATFORMS,
+)
 from .coordinator import AreaOccupancyCoordinator
 from .db.operations import delete_area_data as _delete_area_data
 from .db.schema import (
@@ -40,7 +50,7 @@ from .db.schema import (
     Priors,
 )
 from .migrations import async_migrate_entry
-from .service import async_setup_services
+from .service import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -405,6 +415,21 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     entry.entry_id,
                 )
 
+        # Drop the shadow-mode online-prior Store (#500) — it's keyed by
+        # entry_id and DB purging above doesn't touch HA's storage helper
+        # files, so a stale one would otherwise survive removal forever.
+        try:
+            await Store(
+                hass,
+                ONLINE_PRIOR_STORE_VERSION,
+                f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove online-prior storage during entry removal %s",
+                entry.entry_id,
+            )
+
         # When no other entries remain, drop the whole database so a re-install
         # starts clean.
         if not other_entries and db_path is not None:
@@ -451,7 +476,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await coordinator.async_shutdown()
                 del hass.data[DOMAIN]
 
-            # Clean up services flag
+            # Remove services and clean up the setup flag
+            async_unload_services(hass)
             if (
                 "_services_setup" in hass.data
                 and DOMAIN in hass.data["_services_setup"]

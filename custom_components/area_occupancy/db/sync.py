@@ -14,8 +14,13 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 
-from ..const import MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, RETENTION_DAYS
-from ..data.entity_type import InputType
+from ..const import (
+    HA_RECORDER_DAYS,
+    MAX_INTERVAL_SECONDS,
+    MIN_INTERVAL_SECONDS,
+    RETENTION_DAYS,
+)
+from ..data.entity_type import NUMERIC_INPUT_TYPES
 from ..time_utils import to_db_utc, to_utc
 from . import queries
 from .utils import chunked, is_valid_state
@@ -26,21 +31,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _INTERVAL_LOOKUP_BATCH = 250
 _NUMERIC_SAMPLE_LOOKUP_BATCH = 250
-_NUMERIC_INPUT_TYPES = {
-    InputType.TEMPERATURE,
-    InputType.HUMIDITY,
-    InputType.ILLUMINANCE,
-    InputType.CO2,
-    InputType.CO,
-    InputType.SOUND_PRESSURE,
-    InputType.PRESSURE,
-    InputType.AIR_QUALITY,
-    InputType.VOC,
-    InputType.PM25,
-    InputType.PM10,
-    InputType.POWER,
-    InputType.ENVIRONMENTAL,
-}
+_NUMERIC_INPUT_TYPES = NUMERIC_INPUT_TYPES
 
 
 def _normalize_db_key_datetime(value: datetime) -> datetime:
@@ -55,24 +46,27 @@ def _normalize_db_key_datetime(value: datetime) -> datetime:
 def _get_existing_interval_keys(
     session: sa.orm.Session,
     db: AreaOccupancyDB,
-    interval_keys: set[tuple[str, datetime, datetime]],
-) -> set[tuple[str, datetime, datetime]]:
+    interval_keys: set[tuple[str, str, datetime, datetime]],
+) -> set[tuple[str, str, datetime, datetime]]:
     """Return keys already stored in the database using batched tuple lookups."""
     if not interval_keys:
         return set()
 
     keys_list = list(interval_keys)
     interval_tuple = sa.tuple_(
-        db.Intervals.entity_id, db.Intervals.start_time, db.Intervals.end_time
+        db.Intervals.entry_id,
+        db.Intervals.entity_id,
+        db.Intervals.start_time,
+        db.Intervals.end_time,
     )
-    existing_keys: set[tuple[str, datetime, datetime]] = set()
+    existing_keys: set[tuple[str, str, datetime, datetime]] = set()
 
     for chunk in chunked(keys_list, _INTERVAL_LOOKUP_BATCH):
         matches = session.query(db.Intervals).filter(interval_tuple.in_(chunk)).all()
         for interval in matches:
             start = _normalize_db_key_datetime(interval.start_time)
             end = _normalize_db_key_datetime(interval.end_time)
-            existing_keys.add((interval.entity_id, start, end))
+            existing_keys.add((interval.entry_id, interval.entity_id, start, end))
 
     return existing_keys
 
@@ -80,21 +74,25 @@ def _get_existing_interval_keys(
 def _get_existing_numeric_sample_keys(
     session: sa.orm.Session,
     db: AreaOccupancyDB,
-    sample_keys: set[tuple[str, datetime]],
-) -> set[tuple[str, datetime]]:
+    sample_keys: set[tuple[str, str, datetime]],
+) -> set[tuple[str, str, datetime]]:
     """Return numeric samples already stored using batched tuple lookups."""
     if not sample_keys:
         return set()
 
     keys_list = list(sample_keys)
-    sample_tuple = sa.tuple_(db.NumericSamples.entity_id, db.NumericSamples.timestamp)
-    existing_keys: set[tuple[str, datetime]] = set()
+    sample_tuple = sa.tuple_(
+        db.NumericSamples.entry_id,
+        db.NumericSamples.entity_id,
+        db.NumericSamples.timestamp,
+    )
+    existing_keys: set[tuple[str, str, datetime]] = set()
 
     for chunk in chunked(keys_list, _NUMERIC_SAMPLE_LOOKUP_BATCH):
         matches = session.query(db.NumericSamples).filter(sample_tuple.in_(chunk)).all()
         for sample in matches:
             timestamp = _normalize_db_key_datetime(sample.timestamp)
-            existing_keys.add((sample.entity_id, timestamp))
+            existing_keys.add((sample.entry_id, sample.entity_id, timestamp))
 
     return existing_keys
 
@@ -232,6 +230,7 @@ def _commit_intervals(db: AreaOccupancyDB, intervals: list[dict[str, Any]]) -> N
     with db.get_session() as session:
         interval_keys = {
             (
+                interval_data["entry_id"],
                 interval_data["entity_id"],
                 interval_data["start_time"],
                 interval_data["end_time"],
@@ -246,11 +245,11 @@ def _commit_intervals(db: AreaOccupancyDB, intervals: list[dict[str, Any]]) -> N
         )
 
         new_intervals = []
-        seen_keys: set[tuple[str, datetime, datetime]] = set()
+        seen_keys: set[tuple[str, str, datetime, datetime]] = set()
         for interval_data in mapped_intervals:
             start = _normalize_db_key_datetime(interval_data["start_time"])
             end = _normalize_db_key_datetime(interval_data["end_time"])
-            key = (interval_data["entity_id"], start, end)
+            key = (interval_data["entry_id"], interval_data["entity_id"], start, end)
             if key in existing_keys or key in seen_keys:
                 continue
             seen_keys.add(key)
@@ -269,6 +268,7 @@ def _commit_numeric_samples(
     with db.get_session() as session:
         sample_keys = {
             (
+                sample_data["entry_id"],
                 sample_data["entity_id"],
                 sample_data["timestamp"],
             )
@@ -282,10 +282,10 @@ def _commit_numeric_samples(
         )
 
         new_samples = []
-        seen_sample_keys: set[tuple[str, datetime]] = set()
+        seen_sample_keys: set[tuple[str, str, datetime]] = set()
         for sample_data in numeric_samples:
             timestamp = _normalize_db_key_datetime(sample_data["timestamp"])
-            key = (sample_data["entity_id"], timestamp)
+            key = (sample_data["entry_id"], sample_data["entity_id"], timestamp)
             if key in existing_samples or key in seen_sample_keys:
                 continue
             seen_sample_keys.add(key)
@@ -327,6 +327,54 @@ async def sync_states(db: AreaOccupancyDB) -> None:
                 minimal_response=False,
             )
         )
+
+        # Backfill entities with zero existing Intervals rows (e.g. a
+        # motion/sleep/media sensor just added or swapped into an area's
+        # config) with their available recorder history, instead of only
+        # accumulating data forward from the shared ``start_time`` watermark
+        # above — otherwise a newly-configured sensor has no ground-truth
+        # history until enough time passes for it to happen to trigger
+        # (#520 Bug A path 1). Bounded by ``HA_RECORDER_DAYS`` since that's
+        # the most a HA recorder install typically retains.
+        new_entity_ids = await hass.async_add_executor_job(
+            db.get_entities_without_intervals, entity_ids
+        )
+        if new_entity_ids:
+            backfill_start = to_utc(end_time - timedelta(days=HA_RECORDER_DAYS))
+            backfill_end = to_utc(start_time)
+            if backfill_start < backfill_end:
+                _LOGGER.info(
+                    "Backfilling recorder history for %d newly-tracked "
+                    "entity(ies) with no interval data yet: %s",
+                    len(new_entity_ids),
+                    sorted(new_entity_ids),
+                )
+                backfill_states = await recorder.async_add_executor_job(
+                    lambda: get_significant_states(
+                        hass,
+                        backfill_start,
+                        backfill_end,
+                        list(new_entity_ids),
+                        minimal_response=False,
+                    )
+                )
+                for entity_id, history in (backfill_states or {}).items():
+                    if not history:
+                        continue
+                    # Backfilled history is strictly older than anything the
+                    # main query above could have returned for this entity
+                    # (which had zero rows to begin with), so prepend it.
+                    # The two windows share a boundary (backfill_end ==
+                    # start_time) and ``get_significant_states`` can be
+                    # inclusive at both ends, so de-dupe by (state,
+                    # last_changed) to avoid double-counting a boundary
+                    # state that both queries returned.
+                    existing = states.get(entity_id, [])
+                    seen = {(s.state, s.last_changed) for s in existing}
+                    backfilled = [
+                        s for s in history if (s.state, s.last_changed) not in seen
+                    ]
+                    states[entity_id] = backfilled + existing
 
         if not states:
             return

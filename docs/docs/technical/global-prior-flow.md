@@ -292,23 +292,23 @@ def value(self) -> float:
 
 ## Usage in Probability Calculations
 
-The global prior (combined with time prior) is used as the baseline in Bayesian probability calculations:
+The global prior (combined with time prior) is used as the baseline for presence probability:
 
-**Location**: `custom_components/area_occupancy/area/area.py:183-196`
+**Location**: `custom_components/area_occupancy/area/area.py::Area.presence_probability`
 
 ```python
-def probability(self) -> float:
+def presence_probability(self) -> float:
     entities = self.entities.entities
     if not entities:
         return MIN_PROBABILITY
 
-    return bayesian_probability(
-        entities=entities,
-        prior=self.prior.value,  # Uses combined prior (global + time)
-    )
+    correlations = self._get_entity_correlations()
+    return calc_presence(
+        entities, prior=self.prior.value, correlations=correlations
+    )  # Uses combined prior (global + time)
 ```
 
-**Bayesian Update**: Each entity's evidence updates the prior probability using Bayes' theorem.
+**Sigmoid/logit update**: Each entity's evidence adds a weighted term in logit space (see [Bayesian Calculation Deep Dive](bayesian-calculation.md)), so the prior shifts additively per sensor rather than through classic Bayes'-theorem odds multiplication.
 
 ## Data Flow Diagram
 
@@ -339,7 +339,7 @@ sequenceDiagram
     Area->>Prior: value (property)
     Prior->>Prior: Combine global + time prior
     Prior-->>Area: Combined prior
-    Area->>Area: bayesian_probability()
+    Area->>Area: presence_probability() [sigmoid/logit]
 ```
 
 ## Troubleshooting

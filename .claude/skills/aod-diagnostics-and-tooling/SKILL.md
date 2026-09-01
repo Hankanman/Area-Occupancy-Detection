@@ -20,12 +20,12 @@ export.
 ## When NOT to use this
 
 For the underlying Bayesian math those numbers come from (sigmoid pipeline,
-logit combination, decay formula), use `bayesian-occupancy-reference`. For
+logit combination, decay formula), use `aod-math-reference`. For
 *why* a number is wrong and how to fix the code, use
-`aod-debugging-playbook`. For interpreting DB schema/columns in general
-(not diagnostics-specific), see `aod-architecture-contract`. For the
+`aod-debugging-and-history`. For interpreting DB schema/columns in general
+(not diagnostics-specific), see `aod-architecture-and-config`. For the
 open-ended campaign to actually improve prior/likelihood accuracy using
-these tools, see `aod-learning-accuracy-campaign`.
+these tools, see `aod-debugging-and-history`.
 
 ---
 
@@ -130,7 +130,7 @@ from a genuinely learned value, not the floor.
 
 Sensor counts (not entity IDs) per type, decay settings, wasp-in-box
 settings, per-type weights, `min_prior_override`, `motion_timeout`. Shape
-only — cross-reference `aod-config-and-flags` for what each value means.
+only — cross-reference `aod-architecture-and-config` for what each value means.
 
 #### `entities[]`
 
@@ -250,7 +250,7 @@ to `stuck_active`): `SLEEPING` ×6 (8h→48h), `RELAXING` ×4 (8h→32h),
 
 ## 3. Debug log interpretation
 
-Enable per CLAUDE.md's standard snippet:
+Enable per AGENTS.md's standard snippet:
 
 ```yaml
 logger:
@@ -354,16 +354,20 @@ the MkDocs site (`docs/docs/simulator/simulator.html`). Workflow:
    (`calculate_probability_breakdown` in `simulator/app.py`) to see which
    sensor is driving the number.
 
-### Important caveat: the simulator does not run production's math
+### Resolved: the simulator now runs production's math (PR #529, 2026.8.1)
 
-The simulator's sensor-fusion step calls the **legacy dead-code
-`bayesian_probability()` path**, not the live sigmoid/logit pipeline — see
-`aod-run-and-operate` §6 for the full verified explanation (PR #353 history,
-what is and isn't shared). Measurement consequence here: treat simulator
-probabilities as a *relative sensitivity tool* (which sensor moves the
-number, which direction, roughly how much), never as an exact stand-in for
-the live probability sensor. For exact production numbers, read the live
-sensor or the diagnostics export's `current.probability`.
+Until 2026.8.1, the simulator's sensor-fusion step called the legacy
+dead-code `bayesian_probability()` path, not the live sigmoid/logit
+pipeline — a divergence documented at length in `aod-build-run-and-release` §6
+before the fix. PR #529 (2026.8.1) rewired `calculate_probability_breakdown`
+in `simulator/app.py` onto `presence_probability()` /
+`environmental_confidence()` / `combined_probability()`, mirroring
+`Area._base_probability()` exactly, and deleted `bayesian_probability()`
+entirely. Simulator probabilities and per-entity breakdowns should now match
+what a live HA instance computes for the same sensor inputs — still worth a
+spot-check against the diagnostics export's `current.probability` if you're
+relying on exact numbers, but it's no longer a *known-divergent* legacy
+formula.
 
 ---
 
@@ -418,6 +422,6 @@ Re-verification commands, by volatile fact category:
 - **`AnalysisStatus` exact values**: `grep -n "NOT_ANALYZED\|MOTION_EXCLUDED\|ANALYZED =" custom_components/area_occupancy/data/entity_type.py`
 - **Correlation failure-error set**: `grep -n "CORRELATION_FAILURE_ERRORS" -A 20 custom_components/area_occupancy/db/correlation.py`
 - **Adjacency constants**: `grep -n "ADJACENCY_" custom_components/area_occupancy/const.py`
-- **Simulator legacy-math caveat still true**: `grep -n "bayesian_probability" simulator/app.py` (confirms it's still imported/called) and `git log --oneline -- simulator/app.py` (confirms no post-#353 migration commit)
+- **Simulator legacy-math caveat resolved (verify it's stayed that way)**: `grep -n "bayesian_probability" simulator/app.py` (should return nothing — fixed in PR #529, 2026.8.1) and `grep -n "presence_probability\|environmental_confidence\|combined_probability" simulator/app.py` (should show the live pipeline imports)
 - **Open per-sensor-suppression / vacation-suppression issues**: `gh issue view 466`, `gh issue view 485`
 - **Scripts still run clean against current schema**: re-run each script's usage example against a fresh scratch DB built from `custom_components/area_occupancy/db/schema.py::Base.metadata.create_all()`

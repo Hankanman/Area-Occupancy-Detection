@@ -211,7 +211,7 @@ update_timestamp: "2025-11-06T17:55:00.730200+00:00"
 
 The simulator uses the real integration code:
 
-- `bayesian_probability()` from `custom_components/area_occupancy/utils.py`
+- `presence_probability()`, `environmental_confidence()`, and `combined_probability()` from `custom_components/area_occupancy/utils.py` — the same sigmoid/logit model the live integration uses
 - `EntityType` definitions from `custom_components/area_occupancy/data/entity_type.py`
 - Same probability calculation logic as the actual integration
 

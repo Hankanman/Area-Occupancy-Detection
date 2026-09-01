@@ -58,6 +58,11 @@ from .const import (
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -66,6 +71,8 @@ from .const import (
     CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
+    CONF_LOCK_ACTIVE_STATE,
+    CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -101,21 +108,30 @@ from .const import (
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
+    CONF_WEIGHT_LOCK,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_POWER,
+    CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WEIGHT_WINDOW,
+    CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_COVER_ACTIVE_STATES,
+    DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_HEALTH_ENABLED,
+    DEFAULT_LOCK_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -133,11 +149,15 @@ from .const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM_BINARY,
+    DEFAULT_WEIGHT_CUSTOM_NUMERIC,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
+    DEFAULT_WEIGHT_LOCK,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
     DEFAULT_WEIGHT_POWER,
+    DEFAULT_WEIGHT_WIFI_CLIENTS,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
@@ -226,11 +246,7 @@ def _entity_contains_keyword(hass: HomeAssistant, entity_id: str, keyword: str) 
 
     # Check friendly name from state
     state = hass.states.get(entity_id)
-    if state and state.name:
-        if keyword_lower in state.name.lower():
-            return True
-
-    return False
+    return bool(state and state.name and keyword_lower in state.name.lower())
 
 
 def _is_weather_entity(entity_id: str, platform: str | None) -> bool:
@@ -289,6 +305,9 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     include_pm25_entities = []
     include_pm10_entities = []
     include_motion_entities = []
+    include_wifi_clients_entities = []
+    include_custom_binary_entities = []
+    include_custom_numeric_entities = []
 
     door_window_classes = (
         BinarySensorDeviceClass.DOOR,
@@ -334,6 +353,13 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
         if entry.domain == Platform.BINARY_SENSOR:
+            # Custom binary sensors have no device_class/domain filter at
+            # all — every binary_sensor or sensor entity (except this
+            # integration's own outputs) is offered, since the whole point
+            # is supporting entities today's typed sections reject (#531).
+            if entry.platform != DOMAIN:
+                include_custom_binary_entities.append(entry.entity_id)
+
             device_class = entry.device_class
             original_device_class = entry.original_device_class
 
@@ -442,6 +468,19 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             if device_class in pm10_class or original_device_class in pm10_class:
                 include_pm10_entities.append(entry.entity_id)
 
+            # Wi-Fi client-count sensors have no reliable device_class to
+            # filter by, so offer every sensor-domain entity except this
+            # integration's own output sensors (probability, priors, decay,
+            # etc.) — selecting one of those would create a feedback loop.
+            if entry.platform != DOMAIN:
+                include_wifi_clients_entities.append(entry.entity_id)
+                # `sensor.` entities can report discrete/string states too
+                # (e.g. a HASS.Agent sensor reporting "on"/"off"), not just
+                # numeric values, so they're valid custom-binary candidates
+                # alongside custom-numeric ones.
+                include_custom_binary_entities.append(entry.entity_id)
+                include_custom_numeric_entities.append(entry.entity_id)
+
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
         entry.entity_id
@@ -449,10 +488,29 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         if entry.entity_id.startswith("cover.") and not entry.disabled
     ]
 
+    # Collect all lock entities (smart locks, e.g. door locks). Locks don't
+    # have meaningfully distinct device_class variants the way binary_sensor
+    # door/window entities do, so just include the whole domain. Discover
+    # via hass.states rather than the entity registry: entities without a
+    # unique_id (some MQTT-configured locks, e.g.) have no registry entry
+    # and would otherwise be silently excluded from selection. The registry
+    # is still consulted, but only to filter out disabled entities.
+    disabled_lock_entities = {
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.entity_id.startswith("lock.") and entry.disabled
+    }
+    include_lock_entities = [
+        entity_id
+        for entity_id in hass.states.async_entity_ids("lock")
+        if entity_id not in disabled_lock_entities
+    ]
+
     return {
         "appliance": include_appliance_entities,
         "window": include_window_entities,
         "door": include_door_entities,
+        "lock": include_lock_entities,
         "cover": include_cover_entities,
         "temperature": include_temperature_entities,
         "humidity": include_humidity_entities,
@@ -461,70 +519,10 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         "pm25": include_pm25_entities,
         "pm10": include_pm10_entities,
         "motion": include_motion_entities,
+        "wifi_clients": include_wifi_clients_entities,
+        "custom_binary": include_custom_binary_entities,
+        "custom_numeric": include_custom_numeric_entities,
     }
-
-
-def _create_motion_section_schema(
-    defaults: dict[str, Any],
-    motion_entities: list[str],
-) -> vol.Schema:
-    """Create schema for the motion section."""
-    fields: dict[vol.Marker, Any] = {
-        vol.Required(
-            CONF_MOTION_SENSORS, default=defaults.get(CONF_MOTION_SENSORS, [])
-        ): EntitySelector(
-            EntitySelectorConfig(
-                include_entities=motion_entities,
-                multiple=True,
-            )
-        ),
-        vol.Optional(
-            CONF_WEIGHT_MOTION,
-            default=defaults.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=WEIGHT_MIN,
-                max=WEIGHT_MAX,
-                step=WEIGHT_STEP,
-                mode=NumberSelectorMode.SLIDER,
-                unit_of_measurement="weight",
-            )
-        ),
-        vol.Optional(
-            CONF_MOTION_TIMEOUT,
-            default=_seconds_to_duration(
-                defaults.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)
-            ),
-        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-        vol.Optional(
-            CONF_MOTION_PROB_GIVEN_TRUE,
-            default=defaults.get(
-                CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
-            ),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_PROBABILITY,
-                max=MAX_PROBABILITY,
-                step=0.01,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_MOTION_PROB_GIVEN_FALSE,
-            default=defaults.get(
-                CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
-            ),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=0.001,
-                max=MAX_PROBABILITY,
-                step=0.001,
-                mode=NumberSelectorMode.BOX,
-            )
-        ),
-    }
-
-    return vol.Schema(fields)
 
 
 def _create_windows_and_doors_section_schema(
@@ -532,11 +530,13 @@ def _create_windows_and_doors_section_schema(
     door_entities: list[str],
     window_entities: list[str],
     cover_entities: list[str],
+    lock_entities: list[str],
     door_state_options: list[SelectOptionDict],
     window_state_options: list[SelectOptionDict],
     cover_state_options: list[SelectOptionDict],
+    lock_state_options: list[SelectOptionDict],
 ) -> vol.Schema:
-    """Create schema for the combined windows, doors, and covers section."""
+    """Create schema for the combined windows, doors, locks, and covers section."""
     return vol.Schema(
         {
             vol.Optional(
@@ -557,6 +557,32 @@ def _create_windows_and_doors_section_schema(
             vol.Optional(
                 CONF_WEIGHT_DOOR,
                 default=defaults.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_LOCK_SENSORS, default=defaults.get(CONF_LOCK_SENSORS, [])
+            ): EntitySelector(
+                EntitySelectorConfig(include_entities=lock_entities, multiple=True)
+            ),
+            vol.Optional(
+                CONF_LOCK_ACTIVE_STATE,
+                default=defaults.get(CONF_LOCK_ACTIVE_STATE, get_default_state("lock")),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=lock_state_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_LOCK,
+                default=defaults.get(CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -873,49 +899,134 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _create_parameters_section_schema(
-    defaults: dict[str, Any],
+def _create_wifi_clients_section_schema(
+    defaults: dict[str, Any], wifi_clients_entities: list[str]
 ) -> vol.Schema:
-    """Create schema for the parameters section."""
-    # Default decay half-life to 0 (use purpose value)
-    decay_half_life_default = defaults.get(
-        CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE
+    """Create schema for the Wi-Fi client-count section.
+
+    Unlike power sensors, Wi-Fi client-count sensors (e.g. from the UniFi
+    Network integration) have no reliable SensorDeviceClass to auto-filter
+    by, so this offers every sensor-domain entity except this integration's
+    own output sensors (see ``_get_include_entities``'s ``wifi_clients`` key)
+    rather than a device_class-scanned include list.
+    """
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_WIFI_CLIENTS_SENSORS,
+                default=defaults.get(CONF_WIFI_CLIENTS_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=wifi_clients_entities,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_WIFI_CLIENTS,
+                default=defaults.get(
+                    CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+        }
     )
 
-    fields: dict[vol.Marker, Any] = {
-        vol.Optional(
-            CONF_THRESHOLD, default=defaults.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=THRESHOLD_MIN,
-                max=THRESHOLD_MAX,
-                step=THRESHOLD_STEP,
-                mode=NumberSelectorMode.SLIDER,
-            )
-        ),
-        vol.Optional(
-            CONF_DECAY_ENABLED,
-            default=defaults.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED),
-        ): BooleanSelector(),
-        vol.Optional(
-            CONF_DECAY_HALF_LIFE,
-            default=_seconds_to_duration(decay_half_life_default),
-        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-        vol.Optional(
-            CONF_MIN_PRIOR_OVERRIDE,
-            default=defaults.get(CONF_MIN_PRIOR_OVERRIDE, DEFAULT_MIN_PRIOR_OVERRIDE),
-        ): NumberSelector(
-            NumberSelectorConfig(
-                min=0.0,
-                max=1.0,
-                step=0.01,
-                mode=NumberSelectorMode.SLIDER,
-                unit_of_measurement="probability",
-            )
-        ),
-    }
 
-    return vol.Schema(fields)
+def _create_custom_section_schema(
+    defaults: dict[str, Any],
+    custom_binary_entities: list[str],
+    custom_numeric_entities: list[str],
+    custom_state_options: list[SelectOptionDict],
+) -> vol.Schema:
+    """Create schema for the custom entities section (#531).
+
+    Unlike every other section, these have no domain/device_class filter
+    at all — the whole point is supporting entities today's typed sections
+    reject (e.g. an MQTT/HASS.Agent sensor with no matching device_class).
+    Binary and numeric are separate InputTypes (not one flexible type)
+    because the rest of the codebase classifies InputTypes statically as
+    binary or numeric (DB storage, health checks, probability channel).
+    """
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_CUSTOM_BINARY_SENSORS,
+                default=defaults.get(CONF_CUSTOM_BINARY_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=custom_binary_entities,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_CUSTOM_BINARY_ACTIVE_STATES,
+                default=defaults.get(
+                    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+                    list(DEFAULT_CUSTOM_BINARY_ACTIVE_STATES),
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=custom_state_options,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
+                )
+            ),
+            vol.Optional(
+                CONF_WEIGHT_CUSTOM_BINARY,
+                default=defaults.get(
+                    CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_CUSTOM_NUMERIC_SENSORS,
+                default=defaults.get(CONF_CUSTOM_NUMERIC_SENSORS, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    include_entities=custom_numeric_entities,
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+                default=defaults.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+                ),
+            ): NumberSelector(NumberSelectorConfig(mode=NumberSelectorMode.BOX)),
+            vol.Optional(
+                CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+                default=defaults.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX
+                ),
+            ): NumberSelector(NumberSelectorConfig(mode=NumberSelectorMode.BOX)),
+            vol.Optional(
+                CONF_WEIGHT_CUSTOM_NUMERIC,
+                default=defaults.get(
+                    CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+        }
+    )
 
 
 def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -959,117 +1070,6 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): DurationSelector(DurationSelectorConfig(enable_day=False)),
         }
     )
-
-
-def create_schema(
-    hass: HomeAssistant,
-    defaults: dict[str, Any] | None = None,
-    is_options: bool = False,
-    include_entities: dict[str, list[str]] | None = None,
-) -> dict:
-    """Create a schema with optional default values, using helper functions.
-
-    Args:
-        hass: Home Assistant instance
-        defaults: Optional default values for form fields
-        is_options: Whether this is for options flow (vs initial config flow)
-        include_entities: Optional pre-computed entity lists. If not provided,
-            will be computed from hass.
-
-    Returns:
-        Schema dictionary for form
-    """
-    # Ensure defaults is a dictionary
-    defaults = defaults if defaults is not None else {}
-
-    # Pre-calculate expensive lookups (or use provided)
-    if include_entities is None:
-        include_entities = _get_include_entities(hass)
-    door_state_options = _get_state_select_options("door")
-    media_state_options = _get_state_select_options("media")
-    window_state_options = _get_state_select_options("window")
-    cover_state_options = _get_state_select_options("cover")
-    appliance_state_options = _get_state_select_options("appliance")
-
-    # Initialize the dictionary for the schema
-    schema_dict: dict[vol.Marker, Any] = {}
-
-    # Get default area ID from defaults (for editing existing areas)
-    default_area_id = defaults.get(CONF_AREA_ID, "")
-
-    # Add area selector (same for both initial and options flow)
-    schema_dict[vol.Required(CONF_AREA_ID, default=default_area_id)] = AreaSelector(
-        AreaSelectorConfig()
-    )
-    # Add purpose field at root level (not in a section)
-    schema_dict[
-        vol.Optional(CONF_PURPOSE, default=defaults.get(CONF_PURPOSE, DEFAULT_PURPOSE))
-    ] = SelectSelector(
-        SelectSelectorConfig(
-            options=cast("list[SelectOptionDict]", get_purpose_options()),
-            mode=SelectSelectorMode.DROPDOWN,
-        )
-    )
-
-    # Add sections by assigning keys directly to the dictionary
-    schema_dict[vol.Required("motion")] = section(
-        _create_motion_section_schema(defaults, include_entities["motion"]),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("windows_and_doors")] = section(
-        _create_windows_and_doors_section_schema(
-            defaults,
-            include_entities["door"],
-            include_entities["window"],
-            include_entities["cover"],
-            cast("list[SelectOptionDict]", door_state_options),
-            cast("list[SelectOptionDict]", window_state_options),
-            cast("list[SelectOptionDict]", cover_state_options),
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("media")] = section(
-        _create_media_section_schema(
-            defaults, cast("list[SelectOptionDict]", media_state_options)
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("appliances")] = section(
-        _create_appliances_section_schema(
-            defaults,
-            include_entities["appliance"],
-            cast("list[SelectOptionDict]", appliance_state_options),
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("environmental")] = section(
-        _create_environmental_section_schema(
-            defaults,
-            include_entities["temperature"],
-            include_entities["humidity"],
-            include_entities["pressure"],
-            include_entities["air_quality"],
-            include_entities["pm25"],
-            include_entities["pm10"],
-        ),
-        {"collapsed": True},
-    )
-    schema_dict[vol.Required("power")] = section(
-        _create_power_section_schema(defaults), {"collapsed": True}
-    )
-    schema_dict[vol.Required("wasp_in_box")] = section(
-        _create_wasp_in_box_section_schema(defaults), {"collapsed": True}
-    )
-    schema_dict[vol.Required("parameters")] = section(
-        _create_parameters_section_schema(defaults),
-        {"collapsed": True},
-    )
-
-    # Pass the correctly structured dictionary to vol.Schema
-    return schema_dict
-
-
-# ── Wizard step schemas ──────────────────────────────────────────────
 
 
 def _create_basics_step_schema(
@@ -1171,10 +1171,12 @@ def _create_sensors_step_schema(
 
     defaults: dict[str, Any] = {}
     door_state_options = _get_state_select_options("door")
+    lock_state_options = _get_state_select_options("lock")
     media_state_options = _get_state_select_options("media")
     window_state_options = _get_state_select_options("window")
     cover_state_options = _get_state_select_options("cover")
     appliance_state_options = _get_state_select_options("appliance")
+    custom_state_options = _get_state_select_options("custom")
 
     return {
         vol.Required("windows_and_doors"): section(
@@ -1183,9 +1185,11 @@ def _create_sensors_step_schema(
                 include_entities["door"],
                 include_entities["window"],
                 include_entities["cover"],
+                include_entities["lock"],
                 cast("list[SelectOptionDict]", door_state_options),
                 cast("list[SelectOptionDict]", window_state_options),
                 cast("list[SelectOptionDict]", cover_state_options),
+                cast("list[SelectOptionDict]", lock_state_options),
             ),
             {"collapsed": True},
         ),
@@ -1217,6 +1221,21 @@ def _create_sensors_step_schema(
         ),
         vol.Required("power"): section(
             _create_power_section_schema(defaults), {"collapsed": True}
+        ),
+        vol.Required("wifi_clients"): section(
+            _create_wifi_clients_section_schema(
+                defaults, include_entities["wifi_clients"]
+            ),
+            {"collapsed": True},
+        ),
+        vol.Required("custom"): section(
+            _create_custom_section_schema(
+                defaults,
+                include_entities["custom_binary"],
+                include_entities["custom_numeric"],
+                cast("list[SelectOptionDict]", custom_state_options),
+            ),
+            {"collapsed": True},
         ),
     }
 
@@ -1308,6 +1327,9 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         CONF_DOOR_SENSORS,
         CONF_DOOR_ACTIVE_STATE,
         CONF_WEIGHT_DOOR,
+        CONF_LOCK_SENSORS,
+        CONF_LOCK_ACTIVE_STATE,
+        CONF_WEIGHT_LOCK,
         CONF_WINDOW_SENSORS,
         CONF_WINDOW_ACTIVE_STATE,
         CONF_WEIGHT_WINDOW,
@@ -1364,6 +1386,30 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
             power[key] = flat_config[key]
     if power:
         nested["power"] = power
+
+    # Wi-Fi clients section
+    wifi_clients: dict[str, Any] = {}
+    for key in (CONF_WIFI_CLIENTS_SENSORS, CONF_WEIGHT_WIFI_CLIENTS):
+        if key in flat_config:
+            wifi_clients[key] = flat_config[key]
+    if wifi_clients:
+        nested["wifi_clients"] = wifi_clients
+
+    # Custom entities section (binary + numeric, unfiltered — #531)
+    custom: dict[str, Any] = {}
+    for key in (
+        CONF_CUSTOM_BINARY_SENSORS,
+        CONF_CUSTOM_BINARY_ACTIVE_STATES,
+        CONF_WEIGHT_CUSTOM_BINARY,
+        CONF_CUSTOM_NUMERIC_SENSORS,
+        CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+        CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+        CONF_WEIGHT_CUSTOM_NUMERIC,
+    ):
+        if key in flat_config:
+            custom[key] = flat_config[key]
+    if custom:
+        nested["custom"] = custom
 
     # Wasp in box section
     wasp: dict[str, Any] = {}
@@ -1507,6 +1553,7 @@ def _build_area_description_placeholders(
         "motion_count": str(len(area_config.get(CONF_MOTION_SENSORS, []))),
         "media_count": str(len(area_config.get(CONF_MEDIA_DEVICES, []))),
         "door_count": str(len(area_config.get(CONF_DOOR_SENSORS, []))),
+        "lock_count": str(len(area_config.get(CONF_LOCK_SENSORS, []))),
         "window_count": str(len(area_config.get(CONF_WINDOW_SENSORS, []))),
         "appliance_count": str(len(area_config.get(CONF_APPLIANCES, []))),
         "threshold": str(area_config.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)),
@@ -1529,10 +1576,16 @@ def _get_area_summary_info(area: dict[str, Any]) -> str:
     motion_count = len(area.get(CONF_MOTION_SENSORS, []))
     media_count = len(area.get(CONF_MEDIA_DEVICES, []))
     door_count = len(area.get(CONF_DOOR_SENSORS, []))
+    lock_count = len(area.get(CONF_LOCK_SENSORS, []))
     window_count = len(area.get(CONF_WINDOW_SENSORS, []))
     appliance_count = len(area.get(CONF_APPLIANCES, []))
     total_sensors = (
-        motion_count + media_count + door_count + window_count + appliance_count
+        motion_count
+        + media_count
+        + door_count
+        + lock_count
+        + window_count
+        + appliance_count
     )
 
     threshold = area.get(CONF_THRESHOLD, DEFAULT_THRESHOLD)
@@ -2065,6 +2118,12 @@ class BaseOccupancyFlow:
         if door_sensors and not door_state:
             errors[CONF_DOOR_SENSORS] = "door_state_required"
 
+        # Validate locks
+        lock_sensors = data.get(CONF_LOCK_SENSORS, [])
+        lock_state = data.get(CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE)
+        if lock_sensors and not lock_state:
+            errors[CONF_LOCK_SENSORS] = "lock_state_required"
+
         # Validate windows
         window_sensors = data.get(CONF_WINDOW_SENSORS, [])
         window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
@@ -2077,6 +2136,25 @@ class BaseOccupancyFlow:
         if cover_sensors and not cover_states:
             errors[CONF_COVER_SENSORS] = "cover_states_required"
 
+        # Validate custom binary sensors
+        custom_binary_sensors = data.get(CONF_CUSTOM_BINARY_SENSORS, [])
+        custom_binary_states = data.get(
+            CONF_CUSTOM_BINARY_ACTIVE_STATES, DEFAULT_CUSTOM_BINARY_ACTIVE_STATES
+        )
+        if custom_binary_sensors and not custom_binary_states:
+            errors[CONF_CUSTOM_BINARY_SENSORS] = "custom_binary_states_required"
+
+        # Validate custom numeric sensors
+        custom_numeric_sensors = data.get(CONF_CUSTOM_NUMERIC_SENSORS, [])
+        custom_numeric_min = data.get(
+            CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+        )
+        custom_numeric_max = data.get(
+            CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX
+        )
+        if custom_numeric_sensors and custom_numeric_min >= custom_numeric_max:
+            errors[CONF_CUSTOM_NUMERIC_SENSORS] = "custom_numeric_range_invalid"
+
         # Validate weights
         weights = [
             (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
@@ -2086,6 +2164,7 @@ class BaseOccupancyFlow:
                 data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
             ),
             (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
+            (CONF_WEIGHT_LOCK, data.get(CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK)),
             (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
             (CONF_WEIGHT_COVER, data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER)),
             (
@@ -2095,6 +2174,18 @@ class BaseOccupancyFlow:
             (
                 CONF_WEIGHT_POWER,
                 data.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
+            ),
+            (
+                CONF_WEIGHT_WIFI_CLIENTS,
+                data.get(CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS),
+            ),
+            (
+                CONF_WEIGHT_CUSTOM_BINARY,
+                data.get(CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY),
+            ),
+            (
+                CONF_WEIGHT_CUSTOM_NUMERIC,
+                data.get(CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC),
             ),
         ]
         for name, weight in weights:
@@ -2340,6 +2431,10 @@ class BaseOccupancyFlow:
                 CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
             ):
                 errors["base"] = "door_state_required"
+            if flattened.get(CONF_LOCK_SENSORS, []) and not flattened.get(
+                CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE
+            ):
+                errors["base"] = "lock_state_required"
             if flattened.get(CONF_WINDOW_SENSORS, []) and not flattened.get(
                 CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
             ):
@@ -2367,6 +2462,7 @@ class BaseOccupancyFlow:
                 "appliances",
                 "environmental",
                 "power",
+                "wifi_clients",
             }
             suggested = {k: v for k, v in nested.items() if k in sensor_sections}
             if suggested:

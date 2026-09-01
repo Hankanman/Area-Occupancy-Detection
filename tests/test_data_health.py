@@ -139,6 +139,35 @@ class TestStuckActive:
         assert len(issues) == 1
         assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
 
+    def test_lock_stuck_active_below_threshold(self, monitor: HealthMonitor) -> None:
+        """Lock sensor active (unlocked) for 24h should NOT trigger (threshold is 48h)."""
+        entity = _make_entity(
+            "lock.front_door",
+            InputType.LOCK,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=24),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"lock_1": entity})
+
+        assert len(issues) == 0
+
+    def test_lock_stuck_active_above_threshold(self, monitor: HealthMonitor) -> None:
+        """Lock sensor active (unlocked) for 50h should trigger (threshold is 48h)."""
+        entity = _make_entity(
+            "lock.front_door",
+            InputType.LOCK,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=50),
+            evidence=True,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"lock_1": entity})
+
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.STUCK_ACTIVE
+
 
 # --- Stuck Inactive Tests ---
 
@@ -873,6 +902,67 @@ class TestPipelineHealth:
                 last_analysis_duration_ms=None,
                 correlation_failure_count=0,
                 correlatable_entity_count=0,
+            )
+        assert issues == []
+
+    def test_stale_prior_recalculation_flagged(self, monitor: HealthMonitor) -> None:
+        """A prior that stopped recalculating is flagged even though it exists.
+
+        Regression test for #520 Bug A (the silent freeze): before the fix,
+        ``has_global_prior=True`` alone meant this check never fired again,
+        no matter how long recalculation had actually stopped. 30h since
+        the last successful calculation clears the 25h staleness threshold
+        (``PRIOR_RECALCULATION_STALE_THRESHOLD``, mirrors
+        ``STALE_CACHE_THRESHOLD``).
+        """
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+                last_prior_calculation_hours_ago=30.0,
+            )
+        assert len(issues) == 1
+        assert issues[0].issue_type == HealthIssueType.INSUFFICIENT_PRIORS
+        assert "recalculated" in issues[0].details
+
+    def test_recent_prior_recalculation_not_flagged(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A prior recalculated within the staleness threshold is not flagged."""
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+                last_prior_calculation_hours_ago=2.0,
+            )
+        assert issues == []
+
+    def test_stale_prior_recalculation_unknown_recency_not_flagged(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """A prior with no calculation timestamp (legacy data) is not flagged.
+
+        We can't tell how stale it is, so this deliberately doesn't fire —
+        matches the existing has_global_prior=True/no-timestamp case that
+        predates #520.
+        """
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_pipeline_health(
+                area_age_hours=24 * 30,
+                has_global_prior=True,
+                cache_age_hours=1.0,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+                last_prior_calculation_hours_ago=None,
             )
         assert issues == []
 

@@ -37,7 +37,12 @@ from custom_components.area_occupancy.data.purpose import (
     AreaPurpose,
 )
 from custom_components.area_occupancy.data.types import GaussianParams
-from custom_components.area_occupancy.utils import bayesian_probability, combine_priors
+from custom_components.area_occupancy.utils import (
+    combine_priors,
+    combined_probability,
+    environmental_confidence,
+    presence_probability,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -559,6 +564,25 @@ def update_decay_states(entities: dict[str, Entity]) -> None:
         entity.previous_evidence = current_evidence
 
 
+def _base_probability(entities: dict[str, Entity], prior: float) -> float:
+    """Sensor-only probability, mirroring ``Area._base_probability()``.
+
+    Combines presence probability (strong binary indicators) with
+    environmental confidence as an additive update in logit space —
+    the same two-signal combination the live integration uses. Does not
+    include the activity/adjacency boosts from ``Area.probability()``,
+    since the simulator breaks sensor evidence down independently of
+    those.
+    """
+    if not entities:
+        return MIN_PROBABILITY
+    presence = presence_probability(entities, prior=prior)
+    env = environmental_confidence(entities)
+    if env == 0.5:
+        return presence
+    return combined_probability(presence, env)
+
+
 def calculate_probability_breakdown(
     entities: dict[str, Entity],
     area_prior: float,
@@ -576,12 +600,12 @@ def calculate_probability_breakdown(
     if prior != prior_before_clamp:
         _LOGGER.debug("prior clamped: %.5f -> %.5f", prior_before_clamp, prior)
 
-    overall_prob = bayesian_probability(entities, prior)
+    overall_prob = _base_probability(entities, prior)
     breakdown: dict[str, float] = {}
 
     for entity_id in entities:
         entities_without = {k: v for k, v in entities.items() if k != entity_id}
-        prob_without = bayesian_probability(entities_without, prior)
+        prob_without = _base_probability(entities_without, prior)
         breakdown[entity_id] = overall_prob - prob_without
 
     return overall_prob, breakdown

@@ -1,6 +1,6 @@
 """Tests for the Prior class (updated for improved implementation)."""
 
-from datetime import UTC
+from datetime import UTC, timedelta
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -364,11 +364,52 @@ def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
     with patch(
         "custom_components.area_occupancy.data.prior.dt_util.utcnow", return_value=now
     ):
+        # Populate the time-prior cache via its public accessor so the
+        # assertion below proves set_global_prior actually invalidates it,
+        # rather than just confirming the cache was never populated.
+        _ = prior.time_prior
+        assert prior._cached_time_priors is not None
+
         prior.set_global_prior(0.75)
         assert prior.global_prior == 0.75
         assert prior._last_updated == now
+        assert prior.last_calculation_at == now
         # Verify cache is invalidated
         assert prior._cached_time_priors is None
+
+
+def test_set_global_prior_explicit_calculation_date(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """An explicit calculation_date is used verbatim, not overridden by now."""
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+    computed_at = dt_util.utcnow() - timedelta(hours=5)
+
+    prior.set_global_prior(0.6, calculation_date=computed_at)
+
+    assert prior.last_calculation_at == computed_at
+
+
+def test_set_global_prior_explicit_none_calculation_date_not_coerced_to_now(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """A legacy row's calculation_date=None must stay None, not become now.
+
+    Regression test for a bug found during #520 review: set_global_prior()
+    used `calculation_date or now`, which silently turned an *explicit*
+    ``None`` (db/operations.py::load_data passing a legacy row's persisted
+    ``None`` calculation_date through) into "just calculated now" — making
+    the staleness check's documented legacy-data branch unreachable, since
+    a freshly-loaded legacy prior would look identical to a freshly
+    computed one.
+    """
+    area_name = coordinator.get_area_names()[0]
+    prior = Prior(coordinator, area_name=area_name)
+
+    prior.set_global_prior(0.6, calculation_date=None)
+
+    assert prior.last_calculation_at is None
 
 
 @pytest.mark.parametrize(

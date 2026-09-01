@@ -22,13 +22,17 @@ from custom_components.area_occupancy.const import (
     CONF_VERSION,
     DB_NAME,
     DOMAIN as DOMAIN_CONST,
+    ONLINE_PRIOR_STORE_KEY_PREFIX,
+    ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import Base
 from custom_components.area_occupancy.db.schema import Areas, Entities
+from custom_components.area_occupancy.service import async_setup_services
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.storage import Store
 
 
 class TestAsyncSetupEntry:
@@ -446,6 +450,24 @@ class TestAsyncUnloadEntry:
         # Verify runtime_data was cleared in both cases
         assert mock_config_entry.runtime_data is None
 
+    async def test_async_unload_entry_removes_services_on_last_entry(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """Unloading the last entry unregisters the domain services."""
+        await async_setup_services(hass)
+        assert hass.services.has_service(DOMAIN_CONST, "run_analysis")
+
+        mock_coordinator = self._setup_coordinator_mock(hass, mock_config_entry)
+        hass.data[DOMAIN_CONST] = mock_coordinator
+        hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+        hass.config_entries.async_entries = Mock(return_value=[])
+
+        result = await async_unload_entry(hass, mock_config_entry)
+
+        assert result is True
+        for service in ("run_analysis", "export_config", "purge_area_history"):
+            assert not hass.services.has_service(DOMAIN_CONST, service)
+
     async def test_async_unload_entry_platform_unload_failure(
         self, hass: HomeAssistant, mock_config_entry: Mock
     ) -> None:
@@ -752,6 +774,43 @@ class TestAsyncRemoveEntry:
                 session.close()
         finally:
             engine.dispose()
+
+    async def test_removes_online_prior_store(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        isolated_db: Path,
+    ) -> None:
+        """Removal deletes the shadow-mode online-prior Store file (#500).
+
+        Regression test: DB purging above doesn't touch HA's storage helper
+        files, so without explicit cleanup a stale online-prior Store would
+        survive entry removal forever.
+        """
+        entry_id = mock_config_entry.entry_id
+        object.__setattr__(mock_config_entry, "data", {CONF_AREAS: []})
+        object.__setattr__(mock_config_entry, "options", {})
+        hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
+
+        store_key = f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{entry_id}"
+        store: Store[dict[str, dict]] = Store(
+            hass, ONLINE_PRIOR_STORE_VERSION, store_key
+        )
+        await store.async_save({"Kitchen": {"occupied_seconds": 10.0}})
+        # A fresh Store instance avoids Store's own load-result cache, so this
+        # actually re-reads the backing (mocked) storage rather than the
+        # in-memory value from the async_save above.
+        assert (
+            await Store(hass, ONLINE_PRIOR_STORE_VERSION, store_key).async_load()
+            is not None
+        )
+
+        await async_remove_entry(hass, mock_config_entry)
+
+        assert (
+            await Store(hass, ONLINE_PRIOR_STORE_VERSION, store_key).async_load()
+            is None
+        )
 
     async def test_never_raises_even_when_db_missing(
         self,

@@ -7,7 +7,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
-from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import literal
 
@@ -290,55 +289,97 @@ def get_occupied_intervals(
         return extended_intervals
 
 
-def get_time_bounds(
+def get_first_interval_timestamp(
     db: AreaOccupancyDB,
     entry_id: str,
     area_name: str,
-    entity_ids: list[str] | None = None,
-) -> tuple[datetime | None, datetime | None]:
-    """Return min/max timestamps for specified entities or area."""
+) -> datetime | None:
+    """Return the earliest Intervals timestamp for this area's ground-truth entities.
+
+    Unlike :func:`get_occupied_intervals`, this looks at every interval
+    *regardless of state* (not just "on"/active rows) for the area's current
+    motion/sleep/media sensors. It answers "when did we start observing
+    these entities at all" rather than "when did we first see them active".
+
+    Used two ways by prior calculation (#520):
+
+    - Distinguishing "no data exists yet for this area's current sensors"
+      (returns ``None``) from "there is data but none of it is occupied"
+      (returns a timestamp, with ``get_occupied_intervals`` returning ``[]``)
+      — Bug A's silent-freeze fix needs this distinction to know when to
+      flag a stale prior versus computing a genuine near-zero one.
+    - As the warm-up-guard denominator basis, replacing "first *occupied*
+      interval" — a single occupied interval minutes after a sensor swap
+      no longer makes the observation window collapse to just that
+      interval's own duration, which is what produced Bug B's
+      occupied/elapsed ~= 1.0 clamp-to-0.99.
+
+    Deliberately unbounded by lookback days: a sensor that has been
+    reporting for longer than the lookback window should resolve to "seen
+    at least since the lookback window started" once combined with the
+    configured lookback in the caller, not to "no data" just because this
+    query's own window was truncated.
+    """
     try:
         with db.get_session() as session:
-            query = session.query(
-                func.min(db.Intervals.start_time).label("first"),
-                func.max(db.Intervals.end_time).label("last"),
-            )
-
-            if entity_ids is not None:
-                query = query.filter(
-                    db.Intervals.entity_id.in_(entity_ids),
-                    db.Intervals.area_name == area_name,
-                )
-            else:
-                query = query.join(
+            result = (
+                session.query(sa.func.min(db.Intervals.start_time))
+                .join(
                     db.Entities,
                     (db.Intervals.entity_id == db.Entities.entity_id)
                     & (db.Intervals.area_name == db.Entities.area_name),
-                ).filter(
+                )
+                .filter(
                     db.Entities.entry_id == entry_id,
                     db.Entities.area_name == area_name,
+                    db.Intervals.area_name == area_name,
+                    db.Entities.entity_type.in_(
+                        [
+                            InputType.MOTION.value,
+                            InputType.MEDIA.value,
+                            InputType.SLEEP.value,
+                        ]
+                    ),
                 )
-
-            time_bounds = query.first()
-            if not time_bounds:
-                return (None, None)
-            # DB stores naive UTC; return aware UTC to callers
-            first = time_bounds.first
-            last = time_bounds.last
-            return (
-                from_db_utc(first) if first is not None else None,
-                from_db_utc(last) if last is not None else None,
+                .scalar()
             )
-    except (
-        SQLAlchemyError,
-        ValueError,
-        TypeError,
-        RuntimeError,
-        OSError,
-        TimeoutError,
-    ) as e:
-        _LOGGER.error("Error getting time bounds: %s", e)
-        return (None, None)
+            if result is None:
+                return None
+            return from_db_utc(result)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error(
+            "Error getting first interval timestamp for area '%s': %s", area_name, e
+        )
+        return None
+
+
+def get_entities_without_intervals(
+    db: AreaOccupancyDB,
+    entity_ids: list[str],
+) -> set[str]:
+    """Return the subset of ``entity_ids`` that have zero Intervals rows.
+
+    Used by ``sync_states`` to identify newly-(re)configured entities that
+    need a recorder-history backfill rather than only accumulating data
+    forward from the shared sync watermark (#520 Bug A path 1: a sensor
+    swap otherwise leaves the new entity with no ground-truth history until
+    it happens to trigger after being added).
+    """
+    if not entity_ids:
+        return set()
+    try:
+        with db.get_session() as session:
+            with_data = {
+                row[0]
+                for row in session.query(db.Intervals.entity_id)
+                .filter(db.Intervals.entity_id.in_(entity_ids))
+                .distinct()
+                .all()
+            }
+        return set(entity_ids) - with_data
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting entities without intervals: %s", e)
+        return set()
 
 
 def build_base_filters(
@@ -470,7 +511,17 @@ def get_global_prior(db: AreaOccupancyDB, area_name: str) -> dict[str, Any] | No
             if global_prior:
                 return {
                     "prior_value": global_prior.prior_value,
-                    "calculation_date": global_prior.calculation_date,
+                    # DB stores naive UTC; convert to aware UTC so callers can
+                    # do datetime arithmetic directly (e.g. staleness checks).
+                    # calculation_date is NOT NULL for rows created by the
+                    # current schema, but legacy rows predating that
+                    # constraint may still have NULL — guard rather than
+                    # let AttributeError escape uncaught below.
+                    "calculation_date": (
+                        from_db_utc(global_prior.calculation_date)
+                        if global_prior.calculation_date is not None
+                        else None
+                    ),
                     "data_period_start": global_prior.data_period_start,
                     "data_period_end": global_prior.data_period_end,
                     "total_occupied_seconds": global_prior.total_occupied_seconds,
@@ -606,33 +657,3 @@ def get_area_created_at(
     except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
         _LOGGER.error("Error reading created_at for area '%s': %s", area_name, e)
         return None
-
-
-def get_total_occupied_seconds(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    area_name: str,
-    lookback_days: int,
-    motion_timeout_seconds: int,
-) -> float:
-    """Calculate total occupied seconds using robust Python interval merging logic.
-
-    This method handles all complexity (timeouts, overlapping intervals) by fetching
-    raw motion sensor intervals and processing them consistently.
-    """
-    intervals = get_occupied_intervals(
-        db,
-        entry_id,
-        area_name,
-        lookback_days,
-        motion_timeout_seconds,
-    )
-
-    total_seconds = 0.0
-    for start_time, end_time in intervals:
-        total_seconds += (end_time - start_time).total_seconds()
-
-    _LOGGER.debug(
-        "Total occupied seconds (Python) for %s: %.1f", area_name, total_seconds
-    )
-    return total_seconds

@@ -280,10 +280,7 @@ class Entity:
             if state_obj is None:
                 return None
             # Handle both object with .state attribute and direct value
-            if hasattr(state_obj, "state"):
-                state_value = state_obj.state
-            else:
-                state_value = state_obj
+            state_value = state_obj.state if hasattr(state_obj, "state") else state_obj
         else:
             ha_state = self.hass.states.get(self.entity_id)
             if ha_state is None:
