@@ -194,32 +194,45 @@ def _states_to_intervals(
 
             # Apply filtering based on state and duration.
             #
-            # The MAX_INTERVAL_SECONDS cap rejects implausibly long *active*
-            # stretches (a stuck sensor, or a media player parked in a state
-            # the area counts as presence). It used to be keyed on the literal
-            # string "on", which covers motion and sleep sensors but not media
-            # players — whose active states are "playing"/"paused" — so a media
+            # MAX_INTERVAL_SECONDS bounds how much occupancy a single *active*
+            # stretch may contribute. It used to be keyed on the literal string
+            # "on", which covers motion and sleep sensors but not media players
+            # — whose active states are "playing"/"paused" — so a media
             # interval of any length went in uncapped and could dominate the
             # prior's numerator on its own (issue #520). Key it on whether the
             # state is active *for this entity* instead, so every presence type
-            # is capped on the same rule.
+            # is bounded by the same rule.
+            #
+            # Over-cap stretches are truncated to the cap rather than dropped.
+            # Dropping them discarded the evidence entirely: an mmWave sensor
+            # that legitimately stays on overnight contributed nothing at all,
+            # biasing the prior down and — where it was an area's only ground
+            # truth — leaving the interval set empty, which is what stalled the
+            # prior recalculation in the first place (#520 Bug A). Keeping the
+            # leading MAX_INTERVAL_SECONDS credits the plausible part of the
+            # stretch (someone was there when it started) while refusing to
+            # trust the unbounded tail. The truncated end is deterministic, so
+            # repeated syncs of a still-active sensor produce the same row
+            # rather than a growing one.
             #
             # Inactive states keep the MIN_INTERVAL_SECONDS floor and no cap:
             # they are the denominator's evidence that the area was observed,
-            # and dropping a long "off" stretch would bias the prior upward.
+            # and shortening a long "off" stretch would bias the prior upward.
             entity_active = active_states.get(entity_id) or _FALLBACK_ACTIVE_STATES
             if is_active_state(state.state, entity_active):
-                if duration_seconds <= MAX_INTERVAL_SECONDS:
-                    intervals.append(
-                        {
-                            "entity_id": entity_id,
-                            "state": state.state,
-                            "start_time": to_db_utc(start_utc),
-                            "end_time": to_db_utc(end_utc),
-                            "duration_seconds": duration_seconds,
-                            "created_at": created_at_db,
-                        }
-                    )
+                if duration_seconds > MAX_INTERVAL_SECONDS:
+                    end_utc = start_utc + timedelta(seconds=MAX_INTERVAL_SECONDS)
+                    duration_seconds = float(MAX_INTERVAL_SECONDS)
+                intervals.append(
+                    {
+                        "entity_id": entity_id,
+                        "state": state.state,
+                        "start_time": to_db_utc(start_utc),
+                        "end_time": to_db_utc(end_utc),
+                        "duration_seconds": duration_seconds,
+                        "created_at": created_at_db,
+                    }
+                )
             elif (
                 is_valid_state(state.state) and duration_seconds >= MIN_INTERVAL_SECONDS
             ):

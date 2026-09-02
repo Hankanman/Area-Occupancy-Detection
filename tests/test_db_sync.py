@@ -129,7 +129,7 @@ class TestStatesToIntervals:
         assert intervals[0]["state"] == "off"
         assert intervals[0]["start_time"] == to_db_utc(recent_state_time)
 
-    def test_media_active_state_over_cap_is_dropped(
+    def test_media_active_state_over_cap_is_truncated(
         self, coordinator_with_sensors: AreaOccupancyCoordinator
     ) -> None:
         """#520: the length cap applies to media active states, not just "on".
@@ -151,7 +151,9 @@ class TestStatesToIntervals:
             ]
         }
 
-        assert _states_to_intervals(db, states, end_time) == []
+        intervals = _states_to_intervals(db, states, end_time)
+        assert len(intervals) == 1
+        assert intervals[0]["duration_seconds"] == MAX_INTERVAL_SECONDS
 
     def test_media_active_state_under_cap_is_kept(
         self, coordinator_with_sensors: AreaOccupancyCoordinator
@@ -201,10 +203,17 @@ class TestStatesToIntervals:
         assert len(intervals) == 1
         assert intervals[0]["state"] == "paused"
 
-    def test_states_to_intervals_filters_max_duration_on(
+    def test_states_to_intervals_truncates_max_duration_on(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test that 'on' states exceeding MAX_INTERVAL_SECONDS are filtered out."""
+        """'on' states over MAX_INTERVAL_SECONDS are truncated, not discarded.
+
+        These used to be dropped outright, which discarded the evidence
+        entirely — an mmWave sensor that legitimately stays on overnight
+        contributed nothing, and where it was an area's only ground truth the
+        interval set came back empty (#520 Bug A). Keeping the leading
+        MAX_INTERVAL_SECONDS credits the plausible part of the stretch.
+        """
         db = coordinator.db
         start = dt_util.utcnow()
         # Create 'on' state with duration exceeding MAX_INTERVAL_SECONDS
@@ -217,8 +226,39 @@ class TestStatesToIntervals:
         }
 
         intervals = _states_to_intervals(db, states, end_time)
-        # Should filter out 'on' state exceeding MAX_INTERVAL_SECONDS
-        assert len(intervals) == 0
+        assert len(intervals) == 1
+        assert intervals[0]["duration_seconds"] == MAX_INTERVAL_SECONDS
+        assert intervals[0]["start_time"] == to_db_utc(start)
+        assert intervals[0]["end_time"] == to_db_utc(
+            start + timedelta(seconds=MAX_INTERVAL_SECONDS)
+        )
+
+    def test_truncated_interval_is_stable_across_syncs(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """A still-active sensor truncates to the same row on every sync.
+
+        The truncated end is derived from the interval start, not from "now",
+        so re-syncing a sensor that is still on doesn't accumulate a new row
+        each hour — it collides with the existing one and is de-duplicated.
+        """
+        db = coordinator.db
+        start = dt_util.utcnow()
+        states = {
+            "binary_sensor.motion": [
+                State("binary_sensor.motion", "on", last_changed=start),
+            ]
+        }
+
+        first = _states_to_intervals(
+            db, states, start + timedelta(seconds=MAX_INTERVAL_SECONDS + 100)
+        )
+        later = _states_to_intervals(
+            db, states, start + timedelta(seconds=MAX_INTERVAL_SECONDS + 4000)
+        )
+
+        assert first[0]["end_time"] == later[0]["end_time"]
+        assert first[0]["duration_seconds"] == later[0]["duration_seconds"]
 
     def test_states_to_intervals_filters_min_duration_non_on(
         self, coordinator: AreaOccupancyCoordinator
