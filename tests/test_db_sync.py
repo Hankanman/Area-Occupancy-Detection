@@ -185,6 +185,7 @@ class TestStatesToIntervals:
         coordinator = coordinator_with_sensors
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
+        assert area is not None
         # Reporter's config in #520: paused is this player's idle state.
         area.config.sensor_states.media = ["playing"]
         area._entities = EntityManager(coordinator, area_name)  # noqa: SLF001
@@ -205,7 +206,7 @@ class TestStatesToIntervals:
 
     def test_states_to_intervals_truncates_max_duration_on(
         self, coordinator: AreaOccupancyCoordinator
-    ):
+    ) -> None:
         """'on' states over MAX_INTERVAL_SECONDS are truncated, not discarded.
 
         These used to be dropped outright, which discarded the evidence
@@ -235,7 +236,7 @@ class TestStatesToIntervals:
 
     def test_truncated_interval_is_stable_across_syncs(
         self, coordinator: AreaOccupancyCoordinator
-    ):
+    ) -> None:
         """A still-active sensor truncates to the same row on every sync.
 
         The truncated end is derived from the interval start, not from "now",
