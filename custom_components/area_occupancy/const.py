@@ -31,7 +31,14 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.8.1"
-CONF_VERSION: Final = 18
+# v18->v19: widened the aggregation/interval/numeric-sample unique constraints
+# and grouping keys to include entry_id (#533) — two config entries sharing a
+# physical entity_id no longer collide. This is a genuine constraint change,
+# not additive, so it intentionally triggers the destructive
+# _ensure_schema_up_to_date path (delete + recreate the DB) — unlike the
+# adjacent_areas case documented in migrations.py, an in-place ALTER isn't
+# possible here since the old constraint is narrower than the new one.
+CONF_VERSION: Final = 19
 CONF_VERSION_MINOR: Final = 0
 HA_RECORDER_DAYS: Final = 10  # days
 
@@ -81,6 +88,14 @@ CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
 CONF_COVER_SENSORS: Final = "cover_sensors"
 CONF_COVER_ACTIVE_STATES: Final = "cover_active_states"
 CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
+# Custom entities (#531): unlike every other sensor type, these have no
+# domain/device_class filter at all — the whole point is supporting
+# entities today's typed sections reject (e.g. an MQTT/HASS.Agent sensor).
+CONF_CUSTOM_BINARY_SENSORS: Final = "custom_binary_sensors"
+CONF_CUSTOM_BINARY_ACTIVE_STATES: Final = "custom_binary_active_states"
+CONF_CUSTOM_NUMERIC_SENSORS: Final = "custom_numeric_sensors"
+CONF_CUSTOM_NUMERIC_ACTIVE_MIN: Final = "custom_numeric_active_min"
+CONF_CUSTOM_NUMERIC_ACTIVE_MAX: Final = "custom_numeric_active_max"
 CONF_THRESHOLD: Final = "threshold"
 CONF_DECAY_ENABLED: Final = "decay_enabled"
 CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
@@ -114,6 +129,8 @@ CONF_WEIGHT_COVER: Final = "weight_cover"
 CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
 CONF_WEIGHT_POWER: Final = "weight_power"
 CONF_WEIGHT_WIFI_CLIENTS: Final = "weight_wifi_clients"
+CONF_WEIGHT_CUSTOM_BINARY: Final = "weight_custom_binary"
+CONF_WEIGHT_CUSTOM_NUMERIC: Final = "weight_custom_numeric"
 CONF_WEIGHT_WASP: Final = "weight_wasp"
 
 # Default values
@@ -127,6 +144,9 @@ DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_COVER_ACTIVE_STATES: Final[list[str]] = [STATE_OPENING, STATE_CLOSING]
+DEFAULT_CUSTOM_BINARY_ACTIVE_STATES: Final[list[str]] = [STATE_ON]
+DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN: Final = 1.0
+DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX: Final = 1000000.0
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
@@ -167,6 +187,12 @@ DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
 DEFAULT_WEIGHT_POWER: Final = 0.3
 DEFAULT_WEIGHT_WIFI_CLIENTS: Final = (
     0.35  # Matches DEFAULT_TYPES[InputType.WIFI_CLIENTS]
+)
+DEFAULT_WEIGHT_CUSTOM_BINARY: Final = (
+    0.4  # Matches DEFAULT_TYPES[InputType.CUSTOM_BINARY]
+)
+DEFAULT_WEIGHT_CUSTOM_NUMERIC: Final = (
+    0.3  # Matches DEFAULT_TYPES[InputType.CUSTOM_NUMERIC]
 )
 
 # Activity occupancy boost constants (logit-space magnitudes)
@@ -467,6 +493,17 @@ APPLIANCE_STATES: Final[PlatformStates] = {
     "default": STATE_ON,
 }
 
+# Custom binary sensor states configuration. Starting suggestions only —
+# the selector allows custom_value, since a custom entity's actual states
+# (e.g. an MQTT/HASS.Agent sensor) are unknown ahead of time (#531).
+CUSTOM_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_ON, "On", "mdi:power"),
+        StateOption(STATE_OFF, "Off", "mdi:power-off"),
+    ],
+    "default": STATE_ON,
+}
+
 # Cover states configuration (blinds, shades, garage doors, shutters)
 # All states from homeassistant.components.cover.CoverState
 COVER_STATES: Final[PlatformStates] = {
@@ -499,6 +536,7 @@ def get_state_options(platform_type: str) -> PlatformStates:
         "media": MEDIA_STATES,
         "appliance": APPLIANCE_STATES,
         "motion": MOTION_STATES,
+        "custom": CUSTOM_STATES,
     }
     return platform_map.get(platform_type, MOTION_STATES)
 
@@ -544,6 +582,8 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "co": InputType.CO,
             "co2": InputType.CO2,
             "cover": InputType.COVER,
+            "custom_binary": InputType.CUSTOM_BINARY,
+            "custom_numeric": InputType.CUSTOM_NUMERIC,
             "door": InputType.DOOR,
             "humidity": InputType.HUMIDITY,
             "illuminance": InputType.ILLUMINANCE,

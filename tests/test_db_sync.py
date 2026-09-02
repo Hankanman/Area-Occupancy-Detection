@@ -1248,13 +1248,16 @@ class TestIntervalLookup:
                         duration_seconds=(end - start).total_seconds(),
                     )
                 )
-                interval_defs.append((f"binary_sensor.motion_{idx}", start, end))
+                interval_defs.append(
+                    (db.coordinator.entry_id, f"binary_sensor.motion_{idx}", start, end)
+                )
             session.commit()
 
         interval_keys = set(interval_defs)
         # Add a non-existing key to ensure it's ignored
         interval_keys.add(
             (
+                db.coordinator.entry_id,
                 "binary_sensor.motion_new",
                 now + timedelta(hours=1),
                 now + timedelta(hours=1, minutes=5),
@@ -1273,8 +1276,8 @@ class TestIntervalLookup:
             existing = _get_existing_interval_keys(session, db, interval_keys)
 
         expected = {
-            (entity_id, normalize(start), normalize(end))
-            for entity_id, start, end in interval_defs
+            (entry_id, entity_id, normalize(start), normalize(end))
+            for entry_id, entity_id, start, end in interval_defs
         }
         assert existing == expected
 
@@ -1322,12 +1325,16 @@ class TestNumericSampleLookup:
                         state=str(20.0 + idx),
                     )
                 )
-                sample_defs.append((f"sensor.temp_{idx}", timestamp))
+                sample_defs.append(
+                    (db.coordinator.entry_id, f"sensor.temp_{idx}", timestamp)
+                )
             session.commit()
 
         sample_keys = set(sample_defs)
         # Add a non-existing key to ensure it's ignored
-        sample_keys.add(("sensor.temp_new", now + timedelta(hours=1)))
+        sample_keys.add(
+            (db.coordinator.entry_id, "sensor.temp_new", now + timedelta(hours=1))
+        )
 
         monkeypatch.setattr(
             "custom_components.area_occupancy.db.sync._NUMERIC_SAMPLE_LOOKUP_BATCH",
@@ -1341,7 +1348,8 @@ class TestNumericSampleLookup:
             existing = _get_existing_numeric_sample_keys(session, db, sample_keys)
 
         expected = {
-            (entity_id, normalize(timestamp)) for entity_id, timestamp in sample_defs
+            (entry_id, entity_id, normalize(timestamp))
+            for entry_id, entity_id, timestamp in sample_defs
         }
         assert existing == expected
 

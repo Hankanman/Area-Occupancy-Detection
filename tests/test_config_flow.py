@@ -39,6 +39,8 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -55,6 +57,7 @@ from custom_components.area_occupancy.const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
@@ -864,6 +867,45 @@ class TestHelperFunctions:
 
         assert f"sensor.{DOMAIN}_living_room_probability" not in result["wifi_clients"]
         assert "sensor.unifi_guest_ssid_clients" in result["wifi_clients"]
+
+    def test_get_include_entities_custom_has_no_domain_filter(
+        self, hass, entity_registry
+    ):
+        """Custom sensor selectors must accept entities every typed section rejects.
+
+        The whole point of #531 is supporting entities with no device_class
+        that fit no other section -- e.g. an MQTT/HASS.Agent sensor. Unlike
+        every other selector, no device_class filtering is applied at all.
+        """
+        # An entity with no recognizable device_class -- appliance/motion/etc
+        # selectors would all reject this.
+        entity_registry.async_get_or_create(
+            "sensor",
+            "hassagent",
+            "pc_active_window",
+        )
+        # A binary_sensor with no recognizable device_class either.
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "mqtt",
+            "custom_flag",
+        )
+        # This integration's own output sensor must still be excluded.
+        entity_registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            "living_room_probability",
+        )
+
+        result = _get_include_entities(hass)
+
+        assert "sensor.hassagent_pc_active_window" in result["custom_binary"]
+        assert "sensor.hassagent_pc_active_window" in result["custom_numeric"]
+        assert "binary_sensor.mqtt_custom_flag" in result["custom_binary"]
+        assert f"sensor.{DOMAIN}_living_room_probability" not in result["custom_binary"]
+        assert (
+            f"sensor.{DOMAIN}_living_room_probability" not in result["custom_numeric"]
+        )
 
     def test_wizard_steps_always_include_advanced_fields(self, hass, entity_registry):
         """Test that the former advanced-mode fields are always in the schema.
@@ -1776,6 +1818,42 @@ class TestNewHelperFunctions:
             key.schema if hasattr(key, "schema") else key for key in schema_dict
         }
         assert "wifi_clients" in section_names
+
+    def test_flatten_sectioned_input_custom(self):
+        """Test flattening the custom section like other sensor sections."""
+        user_input = {
+            "custom": {
+                CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+                CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+                CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+            },
+        }
+        result = _flatten_sectioned_input(user_input)
+        assert result[CONF_CUSTOM_BINARY_SENSORS] == ["binary_sensor.custom_flag"]
+        assert result[CONF_CUSTOM_NUMERIC_SENSORS] == ["sensor.custom_metric"]
+        assert result[CONF_WEIGHT_CUSTOM_NUMERIC] == 0.25
+
+    def test_nest_config_for_sections_custom(self):
+        """Test that custom config keys are nested under a custom section."""
+        flat_config = {
+            CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+            CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+            CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+        }
+        nested = _nest_config_for_sections(flat_config)
+        assert nested["custom"] == {
+            CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+            CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+            CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+        }
+
+    def test_sensors_step_schema_includes_custom_section(self, hass):
+        """Test that the sensors step schema exposes a custom section."""
+        schema_dict = _create_sensors_step_schema(hass)
+        section_names = {
+            key.schema if hasattr(key, "schema") else key for key in schema_dict
+        }
+        assert "custom" in section_names
 
     @pytest.mark.parametrize(
         ("areas", "search_name", "expected_found", "expected_name"),
