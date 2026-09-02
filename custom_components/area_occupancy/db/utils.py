@@ -6,7 +6,7 @@ import bisect
 from collections.abc import Collection, Iterable, Iterator
 from datetime import datetime, timedelta
 import logging
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,6 +18,10 @@ from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
 from ..data.entity_type import DEFAULT_TYPES, InputType
 from ..time_utils import from_db_utc, to_db_utc, to_utc
 from ..utils import map_binary_state_to_semantic
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
+    from ..data.config import SensorStates
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +69,9 @@ def is_active_state(state: str, active_states: Collection[str]) -> bool:
     return mapped in active_states
 
 
-def entity_active_states(coordinator: Any) -> dict[str, set[str]]:
+def entity_active_states(
+    coordinator: AreaOccupancyCoordinator,
+) -> dict[str, set[str]]:
     """Map every configured entity_id to the states that count as active for it.
 
     Spans all areas. An entity shared between areas takes the union of its
@@ -88,7 +94,9 @@ def entity_active_states(coordinator: Any) -> dict[str, set[str]]:
     return resolved
 
 
-def resolve_active_states(sensor_states: Any, input_type: InputType) -> set[str]:
+def resolve_active_states(
+    sensor_states: SensorStates | None, input_type: InputType
+) -> set[str]:
     """Return the states that count as active for an input type in an area.
 
     Mirrors how :class:`EntityType` resolves them for :attr:`Entity.evidence`:
@@ -107,7 +115,7 @@ def resolve_active_states(sensor_states: Any, input_type: InputType) -> set[str]
 
 
 def area_active_states_by_type(
-    coordinator: Any,
+    coordinator: AreaOccupancyCoordinator,
     area_name: str,
     input_types: Iterable[InputType],
 ) -> dict[InputType, set[str]]:

@@ -912,36 +912,34 @@ class TestPresenceGroundTruthActiveStates:
         return (end - start).total_seconds()
 
     def test_paused_counts_when_configured_active(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
         """With the default media states, 'paused' is occupancy ground truth."""
         db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
+        area_name = default_area.area_name
         db.save_area_data(area_name)
         now = dt_util.utcnow()
         expected = self._seed_paused_media(db, area_name, now)
 
-        coordinator.areas[area_name].config.sensor_states.media = list(
-            DEFAULT_MEDIA_ACTIVE_STATES
-        )
+        default_area.config.sensor_states.media = list(DEFAULT_MEDIA_ACTIVE_STATES)
 
         result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
 
         assert sum((e - s).total_seconds() for s, e in result) == expected
 
     def test_paused_excluded_when_removed_from_config(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
         """Removing 'paused' from the config removes it from ground truth too."""
         db = coordinator.db
-        area_name = db.coordinator.get_area_names()[0]
+        area_name = default_area.area_name
         db.save_area_data(area_name)
         now = dt_util.utcnow()
         self._seed_paused_media(db, area_name, now)
 
         # What the reporter in #520 had configured: paused is this player's
         # idle state, so it was removed from the area's media active states.
-        coordinator.areas[area_name].config.sensor_states.media = ["playing"]
+        default_area.config.sensor_states.media = ["playing"]
 
         result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
 

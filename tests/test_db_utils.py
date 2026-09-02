@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from datetime import UTC, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -260,14 +261,13 @@ class TestActiveStateResolution:
         )
 
     def test_by_type_reads_area_config(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
         """Per-area resolution reflects that area's configured states."""
-        area_name = coordinator.get_area_names()[0]
-        coordinator.areas[area_name].config.sensor_states.media = ["playing"]
+        default_area.config.sensor_states.media = ["playing"]
 
         resolved = area_active_states_by_type(
-            coordinator, area_name, (InputType.MEDIA, InputType.SLEEP)
+            coordinator, default_area.area_name, (InputType.MEDIA, InputType.SLEEP)
         )
 
         assert resolved[InputType.MEDIA] == {"playing"}
