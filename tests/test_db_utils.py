@@ -294,6 +294,22 @@ class TestActiveStateResolution:
             if entity.active_states:
                 assert resolved[entity_id] == set(entity.active_states)
 
+    def test_entity_map_tolerates_entity_without_active_states(self) -> None:
+        """An entity object that doesn't expose active_states is skipped.
+
+        Numeric sensors resolve an active *range* rather than a state list,
+        and duck-typed stand-ins may carry neither. One unusual entity must
+        not take the whole sync down; ``db.sync`` falls back to its historic
+        "on" semantics for anything missing here.
+        """
+        entity = SimpleNamespace(entity_id="sensor.co2")
+        area = SimpleNamespace(
+            entities=SimpleNamespace(entities={"sensor.co2": entity})
+        )
+        coordinator = SimpleNamespace(areas={"Office": area})
+
+        assert entity_active_states(coordinator) == {}
+
     def test_is_active_state_plain_match(self) -> None:
         """A state present in the set is active."""
         assert is_active_state("paused", {"playing", "paused"}) is True

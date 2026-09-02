@@ -71,12 +71,18 @@ def entity_active_states(coordinator: Any) -> dict[str, set[str]]:
     Spans all areas. An entity shared between areas takes the union of its
     per-area active states, so a state active in *any* area is treated as
     active — the conservative direction for the interval-length cap in
-    :mod:`db.sync`, whose job is to reject implausibly long active stretches.
+    :mod:`db.sync`, whose job is to bound implausibly long active stretches.
+
+    ``active_states`` is read defensively: an entity object that doesn't
+    expose it (a numeric sensor resolves an active *range* instead, and
+    duck-typed stand-ins may carry neither) simply contributes nothing here,
+    and :mod:`db.sync` falls back to its historic "on" semantics for it. One
+    unusual entity must not take the whole sync down.
     """
     resolved: dict[str, set[str]] = {}
     for area in coordinator.areas.values():
         for entity_id, entity in area.entities.entities.items():
-            states = entity.active_states
+            states = getattr(entity, "active_states", None)
             if states:
                 resolved.setdefault(entity_id, set()).update(states)
     return resolved
