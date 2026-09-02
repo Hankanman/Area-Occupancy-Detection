@@ -23,12 +23,18 @@ from ..const import (
 from ..data.entity_type import NUMERIC_INPUT_TYPES
 from ..time_utils import to_db_utc, to_utc
 from . import queries
-from .utils import chunked, is_valid_state
+from .utils import chunked, entity_active_states, is_active_state, is_valid_state
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
+# Active states for an entity the coordinator doesn't know about (it was
+# de-configured mid-sync, or a test passes a bare entity_id). Sync only ever
+# requests configured entities, so this is a safety net rather than a live
+# path; "on" preserves the behaviour this code had before active states were
+# resolved per entity.
+_FALLBACK_ACTIVE_STATES = frozenset({"on"})
 _INTERVAL_LOOKUP_BATCH = 250
 _NUMERIC_SAMPLE_LOOKUP_BATCH = 250
 _NUMERIC_INPUT_TYPES = NUMERIC_INPUT_TYPES
@@ -163,6 +169,9 @@ def _states_to_intervals(
     retention_time_utc = to_utc(dt_util.utcnow() - timedelta(days=RETENTION_DAYS))
     created_at_db = to_db_utc(dt_util.utcnow())
     end_time_utc = to_utc(end_time)
+    # Resolved from the live Entity objects, so "active" here means exactly
+    # what Entity.evidence means (issue #520).
+    active_states = entity_active_states(db.coordinator)
 
     for entity_id, state_list in states.items():
         if not state_list:
@@ -190,19 +199,47 @@ def _states_to_intervals(
             end_utc = to_utc(interval_end)
             duration_seconds = (end_utc - start_utc).total_seconds()
 
-            # Apply filtering based on state and duration
-            if state.state == "on":
-                if duration_seconds <= MAX_INTERVAL_SECONDS:
-                    intervals.append(
-                        {
-                            "entity_id": entity_id,
-                            "state": state.state,
-                            "start_time": to_db_utc(start_utc),
-                            "end_time": to_db_utc(end_utc),
-                            "duration_seconds": duration_seconds,
-                            "created_at": created_at_db,
-                        }
-                    )
+            # Apply filtering based on state and duration.
+            #
+            # MAX_INTERVAL_SECONDS bounds how much occupancy a single *active*
+            # stretch may contribute. It used to be keyed on the literal string
+            # "on", which covers motion and sleep sensors but not media players
+            # — whose active states are "playing"/"paused" — so a media
+            # interval of any length went in uncapped and could dominate the
+            # prior's numerator on its own (issue #520). Key it on whether the
+            # state is active *for this entity* instead, so every presence type
+            # is bounded by the same rule.
+            #
+            # Over-cap stretches are truncated to the cap rather than dropped.
+            # Dropping them discarded the evidence entirely: an mmWave sensor
+            # that legitimately stays on overnight contributed nothing at all,
+            # biasing the prior down and — where it was an area's only ground
+            # truth — leaving the interval set empty, which is what stalled the
+            # prior recalculation in the first place (#520 Bug A). Keeping the
+            # leading MAX_INTERVAL_SECONDS credits the plausible part of the
+            # stretch (someone was there when it started) while refusing to
+            # trust the unbounded tail. The truncated end is deterministic, so
+            # repeated syncs of a still-active sensor produce the same row
+            # rather than a growing one.
+            #
+            # Inactive states keep the MIN_INTERVAL_SECONDS floor and no cap:
+            # they are the denominator's evidence that the area was observed,
+            # and shortening a long "off" stretch would bias the prior upward.
+            entity_active = active_states.get(entity_id) or _FALLBACK_ACTIVE_STATES
+            if is_active_state(state.state, entity_active):
+                if duration_seconds > MAX_INTERVAL_SECONDS:
+                    end_utc = start_utc + timedelta(seconds=MAX_INTERVAL_SECONDS)
+                    duration_seconds = float(MAX_INTERVAL_SECONDS)
+                intervals.append(
+                    {
+                        "entity_id": entity_id,
+                        "state": state.state,
+                        "start_time": to_db_utc(start_utc),
+                        "end_time": to_db_utc(end_utc),
+                        "duration_seconds": duration_seconds,
+                        "created_at": created_at_db,
+                    }
+                )
             elif (
                 is_valid_state(state.state) and duration_seconds >= MIN_INTERVAL_SECONDS
             ):

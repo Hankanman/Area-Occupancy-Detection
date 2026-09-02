@@ -15,6 +15,7 @@ from custom_components.area_occupancy.const import (
     RETENTION_DAYS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.sync import (
     _get_existing_interval_keys,
@@ -128,10 +129,92 @@ class TestStatesToIntervals:
         assert intervals[0]["state"] == "off"
         assert intervals[0]["start_time"] == to_db_utc(recent_state_time)
 
-    def test_states_to_intervals_filters_max_duration_on(
+    def test_media_active_state_over_cap_is_truncated(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """#520: the length cap applies to media active states, not just "on".
+
+        The cap used to key on the literal string ``"on"``, which never matches
+        a media player (whose active states are ``playing``/``paused``). A media
+        player parked in ``paused`` for days was therefore stored as one
+        unbounded occupied interval and could dominate the prior's numerator on
+        its own.
+        """
+        coordinator = coordinator_with_sensors
+        db = coordinator.db
+        start = dt_util.utcnow()
+        end_time = start + timedelta(seconds=MAX_INTERVAL_SECONDS + 100)
+
+        states = {
+            "media_player.tv": [
+                State("media_player.tv", "paused", last_changed=start),
+            ]
+        }
+
+        intervals = _states_to_intervals(db, states, end_time)
+        assert len(intervals) == 1
+        assert intervals[0]["duration_seconds"] == MAX_INTERVAL_SECONDS
+
+    def test_media_active_state_under_cap_is_kept(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """A media active state inside the cap is still stored."""
+        coordinator = coordinator_with_sensors
+        db = coordinator.db
+        start = dt_util.utcnow()
+        end_time = start + timedelta(seconds=MAX_INTERVAL_SECONDS - 100)
+
+        states = {
+            "media_player.tv": [
+                State("media_player.tv", "paused", last_changed=start),
+            ]
+        }
+
+        intervals = _states_to_intervals(db, states, end_time)
+        assert len(intervals) == 1
+        assert intervals[0]["state"] == "paused"
+
+    def test_media_inactive_state_over_cap_is_kept(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """A state the area does NOT count as active keeps the uncapped path.
+
+        Inactive intervals are the denominator's evidence that the area was
+        observed at all, so dropping a long one would bias the prior upward.
+        """
+        coordinator = coordinator_with_sensors
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        assert area is not None
+        # Reporter's config in #520: paused is this player's idle state.
+        area.config.sensor_states.media = ["playing"]
+        area._entities = EntityManager(coordinator, area_name)  # noqa: SLF001
+
+        db = coordinator.db
+        start = dt_util.utcnow()
+        end_time = start + timedelta(seconds=MAX_INTERVAL_SECONDS + 100)
+
+        states = {
+            "media_player.tv": [
+                State("media_player.tv", "paused", last_changed=start),
+            ]
+        }
+
+        intervals = _states_to_intervals(db, states, end_time)
+        assert len(intervals) == 1
+        assert intervals[0]["state"] == "paused"
+
+    def test_states_to_intervals_truncates_max_duration_on(
         self, coordinator: AreaOccupancyCoordinator
-    ):
-        """Test that 'on' states exceeding MAX_INTERVAL_SECONDS are filtered out."""
+    ) -> None:
+        """'on' states over MAX_INTERVAL_SECONDS are truncated, not discarded.
+
+        These used to be dropped outright, which discarded the evidence
+        entirely — an mmWave sensor that legitimately stays on overnight
+        contributed nothing, and where it was an area's only ground truth the
+        interval set came back empty (#520 Bug A). Keeping the leading
+        MAX_INTERVAL_SECONDS credits the plausible part of the stretch.
+        """
         db = coordinator.db
         start = dt_util.utcnow()
         # Create 'on' state with duration exceeding MAX_INTERVAL_SECONDS
@@ -144,8 +227,39 @@ class TestStatesToIntervals:
         }
 
         intervals = _states_to_intervals(db, states, end_time)
-        # Should filter out 'on' state exceeding MAX_INTERVAL_SECONDS
-        assert len(intervals) == 0
+        assert len(intervals) == 1
+        assert intervals[0]["duration_seconds"] == MAX_INTERVAL_SECONDS
+        assert intervals[0]["start_time"] == to_db_utc(start)
+        assert intervals[0]["end_time"] == to_db_utc(
+            start + timedelta(seconds=MAX_INTERVAL_SECONDS)
+        )
+
+    def test_truncated_interval_is_stable_across_syncs(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A still-active sensor truncates to the same row on every sync.
+
+        The truncated end is derived from the interval start, not from "now",
+        so re-syncing a sensor that is still on doesn't accumulate a new row
+        each hour — it collides with the existing one and is de-duplicated.
+        """
+        db = coordinator.db
+        start = dt_util.utcnow()
+        states = {
+            "binary_sensor.motion": [
+                State("binary_sensor.motion", "on", last_changed=start),
+            ]
+        }
+
+        first = _states_to_intervals(
+            db, states, start + timedelta(seconds=MAX_INTERVAL_SECONDS + 100)
+        )
+        later = _states_to_intervals(
+            db, states, start + timedelta(seconds=MAX_INTERVAL_SECONDS + 4000)
+        )
+
+        assert first[0]["end_time"] == later[0]["end_time"]
+        assert first[0]["duration_seconds"] == later[0]["duration_seconds"]
 
     def test_states_to_intervals_filters_min_duration_non_on(
         self, coordinator: AreaOccupancyCoordinator

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import bisect
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from datetime import datetime, timedelta
 import logging
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 from homeassistant.exceptions import HomeAssistantError
 
 from ..const import INVALID_STATES, MIN_CORRELATION_SAMPLES
+from ..data.entity_type import DEFAULT_TYPES, InputType
 from ..time_utils import from_db_utc, to_db_utc, to_utc
+from ..utils import map_binary_state_to_semantic
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
+    from ..data.config import SensorStates
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +31,144 @@ _LOGGER = logging.getLogger(__name__)
 SQLITE_BATCH_SIZE = 500
 
 T = TypeVar("T")
+
+
+# ─────────────────────────── Active-state resolution ────────────────────────────
+#
+# Issue #520: the stored-interval ("ground truth") path and the live-evidence
+# path must agree on which states count as *occupied*, or the learned prior
+# and the running probability describe different rooms.
+#
+# They did not. ``build_presence_query`` derived its occupied-state set from
+# ``DEFAULT_TYPES`` while ``Entity.evidence`` reads the area's configured
+# states, so a user who removed ``paused`` from ``CONF_MEDIA_ACTIVE_STATES``
+# still had every ``paused`` stretch counted as occupancy ground truth. A
+# media player parked in ``paused`` for days drove ``global_prior`` to the
+# 0.99 clamp while live evidence correctly read ~0.01.
+#
+# The fix is to resolve active states the way ``EntityType`` does — the area's
+# configured list when non-empty, the type default otherwise — from one shared
+# helper, so the two paths cannot drift apart again.
+# ``resolve_active_states``/``area_active_states_by_type`` answer this from the
+# area config (well-defined even for a type with no entity loaded);
+# ``entity_active_states`` answers it per entity from the live ``Entity``
+# objects, which is what ``db.sync`` needs when deciding whether a recorded
+# state was active for the entity that reported it.
+
+
+def is_active_state(state: str, active_states: Collection[str]) -> bool:
+    """Return whether a stored state counts as active for the given state set.
+
+    Applies the same binary→semantic mapping as :attr:`Entity.evidence` so a
+    door/window configured with ``open``/``closed`` matches the ``on``/``off``
+    that Home Assistant actually records.
+
+    Args:
+        state: The stored state string, as recorded by Home Assistant.
+        active_states: States that count as active for this entity or type.
+
+    Returns:
+        True if the state counts as active, False otherwise (including when
+        ``active_states`` is empty).
+    """
+    if not active_states:
+        return False
+    mapped = map_binary_state_to_semantic(state, sorted(active_states))
+    return mapped in active_states
+
+
+def entity_active_states(
+    coordinator: AreaOccupancyCoordinator,
+) -> dict[str, set[str]]:
+    """Map every configured entity_id to the states that count as active for it.
+
+    Spans all areas. An entity shared between areas takes the union of its
+    per-area active states, so a state active in *any* area is treated as
+    active — the conservative direction for the interval-length cap in
+    :mod:`db.sync`, whose job is to bound implausibly long active stretches.
+
+    ``active_states`` is read defensively: an entity object that doesn't
+    expose it (a numeric sensor resolves an active *range* instead, and
+    duck-typed stand-ins may carry neither) simply contributes nothing here,
+    and :mod:`db.sync` falls back to its historic "on" semantics for it. One
+    unusual entity must not take the whole sync down.
+
+    Args:
+        coordinator: Coordinator whose areas supply the configured entities.
+
+    Returns:
+        Mapping of entity_id to the states counting as active for it. Entities
+        exposing no active states are omitted.
+    """
+    resolved: dict[str, set[str]] = {}
+    for area in coordinator.areas.values():
+        for entity_id, entity in area.entities.entities.items():
+            states = getattr(entity, "active_states", None)
+            if states:
+                resolved.setdefault(entity_id, set()).update(states)
+    return resolved
+
+
+def resolve_active_states(
+    sensor_states: SensorStates | None, input_type: InputType
+) -> set[str]:
+    """Return the states that count as active for an input type in an area.
+
+    Mirrors how :class:`EntityType` resolves them for :attr:`Entity.evidence`:
+    the area's configured list wins when non-empty, otherwise the type default
+    applies (an empty configured list means "use defaults", not "nothing is
+    active"). ``sensor_states`` has no field for every input type — sleep, for
+    one — and those fall through to the defaults, exactly as the live path does.
+
+    Args:
+        sensor_states: The area's configured sensor states, or None when the
+            area has no config (the type default then applies).
+        input_type: The input type whose active states are wanted.
+
+    Returns:
+        The states counting as active, empty if the type defines none.
+    """
+    configured = getattr(sensor_states, input_type.value, None)
+    if configured:
+        return set(configured)
+    defaults = DEFAULT_TYPES.get(input_type)
+    if defaults and defaults.get("active_states"):
+        return set(defaults["active_states"])
+    return set()
+
+
+def area_active_states_by_type(
+    coordinator: AreaOccupancyCoordinator,
+    area_name: str,
+    input_types: Iterable[InputType],
+) -> dict[InputType, set[str]]:
+    """Map each requested input type to the states counting as active in an area.
+
+    Active states are configured per input type per area (there is no
+    per-entity override — see issue #159), so every entity of a given type in
+    an area resolves to the same set. Resolution keys off the area's *config*
+    rather than its currently-loaded entities, so the answer is well-defined
+    even for a type that has no entity loaded yet.
+
+    Args:
+        coordinator: Coordinator holding the area.
+        area_name: Name of the area whose configuration is read.
+        input_types: Input types to resolve.
+
+    Returns:
+        Mapping of input type to its active states. Types resolving to no
+        states are omitted, as is every type when the area is unknown.
+    """
+    resolved: dict[InputType, set[str]] = {}
+    area = coordinator.areas.get(area_name)
+    if area is None:
+        return resolved
+    sensor_states = getattr(getattr(area, "config", None), "sensor_states", None)
+    for input_type in input_types:
+        states = resolve_active_states(sensor_states, input_type)
+        if states:
+            resolved[input_type] = states
+    return resolved
 
 
 def chunked(items: Iterable[T], size: int) -> Iterator[list[T]]:
