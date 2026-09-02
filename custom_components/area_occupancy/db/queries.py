@@ -13,9 +13,13 @@ from sqlalchemy.sql import literal
 from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TIME_PRIOR
-from ..data.entity_type import DEFAULT_TYPES, InputType
+from ..data.entity_type import InputType
 from ..time_utils import from_db_utc, to_db_utc, to_utc
-from .utils import apply_motion_timeout, merge_overlapping_intervals
+from .utils import (
+    apply_motion_timeout,
+    area_active_states_by_type,
+    merge_overlapping_intervals,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Query, Session
@@ -196,7 +200,7 @@ def get_occupied_intervals(
         with db.get_session() as session:
             base_filters = build_base_filters(db, entry_id, lookback_date_db, area_name)
             motion_query = build_motion_query(session, db, base_filters)
-            presence_query = build_presence_query(session, db, base_filters)
+            presence_query = build_presence_query(session, db, base_filters, area_name)
 
             all_results = execute_union_queries(
                 session, db, [motion_query, presence_query]
@@ -373,20 +377,42 @@ def build_motion_query(
 
 
 def build_presence_query(
-    session: Session, db: AreaOccupancyDB, base_filters: list[sa.ColumnElement[bool]]
-) -> Query[Any]:
+    session: Session,
+    db: AreaOccupancyDB,
+    base_filters: list[sa.ColumnElement[bool]],
+    area_name: str,
+) -> Query[Any] | None:
     """Create query selecting sleep and media presence intervals.
 
     These sensors indicate sustained presence (e.g., sleeping, watching TV)
     that motion sensors may miss.
+
+    Active states come from the area's *configured* values, not from
+    ``DEFAULT_TYPES``. Deriving them from defaults meant a user who removed
+    ``paused`` from ``CONF_MEDIA_ACTIVE_STATES`` still had every ``paused``
+    stretch counted as occupancy ground truth, pinning ``global_prior`` at the
+    0.99 clamp while live evidence read ~0.01 — issue #520.
+
+    Each type is matched against its own state set rather than the union, so a
+    sleep sensor can never be matched by a media state (or vice versa).
+
+    Returns ``None`` when the area has no configured presence sensors, so the
+    caller can skip the query entirely rather than emit an always-false filter.
     """
-    # Collect active states from DEFAULT_TYPES for each presence type.
-    presence_types = [InputType.MEDIA, InputType.SLEEP]
-    active_states: set[str] = set()
-    for ptype in presence_types:
-        defaults = DEFAULT_TYPES.get(ptype)
-        if defaults and defaults.get("active_states"):
-            active_states.update(defaults["active_states"])
+    states_by_type = area_active_states_by_type(
+        db.coordinator, area_name, (InputType.MEDIA, InputType.SLEEP)
+    )
+
+    type_clauses = [
+        (db.Entities.entity_type == input_type.value)
+        & db.Intervals.state.in_(sorted(active_states))
+        for input_type, active_states in sorted(
+            states_by_type.items(), key=lambda item: item[0].value
+        )
+        if active_states
+    ]
+    if not type_clauses:
+        return None
 
     return (
         session.query(
@@ -401,8 +427,7 @@ def build_presence_query(
         )
         .filter(
             *base_filters,
-            db.Entities.entity_type.in_([InputType.MEDIA.value, InputType.SLEEP.value]),
-            db.Intervals.state.in_(sorted(active_states)),
+            sa.or_(*type_clauses),
         )
     )
 

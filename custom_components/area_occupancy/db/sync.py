@@ -23,12 +23,18 @@ from ..const import (
 from ..data.entity_type import NUMERIC_INPUT_TYPES
 from ..time_utils import to_db_utc, to_utc
 from . import queries
-from .utils import chunked, is_valid_state
+from .utils import chunked, entity_active_states, is_active_state, is_valid_state
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
+# Active states for an entity the coordinator doesn't know about (it was
+# de-configured mid-sync, or a test passes a bare entity_id). Sync only ever
+# requests configured entities, so this is a safety net rather than a live
+# path; "on" preserves the behaviour this code had before active states were
+# resolved per entity.
+_FALLBACK_ACTIVE_STATES = frozenset({"on"})
 _INTERVAL_LOOKUP_BATCH = 250
 _NUMERIC_SAMPLE_LOOKUP_BATCH = 250
 _NUMERIC_INPUT_TYPES = NUMERIC_INPUT_TYPES
@@ -156,6 +162,9 @@ def _states_to_intervals(
     retention_time_utc = to_utc(dt_util.utcnow() - timedelta(days=RETENTION_DAYS))
     created_at_db = to_db_utc(dt_util.utcnow())
     end_time_utc = to_utc(end_time)
+    # Resolved from the live Entity objects, so "active" here means exactly
+    # what Entity.evidence means (issue #520).
+    active_states = entity_active_states(db.coordinator)
 
     for entity_id, state_list in states.items():
         if not state_list:
@@ -183,8 +192,23 @@ def _states_to_intervals(
             end_utc = to_utc(interval_end)
             duration_seconds = (end_utc - start_utc).total_seconds()
 
-            # Apply filtering based on state and duration
-            if state.state == "on":
+            # Apply filtering based on state and duration.
+            #
+            # The MAX_INTERVAL_SECONDS cap rejects implausibly long *active*
+            # stretches (a stuck sensor, or a media player parked in a state
+            # the area counts as presence). It used to be keyed on the literal
+            # string "on", which covers motion and sleep sensors but not media
+            # players — whose active states are "playing"/"paused" — so a media
+            # interval of any length went in uncapped and could dominate the
+            # prior's numerator on its own (issue #520). Key it on whether the
+            # state is active *for this entity* instead, so every presence type
+            # is capped on the same rule.
+            #
+            # Inactive states keep the MIN_INTERVAL_SECONDS floor and no cap:
+            # they are the denominator's evidence that the area was observed,
+            # and dropping a long "off" stretch would bias the prior upward.
+            entity_active = active_states.get(entity_id) or _FALLBACK_ACTIVE_STATES
+            if is_active_state(state.state, entity_active):
                 if duration_seconds <= MAX_INTERVAL_SECONDS:
                     intervals.append(
                         {

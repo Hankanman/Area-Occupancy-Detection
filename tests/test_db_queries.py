@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from custom_components.area_occupancy.const import DEFAULT_MEDIA_ACTIVE_STATES
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.operations import (
     save_global_prior,
@@ -859,11 +860,116 @@ class TestBuildFilters:
         )
 
         with db.get_session() as session:
-            query = build_presence_query(session, db, base_filters)
+            query = build_presence_query(session, db, base_filters, area_name)
             assert query is not None
 
             with suppress(Exception):
                 _ = query.all()
+
+    def test_build_presence_query_unknown_area(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An area the coordinator doesn't know resolves no states, so no query."""
+        db = coordinator.db
+        lookback_date = dt_util.utcnow() - timedelta(days=90)
+        base_filters = build_base_filters(
+            db, db.coordinator.entry_id, lookback_date, "No Such Area"
+        )
+
+        with db.get_session() as session:
+            assert (
+                build_presence_query(session, db, base_filters, "No Such Area") is None
+            )
+
+
+class TestPresenceGroundTruthActiveStates:
+    """Ground truth must honour the area's configured active states (issue #520).
+
+    ``Entity.evidence`` reads the area's configured active states while the
+    occupied-interval query used to read ``DEFAULT_TYPES``. A user who removed
+    ``paused`` from ``CONF_MEDIA_ACTIVE_STATES`` therefore still had every
+    ``paused`` stretch counted as occupancy ground truth, so a media player
+    parked in ``paused`` drove ``global_prior`` to the 0.99 clamp while the
+    live probability correctly read ~0.01.
+    """
+
+    @staticmethod
+    def _seed_paused_media(db: Any, area_name: str, now: datetime) -> float:
+        """Store one 4h 'paused' media interval; return its duration in seconds."""
+        start = now - timedelta(hours=6)
+        end = start + timedelta(hours=4)
+
+        with db.get_session() as session:
+            _create_test_entity(session, db, "media_player.amp", "media", area_name)
+            session.commit()
+
+        with db.get_session() as session:
+            _create_test_interval(
+                session, db, "media_player.amp", start, end, area_name, state="paused"
+            )
+            session.commit()
+
+        return (end - start).total_seconds()
+
+    def test_paused_counts_when_configured_active(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """With the default media states, 'paused' is occupancy ground truth."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        expected = self._seed_paused_media(db, area_name, now)
+
+        coordinator.areas[area_name].config.sensor_states.media = list(
+            DEFAULT_MEDIA_ACTIVE_STATES
+        )
+
+        result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
+
+        assert sum((e - s).total_seconds() for s, e in result) == expected
+
+    def test_paused_excluded_when_removed_from_config(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Removing 'paused' from the config removes it from ground truth too."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        self._seed_paused_media(db, area_name, now)
+
+        # What the reporter in #520 had configured: paused is this player's
+        # idle state, so it was removed from the area's media active states.
+        coordinator.areas[area_name].config.sensor_states.media = ["playing"]
+
+        result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
+
+        assert result == []
+
+    def test_sleep_falls_back_to_type_default(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """SensorStates has no 'sleep' field, so sleep uses the type default."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        start = now - timedelta(hours=3)
+        end = start + timedelta(hours=1)
+
+        with db.get_session() as session:
+            _create_test_entity(session, db, "binary_sensor.bed", "sleep", area_name)
+            session.commit()
+        with db.get_session() as session:
+            _create_test_interval(
+                session, db, "binary_sensor.bed", start, end, area_name, state="on"
+            )
+            session.commit()
+
+        result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
+
+        assert sum((e - s).total_seconds() for s, e in result) == 3600.0
 
 
 class TestGetGlobalPrior:

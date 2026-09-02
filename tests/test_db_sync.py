@@ -15,6 +15,7 @@ from custom_components.area_occupancy.const import (
     RETENTION_DAYS,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.sync import (
     _get_existing_interval_keys,
@@ -127,6 +128,78 @@ class TestStatesToIntervals:
         assert len(intervals) == 1
         assert intervals[0]["state"] == "off"
         assert intervals[0]["start_time"] == to_db_utc(recent_state_time)
+
+    def test_media_active_state_over_cap_is_dropped(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """#520: the length cap applies to media active states, not just "on".
+
+        The cap used to key on the literal string ``"on"``, which never matches
+        a media player (whose active states are ``playing``/``paused``). A media
+        player parked in ``paused`` for days was therefore stored as one
+        unbounded occupied interval and could dominate the prior's numerator on
+        its own.
+        """
+        coordinator = coordinator_with_sensors
+        db = coordinator.db
+        start = dt_util.utcnow()
+        end_time = start + timedelta(seconds=MAX_INTERVAL_SECONDS + 100)
+
+        states = {
+            "media_player.tv": [
+                State("media_player.tv", "paused", last_changed=start),
+            ]
+        }
+
+        assert _states_to_intervals(db, states, end_time) == []
+
+    def test_media_active_state_under_cap_is_kept(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """A media active state inside the cap is still stored."""
+        coordinator = coordinator_with_sensors
+        db = coordinator.db
+        start = dt_util.utcnow()
+        end_time = start + timedelta(seconds=MAX_INTERVAL_SECONDS - 100)
+
+        states = {
+            "media_player.tv": [
+                State("media_player.tv", "paused", last_changed=start),
+            ]
+        }
+
+        intervals = _states_to_intervals(db, states, end_time)
+        assert len(intervals) == 1
+        assert intervals[0]["state"] == "paused"
+
+    def test_media_inactive_state_over_cap_is_kept(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """A state the area does NOT count as active keeps the uncapped path.
+
+        Inactive intervals are the denominator's evidence that the area was
+        observed at all, so dropping a long one would bias the prior upward.
+        """
+        coordinator = coordinator_with_sensors
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        # Reporter's config in #520: paused is this player's idle state.
+        area.config.sensor_states.media = ["playing"]
+        area._entities = EntityManager(coordinator, area_name)  # noqa: SLF001
+
+        db = coordinator.db
+        start = dt_util.utcnow()
+        end_time = start + timedelta(seconds=MAX_INTERVAL_SECONDS + 100)
+
+        states = {
+            "media_player.tv": [
+                State("media_player.tv", "paused", last_changed=start),
+            ]
+        }
+
+        intervals = _states_to_intervals(db, states, end_time)
+        assert len(intervals) == 1
+        assert intervals[0]["state"] == "paused"
 
     def test_states_to_intervals_filters_max_duration_on(
         self, coordinator: AreaOccupancyCoordinator
