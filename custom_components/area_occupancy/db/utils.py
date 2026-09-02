@@ -62,6 +62,14 @@ def is_active_state(state: str, active_states: Collection[str]) -> bool:
     Applies the same binary→semantic mapping as :attr:`Entity.evidence` so a
     door/window configured with ``open``/``closed`` matches the ``on``/``off``
     that Home Assistant actually records.
+
+    Args:
+        state: The stored state string, as recorded by Home Assistant.
+        active_states: States that count as active for this entity or type.
+
+    Returns:
+        True if the state counts as active, False otherwise (including when
+        ``active_states`` is empty).
     """
     if not active_states:
         return False
@@ -84,6 +92,13 @@ def entity_active_states(
     duck-typed stand-ins may carry neither) simply contributes nothing here,
     and :mod:`db.sync` falls back to its historic "on" semantics for it. One
     unusual entity must not take the whole sync down.
+
+    Args:
+        coordinator: Coordinator whose areas supply the configured entities.
+
+    Returns:
+        Mapping of entity_id to the states counting as active for it. Entities
+        exposing no active states are omitted.
     """
     resolved: dict[str, set[str]] = {}
     for area in coordinator.areas.values():
@@ -104,6 +119,14 @@ def resolve_active_states(
     applies (an empty configured list means "use defaults", not "nothing is
     active"). ``sensor_states`` has no field for every input type — sleep, for
     one — and those fall through to the defaults, exactly as the live path does.
+
+    Args:
+        sensor_states: The area's configured sensor states, or None when the
+            area has no config (the type default then applies).
+        input_type: The input type whose active states are wanted.
+
+    Returns:
+        The states counting as active, empty if the type defines none.
     """
     configured = getattr(sensor_states, input_type.value, None)
     if configured:
@@ -126,6 +149,15 @@ def area_active_states_by_type(
     an area resolves to the same set. Resolution keys off the area's *config*
     rather than its currently-loaded entities, so the answer is well-defined
     even for a type that has no entity loaded yet.
+
+    Args:
+        coordinator: Coordinator holding the area.
+        area_name: Name of the area whose configuration is read.
+        input_types: Input types to resolve.
+
+    Returns:
+        Mapping of input type to its active states. Types resolving to no
+        states are omitted, as is every type when the area is unknown.
     """
     resolved: dict[InputType, set[str]] = {}
     area = coordinator.areas.get(area_name)
