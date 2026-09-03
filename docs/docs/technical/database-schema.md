@@ -514,7 +514,7 @@ Stores database metadata (version, last prune time, etc.).
 
 **Common Keys:**
 
-- `db_version`: Database schema version
+- `db_version`: SQLite schema version stamp (`DB_SCHEMA_VERSION` in `const.py`). Independent of the config-entry `CONF_VERSION`; a mismatch deletes and recreates the database, so it only moves for incompatible schema changes.
 - `last_prune_time`: Timestamp of last interval prune operation
 
 ## Data Flow

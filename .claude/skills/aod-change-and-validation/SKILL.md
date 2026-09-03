@@ -141,15 +141,19 @@ checkmark.
 
 **Rule**: migrations must be idempotent (safe to run twice), missing keys
 must be defaulted via `.get(KEY, DEFAULT)` rather than assumed present, and DB
-schema changes must not be destructive unless a `CONF_VERSION` bump is
+schema changes must not be destructive unless a `DB_SCHEMA_VERSION` bump is
 deliberately accepted (which wipes the whole DB — see below).
 
-**Why a version bump is dangerous**: `db/maintenance.py`'s
+**Why a DB version bump is dangerous**: `db/maintenance.py`'s
 `_ensure_schema_up_to_date` treats any mismatch between the stored DB version
-and `CONF_VERSION` as fatal — it **deletes and recreates the entire
-database** (all learned priors, correlations, intervals, aggregates, for
-every area) rather than migrating it. There is no DB-level migration script,
-unlike the config-entry migrations in `migrations.py`. Bumping `CONF_VERSION`
+and `DB_SCHEMA_VERSION` (`const.py`) as fatal — it **deletes and recreates the
+entire database** (all learned priors, correlations, intervals, aggregates,
+for every area) rather than migrating it. There is no DB-level migration
+script, unlike the config-entry migrations in `migrations.py`. Until the
+`feat/config-ux` decoupling (2026-09) this check was keyed on `CONF_VERSION`,
+so a config-entry migration also wiped the DB; that is no longer true, and a
+`CONF_VERSION` bump on its own is now safe for learned data. Bumping
+`DB_SCHEMA_VERSION`
 for a schema change you don't actually need to gate is a real way to wipe
 every user's learned history on upgrade.
 

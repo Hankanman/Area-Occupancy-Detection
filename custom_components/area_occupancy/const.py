@@ -33,6 +33,14 @@ DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.8.1"
 CONF_VERSION: Final = 18
 CONF_VERSION_MINOR: Final = 0
+# Version stamp of the SQLite schema, stored in the ``metadata`` table as
+# ``db_version``. Deliberately independent of ``CONF_VERSION`` (the config
+# entry format version): a config-entry migration must never cost users their
+# learned history. Bump this ONLY for an incompatible SQLite schema change --
+# ``db/maintenance.py::_ensure_schema_up_to_date`` deletes and recreates the
+# whole database on mismatch. It starts at 18 because that is the stamp every
+# existing install already carries, so introducing it resets nothing.
+DB_SCHEMA_VERSION: Final = 18
 HA_RECORDER_DAYS: Final = 10  # days
 
 # Multi-area architecture constants

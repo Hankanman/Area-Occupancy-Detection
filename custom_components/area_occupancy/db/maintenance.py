@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..const import CONF_VERSION
+from ..const import DB_SCHEMA_VERSION
 from .schema import Base
 
 if TYPE_CHECKING:
@@ -171,16 +171,19 @@ def get_missing_tables(db: AreaOccupancyDB) -> set[str]:
 def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
     """Ensure database schema matches current version.
 
-    If version doesn't match CONF_VERSION, delete and recreate from scratch.
+    If the stored ``db_version`` doesn't match ``DB_SCHEMA_VERSION``, delete
+    and recreate from scratch. This is intentionally keyed on the SQLite
+    schema version, not on ``CONF_VERSION``: config-entry migrations must
+    never wipe learned history.
     """
     try:
         db_version = get_db_version(db)
-        if db_version != CONF_VERSION:
+        if db_version != DB_SCHEMA_VERSION:
             _LOGGER.info(
                 "Database version mismatch (found %d, expected %d). "
                 "Deleting existing database and recreating from scratch.",
                 db_version,
-                CONF_VERSION,
+                DB_SCHEMA_VERSION,
             )
             delete_db(db)
             # Recreate database with new schema
@@ -188,7 +191,7 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
             _set_db_version(db)
             _LOGGER.info(
                 "Database recreated with schema version %d. All previous data has been cleared.",
-                CONF_VERSION,
+                DB_SCHEMA_VERSION,
             )
 
     except (SQLAlchemyError, OSError, RuntimeError) as e:
@@ -506,10 +509,12 @@ def _set_db_version(db: AreaOccupancyDB) -> None:
                 )
                 if metadata_entry:
                     # Update existing entry
-                    metadata_entry.value = str(CONF_VERSION)
+                    metadata_entry.value = str(DB_SCHEMA_VERSION)
                 else:
                     # Insert new entry
-                    session.add(db.Metadata(key="db_version", value=str(CONF_VERSION)))
+                    session.add(
+                        db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION))
+                    )
         except Exception as e:
             _LOGGER.error("Failed to set db_version in metadata table: %s", e)
             raise
