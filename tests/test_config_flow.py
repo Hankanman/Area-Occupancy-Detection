@@ -11,15 +11,12 @@ from custom_components.area_occupancy.config_flow import (
     AreaOccupancyConfigFlow,
     AreaOccupancyOptionsFlow,
     BaseOccupancyFlow,
-    _apply_purpose_based_decay_default,
-    _apply_symmetric_adjacency,
     _build_area_description_placeholders,
     _create_area_selector_schema,
     _create_behavior_step_schema,
     _create_motion_step_schema,
     _create_sensors_step_schema,
     _entity_contains_keyword,
-    _find_area_by_id,
     _find_area_by_sanitized_id,
     _flatten_sectioned_input,
     _get_area_summary_info,
@@ -29,9 +26,14 @@ from custom_components.area_occupancy.config_flow import (
     _handle_step_error,
     _is_weather_entity,
     _nest_config_for_sections,
-    _remove_area_from_list,
-    _strip_adjacency_references,
-    _update_area_in_list,
+)
+from custom_components.area_occupancy.config_helpers import (
+    apply_purpose_based_decay_default,
+    apply_symmetric_adjacency,
+    find_area_by_id,
+    remove_area_from_list,
+    strip_adjacency_references,
+    update_area_in_list,
 )
 from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
@@ -1698,7 +1700,7 @@ class TestNewHelperFunctions:
     ):
         """Test applying purpose-based decay default."""
         flattened_input = {CONF_PURPOSE: purpose} if purpose else {}
-        _apply_purpose_based_decay_default(flattened_input, purpose)
+        apply_purpose_based_decay_default(flattened_input, purpose)
         if expected_has_decay_half_life:
             assert CONF_DECAY_HALF_LIFE in flattened_input
         else:
@@ -1713,20 +1715,20 @@ class TestNewHelperFunctions:
         """
         # "social" purpose default is 520s; 600s is the Office default.
         flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 600}
-        _apply_purpose_based_decay_default(flattened_input, "social")
+        apply_purpose_based_decay_default(flattened_input, "social")
         assert flattened_input[CONF_DECAY_HALF_LIFE] == 600
 
     def test_apply_purpose_based_decay_default_normalises_matching_value(self):
         """Entering the current purpose's default must normalise to 0 (auto)."""
         # "social" purpose default is 520s.
         flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 520}
-        _apply_purpose_based_decay_default(flattened_input, "social")
+        apply_purpose_based_decay_default(flattened_input, "social")
         assert flattened_input[CONF_DECAY_HALF_LIFE] == 0
 
     def test_apply_purpose_based_decay_default_preserves_arbitrary_value(self):
         """Arbitrary custom values must be preserved verbatim."""
         flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 777}
-        _apply_purpose_based_decay_default(flattened_input, "social")
+        apply_purpose_based_decay_default(flattened_input, "social")
         assert flattened_input[CONF_DECAY_HALF_LIFE] == 777
 
     def test_flatten_sectioned_input(self):
@@ -1799,7 +1801,7 @@ class TestNewHelperFunctions:
     )
     def test_find_area_by_id(self, areas, search_name, expected_found, expected_name):
         """Test finding area by ID."""
-        result = _find_area_by_id(areas, search_name)
+        result = find_area_by_id(areas, search_name)
         if expected_found:
             assert result is not None
             assert result[CONF_AREA_ID] == expected_name
@@ -1847,7 +1849,7 @@ class TestNewHelperFunctions:
         expected_name,
     ):
         """Test updating or adding area in list."""
-        result = _update_area_in_list(initial_areas.copy(), updated_area, old_name)
+        result = update_area_in_list(initial_areas.copy(), updated_area, old_name)
         assert len(result) == expected_count
         if expected_purpose:
             assert result[0][CONF_PURPOSE] == expected_purpose
@@ -1860,7 +1862,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"},
             {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
         ]
-        result = _remove_area_from_list(areas, "living_room")
+        result = remove_area_from_list(areas, "living_room")
         assert len(result) == 1
         assert result[0][CONF_AREA_ID] == "kitchen"
 
@@ -1883,7 +1885,7 @@ class TestNewHelperFunctions:
                 CONF_ADJACENT_AREAS: ["hall"],
             },
         ]
-        result = _remove_area_from_list(areas, "hall")
+        result = remove_area_from_list(areas, "hall")
 
         assert [a[CONF_AREA_ID] for a in result] == ["bedroom", "kitchen"]
         assert result[0][CONF_ADJACENT_AREAS] == []
@@ -1896,7 +1898,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "C", CONF_ADJACENT_AREAS: []},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # A's list is unchanged (caller already wrote it)
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
@@ -1912,7 +1914,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["A"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         assert result[0][CONF_ADJACENT_AREAS] == []
         assert result[1][CONF_ADJACENT_AREAS] == []
@@ -1925,7 +1927,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "C", CONF_ADJACENT_AREAS: ["D"]},
             {CONF_AREA_ID: "D", CONF_ADJACENT_AREAS: ["C"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         assert result[2][CONF_ADJACENT_AREAS] == ["D"]
         assert result[3][CONF_ADJACENT_AREAS] == ["C"]
@@ -1945,7 +1947,7 @@ class TestNewHelperFunctions:
             # Partner row mistakenly lists itself, no link to A.
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["B"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # Target's own self-reference is cleaned out of the saved row.
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
@@ -1965,7 +1967,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # Target row is rewritten as a proper list[str].
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
@@ -1978,7 +1980,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["A"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # B's row is returned as-is (no spurious mutation)
         assert result[1] is areas[1]
@@ -1990,7 +1992,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "hallway_north", CONF_ADJACENT_AREAS: ["hall"]},
             {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: ["hall"]},
         ]
-        result = _strip_adjacency_references(areas, "hall")
+        result = strip_adjacency_references(areas, "hall")
 
         assert result[0][CONF_AREA_ID] == "hall"
         assert result[1][CONF_ADJACENT_AREAS] == []
@@ -2003,7 +2005,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
         updated_a = {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]}
-        result = _update_area_in_list(areas, updated_a, "A")
+        result = update_area_in_list(areas, updated_a, "A")
 
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
@@ -2016,7 +2018,7 @@ class TestNewHelperFunctions:
         ops would treat ``"hall"`` as ``["h", "a", "l", "l"]`` and silently
         corrupt the data. None and other scalars must also be handled.
         """
-        # _strip_adjacency_references with a bare-string adjacent must not
+        # strip_adjacency_references with a bare-string adjacent must not
         # substring-match (removed_id="hall" inside "hallway_north" → false
         # positive without normalisation).
         areas = [
@@ -2024,7 +2026,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "study", CONF_ADJACENT_AREAS: None},
             {CONF_AREA_ID: "lounge", CONF_ADJACENT_AREAS: ("hall",)},
         ]
-        result = _strip_adjacency_references(areas, "hall")
+        result = strip_adjacency_references(areas, "hall")
         # kitchen's bare "hallway_north" must NOT match "hall" (the
         # substring-on-string trap). Helper is non-destructive when
         # nothing matches → row identity preserved.
@@ -2034,7 +2036,7 @@ class TestNewHelperFunctions:
         # lounge had "hall" in a tuple → stripped, leaving [].
         assert result[2][CONF_ADJACENT_AREAS] == []
 
-        # _apply_symmetric_adjacency: target with bare-string adjacent should
+        # apply_symmetric_adjacency: target with bare-string adjacent should
         # not iterate characters. Target row is also sanitised on the way
         # out so the saved record carries a proper list[str], not the
         # original malformed value.
@@ -2042,42 +2044,42 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
-        result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
+        result = apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
         # Target row is rewritten as a clean list (single-element).
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         # B picks up A as a single id, not as a list of characters from "B"
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
-        # _apply_symmetric_adjacency: existing adjacents on a partner area
+        # apply_symmetric_adjacency: existing adjacents on a partner area
         # are also tolerated as a non-list.
         symmetric_areas = [
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: "A"},  # malformed
         ]
-        result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
+        result = apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
         # Already mutual after normalisation → B's row unchanged
         assert result[1] is symmetric_areas[1]
 
-        # _update_area_in_list end-to-end with a malformed sibling row.
+        # update_area_in_list end-to-end with a malformed sibling row.
         areas = [
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: None},
         ]
         updated_a = {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]}
-        result = _update_area_in_list(areas, updated_a, "A")
+        result = update_area_in_list(areas, updated_a, "A")
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         # B's None is replaced with the normalised single-element list,
         # not a list of None plus A.
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
-        # _remove_area_from_list: remove an area, surviving rows with
+        # remove_area_from_list: remove an area, surviving rows with
         # malformed adjacents must not crash.
         areas = [
             {CONF_AREA_ID: "hall", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: "hall"},  # malformed
             {CONF_AREA_ID: "lounge", CONF_ADJACENT_AREAS: ["hall", "kitchen"]},
         ]
-        result = _remove_area_from_list(areas, "hall")
+        result = remove_area_from_list(areas, "hall")
         assert [a[CONF_AREA_ID] for a in result] == ["kitchen", "lounge"]
         # kitchen's "hall" is treated as the single removed id → cleared
         assert result[0][CONF_ADJACENT_AREAS] == []

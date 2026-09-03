@@ -44,6 +44,22 @@ from homeassistant.helpers.selector import (
     TimeSelector,
 )
 
+from .config_helpers import (
+    THRESHOLD_MAX,
+    THRESHOLD_MIN,
+    THRESHOLD_STEP,
+    WEIGHT_MAX,
+    WEIGHT_MIN,
+    WEIGHT_STEP,
+    apply_purpose_based_decay_default,
+    duration_to_seconds,
+    find_area_by_id,
+    remove_area_from_list,
+    seconds_to_duration,
+    update_area_in_list,
+    validate_area_config,
+    validate_person_input,
+)
 from .const import (
     CONF_ACTION_ADD_AREA,
     CONF_ACTION_GLOBAL_SETTINGS,
@@ -158,52 +174,6 @@ from .const import (
 from .data.purpose import Purpose, get_purpose_options
 
 _LOGGER = logging.getLogger(__name__)
-
-# UI Configuration Constants
-WEIGHT_STEP = 0.05
-WEIGHT_MIN = 0
-WEIGHT_MAX = 1
-
-THRESHOLD_STEP = 1
-THRESHOLD_MIN = 1
-THRESHOLD_MAX = 100
-
-
-def _seconds_to_duration(seconds: float) -> dict[str, int]:
-    """Convert seconds to duration dict for DurationSelector.
-
-    Args:
-        seconds: Duration in seconds
-
-    Returns:
-        Dictionary with days, hours, minutes, seconds keys.
-    """
-    total = int(seconds)
-    return {
-        "days": total // 86400,
-        "hours": (total % 86400) // 3600,
-        "minutes": (total % 3600) // 60,
-        "seconds": total % 60,
-    }
-
-
-def _duration_to_seconds(duration: dict[str, int] | float) -> int:
-    """Convert duration dict or raw number to seconds.
-
-    Args:
-        duration: Duration dict with days/hours/minutes/seconds keys, or raw seconds.
-
-    Returns:
-        Total seconds as integer
-    """
-    if isinstance(duration, (int, float)):
-        return int(duration)
-    return (
-        duration.get("days", 0) * 86400
-        + duration.get("hours", 0) * 3600
-        + duration.get("minutes", 0) * 60
-        + duration.get("seconds", 0)
-    )
 
 
 def _get_state_select_options(state_type: str) -> list[dict[str, str]]:
@@ -918,7 +888,7 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): BooleanSelector(),
             vol.Optional(
                 CONF_WASP_MOTION_TIMEOUT,
-                default=_seconds_to_duration(
+                default=seconds_to_duration(
                     defaults.get(CONF_WASP_MOTION_TIMEOUT, DEFAULT_WASP_MOTION_TIMEOUT)
                 ),
             ): DurationSelector(DurationSelectorConfig(enable_day=False)),
@@ -936,13 +906,13 @@ def _create_wasp_in_box_section_schema(defaults: dict[str, Any]) -> vol.Schema:
             ),
             vol.Optional(
                 CONF_WASP_MAX_DURATION,
-                default=_seconds_to_duration(
+                default=seconds_to_duration(
                     defaults.get(CONF_WASP_MAX_DURATION, DEFAULT_WASP_MAX_DURATION)
                 ),
             ): DurationSelector(DurationSelectorConfig(enable_day=True)),
             vol.Optional(
                 CONF_WASP_VERIFICATION_DELAY,
-                default=_seconds_to_duration(
+                default=seconds_to_duration(
                     defaults.get(
                         CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY
                     )
@@ -1012,7 +982,7 @@ def _create_motion_step_schema(
         ),
         vol.Optional(
             CONF_MOTION_TIMEOUT,
-            default=_seconds_to_duration(DEFAULT_MOTION_TIMEOUT),
+            default=seconds_to_duration(DEFAULT_MOTION_TIMEOUT),
         ): DurationSelector(DurationSelectorConfig(enable_day=False)),
         vol.Optional(
             CONF_MOTION_PROB_GIVEN_TRUE,
@@ -1133,7 +1103,7 @@ def _create_behavior_step_schema(
         ): BooleanSelector(),
         vol.Optional(
             CONF_DECAY_HALF_LIFE,
-            default=_seconds_to_duration(DEFAULT_DECAY_HALF_LIFE),
+            default=seconds_to_duration(DEFAULT_DECAY_HALF_LIFE),
         ): DurationSelector(DurationSelectorConfig(enable_day=False)),
         vol.Optional(
             CONF_MIN_PRIOR_OVERRIDE,
@@ -1186,7 +1156,7 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
             val = flat_config[key]
             # Convert seconds to duration for DurationSelector fields
             if key in DURATION_FIELDS:
-                val = _seconds_to_duration(val)
+                val = seconds_to_duration(val)
             motion[key] = val
     if motion:
         nested["motion"] = motion
@@ -1277,7 +1247,7 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         if key in flat_config:
             val = flat_config[key]
             if key in DURATION_FIELDS:
-                val = _seconds_to_duration(val)
+                val = seconds_to_duration(val)
             wasp[key] = val
     if wasp:
         nested["wasp_in_box"] = wasp
@@ -1293,7 +1263,7 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         if key in flat_config:
             val = flat_config[key]
             if key in DURATION_FIELDS:
-                val = _seconds_to_duration(val)
+                val = seconds_to_duration(val)
             parameters[key] = val
     if parameters:
         nested["parameters"] = parameters
@@ -1316,7 +1286,7 @@ def _draft_to_suggested(draft: dict[str, Any], keys: set[str]) -> dict[str, Any]
         if key in draft:
             val = draft[key]
             if key in DURATION_FIELDS:
-                val = _seconds_to_duration(val)
+                val = seconds_to_duration(val)
             suggested[key] = val
     return suggested
 
@@ -1449,29 +1419,6 @@ def _get_area_summary_info(area: dict[str, Any]) -> str:
     )
 
 
-def _apply_purpose_based_decay_default(
-    flattened_input: dict[str, Any], purpose: str | None
-) -> None:
-    """Apply purpose-based default for decay half-life.
-
-    If decay half-life is not set or matches a default value, set it to 0
-    (which means "use purpose value"). Modifies flattened_input in place.
-
-    Args:
-        flattened_input: Flattened configuration dictionary
-        purpose: Selected purpose value
-    """
-    if not purpose:
-        return
-
-    user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
-    if user_set_decay is None or Purpose.is_purpose_half_life(user_set_decay, purpose):
-        # Normalise to 0 ("use purpose value") when the user left the field
-        # empty or entered exactly the selected purpose's default. Any other
-        # custom value is preserved so it persists across reloads (#439).
-        flattened_input[CONF_DECAY_HALF_LIFE] = 0
-
-
 def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
     """Flatten sectioned user input into flat configuration dictionary.
 
@@ -1495,241 +1442,9 @@ def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
     # Convert duration fields from DurationSelector format back to seconds
     for field in DURATION_FIELDS:
         if field in flattened_input:
-            flattened_input[field] = _duration_to_seconds(flattened_input[field])
+            flattened_input[field] = duration_to_seconds(flattened_input[field])
 
     return flattened_input
-
-
-def _find_area_by_id(
-    areas: list[dict[str, Any]], area_id: str
-) -> dict[str, Any] | None:
-    """Find an area by ID in a list of areas.
-
-    Args:
-        areas: List of area configuration dictionaries
-        area_id: Area ID to find
-
-    Returns:
-        Area configuration dictionary if found, None otherwise
-    """
-    for area in areas:
-        if area.get(CONF_AREA_ID) == area_id:
-            return area
-    return None
-
-
-def _normalize_adjacent_areas(value: Any) -> list[str]:
-    """Coerce a `CONF_ADJACENT_AREAS` value to a clean list of area_id strings.
-
-    The persistence layer normally writes a list, but config storage is JSON
-    and a hand-edited file (or an old import) can supply other shapes. The
-    mirror/strip helpers do set ops over the values, so a stray string would
-    be iterated character-by-character and silently corrupt the data. This
-    helper folds every shape into a `list[str]`:
-
-    - ``None`` → ``[]``
-    - empty string → ``[]``
-    - non-empty string → ``[value]`` (treated as a single area_id, not a
-      sequence of characters)
-    - list / tuple / set → list of non-empty stringified items (drops falsy
-      entries like ``""`` or ``None``)
-    - anything else → ``[str(value)]`` (best-effort preservation; the helper
-      never raises, so an unexpected scalar is kept as a single id rather
-      than silently dropped)
-    """
-    if value is None:
-        return []
-    if isinstance(value, str):
-        # A bare string is a single area_id, not a sequence to iterate.
-        return [value] if value else []
-    if isinstance(value, (list, tuple, set)):
-        return [str(v) for v in value if v]
-    # Best-effort: keep the value as a single entry rather than crashing.
-    return [str(value)]
-
-
-def _apply_symmetric_adjacency(
-    areas: list[dict[str, Any]], updated_area: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Mirror an area's adjacency edits across the paired areas.
-
-    The adjacency UI is per-area (a flat multi-select of neighbours), but
-    the underlying relation is mutual. When the user saves area A with
-    adjacents `[B, C]`:
-      * Add A to B's and C's adjacents (if not already there).
-      * Remove A from any other area X that previously listed A but
-        isn't in A's new list.
-
-    Returns a new list — does not mutate inputs.
-    """
-    target_area_id = updated_area.get(CONF_AREA_ID)
-    if not target_area_id:
-        return areas
-
-    target_adjacents = set(
-        _normalize_adjacent_areas(updated_area.get(CONF_ADJACENT_AREAS))
-    )
-    # Defensive: the UI excludes self from the multi-select, but a
-    # hand-edited storage file or imported config could carry a stray
-    # self-reference. Drop it before any set ops so downstream callers
-    # never see an area listed as adjacent to itself.
-    target_adjacents.discard(target_area_id)
-
-    result: list[dict[str, Any]] = []
-    sanitized_target_adjacents = sorted(target_adjacents)
-    for area in areas:
-        area_id = area.get(CONF_AREA_ID)
-        # The target row was substituted in by the caller; rewrite its
-        # adjacents field to the normalised+self-stripped value so any
-        # malformed input (non-list, self-link) doesn't survive a save.
-        if area_id == target_area_id:
-            cleaned_target = dict(area)
-            cleaned_target[CONF_ADJACENT_AREAS] = list(sanitized_target_adjacents)
-            result.append(cleaned_target)
-            continue
-        if not area_id:
-            result.append(area)
-            continue
-
-        current_adjacents = set(
-            _normalize_adjacent_areas(area.get(CONF_ADJACENT_AREAS))
-        )
-        # Same defensive guard for the partner row.
-        current_adjacents.discard(area_id)
-
-        if area_id in target_adjacents:
-            new_adjacents = current_adjacents | {target_area_id}
-        else:
-            new_adjacents = current_adjacents - {target_area_id}
-
-        if new_adjacents != current_adjacents:
-            mirrored = dict(area)
-            mirrored[CONF_ADJACENT_AREAS] = sorted(new_adjacents)
-            result.append(mirrored)
-        else:
-            result.append(area)
-    return result
-
-
-def _strip_adjacency_references(
-    areas: list[dict[str, Any]], removed_area_id: str
-) -> list[dict[str, Any]]:
-    """Remove a deleted area_id from every other area's adjacents list."""
-    if not removed_area_id:
-        return areas
-    result: list[dict[str, Any]] = []
-    for area in areas:
-        normalized = _normalize_adjacent_areas(area.get(CONF_ADJACENT_AREAS))
-        if removed_area_id in normalized:
-            cleaned = dict(area)
-            cleaned[CONF_ADJACENT_AREAS] = [
-                a for a in normalized if a != removed_area_id
-            ]
-            result.append(cleaned)
-        else:
-            result.append(area)
-    return result
-
-
-def _update_area_in_list(
-    areas: list[dict[str, Any]],
-    updated_area: dict[str, Any],
-    area_id: str | None,
-) -> list[dict[str, Any]]:
-    """Update or add an area in a list of areas.
-
-    After the update or add, mirrors any adjacency changes across the
-    other areas (adjacency is mutual; the UI is per-area).
-
-    Args:
-        areas: List of area configuration dictionaries
-        updated_area: Updated area configuration
-        area_id: Area ID being updated (None for new area)
-
-    Returns:
-        Updated list of areas
-    """
-    updated_areas = []
-    area_updated = False
-    for area in areas:
-        if area_id and area.get(CONF_AREA_ID) == area_id:
-            # Update existing area
-            updated_areas.append(updated_area)
-            area_updated = True
-        else:
-            # Keep other areas
-            updated_areas.append(area)
-
-    if not area_updated:
-        # Add new area
-        updated_areas.append(updated_area)
-
-    return _apply_symmetric_adjacency(updated_areas, updated_area)
-
-
-def _remove_area_from_list(
-    areas: list[dict[str, Any]], area_id: str
-) -> list[dict[str, Any]]:
-    """Remove an area from a list of areas.
-
-    Also strips the removed area_id from every surviving area's
-    adjacents list so we don't leave dangling references.
-
-    Args:
-        areas: List of area configuration dictionaries
-        area_id: Area ID to remove
-
-    Returns:
-        Updated list of areas with specified area removed
-    """
-    surviving = [area for area in areas if area.get(CONF_AREA_ID) != area_id]
-    return _strip_adjacency_references(surviving, area_id)
-
-
-def _validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Validate and normalize person configuration input.
-
-    Args:
-        user_input: Raw user input from person config form
-
-    Returns:
-        Validated person data dict
-
-    Raises:
-        vol.Invalid: If required fields are missing or empty
-    """
-    person_entity = user_input.get(CONF_PERSON_ENTITY, "")
-    sleep_sensors = user_input.get(CONF_PERSON_SLEEP_SENSORS, [])
-    sleep_area = user_input.get(CONF_PERSON_SLEEP_AREA, "")
-
-    if not person_entity:
-        raise vol.Invalid("person_entity_required")
-    if not sleep_sensors:
-        raise vol.Invalid("sleep_sensor_required")
-    if not sleep_area:
-        raise vol.Invalid("sleep_area_required")
-
-    raw_threshold = user_input.get(
-        CONF_PERSON_CONFIDENCE_THRESHOLD, DEFAULT_SLEEP_CONFIDENCE_THRESHOLD
-    )
-    try:
-        threshold = int(raw_threshold)
-    except (ValueError, TypeError) as err:
-        raise vol.Invalid("confidence_not_number") from err
-    threshold = max(1, min(100, threshold))
-
-    result = {
-        CONF_PERSON_ENTITY: person_entity,
-        CONF_PERSON_SLEEP_SENSORS: sleep_sensors,
-        CONF_PERSON_SLEEP_AREA: sleep_area,
-        CONF_PERSON_CONFIDENCE_THRESHOLD: threshold,
-    }
-
-    device_tracker = user_input.get(CONF_PERSON_DEVICE_TRACKER, "")
-    if device_tracker:
-        result[CONF_PERSON_DEVICE_TRACKER] = device_tracker
-
-    return result
 
 
 def _handle_step_error(err: Exception) -> str:
@@ -1897,139 +1612,28 @@ class BaseOccupancyFlow:
     def _validate_config(
         self, data: dict[str, Any], hass: HomeAssistant | None = None
     ) -> dict[str, str]:
-        """Validate the configuration and return per-field errors.
+        """Validate a flat area configuration and return per-field errors.
 
-        Performs comprehensive validation of all configuration fields including:
-        - Required area ID and validation against Home Assistant registry
-        - Required sensors and their relationships
-        - State configurations for different device types
-        - Weight values and their ranges
+        Every hass-free rule lives in ``config_helpers.validate_area_config``
+        so other writers (entities, services) validate identically. This
+        wrapper adds the one check that needs the registry: the selected
+        Home Assistant area must exist.
 
         Args:
-            data: Dictionary containing the configuration to validate
-            hass: Home Assistant instance (for validating area ID)
+            data: Flat (un-sectioned) area configuration
+            hass: Home Assistant instance (for validating the area id)
 
         Returns:
-            Dictionary mapping field keys to error translation keys.
-            Empty dict means validation passed.
+            Mapping of field key (or ``"base"``) to ``strings.json`` error key.
+            Empty when validation passed.
         """
-        errors: dict[str, str] = {}
-
-        # Validate area ID
+        errors = validate_area_config(data)
         area_id = data.get(CONF_AREA_ID, "")
-        if not area_id:
-            errors[CONF_AREA_ID] = "area_required"
-        elif hass:
+        if area_id and hass and CONF_AREA_ID not in errors:
             try:
                 _resolve_area_id_to_name(hass, area_id)
             except ValueError:
                 errors[CONF_AREA_ID] = "area_not_found"
-
-        # Validate purpose
-        purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
-        if not purpose:
-            errors[CONF_PURPOSE] = "purpose_required"
-
-        # Validate motion sensors (section field → base fallback)
-        motion_sensors = data.get(CONF_MOTION_SENSORS, [])
-        if not motion_sensors:
-            errors.setdefault("base", "motion_required")
-
-        # Validate motion sensor likelihoods
-        motion_prob_given_true = data.get(
-            CONF_MOTION_PROB_GIVEN_TRUE, DEFAULT_MOTION_PROB_GIVEN_TRUE
-        )
-        motion_prob_given_false = data.get(
-            CONF_MOTION_PROB_GIVEN_FALSE, DEFAULT_MOTION_PROB_GIVEN_FALSE
-        )
-        if motion_prob_given_true <= motion_prob_given_false:
-            errors.setdefault("base", "prob_true_must_exceed_false")
-
-        # Validate threshold
-        threshold = data.get(CONF_THRESHOLD)
-        if threshold is not None and (
-            not isinstance(threshold, (int, float)) or threshold < 1 or threshold > 100
-        ):
-            errors[CONF_THRESHOLD] = "invalid_threshold"
-
-        # Validate media devices
-        media_devices = data.get(CONF_MEDIA_DEVICES, [])
-        media_states = data.get(CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES)
-        if media_devices and not media_states:
-            errors[CONF_MEDIA_DEVICES] = "media_states_required"
-
-        # Validate appliances
-        appliances = data.get(CONF_APPLIANCES, [])
-        appliance_states = data.get(
-            CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
-        )
-        if appliances and not appliance_states:
-            errors[CONF_APPLIANCES] = "appliance_states_required"
-
-        # Validate doors
-        door_sensors = data.get(CONF_DOOR_SENSORS, [])
-        door_state = data.get(CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE)
-        if door_sensors and not door_state:
-            errors[CONF_DOOR_SENSORS] = "door_state_required"
-
-        # Validate locks
-        lock_sensors = data.get(CONF_LOCK_SENSORS, [])
-        lock_state = data.get(CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE)
-        if lock_sensors and not lock_state:
-            errors[CONF_LOCK_SENSORS] = "lock_state_required"
-
-        # Validate windows
-        window_sensors = data.get(CONF_WINDOW_SENSORS, [])
-        window_state = data.get(CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE)
-        if window_sensors and not window_state:
-            errors[CONF_WINDOW_SENSORS] = "window_state_required"
-
-        # Validate covers
-        cover_sensors = data.get(CONF_COVER_SENSORS, [])
-        cover_states = data.get(CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES)
-        if cover_sensors and not cover_states:
-            errors[CONF_COVER_SENSORS] = "cover_states_required"
-
-        # Validate weights
-        weights = [
-            (CONF_WEIGHT_MOTION, data.get(CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION)),
-            (CONF_WEIGHT_MEDIA, data.get(CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA)),
-            (
-                CONF_WEIGHT_APPLIANCE,
-                data.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
-            ),
-            (CONF_WEIGHT_DOOR, data.get(CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR)),
-            (CONF_WEIGHT_LOCK, data.get(CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK)),
-            (CONF_WEIGHT_WINDOW, data.get(CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW)),
-            (CONF_WEIGHT_COVER, data.get(CONF_WEIGHT_COVER, DEFAULT_WEIGHT_COVER)),
-            (
-                CONF_WEIGHT_ENVIRONMENTAL,
-                data.get(CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
-            ),
-            (
-                CONF_WEIGHT_POWER,
-                data.get(CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
-            ),
-            (
-                CONF_WEIGHT_WIFI_CLIENTS,
-                data.get(CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS),
-            ),
-        ]
-        for name, weight in weights:
-            if not WEIGHT_MIN <= weight <= WEIGHT_MAX:
-                errors[name] = "invalid_weight"
-                break
-
-        # Validate decay settings
-        decay_enabled = data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED)
-        if decay_enabled:
-            decay_window = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
-            # Allow 0 (use purpose value) or values between 10 and 3600
-            if not isinstance(decay_window, (int, float)) or (
-                decay_window != 0 and (decay_window < 10 or decay_window > 3600)
-            ):
-                errors[CONF_DECAY_HALF_LIFE] = "invalid_decay_half_life"
-
         return errors
 
     def _prepare_area_action_edit(self) -> None:
@@ -2093,7 +1697,7 @@ class BaseOccupancyFlow:
         """Initialize the area config wizard draft."""
         if self._area_being_edited:
             areas = self._get_wizard_areas()
-            area = _find_area_by_id(areas, self._area_being_edited)
+            area = find_area_by_id(areas, self._area_being_edited)
             self._area_config_draft = area.copy() if area else {}
         else:
             self._area_config_draft = {}
@@ -2323,7 +1927,7 @@ class BaseOccupancyFlow:
 
             # Auto-set decay half-life based on purpose
             selected_purpose = candidate.get(CONF_PURPOSE)
-            _apply_purpose_based_decay_default(candidate, selected_purpose)
+            apply_purpose_based_decay_default(candidate, selected_purpose)
 
             # Run full validation on the complete candidate
             validation_errors = self._validate_config(candidate, self.hass)
@@ -2402,7 +2006,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self, config: dict[str, Any]
     ) -> ConfigFlowResult:
         """Handle wizard completion: update areas list and return to menu."""
-        self._areas = _update_area_in_list(self._areas, config, self._area_being_edited)
+        self._areas = update_area_in_list(self._areas, config, self._area_being_edited)
         self._area_being_edited = None
         self._area_config_draft = {}
         return await self.async_step_user()
@@ -2552,7 +2156,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         if not area_id:
             return await self.async_step_user()
 
-        area_config = _find_area_by_id(self._areas, area_id)
+        area_config = find_area_by_id(self._areas, area_id)
         if not area_config:
             return await self.async_step_user()
 
@@ -2608,7 +2212,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         if not area_id:
             return await self.async_step_user()
 
-        updated_areas = _remove_area_from_list(self._areas, area_id)
+        updated_areas = remove_area_from_list(self._areas, area_id)
         if not updated_areas:
             return self.async_abort(reason="cannot_remove_last_area")
 
@@ -2682,7 +2286,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         triggers a full reload to create/destroy entity platform entries.
         """
         areas = self._get_areas_from_config()
-        areas = _update_area_in_list(areas, config, self._area_being_edited)
+        areas = update_area_in_list(areas, config, self._area_being_edited)
 
         self._area_being_edited = None
         self._area_config_draft = {}
@@ -2747,7 +2351,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             return await self.async_step_init()
 
         areas = self._get_areas_from_config()
-        area_config = _find_area_by_id(areas, area_id)
+        area_config = find_area_by_id(areas, area_id)
         if not area_config:
             return await self.async_step_init()
 
@@ -2817,7 +2421,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             return await self.async_step_init()
 
         areas = self._get_areas_from_config()
-        updated_areas = _remove_area_from_list(areas, area_id)
+        updated_areas = remove_area_from_list(areas, area_id)
         if not updated_areas:
             return self.async_abort(reason="cannot_remove_last_area")
 
@@ -3154,7 +2758,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
 
             if not errors:
                 try:
-                    person_data = _validate_person_input(user_input)
+                    person_data = validate_person_input(user_input)
 
                     # Update or add person
                     updated_people = list(people)

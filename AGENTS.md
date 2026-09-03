@@ -132,6 +132,7 @@ The integration uses Home Assistant's config flow with a **list-based multi-area
 - Each area config contains: `area_id`, sensor lists, weights, thresholds, decay settings
 - Options flow allows adding/editing/removing areas
 - Changes trigger `async_update_options()` which handles area lifecycle (create/update/delete)
+- Validation and list transforms that do not need `hass` live in `config_helpers.py` (`validate_area_config`, `validate_threshold`, `validate_decay_half_life`, `apply_symmetric_adjacency`, `update_area_in_list`, duration conversion, shared `THRESHOLD_*`/`WEIGHT_*` bounds). Every writer of area configuration (the flows, the threshold `number` entity, any future service or websocket API) must validate through it rather than re-implementing rules
 
 ### State Management
 
@@ -172,6 +173,8 @@ When updating `CONF_VERSION`, implement migration in `migrations.py`. Migrations
 - Preserve all user settings
 - Log migration steps
 - Be idempotent (safe to run multiple times)
+
+`CONF_VERSION` (config-entry format) and `DB_SCHEMA_VERSION` (SQLite schema stamp, both in `const.py`) are independent. Bumping `CONF_VERSION` never touches the database. Bumping `DB_SCHEMA_VERSION` makes `db/maintenance.py` delete and recreate the database, wiping all learned history, so only do it for an incompatible schema change; additive tables/columns go through `Base.metadata.create_all(checkfirst=True)` with no bump.
 
 ### Entity Evidence
 

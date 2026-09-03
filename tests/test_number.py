@@ -107,7 +107,7 @@ class TestThreshold:
         assert threshold_entity._attr_has_entity_name is True
         assert threshold_entity._attr_translation_key == "threshold"
         assert threshold_entity._attr_native_min_value == 1.0
-        assert threshold_entity._attr_native_max_value == 99.0
+        assert threshold_entity._attr_native_max_value == 100.0
         assert threshold_entity._attr_native_step == 1.0
         assert threshold_entity._attr_mode == NumberMode.BOX
         assert threshold_entity._attr_native_unit_of_measurement == PERCENTAGE
@@ -179,8 +179,8 @@ class TestThreshold:
         [
             0.0,  # zero
             0.9,  # just below minimum
-            99.1,  # just above maximum
-            100.0,  # above maximum
+            100.1,  # just above maximum
+            101.0,  # above maximum
             -1.0,  # negative
         ],
         ids=[
@@ -196,7 +196,7 @@ class TestThreshold:
         threshold_entity: Threshold,
         invalid_value: float,
     ) -> None:
-        """Test async_set_native_value raises ServiceValidationError for values outside 1.0-99.0 range."""
+        """Test async_set_native_value raises ServiceValidationError for values outside 1.0-100.0 range."""
         # Act & Assert
         with pytest.raises(ServiceValidationError) as exc_info:
             await threshold_entity.async_set_native_value(invalid_value)
