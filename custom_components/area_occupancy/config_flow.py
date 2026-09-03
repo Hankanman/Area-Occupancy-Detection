@@ -44,6 +44,7 @@ from homeassistant.helpers.selector import (
     TimeSelector,
 )
 
+from . import preview
 from .config_helpers import (
     THRESHOLD_MAX,
     THRESHOLD_MIN,
@@ -52,8 +53,8 @@ from .config_helpers import (
     WEIGHT_MIN,
     WEIGHT_STEP,
     apply_purpose_based_decay_default,
-    duration_to_seconds,
     find_area_by_id,
+    flatten_sectioned_input,
     normalize_adjacent_areas,
     remove_area_from_list,
     seconds_to_duration,
@@ -1504,34 +1505,6 @@ def _get_area_summary_info(area: dict[str, Any]) -> str:
     )
 
 
-def _flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Flatten sectioned user input into flat configuration dictionary.
-
-    Converts nested section structure (motion, doors, windows, etc.) into
-    a flat dictionary suitable for validation and storage.
-
-    Args:
-        user_input: Sectioned user input dictionary
-
-    Returns:
-        Flattened configuration dictionary
-    """
-    flattened_input = {}
-    for key, value in user_input.items():
-        if isinstance(value, dict) and key not in DURATION_FIELDS:
-            # All sections (motion, doors, windows, wasp_in_box, etc.) are flattened the same way
-            flattened_input.update(value)
-        else:
-            flattened_input[key] = value
-
-    # Convert duration fields from DurationSelector format back to seconds
-    for field in DURATION_FIELDS:
-        if field in flattened_input:
-            flattened_input[field] = duration_to_seconds(flattened_input[field])
-
-    return flattened_input
-
-
 def _handle_step_error(err: Exception) -> str:
     """Handle step errors and convert to user-friendly error message.
 
@@ -1798,6 +1771,20 @@ class BaseOccupancyFlow:
                 area_name = _resolve_area_id_to_name(self.hass, area_id)
         return {"area_name": area_name}
 
+    # ── Live preview (options flow only) ─────────────────────────────
+
+    def _preview_component(self) -> str | None:
+        """Name of the frontend preview to show next to sensor/behaviour forms.
+
+        ``None`` disables the preview. The options flow overrides this: a
+        preview needs a loaded area to read live evidence from, which the
+        initial config flow does not have yet.
+        """
+        return None
+
+    def _publish_preview_context(self) -> None:
+        """Expose the draft to the preview websocket handler (options flow)."""
+
     # ── Hub-and-spoke editing of an existing area ────────────────────
     #
     # The linear wizard is the right shape for *adding* an area. For
@@ -2018,7 +2005,7 @@ class BaseOccupancyFlow:
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            flattened = _flatten_sectioned_input(user_input)
+            flattened = flatten_sectioned_input(user_input)
 
             if not flattened.get(CONF_MOTION_SENSORS):
                 errors["base"] = "motion_required"
@@ -2063,11 +2050,13 @@ class BaseOccupancyFlow:
             else:
                 data_schema = base_schema
 
+        self._publish_preview_context()
         return self.async_show_form(
             step_id="area_motion",
             data_schema=data_schema,
             errors=errors,
             description_placeholders=self._get_wizard_placeholders(),
+            preview=self._preview_component(),
             last_step=self._editing_single_section,
         )
 
@@ -2078,7 +2067,7 @@ class BaseOccupancyFlow:
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            flattened = _flatten_sectioned_input(user_input)
+            flattened = flatten_sectioned_input(user_input)
 
             # Validate sensor-state combinations
             if flattened.get(CONF_MEDIA_DEVICES, []) and not flattened.get(
@@ -2138,11 +2127,13 @@ class BaseOccupancyFlow:
         else:
             data_schema = base_schema
 
+        self._publish_preview_context()
         return self.async_show_form(
             step_id="area_sensors",
             data_schema=data_schema,
             errors=errors,
             description_placeholders=self._get_wizard_placeholders(),
+            preview=self._preview_component(),
             last_step=self._editing_single_section,
         )
 
@@ -2153,7 +2144,7 @@ class BaseOccupancyFlow:
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            flattened = _flatten_sectioned_input(user_input)
+            flattened = flatten_sectioned_input(user_input)
 
             # Validate on a copy to avoid corrupting the draft on failure
             candidate = {**self._area_config_draft, **flattened}
@@ -2199,11 +2190,13 @@ class BaseOccupancyFlow:
         else:
             data_schema = base_schema
 
+        self._publish_preview_context()
         return self.async_show_form(
             step_id="area_behavior",
             data_schema=data_schema,
             errors=errors,
             description_placeholders=self._get_wizard_placeholders(),
+            preview=self._preview_component(),
             last_step=True,
         )
 
@@ -2492,6 +2485,35 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         self._sensor_group_being_edited: str | None = None
         self._person_being_edited: int | None = None  # Index into people list
         self._person_to_remove: int | None = None  # Index into people list for removal
+
+    @staticmethod
+    async def async_setup_preview(hass: HomeAssistant) -> None:
+        """Register the preview websocket command on first use."""
+        await preview.async_setup_preview(hass)
+
+    def _preview_component(self) -> str | None:
+        """Show the live estimate next to the sensor and behaviour forms."""
+        return preview.PREVIEW_COMPONENT
+
+    def _publish_preview_context(self) -> None:
+        """Hand the draft to the preview handler under this flow's id."""
+        flow_id = getattr(self, "flow_id", None)
+        if not flow_id or not self.hass:
+            return
+        preview.register_preview_context(
+            self.hass,
+            flow_id,
+            self.config_entry.entry_id,
+            self._area_config_draft.get(CONF_AREA_ID) or self._area_being_edited,
+            self._area_config_draft,
+        )
+
+    @callback
+    def async_remove(self) -> None:
+        """Drop the preview context when the flow ends."""
+        flow_id = getattr(self, "flow_id", None)
+        if flow_id and self.hass:
+            preview.unregister_preview_context(self.hass, flow_id)
 
     def _get_areas_from_config(self) -> list[dict[str, Any]]:
         """Get areas list from merged config entry data+options."""

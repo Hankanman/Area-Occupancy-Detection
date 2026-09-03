@@ -20,7 +20,6 @@ from custom_components.area_occupancy.config_flow import (
     _create_sensors_step_schema,
     _entity_contains_keyword,
     _find_area_by_sanitized_id,
-    _flatten_sectioned_input,
     _format_seconds,
     _get_area_summary_info,
     _get_include_entities,
@@ -34,6 +33,7 @@ from custom_components.area_occupancy.config_helpers import (
     apply_purpose_based_decay_default,
     apply_symmetric_adjacency,
     find_area_by_id,
+    flatten_sectioned_input,
     remove_area_from_list,
     strip_adjacency_references,
     update_area_in_list,
@@ -70,6 +70,7 @@ from custom_components.area_occupancy.const import (
     CONF_WINDOW_SENSORS,
     DOMAIN,
 )
+from custom_components.area_occupancy.preview import PREVIEW_COMPONENT, PREVIEW_DATA_KEY
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
@@ -1748,7 +1749,7 @@ class TestNewHelperFunctions:
             CONF_PURPOSE: "social",  # Purpose is now at root level
             "wasp_in_box": {CONF_WASP_ENABLED: True},
         }
-        result = _flatten_sectioned_input(user_input)
+        result = flatten_sectioned_input(user_input)
         assert result[CONF_AREA_ID] == "test_area"
         assert result[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
         assert result[CONF_PURPOSE] == "social"
@@ -1762,7 +1763,7 @@ class TestNewHelperFunctions:
                 CONF_WEIGHT_WIFI_CLIENTS: 0.42,
             },
         }
-        result = _flatten_sectioned_input(user_input)
+        result = flatten_sectioned_input(user_input)
         assert result[CONF_WIFI_CLIENTS_SENSORS] == ["sensor.wifi_clients_guest"]
         assert result[CONF_WEIGHT_WIFI_CLIENTS] == 0.42
 
@@ -2389,3 +2390,50 @@ class TestAreaDescriptionPlaceholders:
     def test_placeholders_decay_off(self) -> None:
         config = {CONF_AREA_ID: "x", CONF_DECAY_ENABLED: False}
         assert _build_area_description_placeholders(config, "x")["decay"] == "off"
+
+
+class TestFlowPreview:
+    """The options flow offers a live preview; the config flow does not."""
+
+    async def test_options_spoke_offers_preview_and_publishes_context(
+        self, config_flow_options_flow, hass: HomeAssistant
+    ) -> None:
+        flow = config_flow_options_flow
+        flow.flow_id = "preview-flow"
+        areas = flow._get_areas_from_config()
+        flow._area_being_edited = areas[0][CONF_AREA_ID]
+
+        result = await flow.async_step_edit_behavior()
+
+        assert result["preview"] == PREVIEW_COMPONENT
+        context = hass.data[PREVIEW_DATA_KEY]["preview-flow"]
+        assert context["entry_id"] == flow.config_entry.entry_id
+        assert context["area_id"] == areas[0][CONF_AREA_ID]
+        assert context["draft"][CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+        flow.async_remove()
+        assert "preview-flow" not in hass.data[PREVIEW_DATA_KEY]
+
+    async def test_options_flow_without_flow_id_skips_context(
+        self, config_flow_options_flow, hass: HomeAssistant
+    ) -> None:
+        flow = config_flow_options_flow
+        areas = flow._get_areas_from_config()
+        flow._area_being_edited = areas[0][CONF_AREA_ID]
+
+        result = await flow.async_step_edit_motion()
+
+        assert result["preview"] == PREVIEW_COMPONENT
+        assert not hass.data.get(PREVIEW_DATA_KEY)
+        flow.async_remove()  # must not raise either
+
+    async def test_config_flow_has_no_preview(
+        self, config_flow_flow, config_flow_sample_area
+    ) -> None:
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = config_flow_sample_area[CONF_AREA_ID]
+        config_flow_flow._init_area_wizard()
+
+        result = await config_flow_flow.async_step_area_behavior()
+
+        assert result.get("preview") is None

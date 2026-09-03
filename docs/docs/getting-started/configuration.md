@@ -87,7 +87,7 @@ Open the integration's **Configure** dialog, choose **Manage Areas** and pick th
 - **Additional sensors** – opens a second menu with one entry per sensor group (doors/windows/locks/covers, media, appliances, environmental, power, Wi-Fi clients)
 - **Detection behaviour** – threshold, decay, minimum prior and Wasp in Box
 
-Each entry opens just that page and saves when you press **Submit**, so changing one value no longer means stepping through the whole wizard. **Edit everything (wizard)** is still there if you want to walk all four pages in order.
+Each entry opens just that page and saves when you press **Submit**, so changing one value no longer means stepping through the whole wizard. The motion, additional-sensor and behaviour pages show a **live preview** beside the form: the probability the area would read right now with the values you are editing, whether that crosses the threshold, and which sensors are currently contributing. It is a sensor-only estimate from current states and learned priors; activity and adjacency boosts, Wasp in Box and decay timing are not simulated, and the current live probability is listed for comparison. **Edit everything (wizard)** is still there if you want to walk all four pages in order.
 
 ## People Management
 

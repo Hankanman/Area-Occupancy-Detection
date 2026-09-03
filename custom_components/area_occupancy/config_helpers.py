@@ -75,6 +75,7 @@ from .const import (
     DEFAULT_WEIGHT_WIFI_CLIENTS,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    DURATION_FIELDS,
 )
 from .data.purpose import Purpose
 
@@ -190,6 +191,34 @@ def duration_to_seconds(duration: dict[str, int] | float) -> int:
         + duration.get("minutes", 0) * 60
         + duration.get("seconds", 0)
     )
+
+
+def flatten_sectioned_input(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Flatten sectioned user input into flat configuration dictionary.
+
+    Converts nested section structure (motion, doors, windows, etc.) into
+    a flat dictionary suitable for validation and storage.
+
+    Args:
+        user_input: Sectioned user input dictionary
+
+    Returns:
+        Flattened configuration dictionary
+    """
+    flattened_input = {}
+    for key, value in user_input.items():
+        if isinstance(value, dict) and key not in DURATION_FIELDS:
+            # All sections (motion, doors, windows, wasp_in_box, etc.) are flattened the same way
+            flattened_input.update(value)
+        else:
+            flattened_input[key] = value
+
+    # Convert duration fields from DurationSelector format back to seconds
+    for field in DURATION_FIELDS:
+        if field in flattened_input:
+            flattened_input[field] = duration_to_seconds(flattened_input[field])
+
+    return flattened_input
 
 
 # ── Field-level validation ───────────────────────────────────────────
