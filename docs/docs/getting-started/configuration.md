@@ -78,6 +78,17 @@ Configure how occupancy is detected and reported:
 
 This step also includes the [Wasp in Box](../features/wasp-in-box.md) configuration section for single-entry rooms.
 
+## Editing an Existing Area
+
+Open the integration's **Configure** dialog, choose **Manage Areas** and pick the area. The area menu lists each part of the configuration with a one-line summary of its current values:
+
+- **Basics** – purpose and adjacent areas
+- **Motion sensors** – sensors, weight, timeout and likelihoods
+- **Additional sensors** – opens a second menu with one entry per sensor group (doors/windows/locks/covers, media, appliances, environmental, power, Wi-Fi clients)
+- **Detection behaviour** – threshold, decay, minimum prior and Wasp in Box
+
+Each entry opens just that page and saves when you press **Submit**, so changing one value no longer means stepping through the whole wizard. **Edit everything (wizard)** is still there if you want to walk all four pages in order.
+
 ## People Management
 
 You can configure sleep presence detection through the **Manage People** option in the integration’s main menu. This allows the integration to detect when people are sleeping and maintain high occupancy probability in bedrooms overnight.

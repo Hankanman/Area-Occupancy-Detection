@@ -33,13 +33,25 @@
                 }
             },
             "area_action": {
-                "title": "Manage Area",
-                "description": "Choose an action for this area.",
+                "title": "Manage Area: {area_name}",
+                "description": "Purpose: {purpose} · Threshold: {threshold}% · Decay: {decay}",
                 "menu_options": {
-                    "edit_area": "Edit Area",
-                    "reset_learning_confirm": "Reset Learning",
+                    "edit_basics": "Basics",
+                    "edit_motion": "Motion sensors",
+                    "edit_sensors": "Additional sensors",
+                    "edit_behavior": "Detection behaviour",
+                    "edit_area": "Edit everything (wizard)",
                     "remove_area_confirm": "Remove Area",
                     "cancel_area_action": "Cancel"
+                },
+                "menu_option_descriptions": {
+                    "edit_basics": "Purpose: {purpose} · Adjacent: {adjacent}",
+                    "edit_motion": "{motion_count} sensor(s) · weight {weight_motion} · timeout {motion_timeout}",
+                    "edit_sensors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count} · Media {media_count} · Appliances {appliance_count} · Environmental {environmental_count} · Power {power_count} · Wi-Fi {wifi_count}",
+                    "edit_behavior": "Threshold {threshold}% · Decay {decay} · Wasp in Box {wasp}",
+                    "edit_area": "Walk through all four pages in order",
+                    "remove_area_confirm": "Delete this area and all of its entities",
+                    "cancel_area_action": "Back to the main menu"
                 }
             },
             "area_config": {
@@ -362,6 +374,28 @@
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }
+                }
+            },
+            "area_sensors_menu": {
+                "title": "Additional Sensors — {area_name}",
+                "description": "Pick a sensor group to edit. Each group saves on its own.",
+                "menu_options": {
+                    "edit_sensors_windows_and_doors": "Windows, Doors, Locks & Covers",
+                    "edit_sensors_media": "Media Players",
+                    "edit_sensors_appliances": "Appliances",
+                    "edit_sensors_environmental": "Environmental Sensors",
+                    "edit_sensors_power": "Power Sensors",
+                    "edit_sensors_wifi_clients": "Wi-Fi Client Sensors",
+                    "cancel_sensors_menu": "Back"
+                },
+                "menu_option_descriptions": {
+                    "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
+                    "edit_sensors_media": "{media_count} configured",
+                    "edit_sensors_appliances": "{appliance_count} configured",
+                    "edit_sensors_environmental": "{environmental_count} configured",
+                    "edit_sensors_power": "{power_count} configured",
+                    "edit_sensors_wifi_clients": "{wifi_count} configured",
+                    "cancel_sensors_menu": "Return to the area menu"
                 }
             },
             "area_behavior": {
@@ -465,13 +499,27 @@
                 }
             },
             "area_action": {
-                "title": "Manage Area",
-                "description": "Choose an action for this area.",
+                "title": "Manage Area: {area_name}",
+                "description": "Purpose: {purpose} · Threshold: {threshold}% · Decay: {decay}",
                 "menu_options": {
-                    "edit_area": "Edit Area",
+                    "edit_basics": "Basics",
+                    "edit_motion": "Motion sensors",
+                    "edit_sensors": "Additional sensors",
+                    "edit_behavior": "Detection behaviour",
+                    "edit_area": "Edit everything (wizard)",
                     "reset_learning_confirm": "Reset Learning",
                     "remove_area_confirm": "Remove Area",
                     "cancel_area_action": "Cancel"
+                },
+                "menu_option_descriptions": {
+                    "edit_basics": "Purpose: {purpose} · Adjacent: {adjacent}",
+                    "edit_motion": "{motion_count} sensor(s) · weight {weight_motion} · timeout {motion_timeout}",
+                    "edit_sensors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count} · Media {media_count} · Appliances {appliance_count} · Environmental {environmental_count} · Power {power_count} · Wi-Fi {wifi_count}",
+                    "edit_behavior": "Threshold {threshold}% · Decay {decay} · Wasp in Box {wasp}",
+                    "edit_area": "Walk through all four pages in order",
+                    "reset_learning_confirm": "Wipe learned priors and correlations for this area, keep its configuration",
+                    "remove_area_confirm": "Delete this area and all of its entities",
+                    "cancel_area_action": "Back to the main menu"
                 }
             },
             "area_config": {
@@ -794,6 +842,28 @@
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
                     }
+                }
+            },
+            "area_sensors_menu": {
+                "title": "Additional Sensors — {area_name}",
+                "description": "Pick a sensor group to edit. Each group saves on its own.",
+                "menu_options": {
+                    "edit_sensors_windows_and_doors": "Windows, Doors, Locks & Covers",
+                    "edit_sensors_media": "Media Players",
+                    "edit_sensors_appliances": "Appliances",
+                    "edit_sensors_environmental": "Environmental Sensors",
+                    "edit_sensors_power": "Power Sensors",
+                    "edit_sensors_wifi_clients": "Wi-Fi Client Sensors",
+                    "cancel_sensors_menu": "Back"
+                },
+                "menu_option_descriptions": {
+                    "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
+                    "edit_sensors_media": "{media_count} configured",
+                    "edit_sensors_appliances": "{appliance_count} configured",
+                    "edit_sensors_environmental": "{environmental_count} configured",
+                    "edit_sensors_power": "{power_count} configured",
+                    "edit_sensors_wifi_clients": "{wifi_count} configured",
+                    "cancel_sensors_menu": "Return to the area menu"
                 }
             },
             "area_behavior": {

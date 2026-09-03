@@ -8,6 +8,8 @@ import pytest
 import voluptuous as vol
 
 from custom_components.area_occupancy.config_flow import (
+    AREA_EDIT_SPOKES,
+    SENSOR_GROUPS,
     AreaOccupancyConfigFlow,
     AreaOccupancyOptionsFlow,
     BaseOccupancyFlow,
@@ -19,6 +21,7 @@ from custom_components.area_occupancy.config_flow import (
     _entity_contains_keyword,
     _find_area_by_sanitized_id,
     _flatten_sectioned_input,
+    _format_seconds,
     _get_area_summary_info,
     _get_include_entities,
     _get_purpose_display_name,
@@ -45,6 +48,8 @@ from custom_components.area_occupancy.const import (
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_EXCLUDE_FROM_ALL_AREAS,
+    CONF_ILLUMINANCE_SENSORS,
     CONF_LOCK_ACTIVE_STATE,
     CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -55,8 +60,10 @@ from custom_components.area_occupancy.const import (
     CONF_MOTION_SENSORS,
     CONF_OPTION_PREFIX_AREA,
     CONF_PURPOSE,
+    CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
+    CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
@@ -312,7 +319,7 @@ class TestHelperFunctions:
         assert placeholders["door_count"] == "1"
         assert placeholders["window_count"] == "1"
         assert placeholders["appliance_count"] == "1"
-        assert placeholders["threshold"] == "60.0"
+        assert placeholders["threshold"] == "60"
 
     def test_get_area_summary_info(self):
         """Test _get_area_summary_info function."""
@@ -2111,3 +2118,274 @@ class TestNewHelperFunctions:
             assert "line" not in result.lower()
             # Should be readable (no excessive technical details)
             assert len(result) < 500  # Reasonable length for user-facing errors
+
+
+class TestSectionEditing:
+    """Hub-and-spoke editing: each wizard page reachable and saveable alone."""
+
+    def _area_id(self, flow) -> str:
+        areas = flow._get_areas_from_config()
+        assert areas
+        return areas[0][CONF_AREA_ID]
+
+    async def test_area_action_menu_lists_spokes_first(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_area_action()
+
+        assert result["type"] == FlowResultType.MENU
+        assert (
+            tuple(result["menu_options"][: len(AREA_EDIT_SPOKES)]) == AREA_EDIT_SPOKES
+        )
+        placeholders = result["description_placeholders"]
+        assert placeholders["threshold"] == "60"
+        assert placeholders["decay"] == "on (purpose default)"
+        assert placeholders["adjacent"] == "none"
+        assert placeholders["wasp"] == "off"
+
+    async def test_config_flow_area_action_menu_lists_spokes(
+        self, config_flow_flow, config_flow_sample_area
+    ) -> None:
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = config_flow_sample_area[CONF_AREA_ID]
+
+        result = await config_flow_flow.async_step_area_action()
+
+        assert result["type"] == FlowResultType.MENU
+        for spoke in AREA_EDIT_SPOKES:
+            assert spoke in result["menu_options"]
+        assert "reset_learning_confirm" not in result["menu_options"]
+
+    async def test_edit_behavior_spoke_saves_only_that_page(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_behavior()
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_behavior"
+        assert result["last_step"] is True
+
+        result = await flow.async_step_area_behavior(
+            {
+                CONF_THRESHOLD: 75,
+                CONF_DECAY_ENABLED: True,
+                CONF_EXCLUDE_FROM_ALL_AREAS: False,
+                CONF_DECAY_HALF_LIFE: {"hours": 0, "minutes": 10, "seconds": 0},
+                CONF_MIN_PRIOR_OVERRIDE: 0.0,
+                "wasp_in_box": {CONF_WASP_ENABLED: False},
+            }
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = result["data"][CONF_AREAS][0]
+        assert saved[CONF_THRESHOLD] == 75
+        assert saved[CONF_DECAY_HALF_LIFE] == 600
+        # Untouched pages survive a single-section save
+        assert saved[CONF_PURPOSE] == "social"
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+        # Flow state is cleared for the next edit
+        assert flow._area_being_edited is None
+        assert flow._area_edit_section is None
+
+    async def test_edit_basics_spoke_changes_purpose_and_keeps_rest(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_basics()
+        assert result["step_id"] == "area_basics"
+        assert result["last_step"] is True
+
+        result = await flow.async_step_area_basics({CONF_PURPOSE: "sleeping"})
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = result["data"][CONF_AREAS][0]
+        assert saved[CONF_PURPOSE] == "sleeping"
+        assert saved[CONF_THRESHOLD] == 60.0
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+    async def test_edit_motion_spoke_validation_error_keeps_form(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_motion()
+        assert result["step_id"] == "area_motion"
+        assert result["last_step"] is True
+
+        result = await flow.async_step_area_motion({CONF_MOTION_SENSORS: []})
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_motion"
+        assert result["errors"] == {"base": "motion_required"}
+        # Nothing was saved and the edit is still in progress
+        assert flow._area_being_edited == self._area_id(flow)
+        assert flow._area_edit_section == "motion"
+
+    async def test_edit_sensors_shows_group_menu(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors()
+
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "area_sensors_menu"
+        assert result["menu_options"] == [
+            *(f"edit_sensors_{group}" for group in SENSOR_GROUPS),
+            "cancel_sensors_menu",
+        ]
+        assert result["description_placeholders"]["media_count"] == "0"
+
+    async def test_edit_sensors_menu_without_area_falls_back(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = None
+
+        result = await flow.async_step_area_sensors_menu()
+
+        # No area selected: the hub sends the user back to the main menu
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "init"
+
+    async def test_edit_sensor_group_spoke_renders_only_that_group(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors_media()
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_sensors"
+        assert result["last_step"] is True
+        assert [marker.schema for marker in result["data_schema"].schema] == ["media"]
+
+        result = await flow.async_step_area_sensors(
+            {
+                "media": {
+                    CONF_MEDIA_DEVICES: ["media_player.tv"],
+                    CONF_MEDIA_ACTIVE_STATES: ["playing"],
+                    CONF_WEIGHT_MEDIA: 0.7,
+                }
+            }
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = result["data"][CONF_AREAS][0]
+        assert saved[CONF_MEDIA_DEVICES] == ["media_player.tv"]
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+        assert saved[CONF_THRESHOLD] == 60.0
+        assert flow._sensor_group_being_edited is None
+
+    async def test_cancel_sensors_menu_returns_to_area_action(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_cancel_sensors_menu()
+
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "area_action"
+
+    async def test_add_area_still_runs_the_full_wizard(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        # A previous single-section edit must not leak into the add wizard
+        flow._area_edit_section = "behavior"
+
+        result = await flow.async_step_add_area()
+
+        assert result["step_id"] == "area_basics"
+        assert result["last_step"] is False
+        assert flow._area_edit_section is None
+
+    def test_sensors_schema_group_filter(self, hass: HomeAssistant) -> None:
+        full = _create_sensors_step_schema(hass, include_entities=_empty_entities())
+        assert [m.schema for m in full] == list(SENSOR_GROUPS)
+        only_power = _create_sensors_step_schema(
+            hass, include_entities=_empty_entities(), groups=("power",)
+        )
+        assert [m.schema for m in only_power] == ["power"]
+
+
+def _empty_entities() -> dict[str, list[str]]:
+    """Candidate-entity map with nothing in it, for schema-shape tests."""
+    keys = (
+        "motion",
+        "door",
+        "window",
+        "cover",
+        "lock",
+        "appliance",
+        "temperature",
+        "humidity",
+        "pressure",
+        "air_quality",
+        "pm25",
+        "pm10",
+        "wifi_clients",
+    )
+    return {key: [] for key in keys}
+
+
+class TestAreaDescriptionPlaceholders:
+    """Placeholders feed the hub menus' secondary lines."""
+
+    @pytest.mark.parametrize(
+        ("seconds", "expected"),
+        [
+            (0, "0s"),
+            (45, "45s"),
+            (60, "1m"),
+            (300, "5m"),
+            (5400, "1h 30m"),
+            (3661, "1h 1m 1s"),
+        ],
+    )
+    def test_format_seconds(self, seconds: int, expected: str) -> None:
+        assert _format_seconds(seconds) == expected
+
+    def test_placeholders_summarise_every_page(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        living_room = setup_area_registry["Living Room"]
+        kitchen = setup_area_registry["Kitchen"]
+        config = {
+            CONF_AREA_ID: living_room,
+            CONF_PURPOSE: "social",
+            CONF_ADJACENT_AREAS: [kitchen],
+            CONF_MOTION_SENSORS: ["binary_sensor.a", "binary_sensor.b"],
+            CONF_ILLUMINANCE_SENSORS: ["sensor.lux"],
+            CONF_TEMPERATURE_SENSORS: ["sensor.t1", "sensor.t2"],
+            CONF_THRESHOLD: 55.0,
+            CONF_DECAY_ENABLED: True,
+            CONF_DECAY_HALF_LIFE: 600,
+            CONF_WASP_ENABLED: True,
+        }
+
+        placeholders = _build_area_description_placeholders(config, living_room, hass)
+
+        assert placeholders["area_name"] == "Living Room"
+        assert placeholders["adjacent"] == "Kitchen"
+        assert placeholders["motion_count"] == "2"
+        assert placeholders["environmental_count"] == "3"
+        assert placeholders["threshold"] == "55"
+        assert placeholders["decay"] == "on (10m)"
+        assert placeholders["wasp"] == "on"
+        assert all(isinstance(v, str) for v in placeholders.values())
+
+    def test_placeholders_decay_off(self) -> None:
+        config = {CONF_AREA_ID: "x", CONF_DECAY_ENABLED: False}
+        assert _build_area_description_placeholders(config, "x")["decay"] == "off"
