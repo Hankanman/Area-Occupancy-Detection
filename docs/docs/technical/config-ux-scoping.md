@@ -3,6 +3,26 @@
 Scoping document, 2026-09-02. Not in the mkdocs nav; it is a working document
 for maintainers, like `ha-config-flow-ui-reference.md`.
 
+## Status (2026-09-03)
+
+Delivered on `feat/config-ux`:
+
+- Prerequisite: `DB_SCHEMA_VERSION` decoupled from `CONF_VERSION`, so a
+  config-entry migration no longer wipes learned history.
+- HA pinned to 2026.9.0, with the device-registry API changes that release
+  requires (closes #530).
+- Phase 0: `config_helpers.py` holds every hass-free validator and transform;
+  the threshold number entity validates through it.
+- Phase 1: hub-and-spoke editing with native menu descriptions, and a
+  per-group sub-menu for additional sensors.
+- Phase 2: live preview on the motion, sensors and behaviour pages of the
+  options flow.
+
+Open: Phase 3 scope (custom sensors vs. per-entity overrides), the optional
+config-entities idea, and the Phase 4 subentry migration, which now has its
+prerequisite in place. `hacs.json` still advertises a 2024.8.0 minimum; the
+true minimum has not been established.
+
 ## Summary and recommendation
 
 The per-area configuration surface is now 52 fields across a 4-step wizard,

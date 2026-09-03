@@ -208,8 +208,11 @@ def compute_area_preview(
         if e.evidence is not True and e.decay.is_decaying
     )
 
+    verdict = "occupied" if occupied else "not occupied"
     attributes: dict[str, Any] = {
-        "friendly_name": f"{area.area_name} (preview)",
+        # The generic preview row shows only name and state, so the verdict
+        # against the candidate threshold rides along in the name.
+        "friendly_name": f"{area.area_name} · {verdict} (threshold {threshold_pct:g}%)",
         "unit_of_measurement": "%",
         "occupied": occupied,
         "threshold": threshold_pct,

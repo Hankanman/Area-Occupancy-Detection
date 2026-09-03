@@ -33,8 +33,8 @@
                 }
             },
             "area_action": {
-                "title": "Manage Area: {area_name}",
-                "description": "Purpose: {purpose} · Threshold: {threshold}% · Decay: {decay}",
+                "title": "Manage Area",
+                "description": "{area_name} · Purpose: {purpose} · Threshold: {threshold}% · Decay: {decay}",
                 "menu_options": {
                     "edit_basics": "Basics",
                     "edit_motion": "Motion sensors",
@@ -377,8 +377,8 @@
                 }
             },
             "area_sensors_menu": {
-                "title": "Additional Sensors — {area_name}",
-                "description": "Pick a sensor group to edit. Each group saves on its own.",
+                "title": "Additional Sensors",
+                "description": "{area_name}: pick a sensor group to edit. Each group saves on its own.",
                 "menu_options": {
                     "edit_sensors_windows_and_doors": "Windows, Doors, Locks & Covers",
                     "edit_sensors_media": "Media Players",
@@ -500,8 +500,8 @@
                 }
             },
             "area_action": {
-                "title": "Manage Area: {area_name}",
-                "description": "Purpose: {purpose} · Threshold: {threshold}% · Decay: {decay}",
+                "title": "Manage Area",
+                "description": "{area_name} · Purpose: {purpose} · Threshold: {threshold}% · Decay: {decay}",
                 "menu_options": {
                     "edit_basics": "Basics",
                     "edit_motion": "Motion sensors",
@@ -846,8 +846,8 @@
                 }
             },
             "area_sensors_menu": {
-                "title": "Additional Sensors — {area_name}",
-                "description": "Pick a sensor group to edit. Each group saves on its own.",
+                "title": "Additional Sensors",
+                "description": "{area_name}: pick a sensor group to edit. Each group saves on its own.",
                 "menu_options": {
                     "edit_sensors_windows_and_doors": "Windows, Doors, Locks & Covers",
                     "edit_sensors_media": "Media Players",
