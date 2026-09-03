@@ -690,10 +690,7 @@ class TestRegistryCleanup:
         device_2.id = "device_2"
         device_2.config_entries = {entry_id_2}
 
-        device_registry.devices = {
-            device_1.id: device_1,
-            device_2.id: device_2,
-        }
+        mock_devices = [device_1, device_2]
 
         # Track device remove calls
         device_remove_calls = []
@@ -702,10 +699,18 @@ class TestRegistryCleanup:
         )
 
         # Call cleanup
-        (
-            devices_removed,
-            entities_removed,
-        ) = await _cleanup_registry_devices_and_entities(hass, [entry_id_1, entry_id_2])
+        with patch(
+            "custom_components.area_occupancy.migrations.dr.async_entries_for_config_entry",
+            side_effect=lambda _reg, eid: [
+                d for d in mock_devices if eid in d.config_entries
+            ],
+        ):
+            (
+                devices_removed,
+                entities_removed,
+            ) = await _cleanup_registry_devices_and_entities(
+                hass, [entry_id_1, entry_id_2]
+            )
 
         # Verify entities were removed
         assert entities_removed == 2
@@ -733,14 +738,17 @@ class TestRegistryCleanup:
         entity_registry.async_remove = Mock()
 
         # Mock device registry with no devices
-        device_registry.devices = {}
         device_registry.async_remove_device = Mock()
 
         # Call cleanup - should not raise
-        (
-            devices_removed,
-            entities_removed,
-        ) = await _cleanup_registry_devices_and_entities(hass, [entry_id])
+        with patch(
+            "custom_components.area_occupancy.migrations.dr.async_entries_for_config_entry",
+            return_value=[],
+        ):
+            (
+                devices_removed,
+                entities_removed,
+            ) = await _cleanup_registry_devices_and_entities(hass, [entry_id])
 
         # Verify no errors and counts are zero
         assert devices_removed == 0

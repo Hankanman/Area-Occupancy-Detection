@@ -22,7 +22,7 @@ classifiers = [
 ]
 requires-python = ">=3.14.2"
 dependencies = [
-  "homeassistant==2026.7.1",
+  "homeassistant==2026.9.0",
   "hassil==3.5.0",
   "unicode-rbnf==2.4.0",
   "home-assistant-intents==2026.2.13",
@@ -39,7 +39,7 @@ dev = [
   "pre-commit",
 ]
 test = [
-  "pytest-homeassistant-custom-component==0.13.345",
+  "pytest-homeassistant-custom-component==0.13.363",
   "pytest-cov",
 ]
 viz = [
@@ -115,7 +115,7 @@ fail_under = 85 # Enforced global minimum; aim for 90%+ on core calculation modu
 [tool.ruff]
 # Shipped integration code must IMPORT on the Python of the oldest supported
 # HA runtime (3.13 for HA <=2026.5), even though the dev/test environment
-# requires 3.14 for homeassistant==2026.7.1. py314 target makes ruff-format
+# requires 3.14 for homeassistant==2026.9.0. py314 target makes ruff-format
 # strip except-tuple parentheses (PEP 758), which is a SyntaxError on 3.13 —
 # keep this at the runtime floor, not the dev interpreter version.
 target-version = "py313"

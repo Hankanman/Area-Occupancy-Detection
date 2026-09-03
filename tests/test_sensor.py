@@ -1172,7 +1172,9 @@ class TestSensorErrorHandling:
 
         # Mock device registry to raise error when accessing
         mock_registry = Mock()
-        mock_registry.async_get_device.side_effect = Exception("Registry error")
+        mock_registry.async_get_device_by_identifier.side_effect = Exception(
+            "Registry error"
+        )
         with (
             patch(
                 "custom_components.area_occupancy.utils.dr.async_get",
@@ -1195,7 +1197,7 @@ class TestSensorErrorHandling:
 
         # Mock device registry to return None
         mock_registry = Mock()
-        mock_registry.async_get_device.return_value = None
+        mock_registry.async_get_device_by_identifier.return_value = None
         with patch(
             "custom_components.area_occupancy.utils.dr.async_get",
             return_value=mock_registry,
@@ -1222,7 +1224,7 @@ class TestSensorErrorHandling:
         mock_device.area_id = "different_area_id"  # Different from config
 
         mock_registry = Mock()
-        mock_registry.async_get_device.return_value = mock_device
+        mock_registry.async_get_device_by_identifier.return_value = mock_device
         mock_registry.async_update_device = Mock()
 
         with patch(
@@ -1245,7 +1247,7 @@ class TestSensorErrorHandling:
         sensor.hass = hass
 
         mock_registry = Mock()
-        mock_registry.async_get_device = Mock()
+        mock_registry.async_get_device_by_identifier = Mock()
 
         with patch(
             "custom_components.area_occupancy.utils.dr.async_get",
@@ -1254,7 +1256,7 @@ class TestSensorErrorHandling:
             await sensor.async_added_to_hass()
 
             # Verify device registry was not accessed (All Areas sensors skip this)
-            mock_registry.async_get_device.assert_not_called()
+            mock_registry.async_get_device_by_identifier.assert_not_called()
 
     async def test_async_added_to_hass_no_area_id_config(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator

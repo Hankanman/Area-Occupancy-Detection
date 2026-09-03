@@ -115,7 +115,12 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         # Let the coordinator know our entity_id. Only for per-area entities, not aggregates.
         if self._handle is not None and (area := self._get_area()) is not None:
             area.occupancy_entity_id = self.entity_id
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""

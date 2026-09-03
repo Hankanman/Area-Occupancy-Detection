@@ -535,7 +535,9 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if removed_area_ids:
             dev_reg = dr.async_get(hass)
             for area_id in removed_area_ids:
-                device = dev_reg.async_get_device(identifiers={(DOMAIN, area_id)})
+                device = dev_reg.async_get_device_by_identifier(
+                    (DOMAIN, area_id), entry.entry_id
+                )
                 if device:
                     _LOGGER.info("Removing device for deleted area: %s", area_id)
                     dev_reg.async_remove_device(device.id)

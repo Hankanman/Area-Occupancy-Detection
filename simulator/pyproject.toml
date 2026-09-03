@@ -6,7 +6,7 @@ description = "Flask-based simulator for Area Occupancy Detection"
 dependencies = [
     "Flask>=3.0.0",
     "Flask-Cors>=4.0",
-    "homeassistant>=2026.7.1",
+    "homeassistant>=2026.9.0",
     "numpy>=2.3.2",
 ]
 

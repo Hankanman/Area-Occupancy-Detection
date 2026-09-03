@@ -1572,10 +1572,12 @@ class TestAreaOccupancyCoordinator:
             if db_error is None:
                 mock_device = Mock()
                 mock_device.id = "device_id"
-                mock_device_registry.async_get_device.return_value = mock_device
+                mock_device_registry.async_get_device_by_identifier.return_value = (
+                    mock_device
+                )
                 mock_device_registry.async_remove_device = Mock()
             else:
-                mock_device_registry.async_get_device.return_value = None
+                mock_device_registry.async_get_device_by_identifier.return_value = None
             mock_dr_get.return_value = mock_device_registry
 
             # Mock entity registry
@@ -1594,7 +1596,7 @@ class TestAreaOccupancyCoordinator:
             mock_delete.assert_called_with(area_name)
 
             # Verify device registry lookup was attempted
-            mock_device_registry.async_get_device.assert_called_once()
+            mock_device_registry.async_get_device_by_identifier.assert_called_once()
 
 
 class TestRunAnalysisWithPruning:
@@ -1940,7 +1942,7 @@ class TestCoordinatorOrphanedAreaCleanup:
         mock_device = Mock()
         mock_device.id = "device_123"
         mock_device_registry = Mock()
-        mock_device_registry.async_get_device.return_value = mock_device
+        mock_device_registry.async_get_device_by_identifier.return_value = mock_device
         mock_device_registry.async_remove_device = Mock()
 
         # Mock entity registry with an entity belonging to that device
@@ -2007,7 +2009,7 @@ class TestCoordinatorOrphanedAreaCleanup:
         orphaned_area_id = "deleted_ha_area_id"
 
         mock_device_registry = Mock()
-        mock_device_registry.async_get_device.return_value = None
+        mock_device_registry.async_get_device_by_identifier.return_value = None
 
         mock_entity_registry = Mock()
         mock_entity_registry.entities = {}

@@ -66,7 +66,12 @@ class Threshold(CoordinatorEntity, NumberEntity):
         # Assign device to Home Assistant area if area_id is configured
         area = self._get_area()
         if area is not None:
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     @property
     def native_value(self) -> float:

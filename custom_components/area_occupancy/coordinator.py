@@ -897,8 +897,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Look up device for this area (used for both entity and device removal)
         device_registry = dr.async_get(self.hass)
-        device_identifiers = {(DOMAIN, area.config.area_id)}
-        device = device_registry.async_get_device(identifiers=device_identifiers)
+        device = device_registry.async_get_device_by_identifier(
+            (DOMAIN, area.config.area_id), self.entry_id
+        )
 
         # Remove entities from entity registry that belong to this device
         entity_registry = er.async_get(self.hass)
@@ -1010,7 +1011,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
             # Clean up device and entities from registries
-            device = device_registry.async_get_device(identifiers={(DOMAIN, area_id)})
+            device = device_registry.async_get_device_by_identifier(
+                (DOMAIN, area_id), self.entry_id
+            )
             if device:
                 # Remove entities belonging to this device
                 for entity_id, entity_entry in list(entity_registry.entities.items()):

@@ -82,7 +82,12 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
         # Assign device to Home Assistant area if area_id is configured.
         # Only for specific areas, not "All Areas" or floor aggregates.
         if self._area_handle is not None and (area := self._get_area()) is not None:
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""

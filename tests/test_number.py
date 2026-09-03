@@ -262,8 +262,9 @@ class TestThreshold:
             mock_parent.assert_called_once()
 
         # Assert: Device should now have area_id assigned
-        device_entry = device_registry.async_get_device(
-            identifiers=threshold_entity_with_hass.device_info["identifiers"]
+        device_entry = device_registry.async_get_device_by_identifier(
+            next(iter(threshold_entity_with_hass.device_info["identifiers"])),
+            coordinator.entry_id,
         )
         assert device_entry is not None
         assert device_entry.area_id == "test_area_id"
@@ -315,8 +316,9 @@ class TestThreshold:
         )
         device_registry.async_update_device(device_entry.id, area_id="test_area_id")
         # Re-fetch device to get updated area_id
-        device_entry = device_registry.async_get_device(
-            identifiers=threshold_entity_with_hass.device_info["identifiers"]
+        device_entry = device_registry.async_get_device_by_identifier(
+            next(iter(threshold_entity_with_hass.device_info["identifiers"])),
+            coordinator.entry_id,
         )
         assert device_entry is not None
         assert device_entry.area_id == "test_area_id"

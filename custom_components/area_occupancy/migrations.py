@@ -161,8 +161,7 @@ async def _cleanup_registry_devices_and_entities(
         # Find and remove all devices with matching config_entry_id
         devices_to_remove = [
             device.id
-            for device in device_registry.devices.values()
-            if entry_id in device.config_entries
+            for device in dr.async_entries_for_config_entry(device_registry, entry_id)
         ]
 
         for device_id in devices_to_remove:
