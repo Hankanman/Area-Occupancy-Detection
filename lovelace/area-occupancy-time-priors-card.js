@@ -31,8 +31,17 @@
  *                    "raw"      = the learned time prior alone; carries the
  *                                 weekly shape at full dynamic range.
  *   scale:           "area" | "absolute"  colour ramp (default "area"):
- *                    "area" stretches the ramp over the area's own min..max,
- *                    "absolute" pins it to 0..100%.
+ *                    "area" stretches the ramp over the area's own habitual
+ *                    min..max, "absolute" pins it to 0..100%.
+ *                    The range is always measured on the *stable* series
+ *                    (slots_baseline), never on the live one. Measuring it on
+ *                    the live series let a single occupied slot set the
+ *                    maximum: the other 167 cells of that room collapsed onto
+ *                    the coldest colour and the comfort count fell to one
+ *                    hour, with nothing whatsoever changed in the learned
+ *                    data. Live values above the habitual maximum are clamped
+ *                    to the hot end of the ramp, which is exactly what
+ *                    "somebody is in here right now" should look like.
  *
  * Requires the Area Occupancy build that exposes get_time_priors
  * (SupportsResponse.ONLY).
@@ -84,6 +93,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       ...config,
     };
     this._threshold = (Number(this._config.threshold) || 50) / 100;
+    this._retryCount = 0;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     this._render();
   }
@@ -102,6 +112,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
 
   disconnectedCallback() {
     this._stopTimer();
+    this._stopRetry();
   }
 
   _startTimer() {
@@ -114,6 +125,28 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     if (this._timer) {
       window.clearInterval(this._timer);
       this._timer = null;
+    }
+  }
+
+  /** Short backoff after a failed poll, then the periodic timer takes over.
+   *  A card built before the coordinator is registered would otherwise sit
+   *  empty for a whole refresh interval over a race it loses by a second. */
+  _scheduleRetry() {
+    this._stopRetry();
+    const delays = [5000, 15000, 45000];
+    if (this._retryCount >= delays.length) return;
+    const wait = delays[this._retryCount];
+    this._retryCount += 1;
+    this._retryTimer = window.setTimeout(() => {
+      this._retryTimer = null;
+      this._fetch();
+    }, wait);
+  }
+
+  _stopRetry() {
+    if (this._retryTimer) {
+      window.clearTimeout(this._retryTimer);
+      this._retryTimer = null;
     }
   }
 
@@ -130,13 +163,31 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
         false,
         true
       );
-      this._data = (res && res.response) || res || null;
-      this._error = null;
+      const payload = (res && res.response) || res || null;
+      if (payload && payload.areas) {
+        this._data = payload;
+        this._error = null;
+        this._lastOk = Date.now();
+        this._retryCount = 0;
+        this._stopRetry();
+      } else {
+        // A response with no areas in it is a failure too, just a quiet one.
+        this._degrade("no forecast in the response");
+      }
     } catch (e) {
-      this._error = (e && (e.message || e.error)) || String(e);
-      this._data = null;
+      this._degrade((e && (e.message || e.error)) || String(e));
     }
     this._render();
+  }
+
+  /** Record a failed poll *without* discarding the last good forecast.
+   *  Blanking the grid on a transient websocket hiccup made the entire card
+   *  vanish until the next tick, which reads as "the integration is broken"
+   *  when nothing is. Stale data behind a marker is both more honest and more
+   *  useful than an empty card. */
+  _degrade(reason) {
+    this._error = reason;
+    this._scheduleRetry();
   }
 
   getCardSize() {
@@ -162,6 +213,12 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
         .ctl input[type=range]{ width: clamp(90px, 30cqw, 160px); accent-color: var(--primary-color); }
         .pctv { font-variant-numeric: tabular-nums; font-weight:600; color: var(--primary-text-color); min-width:3ch; }
         .msg { padding: 10px 16px; color: var(--secondary-text-color); font-size:.9rem; }
+        /* The grid stays on screen when a poll fails, so it has to say so:
+           silently showing an old forecast as if it were current is worse
+           than showing nothing. */
+        .stale { font-size:.72rem; font-weight:600; letter-spacing:.02em;
+                 color: var(--warning-color, #d9822b); border: 1px solid currentColor;
+                 border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
         .msg code { background: var(--secondary-background-color); padding:1px 5px; border-radius:5px; }
         .rooms { display:grid; gap: 4px 16px; padding-top: 4px;
                  grid-template-columns: minmax(0, 1fr); }
@@ -217,21 +274,22 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       </style>`;
 
     let body = "";
-    if (this._error) {
-      body = `<div class="msg">Could not read <code>area_occupancy.get_time_priors</code>: ${esc(
-        this._error
-      )}<br>Make sure the Area Occupancy build that exposes this service is installed.</div>`;
-    } else if (!this._data || !this._data.areas) {
-      body = `<div class="msg">Loading occupancy forecast…</div>`;
+    if (!this._data || !this._data.areas) {
+      // An error only takes over the card when there is no forecast to draw.
+      // With one in hand the grid wins and the failure becomes a badge.
+      body = this._error
+        ? `<div class="msg">Could not read <code>area_occupancy.get_time_priors</code>: ${esc(
+            this._error
+          )}<br>Make sure the Area Occupancy build that exposes this service is installed.</div>`
+        : `<div class="msg">Loading occupancy forecast...</div>`;
     } else {
       const slotMin = this._data.slot_minutes || 60;
       const cols = Math.round(1440 / slotMin);
       const hoursPerSlot = slotMin / 60;
       body =
         `<div class="legend"><span>Probability</span><span class="ramp"></span>` +
-        `<span>${
-          (this._config?.scale ?? "area") === "area" ? "area min–max" : "0–100%"
-        }</span><span><span class="sw comfort"></span> comfort</span>` +
+        `<span>${esc(this._scaleLabel())}</span>` +
+        `<span><span class="sw comfort"></span> comfort</span>` +
         `<span><span class="sw nodata"></span> no data</span>` +
         `<span><span class="sw now"></span> now</span>` +
         `<span>metric: ${esc(this._config?.metric ?? "live")}</span></div>` +
@@ -246,6 +304,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       <ha-card>
         <div class="head">
           <span class="title">${esc(cfg.title || "Occupancy forecast")}</span>
+          ${this._staleBadge()}
           <span class="ctl">
             <label>Comfort threshold</label>
             <input id="thr" type="range" min="0" max="100" value="${pct}">
@@ -264,6 +323,26 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     }
   }
 
+  /** What the ramp is stretched over, spelled out. With the live metric the
+   *  range belongs to the habit, not to the series being drawn, and saying
+   *  "area min-max" there would be a lie. */
+  _scaleLabel() {
+    if ((this._config?.scale ?? "area") !== "area") return "0-100%";
+    return (this._config?.metric ?? "live") === "live"
+      ? "habit min-max"
+      : "area min-max";
+  }
+
+  /** Only shown when what is on screen is not what we last asked for. */
+  _staleBadge() {
+    if (!this._error || !this._data) return "";
+    const age = this._lastOk ? Math.round((Date.now() - this._lastOk) / 60000) : null;
+    const label = age === null ? "stale" : `stale (${age} min)`;
+    return `<span class="stale" title="${esc(
+      `Last poll failed: ${this._error}. Still showing the previous forecast.`
+    )}">${esc(label)}</span>`;
+  }
+
   _roomsClass() {
     const c = String(this._config?.columns ?? "auto");
     return c === "1" || c === "2" ? `cols-${c}` : "cols-auto";
@@ -278,6 +357,19 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     return area.slots || {};
   }
 
+  /** The series the colour ramp and the comfort cutoff are measured against.
+   *  Always a *stable* one. Measuring them on the live series meant a single
+   *  occupied slot set the maximum: with Salotto at 43% and a habit spanning
+   *  5..10%, the other 167 cells normalised to 0.04 and went uniformly cold,
+   *  the cutoff climbed above every habitual slot, and a room with 27 comfort
+   *  hours reported one - all with the learned data bit-for-bit unchanged.
+   *  The habit sets the scale; the live value moves on top of it. */
+  _scaleSlotsOf(area) {
+    const metric = this._config?.metric ?? "live";
+    if (metric === "live") return area.slots_baseline || area.slots || {};
+    return this._slotsOf(area);
+  }
+
   /** Slots with zero weeks of data behind them: filled with a neutral
    *  fallback, not observed. Rendered as "no data", never as a probability. */
   _unknownOf(area) {
@@ -288,23 +380,32 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
 
   _room(name, area, cols, hoursPerSlot) {
     const slots = this._slotsOf(area);
+    const scaleRef = this._scaleSlotsOf(area);
     const unknown = this._unknownOf(area);
-    const known = Object.entries(slots)
+    const known = Object.entries(scaleRef)
       .filter(([k]) => !unknown.has(k))
       .map(([, v]) => v);
-    // Stretch the ramp over what this area actually spans, otherwise a room
-    // whose values all sit in 7..43% reads as uniformly cold and looks untrained.
+    // Stretch the ramp over what this area habitually spans, otherwise a room
+    // whose values all sit in 7..43% reads as uniformly cold and looks
+    // untrained. The span comes from the habit, never from the live series.
     const nowKey = area.current_slot;
     const baseline = area.slots_baseline || {};
     const perArea = (this._config?.scale ?? "area") === "area" && known.length > 1;
     const lo = perArea ? Math.min(...known) : 0;
     const hi = perArea ? Math.max(...known) : 1;
-    const norm = (v) => (hi > lo ? (v - lo) / (hi - lo) : 0.5);
+    // Clamped, because a live value sits above the habitual maximum by design
+    // whenever somebody is in the room - and an unclamped ramp position walks
+    // straight off the end of RAMP_STOPS into an undefined colour stop.
+    const norm = (v) =>
+      hi > lo ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0.5;
     // With a stretched ramp an absolute cutoff is meaningless, so the comfort
-    // threshold becomes a position within the area's own range.
+    // threshold becomes a position within the area's own habitual range.
     const cutoff = perArea ? lo + (hi - lo) * this._threshold : this._threshold;
+    // Hours per week are a *schedule* figure, so they are counted on the habit
+    // too: the number answers "how long would the heating run", which does not
+    // change because somebody just walked in.
     let climatized = 0;
-    for (const [k, v] of Object.entries(slots)) {
+    for (const [k, v] of Object.entries(scaleRef)) {
       if (!unknown.has(k) && v >= cutoff) climatized += hoursPerSlot;
     }
 
@@ -353,7 +454,9 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       <div class="room-head">
         <span class="room-name">${esc(name)}</span>
         <span class="room-id">${esc(area.area_id || "")}</span>
-        <span class="room-stat"><b>${hrs}</b> h/week comfort</span>
+        <span class="room-stat" title="${esc(
+          "Hours per week the habitual forecast sits above the comfort threshold. Counted on the stable series, so it does not move with live presence."
+        )}"><b>${hrs}</b> h/week comfort</span>
       </div>
       <div class="scroll"><div class="grid" style="--cols:${cols}">${head}${rows}</div></div>
     </div>`;

@@ -49,8 +49,8 @@ columns: auto               # optional, "auto" | 1 | 2 (default "auto")
 | `metric: live` | Evidence-conditioned forecast. The current slot (outlined as *now*) and the next one light up while the area is actually occupied, then relax back to habit |
 | `metric: baseline` | The same forecast without live evidence: the stable weekly schedule |
 | `metric: raw` | The learned time prior alone. Carries the weekly shape at full dynamic range — best for reading habits |
-| `scale: area` | Colour ramp stretched over the area's own min–max, and the threshold becomes a position within that range |
-| `scale: absolute` | Colour ramp and threshold pinned to 0–100% |
+| `scale: area` | Colour ramp stretched over the area's own habitual min-max, and the threshold becomes a position within that range |
+| `scale: absolute` | Colour ramp and threshold pinned to 0-100% |
 | `columns` | Areas per row; `auto` uses two columns only when the card itself is wider than 1100px |
 
 `metric: live` is the default because it answers the question you actually have
@@ -61,8 +61,23 @@ cold: the blend keeps 60% of its weight on the global prior, so an area below
 ~0.19 can never reach 50% at any hour. See
 [Occupancy Forecast](../docs/docs/technical/occupancy-forecast.md) for the maths.
 
+The range and the comfort cutoff are always measured on the **stable** series
+(`slots_baseline`), never on the series being drawn. Measuring them on the live
+one made a single occupied slot set the area's maximum: with a room at 43% and a
+habit spanning 5..10%, the other 167 cells normalised to the coldest colour and
+the comfort total fell from 50 hours to 1, with the learned data unchanged. Live
+values above the habitual maximum are clamped to the hot end of the ramp, so the
+current slot still reads as occupied without flattening the rest of the week.
+
+For the same reason the **h/week comfort** figure is counted on the habit: it
+answers "how long would the heating run", which does not change because somebody
+just walked into the room.
+
 Since the live metric moves with the evidence, the card re-polls every 3 minutes
-by default; raise `refresh_minutes` if you only care about the baseline.
+by default; raise `refresh_minutes` if you only care about the baseline. A failed
+poll no longer blanks the card: the last good forecast stays on screen behind a
+*stale* badge, and the card retries after 5s, 15s and 45s before falling back to
+the normal interval.
 
 Slots with `data_points: 0` were never observed; they are hatched as *no data*
 and excluded from both the colour ramp and the comfort-hours total.
