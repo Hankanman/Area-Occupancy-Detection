@@ -845,10 +845,16 @@ class TestPriorAnalyzerCalculateTimePriors:
         # Should be clamped to 0.03.
         assert time_priors2[slot_key] == TIME_PRIOR_MIN_BOUND
 
-    def test_empty_slots_skipped(
+    def test_covered_slots_written_even_when_empty(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
     ) -> None:
-        """Test that slots with no data are skipped (not in result dict)."""
+        """Every slot the period covered is written, occupied or not.
+
+        A covered slot with zero occupancy is a real observation ("empty at this
+        hour") and must be stored at the lower bound. Leaving it out made it
+        read back as the unlearned fallback, which outranks genuinely
+        low-occupancy slots.
+        """
         area_name = coordinator.get_area_names()[0]
         analyzer = PriorAnalyzer(coordinator, area_name)
 
@@ -864,12 +870,13 @@ class TestPriorAnalyzerCalculateTimePriors:
             intervals, period_start, period_end
         )
 
-        # Should only have one slot
-        assert len(time_priors) == 1
-        assert (0, 10) in time_priors
-        # Other slots should not be present
-        assert (0, 9) not in time_priors
-        assert (0, 11) not in time_priors
+        # The period spans two days, so all 48 covered slots are written.
+        assert len(time_priors) == 48
+        # 30 minutes of occupancy in a 60-minute slot.
+        assert time_priors[(0, 10)] == pytest.approx(0.5)
+        # Neighbouring slots were covered but empty: stored at the lower bound.
+        assert time_priors[(0, 9)] == TIME_PRIOR_MIN_BOUND
+        assert time_priors[(0, 11)] == TIME_PRIOR_MIN_BOUND
 
     def test_interval_at_slot_boundary(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
@@ -890,9 +897,10 @@ class TestPriorAnalyzerCalculateTimePriors:
             intervals, period_start, period_end
         )
 
-        # Should only be in slot 10 (not slot 11 since end is exclusive at 11:00)
-        assert (0, 10) in time_priors
-        assert (0, 11) not in time_priors
+        # Occupancy lands in slot 10 only — the end is exclusive at 11:00 — so
+        # slot 11 is written as covered-but-empty rather than omitted.
+        assert time_priors[(0, 10)] == TIME_PRIOR_MAX_BOUND
+        assert time_priors[(0, 11)] == TIME_PRIOR_MIN_BOUND
 
 
 class TestOrchestrationFunctions:

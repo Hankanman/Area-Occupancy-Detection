@@ -128,6 +128,7 @@ nav:
       - Data Flow: technical/data-flow.md
       - Global Prior Flow: technical/global-prior-flow.md
       - Time Prior Flow: technical/time-prior-flow.md
+      - Occupancy Forecast: technical/occupancy-forecast.md
       - Transition Learning: technical/transition-learning.md
       - Entity Evidence: technical/entity-evidence.md
       - Likelihood Calculation: technical/likelihood-calculation.md

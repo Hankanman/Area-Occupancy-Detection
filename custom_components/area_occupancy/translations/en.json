@@ -1104,6 +1104,16 @@
                     "description": "The Home Assistant area whose learned history should be purged."
                 }
             }
+        },
+        "get_time_priors": {
+            "name": "Get Time Priors",
+            "description": "Return the learned weekly occupancy-prior forecast for each area: for every weekly slot (day of week x time of day) the probability that the area tends to be occupied. Unlike the occupancy probability sensor (a current-state estimate), this exposes priors for future slots so other integrations can build a forward-looking occupancy profile, for example to pre-heat a room before its habitual occupancy. Returns response data only.",
+            "fields": {
+                "area_id": {
+                    "name": "Area",
+                    "description": "Optional Home Assistant area. When omitted, the forecast for all configured areas is returned."
+                }
+            }
         }
     },
     "issues": {
