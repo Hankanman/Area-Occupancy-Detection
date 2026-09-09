@@ -47,7 +47,7 @@
                 "menu_option_descriptions": {
                     "edit_basics": "Purpose: {purpose} · Adjacent: {adjacent}",
                     "edit_motion": "{motion_count} sensor(s) · weight {weight_motion} · timeout {motion_timeout}",
-                    "edit_sensors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count} · Media {media_count} · Appliances {appliance_count} · Environmental {environmental_count} · Power {power_count} · Wi-Fi {wifi_count}",
+                    "edit_sensors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count} · Media {media_count} · Appliances {appliance_count} · Environmental {environmental_count} · Power {power_count} · Wi-Fi {wifi_count} · Custom {custom_count}",
                     "edit_behavior": "Threshold {threshold}% · Decay {decay} · Wasp in Box {wasp}",
                     "edit_area": "Walk through all four pages in order",
                     "remove_area_confirm": "Delete this area and all of its entities",
@@ -227,6 +227,16 @@
                             "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
                             "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
+                    },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Any entity, with the states that mean 'active' for it and its own weight. Use this for entities the sections above cannot express: a sensor from a custom integration, an entity whose active state is the opposite of its type default, or a domain not listed above. Type a state that is not in the list to add it.",
+                        "data": {
+                            "custom_sensors": "Custom sensors"
+                        },
+                        "data_description": {
+                            "custom_sensors": "One row per entity. Every row needs at least one active state; type a state to add one that is not in the list. Weight controls how much the entity influences the result -- leave the slider at 0 to use the default. An entity already configured in another section cannot be added here."
+                        }
                     }
                 }
             },
@@ -373,6 +383,16 @@
                             "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
+                    },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Any entity, with the states that mean 'active' for it and its own weight. Use this for entities the sections above cannot express: a sensor from a custom integration, an entity whose active state is the opposite of its type default, or a domain not listed above. Type a state that is not in the list to add it.",
+                        "data": {
+                            "custom_sensors": "Custom sensors"
+                        },
+                        "data_description": {
+                            "custom_sensors": "One row per entity. Every row needs at least one active state; type a state to add one that is not in the list. Weight controls how much the entity influences the result -- leave the slider at 0 to use the default. An entity already configured in another section cannot be added here."
+                        }
                     }
                 }
             },
@@ -386,6 +406,7 @@
                     "edit_sensors_environmental": "Environmental Sensors",
                     "edit_sensors_power": "Power Sensors",
                     "edit_sensors_wifi_clients": "Wi-Fi Client Sensors",
+                    "edit_sensors_custom": "Custom Sensors",
                     "cancel_sensors_menu": "Back"
                 },
                 "menu_option_descriptions": {
@@ -395,6 +416,7 @@
                     "edit_sensors_environmental": "{environmental_count} configured",
                     "edit_sensors_power": "{power_count} configured",
                     "edit_sensors_wifi_clients": "{wifi_count} configured",
+                    "edit_sensors_custom": "{custom_count} configured",
                     "cancel_sensors_menu": "Return to the area menu"
                 }
             },
@@ -466,7 +488,11 @@
             "sleep_area_required": "A sleep area is required.",
             "confidence_not_number": "Confidence threshold must be a number.",
             "invalid_selection": "Invalid selection. Please try again.",
-            "unknown": "An unexpected error occurred."
+            "unknown": "An unexpected error occurred.",
+            "custom_sensor_entity_required": "Every custom sensor row needs an entity.",
+            "custom_sensor_states_required": "Every custom sensor row needs at least one active state.",
+            "custom_sensor_duplicate": "That entity is already configured for this area, either in another section or in another custom row.",
+            "custom_sensor_invalid": "The custom sensor rows could not be read. Remove them and add them again."
         }
     },
     "options": {
@@ -514,7 +540,7 @@
                 "menu_option_descriptions": {
                     "edit_basics": "Purpose: {purpose} · Adjacent: {adjacent}",
                     "edit_motion": "{motion_count} sensor(s) · weight {weight_motion} · timeout {motion_timeout}",
-                    "edit_sensors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count} · Media {media_count} · Appliances {appliance_count} · Environmental {environmental_count} · Power {power_count} · Wi-Fi {wifi_count}",
+                    "edit_sensors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count} · Media {media_count} · Appliances {appliance_count} · Environmental {environmental_count} · Power {power_count} · Wi-Fi {wifi_count} · Custom {custom_count}",
                     "edit_behavior": "Threshold {threshold}% · Decay {decay} · Wasp in Box {wasp}",
                     "edit_area": "Walk through all four pages in order",
                     "reset_learning_confirm": "Wipe learned priors and correlations for this area, keep its configuration",
@@ -695,6 +721,16 @@
                             "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override. When set to 0, the system automatically uses the half-life value appropriate for the selected area purpose.",
                             "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. The prior (baseline occupancy probability) will never drop below this value, useful for areas that should always have some baseline occupancy probability. Set to 0.0 to disable (default)."
                         }
+                    },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Any entity, with the states that mean 'active' for it and its own weight. Use this for entities the sections above cannot express: a sensor from a custom integration, an entity whose active state is the opposite of its type default, or a domain not listed above. Type a state that is not in the list to add it.",
+                        "data": {
+                            "custom_sensors": "Custom sensors"
+                        },
+                        "data_description": {
+                            "custom_sensors": "One row per entity. Every row needs at least one active state; type a state to add one that is not in the list. Weight controls how much the entity influences the result -- leave the slider at 0 to use the default. An entity already configured in another section cannot be added here."
+                        }
                     }
                 }
             },
@@ -841,6 +877,16 @@
                             "wifi_clients_sensors": "Numeric sensors reporting connected Wi-Fi client counts for an SSID/AP (e.g. UniFi Network's connected-clients sensors). The default active range treats any count of 1 or more as presence evidence, with no upper bound. The useful threshold varies a lot per network (a guest SSID might swing 0-1, an office SSID 5-45) -- tune per-area expectations by adjusting which sensors you include.",
                             "weight_wifi_clients": "The weight given to Wi-Fi client-count sensor inputs in the occupancy calculation."
                         }
+                    },
+                    "custom": {
+                        "name": "Custom Sensors",
+                        "description": "Any entity, with the states that mean 'active' for it and its own weight. Use this for entities the sections above cannot express: a sensor from a custom integration, an entity whose active state is the opposite of its type default, or a domain not listed above. Type a state that is not in the list to add it.",
+                        "data": {
+                            "custom_sensors": "Custom sensors"
+                        },
+                        "data_description": {
+                            "custom_sensors": "One row per entity. Every row needs at least one active state; type a state to add one that is not in the list. Weight controls how much the entity influences the result -- leave the slider at 0 to use the default. An entity already configured in another section cannot be added here."
+                        }
                     }
                 }
             },
@@ -854,6 +900,7 @@
                     "edit_sensors_environmental": "Environmental Sensors",
                     "edit_sensors_power": "Power Sensors",
                     "edit_sensors_wifi_clients": "Wi-Fi Client Sensors",
+                    "edit_sensors_custom": "Custom Sensors",
                     "cancel_sensors_menu": "Back"
                 },
                 "menu_option_descriptions": {
@@ -863,6 +910,7 @@
                     "edit_sensors_environmental": "{environmental_count} configured",
                     "edit_sensors_power": "{power_count} configured",
                     "edit_sensors_wifi_clients": "{wifi_count} configured",
+                    "edit_sensors_custom": "{custom_count} configured",
                     "cancel_sensors_menu": "Return to the area menu"
                 }
             },
@@ -1000,7 +1048,11 @@
             "sleep_area_required": "A sleep area is required.",
             "confidence_not_number": "Confidence threshold must be a number.",
             "invalid_selection": "Invalid selection. Please try again.",
-            "unknown": "An unexpected error occurred."
+            "unknown": "An unexpected error occurred.",
+            "custom_sensor_entity_required": "Every custom sensor row needs an entity.",
+            "custom_sensor_states_required": "Every custom sensor row needs at least one active state.",
+            "custom_sensor_duplicate": "That entity is already configured for this area, either in another section or in another custom row.",
+            "custom_sensor_invalid": "The custom sensor rows could not be read. Remove them and add them again."
         }
     },
     "entity": {

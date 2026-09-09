@@ -8,6 +8,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
+    CONF_CUSTOM_ACTIVE_STATES,
+    CONF_CUSTOM_ENTITY_ID,
+    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_WEIGHT,
     CONF_MOTION_PROB_GIVEN_FALSE,
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_THRESHOLD,
@@ -15,6 +19,8 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.config import CustomSensor
+from custom_components.area_occupancy.data.entity import EntityFactory
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.preview import (
     PREVIEW_COMPONENT,
@@ -281,3 +287,64 @@ class TestWsStartPreview:
                 hass, connection, self._msg("flow-3", decay_half_life={"minutes": "x"})
             )
         assert connection.errors and connection.errors[0][1] == "invalid_input"
+
+
+class TestCustomSensorPreview:
+    """Custom rows carry a per-entity weight, not a per-type one."""
+
+    def _add_custom_entity(self, coordinator: AreaOccupancyCoordinator) -> str:
+        area = _first_area(coordinator)
+        area.config.custom_sensors = [
+            CustomSensor(entity_id="sensor.pc", active_states=["in_use"], weight=0.3)
+        ]
+        factory = EntityFactory(coordinator, area_name=area.area_name)
+        area.entities.add_entity(
+            factory.create_from_config_spec("sensor.pc", InputType.CUSTOM.value)
+        )
+        return "sensor.pc"
+
+    def test_candidate_row_weight_is_applied(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        entity_id = self._add_custom_entity(coordinator)
+        area = _first_area(coordinator)
+
+        entities = build_preview_entities(
+            area,
+            {
+                CONF_CUSTOM_SENSORS: [
+                    {
+                        CONF_CUSTOM_ENTITY_ID: entity_id,
+                        CONF_CUSTOM_ACTIVE_STATES: ["in_use"],
+                        CONF_CUSTOM_WEIGHT: 0.9,
+                    }
+                ]
+            },
+        )
+
+        assert entities[entity_id].weight == 0.9
+
+    def test_row_without_a_weight_keeps_the_live_value(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        entity_id = self._add_custom_entity(coordinator)
+        area = _first_area(coordinator)
+
+        entities = build_preview_entities(
+            area,
+            {CONF_CUSTOM_SENSORS: [{CONF_CUSTOM_ENTITY_ID: entity_id}]},
+        )
+
+        assert entities[entity_id].weight == 0.3
+
+    def test_malformed_rows_are_ignored(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        entity_id = self._add_custom_entity(coordinator)
+        area = _first_area(coordinator)
+
+        entities = build_preview_entities(
+            area, {CONF_CUSTOM_SENSORS: ["not-a-row", {}, None]}
+        )
+
+        assert entities[entity_id].weight == 0.3

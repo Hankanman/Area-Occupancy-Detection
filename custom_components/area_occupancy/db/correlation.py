@@ -26,7 +26,12 @@ from ..const import (
     MIN_CORRELATION_SAMPLES,
     RETENTION_RAW_NUMERIC_SAMPLES_DAYS,
 )
-from ..data.entity_type import NUMERIC_INPUT_TYPES, CorrelationType, InputType
+from ..data.entity_type import (
+    BINARY_INPUT_TYPES,
+    NUMERIC_INPUT_TYPES,
+    CorrelationType,
+    InputType,
+)
 from ..time_utils import from_db_utc, to_db_utc, to_local, to_utc
 from ..utils import clamp_probability, map_binary_state_to_semantic
 from .utils import (
@@ -1648,14 +1653,11 @@ def get_correlatable_entities_by_area(
             'active_states': list[str] | None
         }
     """
-    # Binary sensors that should be analyzed (excluding MOTION)
-    binary_inputs = {
-        InputType.MEDIA,
-        InputType.APPLIANCE,
-        InputType.DOOR,
-        InputType.LOCK,
-        InputType.WINDOW,
-    }
+    # Binary sensors that should be analyzed. MOTION is deliberately absent
+    # from BINARY_INPUT_TYPES (it is ground truth, not a correlate), so this
+    # is exactly the analysable binary set -- shared rather than duplicated
+    # so a new binary channel is picked up here automatically.
+    binary_inputs = BINARY_INPUT_TYPES
 
     # Numeric sensors
     numeric_inputs = NUMERIC_INPUT_TYPES

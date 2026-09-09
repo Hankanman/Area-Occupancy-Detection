@@ -78,13 +78,27 @@ Configure how occupancy is detected and reported:
 
 This step also includes the [Wasp in Box](../features/wasp-in-box.md) configuration section for single-entry rooms.
 
+## Custom Sensors
+
+The typed sensor sections carry built-in meaning: a door counts as occupied when it is *closed*, a media player when it is playing or paused, and so on. When an entity does not fit any of them, add it under **Custom Sensors** instead of forcing it into a section that would apply the wrong semantics.
+
+A custom sensor is a row with three parts:
+
+- **Entity** – any entity, from any integration or domain. Nothing is filtered out.
+- **Active states** – the states that count as evidence of occupancy for this entity. Pick from the list or type a state your installation uses, such as `in_use` or `gaming`.
+- **Weight** – how much this entity influences the result, from 0 to 1. Leave the slider at 0 to use the default.
+
+Use it for a sensor from a custom integration or MQTT, an entity whose active state is the opposite of its type default, or a domain the sections above do not cover. Each row keeps its own states and weight, so two custom sensors in the same area can behave completely differently.
+
+An entity already configured in another section cannot also be a custom sensor; the form rejects the row rather than silently ignoring it. Custom sensors take part in the hourly correlation analysis like every other non-motion sensor, so their likelihoods are refined from your own history over time.
+
 ## Editing an Existing Area
 
 Open the integration's **Configure** dialog, choose **Manage Areas** and pick the area. The area menu lists each part of the configuration with a one-line summary of its current values:
 
 - **Basics** – purpose and adjacent areas
 - **Motion sensors** – sensors, weight, timeout and likelihoods
-- **Additional sensors** – opens a second menu with one entry per sensor group (doors/windows/locks/covers, media, appliances, environmental, power, Wi-Fi clients)
+- **Additional sensors** – opens a second menu with one entry per sensor group (doors/windows/locks/covers, media, appliances, environmental, power, Wi-Fi clients, custom)
 - **Detection behaviour** – threshold, decay, minimum prior and Wasp in Box
 
 Each entry opens just that page and saves when you press **Submit**, so changing one value no longer means stepping through the whole wizard. The motion, additional-sensor and behaviour pages show a **live preview** beside the form: the probability the area would read right now with the values you are editing, whether that crosses the threshold, and which sensors are currently contributing. It is a sensor-only estimate from current states and learned priors; activity and adjacency boosts, Wasp in Box and decay timing are not simulated, and the current live probability is listed for comparison. **Edit everything (wizard)** is still there if you want to walk all four pages in order.

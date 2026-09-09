@@ -61,6 +61,7 @@ class InputType(StrEnum):
     POWER = "power"
     SLEEP = "sleep"
     ENVIRONMENTAL = "environmental"
+    CUSTOM = "custom"
     WIFI_CLIENTS = "wifi_clients"
     UNKNOWN = "unknown"
 
@@ -205,6 +206,8 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     # not a weak indirect correlate — deliberately NOT in
     # ENVIRONMENTAL_INPUT_TYPES. See issue #515.
     InputType.WIFI_CLIENTS,
+    # User-declared signals are presence evidence, not ambient correlates.
+    InputType.CUSTOM,
 }
 
 BINARY_INPUT_TYPES: set[InputType] = {
@@ -213,6 +216,9 @@ BINARY_INPUT_TYPES: set[InputType] = {
     InputType.DOOR,
     InputType.LOCK,
     InputType.WINDOW,
+    # State-based like the rest of this set: likelihoods can be learned and
+    # no numeric active_range is ever derived for it.
+    InputType.CUSTOM,
 }
 
 ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {
@@ -413,6 +419,19 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         # SSID 5-45). Users should be selective about which sensors they
         # include per area rather than relying on the default range alone.
         "active_range": (1.0, float("inf")),
+        "strength_multiplier": 2.0,
+    },
+    InputType.CUSTOM: {
+        # A user-declared binary presence signal for entities the typed
+        # channels cannot express. Deliberately mirrors APPLIANCE -- the
+        # closest existing generic binary channel -- rather than inventing
+        # new likelihoods; correlation analysis refines them per home, and
+        # each row carries its own weight and active states from config.
+        "weight": 0.4,
+        "prob_given_true": 0.2,
+        "prob_given_false": 0.02,
+        "active_states": [STATE_ON],
+        "active_range": None,
         "strength_multiplier": 2.0,
     },
     InputType.ENVIRONMENTAL: {

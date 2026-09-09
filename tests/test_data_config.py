@@ -18,6 +18,10 @@ from custom_components.area_occupancy.const import (
     CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
+    CONF_CUSTOM_ACTIVE_STATES,
+    CONF_CUSTOM_ENTITY_ID,
+    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_WEIGHT,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_SENSORS,
     CONF_LOCK_ACTIVE_STATE,
@@ -60,6 +64,7 @@ from custom_components.area_occupancy.const import (
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_SLEEP_END,
     DEFAULT_SLEEP_START,
+    DEFAULT_WEIGHT_CUSTOM,
     DEFAULT_WEIGHT_LOCK,
     DEFAULT_WEIGHT_MEDIA,
     DEFAULT_WEIGHT_MOTION,
@@ -70,6 +75,7 @@ from custom_components.area_occupancy.data.config import (
     AreaConfig,
     IntegrationConfig,
     Sensors,
+    parse_custom_sensors,
 )
 from custom_components.area_occupancy.data.purpose import get_default_decay_half_life
 from homeassistant.core import HomeAssistant
@@ -1341,3 +1347,133 @@ class TestIntegrationConfigPeople:
         config = IntegrationConfig(coordinator, mock_realistic_config_entry)
 
         assert len(config.people) == 0
+
+
+class TestParseCustomSensors:
+    """Custom rows come from JSON storage, so parsing is defensive."""
+
+    def test_full_row(self) -> None:
+        rows = parse_custom_sensors(
+            [
+                {
+                    CONF_CUSTOM_ENTITY_ID: "sensor.pc",
+                    CONF_CUSTOM_ACTIVE_STATES: ["in_use", "gaming"],
+                    CONF_CUSTOM_WEIGHT: 0.75,
+                }
+            ]
+        )
+        assert len(rows) == 1
+        assert rows[0].entity_id == "sensor.pc"
+        assert rows[0].active_states == ["in_use", "gaming"]
+        assert rows[0].weight == 0.75
+
+    def test_zero_weight_becomes_the_default(self) -> None:
+        # The row editor's slider starts at 0 and cannot declare a default,
+        # so 0 must not save a sensor that can never contribute.
+        rows = parse_custom_sensors(
+            [
+                {
+                    CONF_CUSTOM_ENTITY_ID: "sensor.pc",
+                    CONF_CUSTOM_ACTIVE_STATES: ["on"],
+                    CONF_CUSTOM_WEIGHT: 0,
+                }
+            ]
+        )
+        assert rows[0].weight == DEFAULT_WEIGHT_CUSTOM
+
+    def test_missing_weight_uses_the_default(self) -> None:
+        rows = parse_custom_sensors(
+            [{CONF_CUSTOM_ENTITY_ID: "sensor.pc", CONF_CUSTOM_ACTIVE_STATES: ["on"]}]
+        )
+        assert rows[0].weight == DEFAULT_WEIGHT_CUSTOM
+
+    @pytest.mark.parametrize(
+        ("weight", "expected"),
+        [(2.0, 1.0), ("0.6", 0.6), ("nonsense", DEFAULT_WEIGHT_CUSTOM)],
+    )
+    def test_weight_coercion_and_clamping(
+        self, weight: object, expected: float
+    ) -> None:
+        rows = parse_custom_sensors(
+            [
+                {
+                    CONF_CUSTOM_ENTITY_ID: "sensor.pc",
+                    CONF_CUSTOM_ACTIVE_STATES: ["on"],
+                    CONF_CUSTOM_WEIGHT: weight,
+                }
+            ]
+        )
+        assert rows[0].weight == expected
+
+    def test_single_state_string_is_wrapped(self) -> None:
+        rows = parse_custom_sensors(
+            [{CONF_CUSTOM_ENTITY_ID: "sensor.pc", CONF_CUSTOM_ACTIVE_STATES: "on"}]
+        )
+        assert rows[0].active_states == ["on"]
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            None,
+            {},
+            "sensor.pc",
+            [["sensor.pc"]],
+            [{CONF_CUSTOM_ENTITY_ID: "", CONF_CUSTOM_ACTIVE_STATES: ["on"]}],
+            [{CONF_CUSTOM_ENTITY_ID: "sensor.pc", CONF_CUSTOM_ACTIVE_STATES: []}],
+        ],
+    )
+    def test_unusable_input_yields_no_rows(self, raw: object) -> None:
+        assert parse_custom_sensors(raw) == []
+
+    def test_duplicate_entity_keeps_the_first_row(self) -> None:
+        rows = parse_custom_sensors(
+            [
+                {CONF_CUSTOM_ENTITY_ID: "sensor.pc", CONF_CUSTOM_ACTIVE_STATES: ["a"]},
+                {CONF_CUSTOM_ENTITY_ID: "sensor.pc", CONF_CUSTOM_ACTIVE_STATES: ["b"]},
+            ]
+        )
+        assert [r.active_states for r in rows] == [["a"]]
+
+
+class TestAreaConfigCustomSensors:
+    """Custom rows reach AreaConfig and the area's tracked entity list."""
+
+    def test_rows_are_loaded_and_tracked(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        setup_area_registry: dict[str, str],
+    ) -> None:
+        area_id = setup_area_registry["Living Room"]
+        _setup_area_config(
+            coordinator,
+            area_id,
+            {
+                CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
+                CONF_CUSTOM_SENSORS: [
+                    {
+                        CONF_CUSTOM_ENTITY_ID: "sensor.pc",
+                        CONF_CUSTOM_ACTIVE_STATES: ["in_use"],
+                        CONF_CUSTOM_WEIGHT: 0.6,
+                    }
+                ],
+            },
+        )
+        config = AreaConfig(coordinator, area_name="Living Room")
+
+        assert [row.entity_id for row in config.custom_sensors] == ["sensor.pc"]
+        assert config.custom_sensors[0].weight == 0.6
+        assert "sensor.pc" in config.entity_ids
+
+    def test_absent_key_defaults_to_no_rows(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        setup_area_registry: dict[str, str],
+    ) -> None:
+        # Purely additive key: an entry saved before custom sensors existed
+        # loads with an empty list and no migration.
+        area_id = setup_area_registry["Living Room"]
+        _setup_area_config(
+            coordinator, area_id, {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
+        )
+        config = AreaConfig(coordinator, area_name="Living Room")
+        assert config.custom_sensors == []

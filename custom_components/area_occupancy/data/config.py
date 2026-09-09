@@ -26,6 +26,10 @@ from ..const import (
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_ACTIVE_STATES,
+    CONF_CUSTOM_ENTITY_ID,
+    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_WEIGHT,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -83,6 +87,7 @@ from ..const import (
     DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_COVER_ACTIVE_STATES,
+    DEFAULT_CUSTOM_SENSORS,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -106,6 +111,7 @@ from ..const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -281,6 +287,77 @@ class IntegrationConfig:
     def __repr__(self) -> str:
         """Return a string representation of the integration config."""
         return f"IntegrationConfig(name={self.integration_name!r})"
+
+
+@dataclass
+class CustomSensor:
+    """One user-declared sensor row.
+
+    Unlike the typed channels, a custom sensor carries its own active states
+    and weight rather than sharing a per-type setting, because the whole
+    point is that it does not fit a channel's semantics.
+    """
+
+    entity_id: str
+    active_states: list[str] = field(default_factory=list)
+    weight: float = DEFAULT_WEIGHT_CUSTOM
+
+
+def parse_custom_sensors(raw: Any) -> list[CustomSensor]:
+    """Build ``CustomSensor`` rows from stored config, skipping bad rows.
+
+    Config storage is JSON and can be hand-edited, so every field is coerced
+    defensively. A row without an entity id or without any active state is
+    dropped with a warning rather than raising: one malformed row must not
+    stop an area from loading.
+    """
+    if not isinstance(raw, list):
+        if raw:
+            _LOGGER.warning(
+                "custom_sensors has unexpected type %s, ignoring", type(raw).__name__
+            )
+        return []
+
+    rows: list[CustomSensor] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            _LOGGER.warning("Skipping invalid custom sensor row: %s", item)
+            continue
+        entity_id = str(item.get(CONF_CUSTOM_ENTITY_ID) or "").strip()
+        if not entity_id or entity_id in seen:
+            _LOGGER.warning(
+                "Skipping custom sensor row with missing or duplicate entity: %s", item
+            )
+            continue
+        raw_states = item.get(CONF_CUSTOM_ACTIVE_STATES) or []
+        if isinstance(raw_states, str):
+            raw_states = [raw_states]
+        active_states = [str(state) for state in raw_states if str(state).strip()]
+        if not active_states:
+            _LOGGER.warning(
+                "Skipping custom sensor %s: no active states configured", entity_id
+            )
+            continue
+        try:
+            weight = float(item.get(CONF_CUSTOM_WEIGHT, DEFAULT_WEIGHT_CUSTOM))
+        except (TypeError, ValueError):
+            weight = DEFAULT_WEIGHT_CUSTOM
+        # The row editor's weight slider starts at 0 with no way to declare a
+        # default, so an untouched row would otherwise save a sensor that can
+        # never contribute. 0 means "use the default"; to silence an entity,
+        # delete its row.
+        if weight <= 0:
+            weight = DEFAULT_WEIGHT_CUSTOM
+        # Same bounds the config-flow weight sliders enforce.
+        weight = max(0.0, min(1.0, weight))
+        seen.add(entity_id)
+        rows.append(
+            CustomSensor(
+                entity_id=entity_id, active_states=active_states, weight=weight
+            )
+        )
+    return rows
 
 
 @dataclass
@@ -624,6 +701,10 @@ class AreaConfig:
             data.get(CONF_EXCLUDE_FROM_ALL_AREAS, DEFAULT_EXCLUDE_FROM_ALL_AREAS)
         )
 
+        self.custom_sensors: list[CustomSensor] = parse_custom_sensors(
+            data.get(CONF_CUSTOM_SENSORS, DEFAULT_CUSTOM_SENSORS)
+        )
+
     @property
     def start_time(self) -> datetime:
         """Return the start time of the history period (always 10 days ago)."""
@@ -658,6 +739,7 @@ class AreaConfig:
             *self.sensors.pm10,
             *self.sensors.power,
             *self.sensors.wifi_clients,
+            *(row.entity_id for row in self.custom_sensors),
         ]
 
     def validate_entity_configuration(self) -> list[str]:

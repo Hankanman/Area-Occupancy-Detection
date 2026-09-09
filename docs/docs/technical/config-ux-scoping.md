@@ -17,9 +17,14 @@ Delivered on `feat/config-ux`:
   per-group sub-menu for additional sensors.
 - Phase 2: live preview on the motion, sensors and behaviour pages of the
   options flow.
+- Phase 3 (first half): custom sensors -- an additive `custom_sensors` list of
+  `{entity_id, active_states, weight}` rows edited with `ObjectSelector`,
+  closing #531 and the correctness half of #159. Per-entity overrides on the
+  typed channels (#458, the tuning half of #159) are deliberately not built:
+  #501 aims to make them unnecessary, and adding them now would create a
+  surface it would have to deprecate.
 
-Open: Phase 3 scope (custom sensors vs. per-entity overrides), the optional
-config-entities idea, and the Phase 4 subentry migration, which now has its
+Open: the optional config-entities idea, and the Phase 4 subentry migration, which now has its
 prerequisite in place. `hacs.json` still advertises a 2024.8.0 minimum; the
 true minimum has not been established.
 

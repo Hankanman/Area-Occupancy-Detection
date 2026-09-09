@@ -841,6 +841,21 @@ class EntityFactory:
             if states_attr is not None:
                 active_states = states_attr
 
+        # A custom row carries its own weight and active states rather than
+        # sharing a per-type setting, so it overrides both lookups above.
+        if input_type_enum == InputType.CUSTOM:
+            row = next(
+                (
+                    candidate
+                    for candidate in getattr(self.config, "custom_sensors", [])
+                    if candidate.entity_id == entity_id
+                ),
+                None,
+            )
+            if row is not None:
+                weight = row.weight
+                active_states = list(row.active_states)
+
         range_config_attr = f"{input_type_enum.value}_active_range"
         range_attr = getattr(self.config, range_config_attr, None)
         if range_attr is not None:
@@ -967,6 +982,13 @@ class EntityFactory:
         sleep_sensors = self.config.sensors.get_sleep_sensors(self.coordinator)
         for entity_id in sleep_sensors:
             specs[entity_id] = InputType.SLEEP.value
+
+        # Custom rows last: an entity already claimed by a typed channel keeps
+        # that channel's semantics, so a duplicate row cannot silently
+        # reclassify it. The config flow rejects duplicates up front; this is
+        # the backstop for hand-edited storage.
+        for row in getattr(self.config, "custom_sensors", []):
+            specs.setdefault(row.entity_id, InputType.CUSTOM.value)
 
         return specs
 

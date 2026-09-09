@@ -18,15 +18,24 @@ import voluptuous as vol
 
 from .const import (
     CONF_ADJACENT_AREAS,
+    CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_CO2_SENSORS,
+    CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_ACTIVE_STATES,
+    CONF_CUSTOM_ENTITY_ID,
+    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_WEIGHT,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
     CONF_LOCK_ACTIVE_STATE,
     CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -39,8 +48,15 @@ from .const import (
     CONF_PERSON_ENTITY,
     CONF_PERSON_SLEEP_AREA,
     CONF_PERSON_SLEEP_SENSORS,
+    CONF_PM10_SENSORS,
+    CONF_PM25_SENSORS,
+    CONF_POWER_SENSORS,
+    CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_SOUND_PRESSURE_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
+    CONF_VOC_SENSORS,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_DOOR,
@@ -51,6 +67,7 @@ from .const import (
     CONF_WEIGHT_POWER,
     CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WEIGHT_WINDOW,
+    CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
@@ -66,6 +83,7 @@ from .const import (
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -109,6 +127,31 @@ WEIGHT_KEYS: tuple[tuple[str, float], ...] = (
     (CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
     (CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
     (CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS),
+)
+
+# Every per-area key holding a flat list of entity ids. Used to check that a
+# custom row does not shadow an entity a typed channel already owns.
+TYPED_SENSOR_KEYS: tuple[str, ...] = (
+    CONF_MOTION_SENSORS,
+    CONF_MEDIA_DEVICES,
+    CONF_APPLIANCES,
+    CONF_DOOR_SENSORS,
+    CONF_LOCK_SENSORS,
+    CONF_WINDOW_SENSORS,
+    CONF_COVER_SENSORS,
+    CONF_POWER_SENSORS,
+    CONF_WIFI_CLIENTS_SENSORS,
+    CONF_ILLUMINANCE_SENSORS,
+    CONF_HUMIDITY_SENSORS,
+    CONF_TEMPERATURE_SENSORS,
+    CONF_CO2_SENSORS,
+    CONF_CO_SENSORS,
+    CONF_SOUND_PRESSURE_SENSORS,
+    CONF_PRESSURE_SENSORS,
+    CONF_AIR_QUALITY_SENSORS,
+    CONF_VOC_SENSORS,
+    CONF_PM25_SENSORS,
+    CONF_PM10_SENSORS,
 )
 
 # (entities key, active-state key, default active state, error key) for every
@@ -308,12 +351,69 @@ def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
             errors[key] = "invalid_weight"
             break
 
+    if error := validate_custom_sensors(data):
+        errors[CONF_CUSTOM_SENSORS] = error
+
     if data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED):
         half_life = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
         if error := validate_decay_half_life(half_life):
             errors[CONF_DECAY_HALF_LIFE] = error
 
     return errors
+
+
+def validate_custom_sensors(data: dict[str, Any]) -> str | None:
+    """Validate the custom-sensor rows of an area configuration.
+
+    Custom rows are the escape hatch for entities the typed channels cannot
+    express, so the only rules are the ones that would otherwise produce a
+    silently broken sensor: every row needs an entity and at least one active
+    state, its weight must be in range, and it must not shadow an entity a
+    typed channel already owns (which would otherwise be resolved in favour
+    of the typed channel and look like the row was ignored).
+
+    Returns:
+        ``None`` when valid, otherwise the ``strings.json`` error key.
+    """
+    rows = data.get(CONF_CUSTOM_SENSORS) or []
+    if not isinstance(rows, list):
+        return "custom_sensor_invalid"
+
+    typed_entities = {
+        entity_id
+        for key in TYPED_SENSOR_KEYS
+        for entity_id in (data.get(key) or [])
+        if entity_id
+    }
+
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return "custom_sensor_invalid"
+
+        entity_id = str(row.get(CONF_CUSTOM_ENTITY_ID) or "").strip()
+        if not entity_id:
+            return "custom_sensor_entity_required"
+
+        states = row.get(CONF_CUSTOM_ACTIVE_STATES) or []
+        if isinstance(states, str):
+            states = [states]
+        if not [state for state in states if str(state).strip()]:
+            return "custom_sensor_states_required"
+
+        weight = row.get(CONF_CUSTOM_WEIGHT, DEFAULT_WEIGHT_CUSTOM)
+        if (
+            not isinstance(weight, (int, float))
+            or isinstance(weight, bool)
+            or not WEIGHT_MIN <= weight <= WEIGHT_MAX
+        ):
+            return "invalid_weight"
+
+        if entity_id in seen or entity_id in typed_entities:
+            return "custom_sensor_duplicate"
+        seen.add(entity_id)
+
+    return None
 
 
 def validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:

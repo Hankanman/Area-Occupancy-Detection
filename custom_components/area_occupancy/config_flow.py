@@ -21,7 +21,19 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.const import Platform
+from homeassistant.const import (
+    STATE_CLOSED,
+    STATE_HOME,
+    STATE_IDLE,
+    STATE_NOT_HOME,
+    STATE_OFF,
+    STATE_ON,
+    STATE_OPEN,
+    STATE_PAUSED,
+    STATE_PLAYING,
+    STATE_STANDBY,
+    Platform,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import AbortFlow, section
 from homeassistant.exceptions import HomeAssistantError
@@ -37,6 +49,8 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    ObjectSelector,
+    ObjectSelectorConfig,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -76,6 +90,10 @@ from .const import (
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_ACTIVE_STATES,
+    CONF_CUSTOM_ENTITY_ID,
+    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_WEIGHT,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -157,6 +175,7 @@ from .const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -188,6 +207,7 @@ SENSOR_GROUPS: tuple[str, ...] = (
     "environmental",
     "power",
     "wifi_clients",
+    "custom",
 )
 
 # Menu options of the ``area_action`` hub that open one wizard page as a
@@ -198,6 +218,21 @@ AREA_EDIT_SPOKES: tuple[str, ...] = (
     "edit_sensors",
     "edit_behavior",
 )
+
+# Offered as suggestions in the custom-sensor state picker; the selector also
+# accepts a typed value, so this list only has to cover the common cases.
+COMMON_CUSTOM_ACTIVE_STATES: list[str] = [
+    STATE_ON,
+    STATE_OFF,
+    STATE_OPEN,
+    STATE_CLOSED,
+    STATE_HOME,
+    STATE_NOT_HOME,
+    STATE_PLAYING,
+    STATE_PAUSED,
+    STATE_IDLE,
+    STATE_STANDBY,
+]
 
 ENVIRONMENTAL_SENSOR_KEYS: tuple[str, ...] = (
     CONF_ILLUMINANCE_SENSORS,
@@ -893,6 +928,69 @@ def _create_power_section_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _create_custom_sensors_section_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Create schema for the custom-sensors section.
+
+    One editable row per entity, each with its own active states and weight.
+    The entity picker is deliberately unfiltered: the whole point of a custom
+    row is to accept entities the typed channels reject (#531), including
+    ones whose "active" state is the opposite of a channel default (#159).
+    ``custom_value`` on the state select lets a user type a state this
+    installation uses that no HA constant covers.
+    """
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_CUSTOM_SENSORS,
+                default=defaults.get(CONF_CUSTOM_SENSORS, []),
+            ): ObjectSelector(
+                ObjectSelectorConfig(
+                    multiple=True,
+                    label_field=CONF_CUSTOM_ENTITY_ID,
+                    description_field=CONF_CUSTOM_ACTIVE_STATES,
+                    fields={
+                        # Labels are inline rather than translation keys: the
+                        # object selector renders row fields from this dict and
+                        # shows the raw key when a label is missing. Core's
+                        # ObjectSelectorField schema accepts only selector,
+                        # required and label -- per-field descriptions are
+                        # rejected, so the guidance lives in the section's
+                        # data_description instead.
+                        CONF_CUSTOM_ENTITY_ID: {
+                            "label": "Entity",
+                            "required": True,
+                            "selector": {"entity": {}},
+                        },
+                        CONF_CUSTOM_ACTIVE_STATES: {
+                            "label": "Active states",
+                            "required": True,
+                            "selector": {
+                                "select": {
+                                    "options": COMMON_CUSTOM_ACTIVE_STATES,
+                                    "multiple": True,
+                                    "custom_value": True,
+                                    "mode": "dropdown",
+                                }
+                            },
+                        },
+                        CONF_CUSTOM_WEIGHT: {
+                            "label": f"Weight (0 = default {DEFAULT_WEIGHT_CUSTOM})",
+                            "selector": {
+                                "number": {
+                                    "min": WEIGHT_MIN,
+                                    "max": WEIGHT_MAX,
+                                    "step": WEIGHT_STEP,
+                                    "mode": "slider",
+                                }
+                            },
+                        },
+                    },
+                )
+            ),
+        }
+    )
+
+
 def _create_wifi_clients_section_schema(
     defaults: dict[str, Any], wifi_clients_entities: list[str]
 ) -> vol.Schema:
@@ -1124,6 +1222,7 @@ def _create_sensors_step_schema(
         "wifi_clients": lambda: _create_wifi_clients_section_schema(
             defaults, include_entities["wifi_clients"]
         ),
+        "custom": lambda: _create_custom_sensors_section_schema(defaults),
     }
     return {
         vol.Required(group): section(builders[group](), {"collapsed": collapsed})
@@ -1285,6 +1384,10 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
             wifi_clients[key] = flat_config[key]
     if wifi_clients:
         nested["wifi_clients"] = wifi_clients
+
+    # Custom sensors section (a single list-of-rows field)
+    if CONF_CUSTOM_SENSORS in flat_config:
+        nested["custom"] = {CONF_CUSTOM_SENSORS: flat_config[CONF_CUSTOM_SENSORS]}
 
     # Wasp in box section
     wasp: dict[str, Any] = {}
@@ -1462,6 +1565,7 @@ def _build_area_description_placeholders(
         "environmental_count": str(environmental_count),
         "power_count": _count(CONF_POWER_SENSORS),
         "wifi_count": _count(CONF_WIFI_CLIENTS_SENSORS),
+        "custom_count": _count(CONF_CUSTOM_SENSORS),
         "threshold": str(
             int(threshold) if float(threshold).is_integer() else threshold
         ),
@@ -1912,6 +2016,12 @@ class BaseOccupancyFlow:
     ) -> ConfigFlowResult:
         """Spoke: Wi-Fi client-count sensors."""
         return await self._start_sensor_group_edit("wifi_clients")
+
+    async def async_step_edit_sensors_custom(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Spoke: custom sensor rows."""
+        return await self._start_sensor_group_edit("custom")
 
     async def async_step_cancel_sensors_menu(
         self, user_input: dict[str, Any] | None = None

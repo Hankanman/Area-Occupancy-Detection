@@ -7,16 +7,22 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.config import CustomSensor
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
 )
-from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.entity_type import (
+    DEFAULT_TYPES,
+    EntityType,
+    InputType,
+)
 from custom_components.area_occupancy.data.types import GaussianParams
 from homeassistant.components.lock import LockState
 from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
@@ -2616,3 +2622,76 @@ class TestGaussianLikelihood:
         # Should use configured values, not Gaussian params or EntityType defaults
         assert p_t == 0.9
         assert p_f == 0.05
+
+
+class TestEntityFactoryCustomSensors:
+    """Custom rows become entities carrying their own weight and states."""
+
+    @staticmethod
+    def _row(coordinator, area_name, **kwargs):
+        area = coordinator.areas[area_name]
+        area.config.custom_sensors = [
+            CustomSensor(
+                entity_id=kwargs.get("entity_id", "sensor.pc"),
+                active_states=kwargs.get("active_states", ["in_use"]),
+                weight=kwargs.get("weight", 0.6),
+            )
+        ]
+        return area
+
+    def test_row_drives_weight_and_active_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        self._row(coordinator, area_name)
+        factory = EntityFactory(coordinator, area_name=area_name)
+
+        entity = factory.create_from_config_spec("sensor.pc", InputType.CUSTOM.value)
+
+        assert entity.type.input_type == InputType.CUSTOM
+        assert entity.weight == 0.6
+        assert entity.active_states == ["in_use"]
+        # Anything not in the row falls back to the type defaults.
+        assert (
+            entity.prob_given_true == DEFAULT_TYPES[InputType.CUSTOM]["prob_given_true"]
+        )
+
+    def test_rows_appear_in_the_type_mapping(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        self._row(coordinator, area_name)
+        factory = EntityFactory(coordinator, area_name=area_name)
+
+        mapping = factory.get_entity_type_mapping()
+
+        assert mapping["sensor.pc"] == InputType.CUSTOM.value
+
+    def test_a_typed_channel_keeps_an_entity_it_already_owns(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        # Hand-edited storage could name the same entity twice; the typed
+        # channel wins so its curated semantics are not silently replaced.
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.areas[area_name]
+        motion_id = area.config.sensors.motion[0]
+        self._row(coordinator, area_name, entity_id=motion_id)
+        factory = EntityFactory(coordinator, area_name=area_name)
+
+        mapping = factory.get_entity_type_mapping()
+
+        assert mapping[motion_id] == InputType.MOTION.value
+
+    def test_evidence_uses_the_row_states(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        self._row(coordinator, area_name, active_states=["gaming"])
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("sensor.pc", InputType.CUSTOM.value)
+
+        hass.states.async_set("sensor.pc", "gaming")
+        assert entity.evidence is True
+
+        hass.states.async_set("sensor.pc", "idle")
+        assert entity.evidence is False

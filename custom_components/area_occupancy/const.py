@@ -135,6 +135,20 @@ DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
 DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
 DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
 DEFAULT_COVER_ACTIVE_STATES: Final[list[str]] = [STATE_OPENING, STATE_CLOSING]
+
+# Custom sensors: a per-area list of rows, each naming any entity (no domain
+# restriction), the states that count as active for it, and its own weight.
+# This is the escape hatch for entities the typed channels cannot express --
+# an MQTT sensor with a bespoke state, a sensor whose "active" state is the
+# opposite of its channel default (#159), or a domain the channels don't
+# cover at all (#531). The typed channels keep their curated semantics.
+CONF_CUSTOM_SENSORS: Final = "custom_sensors"
+CONF_CUSTOM_ENTITY_ID: Final = "entity_id"
+CONF_CUSTOM_ACTIVE_STATES: Final = "active_states"
+CONF_CUSTOM_WEIGHT: Final = "weight"
+DEFAULT_CUSTOM_SENSORS: Final[list[dict[str, Any]]] = []
+# Per-row default; mirrors the appliance weight, the closest generic channel.
+DEFAULT_WEIGHT_CUSTOM: Final = 0.4
 DEFAULT_NAME: Final = "Area Occupancy"
 DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]

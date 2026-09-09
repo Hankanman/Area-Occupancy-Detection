@@ -44,6 +44,10 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_CUSTOM_ACTIVE_STATES,
+    CONF_CUSTOM_ENTITY_ID,
+    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_WEIGHT,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -2437,3 +2441,104 @@ class TestFlowPreview:
         result = await config_flow_flow.async_step_area_behavior()
 
         assert result.get("preview") is None
+
+
+class TestCustomSensorsSpoke:
+    """The custom-sensors group is its own spoke with its own validation."""
+
+    def _area_id(self, flow) -> str:
+        areas = flow._get_areas_from_config()
+        assert areas
+        return areas[0][CONF_AREA_ID]
+
+    def _row(self, entity_id="sensor.pc", states=("in_use",), weight=0.6) -> dict:
+        return {
+            CONF_CUSTOM_ENTITY_ID: entity_id,
+            CONF_CUSTOM_ACTIVE_STATES: list(states),
+            CONF_CUSTOM_WEIGHT: weight,
+        }
+
+    async def test_group_menu_lists_the_custom_spoke(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors()
+
+        assert "edit_sensors_custom" in result["menu_options"]
+        assert result["description_placeholders"]["custom_count"] == "0"
+
+    async def test_spoke_renders_only_the_custom_section(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors_custom()
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_sensors"
+        assert [marker.schema for marker in result["data_schema"].schema] == ["custom"]
+
+    async def test_saving_rows_persists_them(self, config_flow_options_flow) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {"custom": {CONF_CUSTOM_SENSORS: [self._row()]}}
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = result["data"][CONF_AREAS][0]
+        assert saved[CONF_CUSTOM_SENSORS] == [self._row()]
+        # An unrelated page is untouched by a single-group save.
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+    async def test_row_without_states_is_rejected(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {"custom": {CONF_CUSTOM_SENSORS: [self._row(states=())]}}
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {
+            CONF_CUSTOM_SENSORS: "custom_sensor_states_required"
+        }
+
+    async def test_row_shadowing_a_typed_sensor_is_rejected(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_SENSORS: [self._row(entity_id="binary_sensor.motion1")]
+                }
+            }
+        )
+
+        assert result["errors"] == {CONF_CUSTOM_SENSORS: "custom_sensor_duplicate"}
+
+    async def test_saved_rows_repopulate_the_form(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+        await flow.async_step_area_sensors(
+            {"custom": {CONF_CUSTOM_SENSORS: [self._row()]}}
+        )
+
+        nested = _nest_config_for_sections({CONF_CUSTOM_SENSORS: [self._row()]})
+
+        assert nested["custom"] == {CONF_CUSTOM_SENSORS: [self._row()]}
