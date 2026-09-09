@@ -94,6 +94,7 @@ from .const import (
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
     DURATION_FIELDS,
+    SUBENTRY_TYPE_AREA,
 )
 from .data.purpose import Purpose
 
@@ -488,6 +489,30 @@ def apply_purpose_based_decay_default(
 
 
 # ── Area list transforms ─────────────────────────────────────────────
+
+
+def iter_area_subentries(entry: Any) -> list[tuple[str, dict[str, Any]]]:
+    """Return ``(subentry_id, area_data)`` for every area subentry of an entry.
+
+    Since CONF_VERSION 19 an area lives in its own config subentry. This is
+    the single place that knows that, so callers iterate areas without
+    caring how they are stored.
+    """
+    return [
+        (subentry_id, dict(subentry.data))
+        for subentry_id, subentry in entry.subentries.items()
+        if subentry.subentry_type == SUBENTRY_TYPE_AREA
+    ]
+
+
+def find_area_subentry_id(entry: Any, area_id: str) -> str | None:
+    """Return the subentry id configured for ``area_id``, if any."""
+    for subentry_id, subentry in entry.subentries.items():
+        if subentry.subentry_type == SUBENTRY_TYPE_AREA and (
+            subentry.unique_id == area_id or subentry.data.get(CONF_AREA_ID) == area_id
+        ):
+            return subentry_id
+    return None
 
 
 def find_area_by_id(areas: list[dict[str, Any]], area_id: str) -> dict[str, Any] | None:

@@ -127,10 +127,12 @@ AreaOccupancyCoordinator (global singleton)
 
 ### Configuration Flow
 
-The integration uses Home Assistant's config flow with a **list-based multi-area architecture**:
-- Configuration stored in `config_entry.data[CONF_AREAS]` as a list of area configurations
-- Each area config contains: `area_id`, sensor lists, weights, thresholds, decay settings
-- Options flow allows adding/editing/removing areas
+The integration uses Home Assistant's config flow with a **subentry-per-area architecture** (`CONF_VERSION` 19 and later):
+- Each area is a config subentry of the single entry; `config_helpers.iter_area_subentries()` is the only place that knows this, so callers iterate areas without caring how they are stored
+- Each area's subentry data contains: `area_id`, sensor lists, weights, thresholds, decay settings
+- `AreaSubentryFlowHandler` provides the native add/reconfigure/delete on the integration page; the options flow keeps the same wizard for area management plus global settings and people
+- Per-area entities are registered with `config_subentry_id` so devices and entities group under their area
+- The pre-19 shape (`config_entry.data[CONF_AREAS]`, a list) only survives in `migrations.py`
 - Changes trigger `async_update_options()` which handles area lifecycle (create/update/delete)
 - Validation and list transforms that do not need `hass` live in `config_helpers.py` (`validate_area_config`, `validate_threshold`, `validate_decay_half_life`, `apply_symmetric_adjacency`, `update_area_in_list`, duration conversion, shared `THRESHOLD_*`/`WEIGHT_*` bounds). Every writer of area configuration (the flows, the threshold `number` entity, any future service or websocket API) must validate through it rather than re-implementing rules
 

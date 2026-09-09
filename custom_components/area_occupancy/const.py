@@ -31,7 +31,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.8.1"
-CONF_VERSION: Final = 18
+CONF_VERSION: Final = 19
 CONF_VERSION_MINOR: Final = 0
 # Version stamp of the SQLite schema, stored in the ``metadata`` table as
 # ``db_version``. Deliberately independent of ``CONF_VERSION`` (the config
@@ -44,7 +44,14 @@ DB_SCHEMA_VERSION: Final = 18
 HA_RECORDER_DAYS: Final = 10  # days
 
 # Multi-area architecture constants
-CONF_AREAS: Final = "areas"  # Key for storing list of area configurations
+# Subentry type for a configured area. Since CONF_VERSION 19 each area is a
+# config subentry of the single entry rather than an item in the CONF_AREAS
+# list, which gives the integration page a native per-area list with its own
+# reconfigure and delete. CONF_AREAS remains defined only so the v18 migration
+# can read the old shape.
+SUBENTRY_TYPE_AREA: Final = "area"
+
+CONF_AREAS: Final = "areas"  # Legacy (<= v18) key holding the list of areas
 ALL_AREAS_IDENTIFIER: Final = (
     "all_areas"  # Identifier for "All Areas" aggregation device
 )

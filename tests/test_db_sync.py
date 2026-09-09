@@ -27,7 +27,7 @@ from custom_components.area_occupancy.time_utils import to_db_utc
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
-from tests.conftest import create_test_area  # noqa: TID251
+from tests.conftest import create_test_area
 
 
 class TestStatesToIntervals:

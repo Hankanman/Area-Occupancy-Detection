@@ -31,10 +31,10 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
+from .config_helpers import iter_area_subentries
 from .const import (
     ACCURACY_TICK_BUFFER_MAXLEN,
     CONF_AREA_ID,
-    CONF_AREAS,
     DEFAULT_NAME,
     DOMAIN,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
@@ -231,12 +231,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         area_reg = ar.async_get(self.hass)
 
-        # Merge data and options to find CONF_AREAS.
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-        areas_list = merged.get(CONF_AREAS, [])
-
-        for area_data in areas_list:
+        for subentry_id, area_data in iter_area_subentries(self.config_entry):
             area_id = area_data.get(CONF_AREA_ID)
 
             if not area_id:
@@ -267,6 +262,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 coordinator=self,
                 area_name=area_name,
                 area_data=area_data,
+                subentry_id=subentry_id,
             )
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
@@ -1059,34 +1055,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name or "unknown",
             )
 
-        # Remove orphaned areas from config entry to prevent repeated warnings
+        # Drop subentries for areas whose HA area was deleted, so the warning
+        # does not repeat on every reload.
         orphaned_set = set(orphaned_area_ids)
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-        areas_list = merged.get(CONF_AREAS, [])
-        updated_areas = [
-            a for a in areas_list if a.get(CONF_AREA_ID) not in orphaned_set
+        orphaned_subentry_ids = [
+            subentry_id
+            for subentry_id, area_data in iter_area_subentries(self.config_entry)
+            if area_data.get(CONF_AREA_ID) in orphaned_set
         ]
 
-        if len(updated_areas) != len(areas_list):
+        if orphaned_subentry_ids:
             try:
-                if CONF_AREAS in self.config_entry.options:
-                    new_options = dict(self.config_entry.options)
-                    new_options[CONF_AREAS] = updated_areas
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry,
-                        options=new_options,
-                    )
-                else:
-                    new_data = dict(self.config_entry.data)
-                    new_data[CONF_AREAS] = updated_areas
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry,
-                        data=new_data,
+                for subentry_id in orphaned_subentry_ids:
+                    self.hass.config_entries.async_remove_subentry(
+                        self.config_entry, subentry_id
                     )
                 _LOGGER.info(
                     "Removed %d orphaned area(s) from configuration",
-                    len(areas_list) - len(updated_areas),
+                    len(orphaned_subentry_ids),
                 )
             except (ValueError, KeyError, AttributeError) as err:
                 _LOGGER.error(

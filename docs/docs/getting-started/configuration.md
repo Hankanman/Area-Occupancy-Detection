@@ -92,9 +92,21 @@ Use it for a sensor from a custom integration or MQTT, an entity whose active st
 
 An entity already configured in another section cannot also be a custom sensor; the form rejects the row rather than silently ignoring it. Custom sensors take part in the hourly correlation analysis like every other non-motion sensor, so their likelihoods are refined from your own history over time.
 
+## Where Areas Live
+
+Each area is a **config subentry** of the single Area Occupancy Detection entry. On the integration page every area appears as its own group with its device and entities beneath it, plus:
+
+- **Add an area** at the top of the page, which opens the same four-step wizard
+- a **gear icon** on each area, which opens that area's edit menu
+- **Delete** in each area's overflow menu, which removes the area and its entities
+
+Upgrading from an earlier version moves your existing areas into subentries automatically. Names, entities, devices and all learned history are preserved; nothing needs to be reconfigured.
+
+The **Configure** dialog still exists for settings that are not per-area: global settings, people, and resetting an area's learned history.
+
 ## Editing an Existing Area
 
-Open the integration's **Configure** dialog, choose **Manage Areas** and pick the area. The area menu lists each part of the configuration with a one-line summary of its current values:
+Click the gear icon on the area you want to change (or open **Configure** and choose **Manage Areas**). The area menu lists each part of the configuration with a one-line summary of its current values:
 
 - **Basics** – purpose and adjacent areas
 - **Motion sensors** – sensors, weight, timeout and likelihoods

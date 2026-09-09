@@ -35,7 +35,7 @@ from custom_components.area_occupancy.db.maintenance import (
     verify_all_tables_exist,
 )
 from homeassistant.util import dt as dt_util
-from tests.conftest import setup_test_db_engine  # noqa: TID251
+from tests.conftest import setup_test_db_engine
 
 
 class TestEnsureDbExists:

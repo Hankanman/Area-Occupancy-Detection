@@ -18,7 +18,7 @@ from homeassistant.exceptions import ServiceValidationError
 from tests.conftest import create_test_area
 
 
-# ruff: noqa: SLF001, TID251
+# ruff: noqa: SLF001
 @pytest.fixture
 def threshold_entity(coordinator: AreaOccupancyCoordinator) -> Threshold:
     """Create a Threshold entity for testing."""

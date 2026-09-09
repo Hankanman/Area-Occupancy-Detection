@@ -15,7 +15,6 @@ from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_CUSTOM_ACTIVE_STATES,
@@ -81,6 +80,7 @@ from custom_components.area_occupancy.data.purpose import get_default_decay_half
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from tests.conftest import make_area_subentries
 
 # ruff: noqa: SLF001
 
@@ -98,8 +98,9 @@ def _setup_area_config(
         area_config: Dictionary of area configuration values
     """
     area_data = {CONF_AREA_ID: area_id, **area_config}
-    coordinator.config_entry.data = {CONF_AREAS: [area_data]}
+    coordinator.config_entry.data = {}
     coordinator.config_entry.options = {}
+    coordinator.config_entry.subentries = make_area_subentries([area_data])
     coordinator._load_areas_from_config()
 
 
@@ -355,15 +356,11 @@ class TestAreaConfigInitialization:
     ) -> None:
         """Test AreaConfig requires area_name when using multi-area configuration."""
         # Set up multi-area config format
-        coordinator.config_entry.data = {
-            CONF_AREAS: [
-                {
-                    CONF_AREA_ID: "test_area_id",
-                    CONF_THRESHOLD: 50,
-                }
-            ]
-        }
+        coordinator.config_entry.data = {}
         coordinator.config_entry.options = {}
+        coordinator.config_entry.subentries = make_area_subentries(
+            [{CONF_AREA_ID: "test_area_id", CONF_THRESHOLD: 50}]
+        )
 
         with pytest.raises(
             ValueError,
@@ -859,37 +856,32 @@ class TestAreaConfigUpdate:
         coordinator: AreaOccupancyCoordinator,
         setup_area_registry: dict[str, str],
     ) -> None:
-        """Test update_config successfully updates CONF_AREAS and reloads config."""
+        """update_config writes the area's subentry and reloads its config."""
         area_name = coordinator.get_area_names()[0]
         area_id = setup_area_registry.get(area_name, "test_area")
 
-        # Set up area config in CONF_AREAS.
         _setup_area_config(coordinator, area_id, {CONF_THRESHOLD: 50})
 
         config = AreaConfig(coordinator, area_name=area_name)
         assert config.area_id == area_id
+        assert config.subentry_id is not None
 
-        # Mock async_update_entry and internal reload to verify behavior.
         with (
             patch.object(
-                coordinator.hass.config_entries, "async_update_entry"
-            ) as mock_update_entry,
+                coordinator.hass.config_entries, "async_update_subentry"
+            ) as mock_update_subentry,
             patch.object(config, "_load_config") as mock_load_config,
             patch.object(coordinator, "_setup_complete", True),
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
-            # Verify async_update_entry was called.
-            mock_update_entry.assert_called_once()
-            call_args = mock_update_entry.call_args
+            mock_update_subentry.assert_called_once()
+            call_args = mock_update_subentry.call_args
             assert call_args is not None
-            # The data kwarg should contain CONF_AREAS with updated threshold.
             updated_data = call_args[1]["data"]
-            areas_list = updated_data[CONF_AREAS]
-            area_data = next(a for a in areas_list if a[CONF_AREA_ID] == area_id)
-            assert area_data[CONF_THRESHOLD] == 70
+            assert updated_data[CONF_AREA_ID] == area_id
+            assert updated_data[CONF_THRESHOLD] == 70
 
-            # Verify config was reloaded after update.
             mock_load_config.assert_called_once()
 
     async def test_update_config_with_exception_raises_homeassistant_error(
@@ -906,9 +898,9 @@ class TestAreaConfigUpdate:
         config = AreaConfig(coordinator, area_name=area_name)
 
         with patch.object(
-            coordinator.hass.config_entries, "async_update_entry"
-        ) as mock_update_entry:
-            mock_update_entry.side_effect = ValueError("Update failed")
+            coordinator.hass.config_entries, "async_update_subentry"
+        ) as mock_update_subentry:
+            mock_update_subentry.side_effect = ValueError("Update failed")
 
             with pytest.raises(
                 HomeAssistantError, match="Failed to update configuration"
@@ -933,32 +925,33 @@ class TestAreaConfigUpdate:
     async def test_update_config_with_area_not_found_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises HomeAssistantError when area not found in CONF_AREAS."""
+        """update_config fails when the area has no subentry of its own."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Set up CONF_AREAS with a different area_id so it won't match.
-        coordinator.config_entry.data = {
-            CONF_AREAS: [{CONF_AREA_ID: "different_area_id", CONF_THRESHOLD: 50}]
-        }
+        # Only some other area has a subentry, so this one cannot be written.
+        coordinator.config_entry.subentries = make_area_subentries(
+            [{CONF_AREA_ID: "different_area_id", CONF_THRESHOLD: 50}]
+        )
+        config.subentry_id = None
 
         with pytest.raises(
-            HomeAssistantError, match=".*Area ID.*not found in CONF_AREAS.*"
+            HomeAssistantError, match=".*Area ID.*has no config subentry.*"
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
     async def test_update_config_with_no_areas_raises_error(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test update_config raises HomeAssistantError when no areas exist."""
+        """update_config fails when the entry has no area subentries at all."""
         area_name = coordinator.get_area_names()[0]
         config = AreaConfig(coordinator, area_name=area_name)
 
-        # Empty CONF_AREAS.
-        coordinator.config_entry.data = {CONF_AREAS: []}
+        coordinator.config_entry.subentries = {}
+        config.subentry_id = None
 
         with pytest.raises(
-            HomeAssistantError, match=".*Area ID.*not found in CONF_AREAS.*"
+            HomeAssistantError, match=".*Area ID.*has no config subentry.*"
         ):
             await config.update_config({CONF_THRESHOLD: 70})
 
@@ -976,8 +969,9 @@ class TestAreaConfigUpdate:
 
         # Create a mock config entry with CONF_AREAS.
         new_config_entry = Mock()
-        new_config_entry.data = {
-            CONF_AREAS: [
+        new_config_entry.data = {}
+        new_config_entry.subentries = make_area_subentries(
+            [
                 {
                     CONF_AREA_ID: testing_area_id,
                     CONF_THRESHOLD: 80,
@@ -990,7 +984,7 @@ class TestAreaConfigUpdate:
                     CONF_WASP_WEIGHT: 0.8,
                 }
             ]
-        }
+        )
         new_config_entry.options = {}
 
         config.update_from_entry(new_config_entry)
@@ -1011,14 +1005,15 @@ class TestAreaConfigUpdate:
 
         # Create a mock config entry with CONF_AREAS for a different area.
         new_config_entry = Mock()
-        new_config_entry.data = {
-            CONF_AREAS: [
+        new_config_entry.data = {}
+        new_config_entry.subentries = make_area_subentries(
+            [
                 {
                     CONF_AREA_ID: "nonexistent_area_id",
                     CONF_THRESHOLD: 80,
                 }
             ]
-        }
+        )
         new_config_entry.options = {}
 
         # Should not raise, but load default config
@@ -1027,81 +1022,62 @@ class TestAreaConfigUpdate:
         assert config.config_entry == new_config_entry
 
 
-class TestAreaConfigExtractAreaData:
-    """Test AreaConfig._extract_area_data_from_areas_list static method."""
+class TestAreaConfigFindAreaSubentry:
+    """AreaConfig._find_area_subentry resolves an area name to its subentry."""
 
-    def test_extract_area_data_finds_area_by_name(
-        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    def _config(self, coordinator: AreaOccupancyCoordinator) -> AreaConfig:
+        """An AreaConfig instance to call the lookup on."""
+        return AreaConfig(coordinator, area_name=coordinator.get_area_names()[0])
+
+    def test_finds_the_subentry_for_an_area_name(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        setup_area_registry: dict[str, str],
     ) -> None:
-        """Test _extract_area_data_from_areas_list finds area by matching area name."""
-        testing_area_id = setup_area_registry.get("Testing", "testing")
-
-        areas_list = [
-            {
-                CONF_AREA_ID: testing_area_id,
-                CONF_THRESHOLD: 50,
-            }
-        ]
-
-        result = AreaConfig._extract_area_data_from_areas_list(
-            areas_list, "Testing", hass
+        testing_area_id = setup_area_registry["Testing"]
+        entry = Mock()
+        entry.subentries = make_area_subentries(
+            [{CONF_AREA_ID: testing_area_id, CONF_THRESHOLD: 50}]
         )
 
-        assert result is not None
-        assert result[CONF_AREA_ID] == testing_area_id
-        assert result[CONF_THRESHOLD] == 50
+        found = self._config(coordinator)._find_area_subentry(entry, "Testing")
 
-    def test_extract_area_data_with_none_area_name_returns_none(
-        self, hass: HomeAssistant
+        assert found is not None
+        subentry_id, area_data = found
+        assert subentry_id in entry.subentries
+        assert area_data[CONF_AREA_ID] == testing_area_id
+        assert area_data[CONF_THRESHOLD] == 50
+
+    def test_no_area_name_returns_none(
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test _extract_area_data_from_areas_list returns None when area_name is None."""
-        areas_list = [
-            {
-                CONF_AREA_ID: "test_area_id",
-                CONF_THRESHOLD: 50,
-            }
-        ]
+        entry = Mock()
+        entry.subentries = make_area_subentries([{CONF_AREA_ID: "test_area_id"}])
 
-        result = AreaConfig._extract_area_data_from_areas_list(areas_list, None, hass)
+        assert self._config(coordinator)._find_area_subentry(entry, None) is None
 
-        assert result is None
-
-    def test_extract_area_data_with_area_not_found_returns_none(
-        self, hass: HomeAssistant
+    def test_unknown_area_name_returns_none(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        setup_area_registry: dict[str, str],
     ) -> None:
-        """Test _extract_area_data_from_areas_list returns None when area not found."""
-        areas_list = [
-            {
-                CONF_AREA_ID: "test_area_id",
-                CONF_THRESHOLD: 50,
-            }
-        ]
-
-        result = AreaConfig._extract_area_data_from_areas_list(
-            areas_list, "Nonexistent Area", hass
+        entry = Mock()
+        entry.subentries = make_area_subentries(
+            [{CONF_AREA_ID: setup_area_registry["Testing"]}]
         )
 
-        assert result is None
+        found = self._config(coordinator)._find_area_subentry(entry, "Nonexistent Area")
 
-    def test_extract_area_data_with_invalid_area_id_handles_gracefully(
-        self, hass: HomeAssistant
+        assert found is None
+
+    def test_area_id_missing_from_the_registry_is_skipped(
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test _extract_area_data_from_areas_list handles invalid area_id gracefully."""
-        areas_list = [
-            {
-                CONF_AREA_ID: "invalid_area_id",
-                CONF_THRESHOLD: 50,
-            }
-        ]
+        # A deleted HA area leaves a subentry that resolves to no name.
+        entry = Mock()
+        entry.subentries = make_area_subentries([{CONF_AREA_ID: "invalid_area_id"}])
 
-        # Should not raise, but return None when area not found
-        result = AreaConfig._extract_area_data_from_areas_list(
-            areas_list, "Testing", hass
-        )
-
-        # Result depends on whether invalid_area_id exists in registry
-        # If not found, should return None
-        assert result is None or result[CONF_AREA_ID] == "invalid_area_id"
+        assert self._config(coordinator)._find_area_subentry(entry, "Testing") is None
 
 
 class TestAreaConfigMergeEntry:

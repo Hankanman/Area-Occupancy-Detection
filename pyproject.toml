@@ -305,7 +305,9 @@ split-on-trailing-comma = false
 [tool.ruff.lint.per-file-ignores]
 # Allow relative imports within custom components
 "custom_components/*/*/*" = ["TID252"]
-"tests/**" = ["PTH", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+# TID251: the shared fixtures live in tests/conftest.py, so test modules
+# importing helpers from it is the intended structure, not a layering breach.
+"tests/**" = ["PTH", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "TID251"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 25

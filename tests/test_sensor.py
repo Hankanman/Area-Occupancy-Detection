@@ -19,7 +19,7 @@ from custom_components.area_occupancy.utils import generate_entity_unique_id
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 
-# ruff: noqa: SLF001, PLC0415, TID251
+# ruff: noqa: SLF001, PLC0415
 
 # Entities name via translation_key + strings.json, so entity.name does not
 # resolve to the literal in a bare unit test. Assert the translation_key

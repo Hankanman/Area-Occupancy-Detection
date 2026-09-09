@@ -24,9 +24,14 @@ Delivered on `feat/config-ux`:
   #501 aims to make them unnecessary, and adding them now would create a
   surface it would have to deprecate.
 
-Open: the optional config-entities idea, and the Phase 4 subentry migration, which now has its
-prerequisite in place. `hacs.json` still advertises a 2024.8.0 minimum; the
-true minimum has not been established.
+- Phase 4: areas are config subentries. The integration page lists them
+  natively with add, reconfigure and delete; the v18 migration moves each
+  area across and re-links its device and entities, and the DB decoupling
+  above means the `CONF_VERSION` bump costs no learned history.
+
+Open: the optional config-entities idea (tunables as per-area config
+entities on the device page). `hacs.json` still advertises a 2024.8.0
+minimum; the true minimum has not been established.
 
 ## Summary and recommendation
 

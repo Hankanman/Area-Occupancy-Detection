@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from types import MappingProxyType
 from typing import Any, cast
 
 import voluptuous as vol
@@ -19,7 +20,11 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentry,
+    ConfigSubentryData,
+    ConfigSubentryFlow,
     OptionsFlow,
+    SubentryFlowResult,
 )
 from homeassistant.const import (
     STATE_CLOSED,
@@ -68,7 +73,9 @@ from .config_helpers import (
     WEIGHT_STEP,
     apply_purpose_based_decay_default,
     find_area_by_id,
+    find_area_subentry_id,
     flatten_sectioned_input,
+    iter_area_subentries,
     normalize_adjacent_areas,
     remove_area_from_list,
     seconds_to_duration,
@@ -85,7 +92,6 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -189,6 +195,7 @@ from .const import (
     DURATION_FIELDS,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
+    SUBENTRY_TYPE_AREA,
     get_default_state,
     get_state_options,
 )
@@ -1875,6 +1882,70 @@ class BaseOccupancyFlow:
                 area_name = _resolve_area_id_to_name(self.hass, area_id)
         return {"area_name": area_name}
 
+    # ── Persisting an area ───────────────────────────────────────────
+
+    def _persist_area_subentry(
+        self,
+        entry: ConfigEntry,
+        config: dict[str, Any],
+        area_id_being_edited: str | None,
+        *,
+        create_missing: bool = True,
+    ) -> None:
+        """Create or update the area's subentry and mirror adjacency.
+
+        Adjacency is mutual but edited per area, so saving one area rewrites
+        its neighbours' rows too. The mirror runs over the flat list of every
+        area's data -- the same pure transform the list format used -- and
+        each changed row is written back to its own subentry.
+        """
+        areas = [data for _, data in iter_area_subentries(entry)]
+        updated = update_area_in_list(areas, config, area_id_being_edited)
+
+        by_area_id = {
+            data.get(CONF_AREA_ID): data for data in updated if data.get(CONF_AREA_ID)
+        }
+        target_area_id = config.get(CONF_AREA_ID)
+
+        for subentry_id, existing in iter_area_subentries(entry):
+            area_id = existing.get(CONF_AREA_ID)
+            new_data = by_area_id.get(area_id)
+            if new_data is None or new_data == existing:
+                continue
+            subentry = entry.subentries[subentry_id]
+            self.hass.config_entries.async_update_subentry(
+                entry, subentry, data=new_data
+            )
+
+        if (
+            create_missing
+            and target_area_id
+            and find_area_subentry_id(entry, target_area_id) is None
+        ):
+            self.hass.config_entries.async_add_subentry(
+                entry,
+                ConfigSubentry(
+                    data=MappingProxyType(by_area_id[target_area_id]),
+                    subentry_type=SUBENTRY_TYPE_AREA,
+                    title=self._area_title(target_area_id),
+                    unique_id=str(target_area_id),
+                ),
+            )
+
+    def _area_title(self, area_id: str) -> str:
+        """Human-readable subentry title for an area id."""
+        if self.hass:
+            with contextlib.suppress(ValueError):
+                return _resolve_area_id_to_name(self.hass, area_id)
+        return str(area_id)
+
+    def _reset_wizard_state(self) -> None:
+        """Clear the per-edit wizard state after a save."""
+        self._area_being_edited = None
+        self._area_config_draft = {}
+        self._area_edit_section = None
+        self._sensor_group_being_edited = None
+
     # ── Live preview (options flow only) ─────────────────────────────
 
     def _preview_component(self) -> str | None:
@@ -2311,6 +2382,128 @@ class BaseOccupancyFlow:
         )
 
 
+class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
+    """Add or reconfigure one area as a config subentry.
+
+    This is the native path: Home Assistant renders every area on the
+    integration page with its own "Add", "Reconfigure" and "Delete", so the
+    integration no longer hand-rolls an area list. The wizard and the
+    hub-and-spoke edit steps are the same ones the options flow uses -- only
+    where the result is written differs.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the subentry flow."""
+        super().__init__()
+        self._area_being_edited: str | None = None
+        self._area_to_remove: str | None = None
+        self._area_config_draft: dict[str, Any] = {}
+        self._area_edit_section: str | None = None
+        self._sensor_group_being_edited: str | None = None
+
+    def _get_wizard_areas(self) -> list[dict[str, Any]]:
+        """Every configured area, for duplicate and adjacency checks."""
+        return [data for _, data in iter_area_subentries(self._get_entry())]
+
+    async def _on_area_config_complete(
+        self, config: dict[str, Any]
+    ) -> SubentryFlowResult:
+        """Write the area, mirroring adjacency onto its neighbours."""
+        entry = self._get_entry()
+        editing = self._area_being_edited
+        # Neighbours are written here; this area's own row is written by the
+        # create/update call below, which is what ends the flow.
+        self._persist_area_subentry(entry, config, editing, create_missing=False)
+        area_id = str(config.get(CONF_AREA_ID) or "")
+        title = self._area_title(area_id)
+        self._reset_wizard_state()
+
+        if editing:
+            return self.async_update_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                data=config,
+                title=title,
+            )
+        return self.async_create_entry(title=title, data=config, unique_id=area_id)
+
+    def _preview_component(self) -> str | None:
+        """Show the live estimate on this flow's forms too.
+
+        Reconfiguring an existing area is the main edit path now, so it gets
+        the same preview the options flow has. A brand-new area has nothing
+        loaded to preview, and the handler reports that itself.
+        """
+        return preview.PREVIEW_COMPONENT
+
+    def _publish_preview_context(self) -> None:
+        """Hand the draft to the preview handler under this flow's id."""
+        flow_id = getattr(self, "flow_id", None)
+        if not flow_id or not self.hass:
+            return
+        preview.register_preview_context(
+            self.hass,
+            flow_id,
+            self._get_entry().entry_id,
+            self._area_config_draft.get(CONF_AREA_ID) or self._area_being_edited,
+            self._area_config_draft,
+        )
+
+    @callback
+    def async_remove(self) -> None:
+        """Drop the preview context when the flow ends."""
+        flow_id = getattr(self, "flow_id", None)
+        if flow_id and self.hass:
+            preview.unregister_preview_context(self.hass, flow_id)
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Add an area: the full linear wizard."""
+        self._area_being_edited = None
+        self._init_area_wizard()
+        return await self.async_step_area_basics()
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Reconfigure an area: the hub menu of per-page spokes."""
+        return await self.async_step_area_action()
+
+    async def async_step_area_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """The hub menu itself.
+
+        A menu's ``step_id`` must have a matching step handler, because the
+        flow manager re-enters it when the user picks an option, so this is a
+        real step rather than something ``async_step_reconfigure`` renders
+        inline.
+        """
+        subentry = self._get_reconfigure_subentry()
+        area_data = dict(subentry.data)
+        area_id = area_data.get(CONF_AREA_ID)
+        if not area_id:
+            return self.async_abort(reason="area_required")
+
+        self._area_being_edited = str(area_id)
+        return self.async_show_menu(
+            step_id="area_action",
+            menu_options=[*AREA_EDIT_SPOKES, "edit_area"],
+            description_placeholders=_build_area_description_placeholders(
+                area_data, str(area_id), self.hass
+            ),
+        )
+
+    async def async_step_edit_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Walk every wizard page in order."""
+        self._prepare_area_action_edit()
+        self._init_area_wizard()
+        return await self.async_step_area_basics()
+
+
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     """Handle a config flow for Area Occupancy Detection.
 
@@ -2350,6 +2543,14 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         self._area_edit_section = None
         self._sensor_group_being_edited = None
         return await self.async_step_user()
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Areas are configured as subentries of the single entry."""
+        return {SUBENTRY_TYPE_AREA: AreaSubentryFlowHandler}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -2461,11 +2662,20 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
                     ) from err
                 raise
 
-            # Store areas in CONF_AREAS list
-            config_data: dict[str, Any] = {CONF_AREAS: self._areas}
+            # Each area becomes a config subentry so the integration page
+            # lists them natively with their own reconfigure and delete.
             return self.async_create_entry(
                 title="Area Occupancy Detection",
-                data=config_data,
+                data={},
+                subentries=[
+                    ConfigSubentryData(
+                        data=area,
+                        subentry_type=SUBENTRY_TYPE_AREA,
+                        title=self._area_title(area.get(CONF_AREA_ID, "")),
+                        unique_id=str(area.get(CONF_AREA_ID)),
+                    )
+                    for area in self._areas
+                ],
             )
         except AbortFlow:
             raise
@@ -2626,27 +2836,8 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             preview.unregister_preview_context(self.hass, flow_id)
 
     def _get_areas_from_config(self) -> list[dict[str, Any]]:
-        """Get areas list from merged config entry data+options."""
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-        areas = merged.get(CONF_AREAS, [])
-        if not isinstance(areas, list):
-            _LOGGER.warning(
-                "CONF_AREAS has unexpected type %s, using empty list",
-                type(areas).__name__,
-            )
-            return []
-        valid_areas: list[dict[str, Any]] = []
-        for i, item in enumerate(areas):
-            if isinstance(item, dict):
-                valid_areas.append(item)
-            else:
-                _LOGGER.warning(
-                    "CONF_AREAS[%d] has unexpected type %s, skipping",
-                    i,
-                    type(item).__name__,
-                )
-        return valid_areas
+        """Get each configured area's data from its config subentry."""
+        return [data for _, data in iter_area_subentries(self.config_entry)]
 
     def _get_wizard_areas(self) -> list[dict[str, Any]]:
         """Get areas list for duplicate checking."""
@@ -2655,24 +2846,14 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
     async def _on_area_config_complete(
         self, config: dict[str, Any]
     ) -> ConfigFlowResult:
-        """Handle wizard completion: update CONF_AREAS list in config entry.
+        """Handle wizard completion: write the area to its config subentry.
 
-        Stores the updated area list in entry.options via async_create_entry.
-        The _async_entry_updated listener detects the structural change and
-        triggers a full reload to create/destroy entity platform entries.
+        The _async_entry_updated listener sees the structural change and
+        reloads the integration so entity platforms are rebuilt.
         """
-        areas = self._get_areas_from_config()
-        areas = update_area_in_list(areas, config, self._area_being_edited)
-
-        self._area_being_edited = None
-        self._area_config_draft = {}
-        self._area_edit_section = None
-        self._sensor_group_being_edited = None
-
-        # Store updated areas in options; the update listener handles the reload
-        config_data = dict(self.config_entry.options)
-        config_data[CONF_AREAS] = areas
-        return self.async_create_entry(title="", data=config_data)
+        self._persist_area_subentry(self.config_entry, config, self._area_being_edited)
+        self._reset_wizard_state()
+        return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -2800,14 +2981,32 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             return await self.async_step_init()
 
         areas = self._get_areas_from_config()
-        updated_areas = remove_area_from_list(areas, area_id)
-        if not updated_areas:
+        surviving = remove_area_from_list(areas, area_id)
+        if not surviving:
             return self.async_abort(reason="cannot_remove_last_area")
 
+        # Strip the removed area from its neighbours before dropping it, so
+        # no adjacency reference is left dangling.
+        by_area_id = {
+            data.get(CONF_AREA_ID): data for data in surviving if data.get(CONF_AREA_ID)
+        }
+        for subentry_id, existing in iter_area_subentries(self.config_entry):
+            existing_area_id = existing.get(CONF_AREA_ID)
+            if existing_area_id == area_id:
+                self.hass.config_entries.async_remove_subentry(
+                    self.config_entry, subentry_id
+                )
+                continue
+            new_data = by_area_id.get(existing_area_id)
+            if new_data is not None and new_data != existing:
+                self.hass.config_entries.async_update_subentry(
+                    self.config_entry,
+                    self.config_entry.subentries[subentry_id],
+                    data=new_data,
+                )
+
         self._area_to_remove = None
-        config_data = dict(self.config_entry.options)
-        config_data[CONF_AREAS] = updated_areas
-        return self.async_create_entry(title="", data=config_data)
+        return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
     async def async_step_cancel_remove_area(
         self, user_input: dict[str, Any] | None = None

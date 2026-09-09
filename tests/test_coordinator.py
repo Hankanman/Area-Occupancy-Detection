@@ -24,9 +24,9 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.util import dt as dt_util
 
 # Import helper functions from conftest
-from tests.conftest import create_test_area
+from tests.conftest import create_test_area, make_area_subentries
 
-# ruff: noqa: SLF001, TID251
+# ruff: noqa: SLF001
 
 
 # Automatically apply the frame helper mock to all tests in this module
@@ -1837,7 +1837,8 @@ class TestCoordinatorAreaRemoval:
 
         # Remove all areas from CONF_AREAS to simulate area removal.
         original_data = coordinator.config_entry.data
-        coordinator.config_entry.data = {CONF_AREAS: []}
+        coordinator.config_entry.data = {}
+        coordinator.config_entry.subentries = make_area_subentries([])
 
         try:
             with (
@@ -1875,7 +1876,8 @@ class TestCoordinatorAreaRemoval:
 
         # Remove all areas from CONF_AREAS to simulate area removal.
         original_data = coordinator.config_entry.data
-        coordinator.config_entry.data = {CONF_AREAS: []}
+        coordinator.config_entry.data = {}
+        coordinator.config_entry.subentries = make_area_subentries([])
 
         try:
             with (
@@ -1917,10 +1919,10 @@ class TestCoordinatorOrphanedAreaCleanup:
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
 
         # Add an orphaned area (area_id not in HA registry) to config
-        original_data = mock_realistic_config_entry.data.copy()
-        areas_list = list(original_data.get(CONF_AREAS, []))
+        original_subentries = dict(mock_realistic_config_entry.subentries)
+        areas_list = [dict(subentry.data) for subentry in original_subentries.values()]
         areas_list.append({CONF_AREA_ID: "deleted_ha_area_id"})
-        mock_realistic_config_entry.data = {CONF_AREAS: areas_list}
+        mock_realistic_config_entry.subentries = make_area_subentries(areas_list)
 
         try:
             orphaned = coordinator._load_areas_from_config()
@@ -1928,7 +1930,7 @@ class TestCoordinatorOrphanedAreaCleanup:
             # Valid areas should still be loaded
             assert len(coordinator.areas) > 0
         finally:
-            mock_realistic_config_entry.data = original_data
+            mock_realistic_config_entry.subentries = original_subentries
 
     async def test_cleanup_orphaned_areas_removes_config_and_device(
         self,
@@ -1972,15 +1974,17 @@ class TestCoordinatorOrphanedAreaCleanup:
             patch.object(coordinator.db, "delete_area_data") as mock_db_delete,
             patch.object(
                 hass.config_entries,
-                "async_update_entry",
+                "async_remove_subentry",
                 mock_update_entry,
             ),
         ):
             # Set up config entry with the orphaned area
-            original_data = coordinator.config_entry.data.copy()
-            areas_list = list(original_data.get(CONF_AREAS, []))
+            original_subentries = dict(coordinator.config_entry.subentries)
+            areas_list = [
+                dict(subentry.data) for subentry in original_subentries.values()
+            ]
             areas_list.append({CONF_AREA_ID: orphaned_area_id})
-            coordinator.config_entry.data = {CONF_AREAS: areas_list}
+            coordinator.config_entry.subentries = make_area_subentries(areas_list)
 
             try:
                 await coordinator._cleanup_orphaned_areas([orphaned_area_id])
@@ -1995,10 +1999,10 @@ class TestCoordinatorOrphanedAreaCleanup:
                 )
                 # Verify DB records were deleted
                 mock_db_delete.assert_called_once_with("Deleted Room")
-                # Verify config entry was updated (orphaned area removed)
+                # Verify the orphaned area's subentry was removed
                 mock_update_entry.assert_called_once()
             finally:
-                coordinator.config_entry.data = original_data
+                coordinator.config_entry.subentries = original_subentries
 
     async def test_cleanup_orphaned_areas_no_db_name(
         self,
@@ -2032,14 +2036,16 @@ class TestCoordinatorOrphanedAreaCleanup:
             patch.object(coordinator.db, "delete_area_data") as mock_db_delete,
             patch.object(
                 hass.config_entries,
-                "async_update_entry",
+                "async_remove_subentry",
                 mock_update_entry,
             ),
         ):
-            original_data = coordinator.config_entry.data.copy()
-            areas_list = list(original_data.get(CONF_AREAS, []))
+            original_subentries = dict(coordinator.config_entry.subentries)
+            areas_list = [
+                dict(subentry.data) for subentry in original_subentries.values()
+            ]
             areas_list.append({CONF_AREA_ID: orphaned_area_id})
-            coordinator.config_entry.data = {CONF_AREAS: areas_list}
+            coordinator.config_entry.subentries = make_area_subentries(areas_list)
 
             try:
                 await coordinator._cleanup_orphaned_areas([orphaned_area_id])
@@ -2049,7 +2055,7 @@ class TestCoordinatorOrphanedAreaCleanup:
                 # Config should still be updated
                 mock_update_entry.assert_called_once()
             finally:
-                coordinator.config_entry.data = original_data
+                coordinator.config_entry.subentries = original_subentries
 
     async def test_cleanup_orphaned_areas_empty_list(
         self,
