@@ -1,7 +1,7 @@
 {
     "name": "Area Occupancy Detection",
     "render_readme": true,
-    "homeassistant": "2024.8.0",
+    "homeassistant": "2026.9.0",
     "zip_release": true,
     "filename": "area_occupancy.zip"
 }

@@ -29,9 +29,19 @@ Delivered on `feat/config-ux`:
   area across and re-links its device and entities, and the DB decoupling
   above means the `CONF_VERSION` bump costs no learned history.
 
+The declared minimum Home Assistant version is now 2026.9.0, corrected from
+a stale 2024.8.0. The binding constraint is
+`device_registry.async_get_device_by_identifier`, which the integration uses
+in four places since the deprecation fix and which first appears in core
+2026.8.0 (absent in 2026.7.1). Every other API in use -- config subentries,
+`ObjectSelector` row fields, `config_subentry_id` on `async_add_entities`,
+`new_config_subentry_id`, `menu_option_descriptions` -- is present by
+2026.8.0, so 2026.8.0 is the true API floor. 2026.9.0 is declared instead
+because it is the only version CI and development exercise, and declaring a
+floor nobody tests invites reports from a version nobody runs.
+
 Open: the optional config-entities idea (tunables as per-area config
-entities on the device page). `hacs.json` still advertises a 2024.8.0
-minimum; the true minimum has not been established.
+entities on the device page).
 
 ## Summary and recommendation
 
