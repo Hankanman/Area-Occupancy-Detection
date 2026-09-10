@@ -5,20 +5,31 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import voluptuous as vol
 
-from custom_components.area_occupancy.const import DEVICE_SW_VERSION, DOMAIN
+from custom_components.area_occupancy.const import (
+    CONF_DECAY_HALF_LIFE,
+    CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    DEVICE_SW_VERSION,
+    DOMAIN,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay as DecayClass
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.purpose import get_default_decay_half_life
 from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.service import (
+    SET_AREA_OPTION_SCHEMA,
+    SETTABLE_AREA_OPTIONS,
     _build_analysis_data,
     _collect_entity_states,
     _collect_likelihood_data,
     _find_area_by_area_id,
     _purge_area_history,
     _run_analysis,
+    _set_area_option,
     async_setup_services,
 )
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
@@ -695,3 +706,161 @@ class TestPurgeAreaHistory:
         miss_name, miss_area = _find_area_by_area_id(coordinator, "not_a_real_id")
         assert miss_name is None
         assert miss_area is None
+
+
+class TestSetAreaOption:
+    """The one automatable write path into an area's configuration."""
+
+    def _area(self, coordinator: AreaOccupancyCoordinator):
+        name = coordinator.get_area_names()[0]
+        return name, coordinator.get_area(name)
+
+    async def test_sets_a_tunable_through_the_shared_validator(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        area_name, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        result = await _set_area_option(
+            hass,
+            _create_service_call(area_id=area.config.area_id, threshold=70.0),
+        )
+
+        area.config.update_config.assert_awaited_once_with({CONF_THRESHOLD: 70.0})
+        assert result["area_name"] == area_name
+        assert result["updated"] == {CONF_THRESHOLD: 70.0}
+
+    async def test_only_the_named_options_are_written(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        # A call that names one option must not rewrite the rest of the area.
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        await _set_area_option(
+            hass,
+            _create_service_call(area_id=area.config.area_id, wasp_enabled=True),
+        )
+
+        assert area.config.update_config.await_args[0][0] == {CONF_WASP_ENABLED: True}
+
+    async def test_invalid_value_is_rejected_before_it_is_stored(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        with pytest.raises(ServiceValidationError, match="invalid_threshold"):
+            await _set_area_option(
+                hass,
+                _create_service_call(area_id=area.config.area_id, threshold=150.0),
+            )
+
+        area.config.update_config.assert_not_awaited()
+
+    async def test_half_life_matching_the_purpose_default_is_normalised(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """The #439/#440 rule applies here too, not just in the config flow.
+
+        Setting the half-life to exactly the area's own purpose default must
+        store the 0 sentinel, so the area keeps following its purpose instead
+        of pinning a value that only looks the same today.
+        """
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+        purpose_default = int(get_default_decay_half_life(area.config.purpose))
+
+        await _set_area_option(
+            hass,
+            _create_service_call(
+                area_id=area.config.area_id, decay_half_life=purpose_default
+            ),
+        )
+
+        assert area.config.update_config.await_args[0][0] == {CONF_DECAY_HALF_LIFE: 0}
+
+    async def test_a_custom_half_life_is_preserved(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        await _set_area_option(
+            hass, _create_service_call(area_id=area.config.area_id, decay_half_life=123)
+        )
+
+        assert area.config.update_config.await_args[0][0] == {CONF_DECAY_HALF_LIFE: 123}
+
+    async def test_out_of_range_half_life_is_rejected(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        with pytest.raises(ServiceValidationError, match="invalid_decay_half_life"):
+            await _set_area_option(
+                hass,
+                _create_service_call(area_id=area.config.area_id, decay_half_life=9),
+            )
+
+    async def test_unknown_area_raises_with_guidance(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        with pytest.raises(ServiceValidationError) as excinfo:
+            await _set_area_option(
+                hass, _create_service_call(area_id="nope", threshold=50)
+            )
+
+        assert "nope" in str(excinfo.value)
+        assert "Known area_ids" in str(excinfo.value)
+
+    def test_schema_rejects_a_call_that_changes_nothing(self) -> None:
+        with pytest.raises(vol.Invalid, match="at least one option"):
+            SET_AREA_OPTION_SCHEMA({"area_id": "living_room"})
+
+    def test_schema_coerces_a_duration_half_life_to_whole_seconds(self) -> None:
+        data = SET_AREA_OPTION_SCHEMA(
+            {"area_id": "living_room", "decay_half_life": {"minutes": 5}}
+        )
+        assert data[CONF_DECAY_HALF_LIFE] == 300
+
+    def test_structural_configuration_is_not_settable(self) -> None:
+        """Sensors, adjacency and the area id itself stay in the UI.
+
+        Adjacency in particular has to be mirrored onto the neighbouring
+        areas, which only the config flow does.
+        """
+        for key in ("motion_sensors", "adjacent_areas", "custom_sensors", "purpose"):
+            assert key not in SETTABLE_AREA_OPTIONS
+            with pytest.raises(vol.Invalid):
+                SET_AREA_OPTION_SCHEMA({"area_id": "living_room", key: "x"})

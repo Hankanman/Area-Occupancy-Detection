@@ -12,9 +12,22 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_AREA_ID, DEVICE_SW_VERSION, DOMAIN
+from .config_helpers import apply_purpose_based_decay_default, validate_area_config
+from .const import (
+    CONF_AREA_ID,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_HALF_LIFE,
+    CONF_MIN_PRIOR_OVERRIDE,
+    CONF_PURPOSE,
+    CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    DEFAULT_PURPOSE,
+    DEVICE_SW_VERSION,
+    DOMAIN,
+)
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
 
@@ -28,6 +41,49 @@ PURGE_AREA_HISTORY_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
     }
+)
+
+# Per-area tunables the ``set_area_option`` service may change, mapped to the
+# coercion applied before validation.
+#
+# Deliberately narrow. Structural configuration (which entities belong to the
+# area, adjacency, the area id itself) stays in the UI: adjacency has to be
+# mirrored onto neighbours, and silently reshaping an area from an automation
+# is not something anyone asked for. Per-type weights are excluded because
+# learned sensor fusion is intended to take them over -- exposing them now
+# would publish an API that plan has to walk back.
+SETTABLE_AREA_OPTIONS: dict[str, Any] = {
+    CONF_THRESHOLD: vol.Coerce(float),
+    CONF_DECAY_ENABLED: cv.boolean,
+    CONF_DECAY_HALF_LIFE: vol.All(
+        cv.time_period, lambda value: int(value.total_seconds())
+    ),
+    CONF_MIN_PRIOR_OVERRIDE: vol.Coerce(float),
+    CONF_WASP_ENABLED: cv.boolean,
+}
+
+
+def _require_at_least_one_option(data: dict[str, Any]) -> dict[str, Any]:
+    """Reject a ``set_area_option`` call that would change nothing."""
+    if not any(option in data for option in SETTABLE_AREA_OPTIONS):
+        raise vol.Invalid(
+            "Specify at least one option to set: "
+            + ", ".join(sorted(SETTABLE_AREA_OPTIONS))
+        )
+    return data
+
+
+SET_AREA_OPTION_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+            **{
+                vol.Optional(option): coerce
+                for option, coerce in SETTABLE_AREA_OPTIONS.items()
+            },
+        },
+        _require_at_least_one_option,
+    )
 )
 
 
@@ -354,6 +410,78 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
     return await async_purge_area_data(hass, coordinator, area_name, area)
 
 
+async def _set_area_option(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Service handler: change one area's tunables from an automation.
+
+    This is the single automatable write path into an area's configuration,
+    and it goes through exactly the same steps the config flow does on save:
+    merge the requested changes over the stored data, normalise the decay
+    half-life against the area's purpose, validate, then persist. Sharing
+    those steps is the point -- a writer that skipped the normalisation is
+    how the half-life kept reverting to a purpose default in the past.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data[CONF_AREA_ID]
+
+    area_name, area = _find_area_by_area_id(coordinator, area_id)
+    if area_name is None or area is None:
+        known = sorted(
+            a.config.area_id
+            for a in coordinator.areas.values()
+            if isinstance(a.config.area_id, str)
+        )
+        raise ServiceValidationError(
+            f"No configured area found for area_id '{area_id}'. "
+            f"Known area_ids: {', '.join(known) if known else '(none)'}"
+        )
+
+    requested = {
+        option: call.data[option]
+        for option in SETTABLE_AREA_OPTIONS
+        if option in call.data
+    }
+
+    subentry_id = area.config.subentry_id
+    subentry = (
+        coordinator.config_entry.subentries.get(subentry_id) if subentry_id else None
+    )
+    if subentry is None:
+        raise ServiceValidationError(
+            f"Area '{area_name}' has no config subentry to update"
+        )
+
+    # Stored area data is flat (the config flow flattens its form sections
+    # before saving), so the requested changes merge straight over it.
+    candidate = {**dict(subentry.data), **requested}
+    apply_purpose_based_decay_default(
+        candidate, candidate.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+    )
+
+    if errors := validate_area_config(candidate):
+        raise ServiceValidationError(
+            f"Invalid configuration for area '{area_name}': "
+            + ", ".join(f"{field}={reason}" for field, reason in sorted(errors.items()))
+        )
+
+    # Persist only the keys this call touched, plus the normalised half-life
+    # when it was one of them, so nothing else in the area is rewritten.
+    changes = {option: candidate[option] for option in requested}
+
+    _LOGGER.info(
+        "Setting %s on area '%s' (area_id=%s) via service call",
+        ", ".join(f"{key}={value}" for key, value in sorted(changes.items())),
+        area_name,
+        area_id,
+    )
+    await area.config.update_config(changes)
+
+    return {
+        "area_id": area_id,
+        "area_name": area_name,
+        "updated": changes,
+    }
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -366,6 +494,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_purge_area_history(call: ServiceCall) -> dict[str, Any]:
         return await _purge_area_history(hass, call)
+
+    async def handle_set_area_option(call: ServiceCall) -> dict[str, Any]:
+        return await _set_area_option(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -389,6 +520,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "purge_area_history",
         handle_purge_area_history,
         schema=PURGE_AREA_HISTORY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_area_option",
+        handle_set_area_option,
+        schema=SET_AREA_OPTION_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
 

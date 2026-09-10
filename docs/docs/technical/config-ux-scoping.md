@@ -40,8 +40,31 @@ in four places since the deprecation fix and which first appears in core
 because it is the only version CI and development exercise, and declaring a
 floor nobody tests invites reports from a version nobody runs.
 
-Open: the optional config-entities idea (tunables as per-area config
-entities on the device page).
+Decided against: exposing per-area tunables as config entities on the device
+page. Four reasons, and one alternative that was built instead.
+
+- The decay half-life would be actively harmful as a number entity. `0` is a
+  sentinel meaning "use the purpose default", so a slider resting at 0 reads
+  as "no decay", and writing the value from an automation would bypass the
+  purpose normalisation. That is the bug class behind #439, its fix in #440,
+  and its recurrence in #481.
+- It roughly doubles the entities per area, from 11 to somewhere between 21
+  and 26, immediately after 7 diagnostic sensors were shipped disabled by
+  default to cut recorder load (#467, PR #488).
+- Every entity is another writer into the config schema. The one that already
+  exists, the threshold number, produced the three-write-path bounds
+  inconsistency fixed earlier on this branch.
+- Per-type weights are what learned sensor fusion (#501) intends to take
+  over; publishing them as entities would advertise an API that plan has to
+  walk back.
+
+No issue has asked for it. The real need behind the idea was "tuning should
+be automatable", and the only tuning anyone plausibly automates is the
+threshold, which the existing `number` entity already covers. The general
+capability now exists as the `area_occupancy.set_area_option` service: one
+validated writer routed through `config_helpers`, no entity sprawl, and it
+applies the same purpose-default normalisation the UI does. Structural
+configuration and weights are deliberately outside it.
 
 ## Summary and recommendation
 

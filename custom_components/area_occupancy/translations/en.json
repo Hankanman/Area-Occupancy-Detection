@@ -1134,6 +1134,36 @@
                     "description": "The Home Assistant area whose learned history should be purged."
                 }
             }
+        },
+        "set_area_option": {
+            "name": "Set Area Option",
+            "description": "Change one configured area's detection tunables from an automation or script. Values go through the same validation and purpose-default handling the configuration UI applies, so an automation cannot put an area into a state the UI would reject. Structural configuration (which entities belong to an area, adjacent areas) is deliberately not settable here.",
+            "fields": {
+                "area_id": {
+                    "name": "Area",
+                    "description": "The Home Assistant area_id of the configured area to change."
+                },
+                "threshold": {
+                    "name": "Occupancy threshold",
+                    "description": "Percentage above which the area counts as occupied."
+                },
+                "decay_enabled": {
+                    "name": "Enable time decay",
+                    "description": "Whether occupancy probability decays once evidence stops."
+                },
+                "decay_half_life": {
+                    "name": "Decay half-life",
+                    "description": "Time over which occupancy probability halves. Set to 0 to follow the area's purpose default; any other value must be between 10 seconds and 1 hour."
+                },
+                "min_prior_override": {
+                    "name": "Minimum prior override",
+                    "description": "Floor for the learned prior, from 0 to 1. Set to 0 to disable."
+                },
+                "wasp_enabled": {
+                    "name": "Enable Wasp in Box",
+                    "description": "Whether the Wasp in Box virtual sensor runs for this area."
+                }
+            }
         }
     },
     "issues": {
