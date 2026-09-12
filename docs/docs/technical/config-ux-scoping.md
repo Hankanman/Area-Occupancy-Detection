@@ -66,6 +66,16 @@ validated writer routed through `config_helpers`, no entity sprawl, and it
 applies the same purpose-default normalisation the UI does. Structural
 configuration and weights are deliberately outside it.
 
+Also delivered: `scripts/harness`, which builds throwaway Home Assistant
+instances seeded with a config entry, HA areas, mock sensors and synthetic
+learned history, and runs end-to-end checks against the real frontend API.
+The hub-and-spoke work above was verified by hand against a live instance
+each time; the harness makes that repeatable, and covers exactly the failures
+this branch hit and unit tests could not see -- a selector schema core
+rejects, a menu step with no handler, a migration that runs but does not
+persist, an entity filed under the wrong subentry. See
+[Test Harness](dev-harness.md).
+
 ## Summary and recommendation
 
 The per-area configuration surface is now 52 fields across a 4-step wizard,

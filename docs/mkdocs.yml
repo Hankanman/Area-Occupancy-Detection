@@ -135,4 +135,5 @@ nav:
       - Pre-Releases: technical/prerelease.md
       - Diagnostics: technical/diagnostics.md
       - Debugging: technical/debug.md
+      - Test Harness: technical/dev-harness.md
   - Simulator: simulator/index.md

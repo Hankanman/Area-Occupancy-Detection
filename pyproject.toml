@@ -308,6 +308,9 @@ split-on-trailing-comma = false
 # TID251: the shared fixtures live in tests/conftest.py, so test modules
 # importing helpers from it is the intended structure, not a layering breach.
 "tests/**" = ["PTH", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "TID251"]
+# The harness is a developer CLI: printing is its output, and it launches and
+# signals a real Home Assistant process on purpose.
+"harness/**" = ["T20", "S603", "S606", "TID252"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 25

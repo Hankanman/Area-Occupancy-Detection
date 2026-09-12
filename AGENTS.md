@@ -49,6 +49,28 @@ uv run pytest -v
 uv run pytest tests/test_area_area.py::test_area_initialization -v
 ```
 
+### Throwaway Home Assistant instances
+
+`scripts/harness` builds disposable Home Assistant instances seeded with a
+config entry, matching HA areas, mock sensor entities and synthetic learned
+history, then runs end-to-end checks against the real frontend API. Use it
+for anything unit tests cannot see: config/options/subentry flow schemas the
+frontend rejects, entity-to-subentry filing, migrations that run but do not
+persist, or learned values coming out pinned.
+
+```bash
+scripts/harness profiles                      # what can be built
+scripts/harness new                           # five areas, 14 days of history, started
+scripts/harness new --entry-version 18        # seed a pre-subentry entry so startup migrates
+scripts/harness verify                        # build, run every check, report, delete
+scripts/harness destroy --name dev            # or clean up by hand
+```
+
+Instances live in `instances/` (gitignored) and are entirely self-contained;
+they never touch the repo's own `config/`. See
+[`docs/docs/technical/dev-harness.md`](docs/docs/technical/dev-harness.md)
+for profiles, what gets seeded, and how to add a check.
+
 ### Development Environment
 
 This project uses a **devcontainer** that provides a standalone Home Assistant instance. When opening in VS Code, accept the devcontainer prompt to get:
@@ -156,6 +178,9 @@ Tests use `pytest-homeassistant-custom-component` with extensive mocking:
 - Tests organized by component: area, coordinator, db, entities, config flow, etc.
 - Mock Home Assistant services, entity states, recorder data
 - Use `pytest-cov` for coverage reporting
+- `tests/test_harness.py` covers the deterministic parts of the harness
+  (profiles, generated YAML, seeded storage, synthesised history); the
+  instance-level checks run through `scripts/harness verify`, not pytest
 
 ## Important Development Notes
 

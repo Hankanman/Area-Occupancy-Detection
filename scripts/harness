@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+# script/harness: Build, run and check throwaway Home Assistant instances.
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+exec uv run python -m harness "$@"
