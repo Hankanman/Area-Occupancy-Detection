@@ -38,6 +38,7 @@ def _make_entity(
     state: str | float | None = None,
     gaussian_params: GaussianParams | None = None,
     ha_device_class: str | None = None,
+    media_is_tv_source: bool = False,
 ) -> Mock:
     """Build a lightweight mock entity for scoring tests."""
     entity = Mock()
@@ -51,6 +52,7 @@ def _make_entity(
     entity.state = state
     entity.learned_gaussian_params = gaussian_params
     entity.ha_device_class = ha_device_class
+    entity.media_is_tv_source = media_is_tv_source
     entity.active = evidence is True or is_decaying
     return entity
 
@@ -837,6 +839,123 @@ class TestDeviceClassFiltering:
             ActivityId.WATCHING_TV,
             ActivityId.LISTENING_TO_MUSIC,
         )
+
+
+# ─── Speaker Relaying TV Audio (media_is_tv_source) ──────────────────
+
+
+class TestSpeakerRelayingTvAudio:
+    """Test that a speaker relaying TV audio scores as watching_tv.
+
+    Some media_players (e.g. a Sonos soundbar/playbar on ARC or optical
+    passthrough) always report ``device_class: speaker``, even while their
+    sole purpose in the moment is relaying audio from a TV. ``media_is_tv_source``
+    detects this from the entity's own source/media_content_id, and
+    ``_score_binary_indicator`` treats such an entity as if it reported
+    ``device_class: tv`` for MEDIA indicators.
+    """
+
+    def test_speaker_relaying_tv_audio_scores_as_watching_tv(self) -> None:
+        """A speaker with media_is_tv_source=True triggers watching_tv, not music."""
+        speaker = _make_entity(
+            "media_player.soundbar",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="speaker",
+            media_is_tv_source=True,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [speaker],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.WATCHING_TV
+
+    def test_speaker_relaying_tv_audio_excluded_from_listening_to_music(self) -> None:
+        """A speaker relaying TV audio no longer counts as music evidence."""
+        speaker = _make_entity(
+            "media_player.soundbar",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="speaker",
+            media_is_tv_source=True,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [speaker],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id != ActivityId.LISTENING_TO_MUSIC
+
+    def test_plain_speaker_still_scores_as_listening_to_music(self) -> None:
+        """A speaker NOT relaying TV audio (e.g. a real playlist) is unaffected."""
+        speaker = _make_entity(
+            "media_player.soundbar",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="speaker",
+            media_is_tv_source=False,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [speaker],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.LISTENING_TO_MUSIC
+
+    def test_media_is_tv_source_ignored_for_non_media_indicators(self) -> None:
+        """media_is_tv_source only affects MEDIA indicators, not e.g. APPLIANCE."""
+        appliance = _make_entity(
+            "switch.stove",
+            InputType.APPLIANCE,
+            evidence=True,
+            ha_device_class="speaker",
+            media_is_tv_source=True,
+        )
+        area = _make_area(
+            purpose=AreaPurpose.WORKING,
+            entities_by_type={InputType.APPLIANCE: [appliance]},
+        )
+        # Should not raise, and should not be reclassified as watching_tv —
+        # APPLIANCE indicators have no ha_device_classes filter to begin with.
+        result = detect_activity(area)
+        assert result.activity_id != ActivityId.WATCHING_TV
+
+    def test_tv_device_class_with_media_is_tv_source_true_stays_tv(self) -> None:
+        """A media_player already reporting device_class=tv is unaffected."""
+        tv = _make_entity(
+            "media_player.tv",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class="tv",
+            media_is_tv_source=True,
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={
+                InputType.MEDIA: [tv],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.WATCHING_TV
 
 
 # ─── Confidence Normalization ────────────────────────────────────────

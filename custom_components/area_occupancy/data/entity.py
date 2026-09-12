@@ -268,6 +268,40 @@ class Entity:
         return ha_state.attributes.get("device_class")
 
     @property
+    def media_is_tv_source(self) -> bool:
+        """Detect a speaker media_player that is relaying TV audio.
+
+        Some media_players (e.g. a Sonos soundbar/playbar on ARC or optical
+        passthrough) always report ``device_class: speaker``, even while
+        their sole purpose in the moment is relaying audio from a TV rather
+        than playing music. HA has no separate device_class for this, so we
+        infer it from the entity's own ``source`` / ``media_content_id``
+        attributes: selecting the TV input is a deliberate, distinguishing
+        signal that does not overlap with any other source (a playlist,
+        radio preset, etc.), so it can be trusted on its own without
+        needing to cross-check a separate TV entity's state.
+        """
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            attrs = getattr(state_obj, "attributes", None) if state_obj else None
+        elif self.hass is not None:
+            ha_state = self.hass.states.get(self.entity_id)
+            attrs = ha_state.attributes if ha_state is not None else None
+        else:
+            attrs = None
+
+        if not attrs:
+            return False
+
+        source = str(attrs.get("source") or "").strip().lower()
+        content_id = str(attrs.get("media_content_id") or "").lower()
+
+        if source == "tv":
+            return True
+        # Sonos ARC/optical TV passthrough content-id scheme.
+        return "htastream" in content_id
+
+    @property
     def available(self) -> bool:
         """Get the entity availability."""
         return self.state is not None

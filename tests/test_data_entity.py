@@ -2018,6 +2018,98 @@ class TestEntityPropertiesAndMethods:
             assert mock_factory.create_all_from_config.call_count == 2
 
 
+class TestMediaIsTvSource:
+    """Test Entity.media_is_tv_source property."""
+
+    @pytest.fixture
+    def test_entity(self, coordinator: AreaOccupancyCoordinator) -> Entity:
+        """Create a test entity for property testing."""
+        return create_test_entity(coordinator=coordinator)
+
+    def test_true_when_source_is_tv(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A media_player with source='TV' is relaying TV audio."""
+        mock_state = Mock()
+        mock_state.attributes = {"source": "TV", "device_class": "speaker"}
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is True
+
+    def test_true_when_source_is_tv_case_insensitive(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Source comparison is case-insensitive."""
+        mock_state = Mock()
+        mock_state.attributes = {"source": "tv"}
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is True
+
+    def test_true_for_sonos_htastream_content_id(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Sonos ARC/optical passthrough uses an x-sonos-htastream content id."""
+        mock_state = Mock()
+        mock_state.attributes = {
+            "source": None,
+            "media_content_id": "x-sonos-htastream:RINCON_ABC123:spdif",
+        }
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is True
+
+    def test_false_for_playlist_source(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A named playlist/radio source is not TV passthrough."""
+        mock_state = Mock()
+        mock_state.attributes = {
+            "source": "Ghislain Late Night Vibes Mix",
+            "media_content_id": "spotify:playlist:abc123",
+        }
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is False
+
+    def test_false_when_no_state(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """No HA state available means we can't tell — default to False."""
+        _set_states_get(coordinator.hass, lambda _: None)
+        assert test_entity.media_is_tv_source is False
+
+    def test_false_when_no_attributes(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A state object with no/empty attributes defaults to False."""
+        mock_state = Mock()
+        mock_state.attributes = {}
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is False
+
+    def test_uses_state_provider_when_present(self) -> None:
+        """state_provider path is checked the same way as the hass path."""
+        entity_type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.4,
+            prob_given_true=0.5,
+            prob_given_false=0.1,
+            active_states=[STATE_ON],
+        )
+        decay = Decay(half_life=60.0)
+
+        state_obj = Mock()
+        state_obj.attributes = {"source": "TV"}
+
+        entity = Entity(
+            entity_id="media_player.speaker",
+            type=entity_type,
+            prob_given_true=0.5,
+            prob_given_false=0.1,
+            decay=decay,
+            state_provider=lambda _entity_id: state_obj,
+        )
+
+        assert entity.media_is_tv_source is True
+
+
 class TestEntityFactory:
     """Test the EntityFactory class."""
 
