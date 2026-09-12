@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 import shutil
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import sqlalchemy as sa
 from sqlalchemy import create_engine, text
@@ -60,12 +60,24 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
     except sa.exc.SQLAlchemyError as e:
         # Check if this is a corruption error
         if _is_database_corrupted(db, e):
-            _LOGGER.warning(
-                "Database may be corrupted (error: %s), will attempt recovery in background",
-                e,
+            # Recover here rather than deferring it. The recovery path used
+            # to be reachable only from periodic_health_check(), which runs
+            # as a step of the hourly analysis pipeline -- and the pipeline
+            # never runs, because setup raises ConfigEntryNotReady on this
+            # very error. A corrupt file therefore left the integration in
+            # setup_retry forever, with no entities, retrying into the same
+            # failure. _handle_database_corruption() tries repair first, then
+            # a restore from backup, and only recreates as a last resort.
+            _LOGGER.warning("Database is corrupted (error: %s), recovering", e)
+            if _handle_database_corruption(db):
+                _LOGGER.info("Database recovered during startup")
+                return
+            _LOGGER.error(
+                "Database recovery failed for %s. The integration cannot load "
+                "until that file is repaired or removed",
+                db.db_path,
             )
-            # Don't block startup - will attempt recovery in background
-            return
+            raise
 
         # Database doesn't exist or is not initialized, create it
         _LOGGER.debug("Database error during table check, initializing database: %s", e)
@@ -207,26 +219,49 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
             raise
 
 
+# Errors that mean the file's contents are genuinely damaged, so the only way
+# forward is repair, restore, or recreate. Recovery is destructive as a last
+# resort, so this list has to stay narrow.
+_CORRUPTION_INDICATORS: Final = (
+    "database disk image is malformed",
+    "malformed database schema",
+    "file is not a database",
+    "corrupted",
+)
+
+# Errors that look like corruption but are not: the database is fine and the
+# environment is not. A full disk or an unopenable path must never trigger
+# recovery -- recreating the database would destroy learned history over a
+# condition that clears itself once there is disk space, or once the path is
+# readable again. Setup fails and Home Assistant retries instead.
+_TRANSIENT_INDICATORS: Final = (
+    "database or disk is full",
+    "unable to open database file",
+)
+
+
 def _is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
-    """Check if an error indicates database corruption.
+    """Whether an error means the database file itself is damaged.
 
     Args:
         db: Database instance
         error: The exception that occurred
 
     Returns:
-        bool: True if the error indicates corruption, False otherwise
+        bool: True if the error indicates real corruption. Environment
+        failures that merely resemble corruption (full disk, unopenable
+        file) return False so they are retried rather than recovered from.
     """
     error_str = str(error).lower()
-    corruption_indicators = [
-        "database disk image is malformed",
-        "corrupted",
-        "file is not a database",
-        "database or disk is full",
-        "unable to open database file",
-    ]
+    if any(indicator in error_str for indicator in _TRANSIENT_INDICATORS):
+        _LOGGER.warning(
+            "Database is unavailable but not corrupted (error: %s); "
+            "not attempting recovery, Home Assistant will retry",
+            error,
+        )
+        return False
 
-    return any(indicator in error_str for indicator in corruption_indicators)
+    return any(indicator in error_str for indicator in _CORRUPTION_INDICATORS)
 
 
 def _attempt_database_recovery(db: AreaOccupancyDB) -> bool:

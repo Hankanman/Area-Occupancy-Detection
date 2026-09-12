@@ -489,6 +489,110 @@ class TestDeleteDb:
             delete_db(db)
 
 
+class TestStartupCorruptionRecovery:
+    """A corrupt database file must not leave the integration unable to load.
+
+    Recovery used to be reachable only from periodic_health_check(), a step
+    of the hourly analysis pipeline -- which never runs, because setup raises
+    ConfigEntryNotReady on the very error that needs recovering. A file with
+    a valid SQLite header but a damaged body (the shape a partial write or
+    power loss leaves behind) therefore put the entry in setup_retry forever,
+    with no entities, retrying into the same failure.
+    """
+
+    def _corrupt(self, path: Path) -> None:
+        """Write a file that passes the header check and fails to open."""
+        path.write_bytes(b"SQLite format 3\x00" + b"\x00" * 512)
+
+    def test_a_damaged_file_is_recovered_during_startup(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "corrupt.db")
+        db.engine.dispose()
+        self._corrupt(db.db_path)
+
+        ensure_db_exists(db)
+
+        # Usable again: the schema is present and stamped.
+        assert verify_all_tables_exist(db)
+        assert get_db_version(db) == DB_SCHEMA_VERSION
+
+    def test_recovery_prefers_the_backup_over_recreating(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "with_backup.db")
+        db.init_db()
+        _set_db_version(db)
+        with db.get_session() as session:
+            session.add(db.Metadata(key="learned_marker", value="kept"))
+            session.commit()
+
+        # Use the integration's own backup path, which checkpoints the WAL
+        # before copying -- a plain file copy can leave the rows behind in
+        # the -wal file and produce a backup that restores empty.
+        assert _backup_database(db) is True
+
+        db.engine.dispose()
+        self._corrupt(db.db_path)
+
+        ensure_db_exists(db)
+
+        # The marker only survives if the backup was restored rather than the
+        # database recreated from scratch.
+        with db.get_session() as session:
+            row = (
+                session.query(db.Metadata)
+                .filter(db.Metadata.key == "learned_marker")
+                .one_or_none()
+            )
+        assert row is not None
+        assert row.value == "kept"
+
+    def test_a_full_disk_is_not_treated_as_corruption(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # SQLITE_FULL says the environment is out of space, not that the file
+        # is damaged. Recovering here would delete a perfectly good database.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "full_disk.db")
+        db.init_db()
+        _set_db_version(db)
+
+        with (
+            patch.object(
+                db_maintenance,
+                "verify_all_tables_exist",
+                side_effect=SQLAlchemyError("database or disk is full"),
+            ),
+            patch.object(db_maintenance, "_handle_database_corruption") as recovery,
+            patch.object(db_maintenance, "delete_db") as delete,
+        ):
+            ensure_db_exists(db)
+
+        recovery.assert_not_called()
+        delete.assert_not_called()
+
+    def test_a_failed_recovery_reports_rather_than_loading_broken(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # If recovery cannot fix it, setup must fail loudly so Home Assistant
+        # retries, rather than coming up with an unusable database.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "unfixable.db")
+        db.engine.dispose()
+        self._corrupt(db.db_path)
+
+        with (
+            patch.object(
+                db_maintenance, "_handle_database_corruption", return_value=False
+            ),
+            pytest.raises(SQLAlchemyError),
+        ):
+            ensure_db_exists(db)
+
+
 class TestIsDatabaseCorrupted:
     """Test _is_database_corrupted function."""
 
@@ -496,7 +600,15 @@ class TestIsDatabaseCorrupted:
         ("error_message", "expected"),
         [
             ("database disk image is malformed", True),
+            ("malformed database schema", True),
+            ("file is not a database", True),
             ("connection error", False),
+            # Environment failures, not damaged files. Recovery recreates the
+            # database as a last resort, so treating these as corruption
+            # would destroy learned history over a full disk or an
+            # unreadable path -- conditions that clear on their own.
+            ("database or disk is full", False),
+            ("unable to open database file", False),
         ],
     )
     def test_is_database_corrupted(

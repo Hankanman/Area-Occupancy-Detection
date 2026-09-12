@@ -243,7 +243,8 @@ if global_prior_data:
 
 - Queries `GlobalPriors` table by `area_name`
 - Returns dictionary with prior metadata
-- Returns `None` if no prior found (prior defaults to `MIN_PRIOR`)
+- Returns `None` if no prior found, in which case the prior falls back to
+  `DEFAULT_AREA_PRIOR` (0.15), capped below the area's threshold
 
 **When Loaded**: During `load_data()` call on integration startup or reload.
 
@@ -267,24 +268,34 @@ The global prior is combined with time priors to create a more accurate baseline
 ```python
 @property
 def value(self) -> float:
+    # A supplied prior is capped below the threshold so it can never hold an
+    # area occupied with no active evidence (issue #435); a learned one may.
+    floor_cap = max(MIN_PRIOR, self.config.threshold - PRIOR_FLOOR_THRESHOLD_MARGIN)
+
     if self.global_prior is None:
-        result = MIN_PRIOR
+        # Nothing learned yet: the shipped no-data baseline, not the floor.
+        result = min(DEFAULT_AREA_PRIOR, floor_cap)
     else:
         if self.time_prior is None:
             prior = self.global_prior
         else:
             prior = combine_priors(self.global_prior, self.time_prior)
 
-        # Apply PRIOR_FACTOR (1.05) and clamp
+        # Apply PRIOR_FACTOR and clamp
         adjusted_prior = prior * PRIOR_FACTOR
         result = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
 
-    # Apply min_prior_override if configured
-    if self.config.min_prior_override > 0.0:
-        result = max(result, self.config.min_prior_override)
-
+    # Raise to the purpose floor / min_prior_override if either is higher,
+    # each capped the same way.
     return result
 ```
+
+**Why the no-data value is 0.15 and not `MIN_PRIOR`**: `MIN_PRIOR` (0.01) does
+not mean "no information", it means "almost certainly empty". From a 0.01
+prior a single active motion sensor only reaches about 14% — below the
+default 50% threshold — so an area with no learned history could not report
+occupied at all until an analysis cycle had computed a global prior. From
+`DEFAULT_AREA_PRIOR` the same sensor reaches about 74%.
 
 **Combination Method**: Uses logit space combination (`combine_priors()` function) to properly combine probabilities.
 
@@ -354,7 +365,8 @@ sequenceDiagram
 
 ### Prior Always Default Value
 
-**Symptom**: Prior always returns `MIN_PRIOR` (0.01).
+**Symptom**: Prior always returns `DEFAULT_AREA_PRIOR` (0.15), and
+`global_prior` shows as `None` in the probability sensor's attributes.
 
 **Possible Causes**:
 

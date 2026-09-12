@@ -585,7 +585,30 @@ def analyze_binary_likelihoods(
                 )
                 return base_result
 
-            # Clamp probabilities to avoid "black hole" values
+            # Clamp probabilities to avoid "black hole" values of exactly 0
+            # or 1, which would dominate the logit sum.
+            #
+            # UNVALIDATED BOUNDS -- measured cost, no real-home retune yet.
+            # Against 21 days of synthetic history whose true statistics were
+            # known exactly (scripts/harness, profile "house", seed 4242),
+            # prob_given_true came back close for every non-motion channel
+            # (appliance 0.280 -> 0.260, media 0.354 -> 0.432, door 0.153 ->
+            # 0.141), but:
+            #   * every binary channel's prob_given_false landed on exactly
+            #     the 0.05 floor, where the true values were 0.051-0.083, so
+            #     the floor is biting on realistic data rather than only
+            #     catching zeroes; and
+            #   * motion pinned at the 0.95 ceiling against a true 0.673,
+            #     which is circularity rather than clamping: the occupied
+            #     intervals these likelihoods are measured against are
+            #     themselves derived from the motion sensors, so
+            #     P(motion | occupied) tends to 1 by construction.
+            # Both errors overstate the evidence a sensor carries. Narrowing
+            # the floor toward MIN_PROBABILITY would recover the measured
+            # spread, but it changes every existing home's learned values on
+            # the next analysis cycle, so it needs multi-home validation
+            # first (see aod-debugging-and-history's accuracy campaign) --
+            # not a change justified by synthetic data alone.
             prob_given_true = clamp_probability(
                 prob_given_true, min_val=0.05, max_val=0.95
             )

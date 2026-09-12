@@ -302,12 +302,24 @@ class TestAreaMethods:
                 f"occupied() should be False when probability ({prob}) < threshold ({threshold})"
             )
 
-        # Test threshold boundary: set threshold to current probability
+        # Test the boundary: occupied() compares with >=, so a threshold
+        # exactly equal to the probability counts as occupied.
+        #
+        # Measured against a *learned* prior on purpose. An area with nothing
+        # learned yet uses the supplied default prior, which is capped below
+        # the threshold so that it can never hold the area occupied with no
+        # evidence (issue #435) -- so for such an area the probability moves
+        # when the threshold does, and "set the threshold to the current
+        # reading" has no fixed point to assert against.
         original_threshold = area.config.threshold
-        area.config.threshold = prob
+        area.prior.global_prior = 0.4
+        learned_prob = area.probability()
+        area.config.threshold = learned_prob
         occupied_at_threshold = area.occupied()
-        # At threshold, occupied should be True (>= comparison)
         assert occupied_at_threshold is True
+        assert area.probability() == pytest.approx(learned_prob), (
+            "a learned prior must not move when the threshold does"
+        )
 
         # Restore original threshold
         area.config.threshold = original_threshold
