@@ -15,9 +15,14 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
-from .config_helpers import apply_purpose_based_decay_default, validate_area_config
+from .config_helpers import (
+    apply_purpose_based_decay_default,
+    iter_area_subentries,
+    validate_area_config,
+)
 from .const import (
     CONF_AREA_ID,
+    CONF_AREAS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -253,21 +258,31 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
 
 
 async def _export_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    """Export the complete integration configuration as YAML."""
+    """Export the complete integration configuration as YAML.
+
+    The areas are read from their config subentries, which is where they have
+    lived since CONF_VERSION 19; an entry that still carries the legacy list
+    (one that has not been migrated yet) is read from that instead. The
+    export is what users paste into bug reports and the simulator, so it has
+    to describe the whole instance either way.
+    """
     try:
         coordinator = get_coordinator(hass)
         config_entry = coordinator.config_entry
 
         config = dict(config_entry.data) | dict(config_entry.options)
+        areas = [area for _, area in iter_area_subentries(config_entry)] or config.get(
+            CONF_AREAS
+        )
 
-        # Reorder area dicts so area_id comes first
-        if "areas" in config:
-            config["areas"] = [
+        if areas:
+            # Reorder area dicts so area_id comes first
+            config[CONF_AREAS] = [
                 {
-                    "area_id": area["area_id"],
-                    **{k: v for k, v in area.items() if k != "area_id"},
+                    CONF_AREA_ID: area.get(CONF_AREA_ID),
+                    **{k: v for k, v in area.items() if k != CONF_AREA_ID},
                 }
-                for area in config["areas"]
+                for area in areas
             ]
     except Exception as err:
         error_msg = f"Failed to export config: {err}"

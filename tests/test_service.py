@@ -8,7 +8,10 @@ import pytest
 import voluptuous as vol
 
 from custom_components.area_occupancy.const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
     CONF_DECAY_HALF_LIFE,
+    CONF_MOTION_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
     DEVICE_SW_VERSION,
@@ -26,6 +29,7 @@ from custom_components.area_occupancy.service import (
     _build_analysis_data,
     _collect_entity_states,
     _collect_likelihood_data,
+    _export_config,
     _find_area_by_area_id,
     _purge_area_history,
     _run_analysis,
@@ -706,6 +710,77 @@ class TestPurgeAreaHistory:
         miss_name, miss_area = _find_area_by_area_id(coordinator, "not_a_real_id")
         assert miss_name is None
         assert miss_area is None
+
+
+class TestExportConfig:
+    """The export users paste into bug reports and the simulator."""
+
+    async def test_areas_come_from_their_subentries(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        # Regression: the export read the legacy CONF_AREAS key, which v19
+        # emptied when areas moved into subentries, so it returned an export
+        # with no areas in it at all.
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        result = await _export_config(hass, _create_service_call())
+
+        areas = result[CONF_AREAS]
+        assert areas, "the export has no areas"
+        assert len(areas) == len(coordinator.get_area_names())
+        configured = {
+            coordinator.get_area(name).config.area_id
+            for name in coordinator.get_area_names()
+        }
+        assert {area[CONF_AREA_ID] for area in areas} == configured
+        # Sensors have to survive the export or it cannot describe an instance.
+        assert any(area.get(CONF_MOTION_SENSORS) for area in areas)
+
+    async def test_area_id_is_the_first_key_of_each_area(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        result = await _export_config(hass, _create_service_call())
+
+        for area in result[CONF_AREAS]:
+            assert next(iter(area)) == CONF_AREA_ID
+
+    async def test_global_settings_are_included(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        coordinator.config_entry.options = {"sleep_start": "22:30:00"}
+
+        result = await _export_config(hass, _create_service_call())
+
+        assert result["sleep_start"] == "22:30:00"
+
+    async def test_a_legacy_entry_still_exports_its_areas(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        # An entry that has not been migrated yet keeps its areas in the
+        # legacy list; the export has to describe that instance too.
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        legacy = [{CONF_AREA_ID: "legacy_area", CONF_THRESHOLD: 55.0}]
+        coordinator.config_entry.subentries = {}
+        coordinator.config_entry.data = {CONF_AREAS: legacy}
+
+        result = await _export_config(hass, _create_service_call())
+
+        assert [area[CONF_AREA_ID] for area in result[CONF_AREAS]] == ["legacy_area"]
 
 
 class TestSetAreaOption:

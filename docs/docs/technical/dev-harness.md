@@ -167,7 +167,18 @@ each path -- a flow is a state machine, so stepping into one spoke rules out
 its siblings. Only menu navigation is ever submitted, never form data, so the
 walk cannot change the instance's configuration.
 
-## Two things worth knowing
+## Three things worth knowing
+
+**A pinned port has to be the *confirmed* HTTP config.** Since 2026.9 the
+HTTP configuration is a user-managed store holding a confirmed `stable`
+config and an unconfirmed `pending` one. A port arriving any other way -- in
+YAML, or as a changed built-in default -- is staged as a pending *trial*, and
+if nothing promotes it within five minutes Home Assistant reverts to stable
+and restarts itself to do it. An instance whose port came from YAML therefore
+died five minutes in, and the next start looked for a port nothing was
+listening on. The harness seeds the port into `stable` with no pending
+config, and marks the YAML migration done so a stray `http:` block cannot
+restage it.
 
 **Home Assistant defers writes while it is starting.** Stores and registries
 are not flushed until it reaches `RUNNING`, so reading `.storage` before then

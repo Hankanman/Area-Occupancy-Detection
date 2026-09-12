@@ -37,6 +37,7 @@ from harness.profiles import (
     area_entities,
     get_profile,
 )
+from homeassistant.components.http import config as ha_http_config
 
 FIXED_END = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
 
@@ -141,11 +142,15 @@ class TestMockConfig:
         for helper in helpers:
             assert helper in rendered, f"{helper} is defined but never referenced"
 
-    def test_port_is_pinned(self, profile: Profile) -> None:
+    def test_no_http_block_is_rendered(self, profile: Profile) -> None:
         document = yaml.safe_load(
             mock_config.render(profile, time_zone="UTC", frontend=False, port=9999)
         )
-        assert document["http"]["server_port"] == 9999
+        # Since 2026.9 an http: block is migrated into the HTTP config store
+        # as an unconfirmed trial that reverts after five minutes, restarting
+        # Home Assistant to do it. The port is seeded as the confirmed config
+        # instead, so the YAML must not mention it.
+        assert "http" not in document
         # Without the frontend the API pieces have to be asked for explicitly.
         assert "onboarding" in document
         assert "frontend" not in document
@@ -157,6 +162,30 @@ class TestMockConfig:
             mock_config.render(profile, time_zone="UTC", frontend=True, port=8123)
         )
         assert "recorder" in document
+
+
+class TestHttpConfig:
+    def test_port_is_seeded_as_the_confirmed_config(self, tmp_path) -> None:
+        storage.write_http_config(tmp_path, 54321)
+        document = json.loads(
+            (tmp_path / ".storage" / "http").read_text(encoding="utf-8")
+        )
+
+        assert document["data"]["stable"]["server_port"] == 54321
+        # A pending config is a five-minute trial that reverts; there must not
+        # be one, and the YAML migration must look done so a stray http:
+        # block cannot stage one either.
+        assert document["data"]["pending"] is None
+        assert document["data"]["yaml_migration_done"] is True
+
+    def test_store_carries_the_cores_version_stamps(self, tmp_path) -> None:
+        storage.write_http_config(tmp_path, 8123)
+        document = json.loads(
+            (tmp_path / ".storage" / "http").read_text(encoding="utf-8")
+        )
+        assert document["version"] == ha_http_config.STORAGE_VERSION
+        assert document["minor_version"] == ha_http_config.STORAGE_MINOR_VERSION
+        assert document["key"] == ha_http_config.STORAGE_KEY
 
 
 class TestStorage:

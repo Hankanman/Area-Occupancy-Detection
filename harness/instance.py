@@ -127,6 +127,7 @@ class Instance:
             REPO_ROOT / "custom_components", target_is_directory=True
         )
 
+        storage.write_http_config(path, port)
         storage.write_area_registry(path, profile)
         entry_id = storage.write_config_entry(
             path, profile, entry_version=entry_version

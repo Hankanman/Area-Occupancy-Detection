@@ -23,6 +23,7 @@ from typing import Any
 import sqlalchemy as sa
 
 from custom_components.area_occupancy.const import (
+    CONF_AREA_ID,
     CONF_AREAS,
     CONF_VERSION,
     DB_NAME,
@@ -34,7 +35,7 @@ from custom_components.area_occupancy.db.schema import GlobalPriors
 from . import mock_config, storage
 from .client import ApiError, Client
 from .instance import Instance
-from .profiles import area_entities
+from .profiles import CHANNELS, area_entities
 
 #: Entities every configured area must expose, by the name they carry after
 #: the device name. Matched on friendly name rather than entity id on
@@ -596,6 +597,50 @@ def _read_global_priors(config_dir: Path) -> dict[str, float]:
     return {str(name): float(value) for name, value in rows}
 
 
+def check_export_config(instance: Instance, client: Client) -> Result:
+    """The config export describes the whole instance, areas included.
+
+    Worth its own check because the export is what users paste into bug
+    reports and the simulator, and because it reads the areas through a
+    different path from everything else -- it once kept reading the legacy
+    list after the areas had moved into subentries, and came back empty.
+
+    Args:
+        instance: The instance under test.
+        client: An authenticated client.
+
+    Returns:
+        The result.
+    """
+    try:
+        response = client.call_service(
+            "area_occupancy", "export_config", {}, return_response=True
+        )
+    except ApiError as err:
+        return _fail("export_config", f"export_config failed: {err}")
+
+    exported = (response or {}).get("service_response") or {}
+    areas = exported.get(CONF_AREAS) or []
+    expected = {area.slug for area in instance.profile.areas}
+    found = {area.get(CONF_AREA_ID) for area in areas if isinstance(area, dict)}
+
+    problems: list[str] = []
+    if found != expected:
+        problems.append(
+            f"exported areas {sorted(found)} do not match {sorted(expected)}"
+        )
+    if not any(
+        area.get(CHANNELS["motion"].conf_key)
+        for area in areas
+        if isinstance(area, dict)
+    ):
+        problems.append("no area exported its motion sensors")
+
+    if problems:
+        return _fail("export_config", "; ".join(problems))
+    return _ok("export_config", f"{len(areas)} areas exported with their sensors")
+
+
 def check_subentry_linkage(instance: Instance) -> Result:
     """Each area's entities are registered under that area's subentry.
 
@@ -675,6 +720,7 @@ LIVE_CHECKS = (
     check_sensor_response,
     check_options_flow,
     check_subentry_flow,
+    check_export_config,
     check_analysis,
 )
 

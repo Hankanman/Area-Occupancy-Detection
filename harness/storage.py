@@ -6,9 +6,10 @@ entry at the current ``CONF_VERSION``, so a v18-shaped entry with its areas
 still in the legacy list has to be fabricated. Seeding also skips the click
 path entirely, so an instance comes up already configured.
 
-Only two files are written -- the area registry and the config entries store.
-Both are small, stable formats, and the version stamps are imported from Home
-Assistant rather than hardcoded so they track the pinned core.
+Three files are written -- the area registry, the config entries store and
+the HTTP config store. All are small, stable formats, and the version stamps
+are imported from Home Assistant rather than hardcoded so they track the
+pinned core.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from custom_components.area_occupancy.const import (
     SUBENTRY_TYPE_AREA,
 )
 from homeassistant import config_entries as ha_config_entries
+from homeassistant.components.http import config as ha_http_config
 from homeassistant.helpers import area_registry as ha_area_registry
 from homeassistant.util import dt as dt_util, ulid as ulid_util
 
@@ -264,3 +266,44 @@ def read_config_entry(config_dir: Path) -> dict[str, Any] | None:
         if entry.get("domain") == DOMAIN:
             return entry
     return None
+
+
+def write_http_config(config_dir: Path, port: int) -> None:
+    """Pin the instance's port as Home Assistant's confirmed HTTP config.
+
+    Since 2026.9 the HTTP config is a user-managed store with a confirmed
+    ``stable`` config and an unconfirmed ``pending`` one. A port that arrives
+    any other way -- in YAML, or as a changed built-in default -- is staged as
+    a pending *trial*: if nothing promotes it within five minutes Home
+    Assistant reverts to stable and restarts itself to do it. For a harness
+    instance that means the process exits five minutes in, and the next start
+    looks for a port nothing is listening on.
+
+    Writing the port straight into ``stable`` with no pending config, and
+    marking the YAML migration done so a stray ``http:`` block cannot restage
+    it, is what makes an instance's port survive as long as the instance
+    does.
+
+    Args:
+        config_dir: The instance's configuration directory.
+        port: Port the instance should listen on.
+    """
+    stable = {
+        **ha_http_config.HTTP_STORAGE_SCHEMA({"server_port": port}),
+        "created_at": _now(),
+        "error": None,
+        "error_message": None,
+    }
+    _write(
+        config_dir / ".storage" / ha_http_config.STORAGE_KEY,
+        _store(
+            ha_http_config.STORAGE_KEY,
+            ha_http_config.STORAGE_VERSION,
+            ha_http_config.STORAGE_MINOR_VERSION,
+            {
+                ha_http_config.KEY_STABLE: stable,
+                ha_http_config.KEY_PENDING: None,
+                ha_http_config.KEY_YAML_MIGRATION_DONE: True,
+            },
+        ),
+    )
