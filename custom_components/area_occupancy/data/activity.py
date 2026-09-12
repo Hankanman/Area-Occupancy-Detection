@@ -341,9 +341,23 @@ def _score_binary_indicator(
         # (-1.0, []) — because the area *has* sensors of this type, they just
         # aren't the right kind. With total-weight normalization the outcome
         # is identical, but semantically "no matching device" ≠ "no sensor."
+        #
+        # A "speaker"-class media_player that is actually relaying TV audio
+        # (see Entity.media_is_tv_source) is treated as the device_class it
+        # is behaving as for MEDIA indicators, so WATCHING_TV vs
+        # LISTENING_TO_MUSIC scoring reflects what's really happening rather
+        # than the device_class HA happens to report for the hardware.
+        effective_device_class = entity.ha_device_class
+        if (
+            indicator.input_type == InputType.MEDIA
+            and effective_device_class == "speaker"
+            and entity.media_is_tv_source
+        ):
+            effective_device_class = "tv"
+
         if (
             indicator.ha_device_classes is not None
-            and entity.ha_device_class not in indicator.ha_device_classes
+            and effective_device_class not in indicator.ha_device_classes
         ):
             continue
 
