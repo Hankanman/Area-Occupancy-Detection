@@ -99,7 +99,7 @@ The section has two halves, because the integration treats binary and numeric ev
 
 **Custom numeric sensors** — any `sensor` entity, again unfiltered. Alongside it:
 
-- **Custom numeric active minimum / maximum** – the inclusive band of readings that counts as evidence of occupancy. The default band is 1 to 1,000,000, which treats "at least 1" as presence; tune it to your sensor. The minimum must be below the maximum, or the form rejects it — an inverted band would match nothing.
+- **Custom numeric active minimum / maximum** – the inclusive band of readings that counts as evidence of occupancy. The default band is 1 to 1,000,000 inclusive: a reading below 1 or above 1,000,000 is not evidence. The upper bound is a stand-in for "no practical ceiling" rather than a considered limit, so tune both ends to your sensor. The minimum must be below the maximum, or the form rejects it — an inverted band would match nothing.
 - **Custom numeric weight** – as above.
 
 Use these for a sensor from a custom integration or MQTT, an entity whose active state is the opposite of its type default, a HASS.Agent sensor reporting a bespoke state, or a domain the sections above do not cover. As with the typed sections, the active states and the band apply to every entity in that half, so put entities that behave differently in different areas — or use the typed section that already matches them.

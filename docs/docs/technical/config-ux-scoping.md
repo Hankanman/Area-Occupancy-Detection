@@ -17,12 +17,19 @@ Delivered on `feat/config-ux`:
   per-group sub-menu for additional sensors.
 - Phase 2: live preview on the motion, sensors and behaviour pages of the
   options flow.
-- Phase 3 (first half): custom sensors -- an additive `custom_sensors` list of
-  `{entity_id, active_states, weight}` rows edited with `ObjectSelector`,
-  closing #531 and the correctness half of #159. Per-entity overrides on the
-  typed channels (#458, the tuning half of #159) are deliberately not built:
-  #501 aims to make them unnecessary, and adding them now would create a
-  surface it would have to deprecate.
+- Phase 3 (first half): custom sensors. This branch first built an additive
+  `custom_sensors` list of `{entity_id, active_states, weight}` rows edited
+  with `ObjectSelector`; it was dropped when `next` landed its own answer to
+  #531. The shipped design is that one: `custom_binary_sensors` and
+  `custom_numeric_sensors`, two `InputType`s with per-section active states,
+  a numeric active range, and a weight each -- reached through the same
+  hub-and-spoke spoke, with the same live preview. It closes #531 and the
+  "arbitrary sensors" half of #159, but *not* #159's per-sensor active
+  state: the states apply per section, so an area still cannot mix a sensor
+  where `on` means present with one where `off` does. Per-entity overrides on
+  the typed channels (#458, the tuning half of #159) are deliberately not
+  built: #501 aims to make them unnecessary, and adding them now would create
+  a surface it would have to deprecate.
 
 - Phase 4: areas are config subentries. The integration page lists them
   natively with add, reconfigure and delete; the v18 migration moves each
@@ -457,10 +464,15 @@ one release cycle, at least one of these is true:
 If none holds, the native path is complete at Phase 4 and the panel is not
 built.
 
-## Immediate next steps
+## Original plan (2026-09-02, all delivered)
+
+Kept as a record of what was scoped up front, against the Status section at
+the top of this page. Every item below has shipped -- do not pick them up as
+open work.
 
 1. Phase 0 PR: `config_helpers.py` extraction, threshold write-path
-   consolidation, HA pin to 2026.8.3 with lockfile regeneration.
+   consolidation, HA pin (landed at 2026.9.0, not the 2026.8.3 planned here)
+   with lockfile regeneration.
 2. Phase 1 PR: hub-and-spoke edit menus with descriptive secondary lines.
 3. Phase 2 PR: preview command and `preview="area_occupancy"` on the
    behaviour and motion spokes.
@@ -468,6 +480,12 @@ built.
    only if #501 stalls) and on the optional config-entities idea.
 5. Prerequisite PR for Phase 4: introduce `DB_SCHEMA_VERSION` and stop tying
    the SQLite reset to `CONF_VERSION`. Then the subentry migration.
+
+## Still open
+
+- #159's per-sensor active state, as described under Phase 3 above. Needs a
+  per-entity override on top of the section default, not a third config
+  surface.
 
 ## Verification notes
 

@@ -201,7 +201,7 @@ When updating `CONF_VERSION`, implement migration in `migrations.py`. Migrations
 - Log migration steps
 - Be idempotent (safe to run multiple times)
 
-`CONF_VERSION` (config-entry format) and `DB_SCHEMA_VERSION` (SQLite schema stamp, both in `const.py`) are independent. Bumping `CONF_VERSION` never touches the database. Bumping `DB_SCHEMA_VERSION` makes `db/maintenance.py` delete and recreate the database, wiping all learned history, so only do it for an incompatible schema change; additive tables/columns go through `Base.metadata.create_all(checkfirst=True)` with no bump.
+`CONF_VERSION` (config-entry format) and `DB_SCHEMA_VERSION` (SQLite schema stamp, both in `const.py`) are independent. Bumping `CONF_VERSION` never touches the database. Bumping `DB_SCHEMA_VERSION` makes `db/maintenance.py` delete and recreate the database, wiping all learned history, so only do it for an incompatible schema change; a new *table* goes through `Base.metadata.create_all(checkfirst=True)` with no bump. A new *column* on an existing table does not: `create_all` only creates missing tables and leaves existing ones untouched, so an upgraded install keeps the old columns and later queries fail. Adding a column needs either an explicit `ALTER TABLE` migration or a `DB_SCHEMA_VERSION` bump, which costs the user their learned history.
 
 ### Entity Evidence
 

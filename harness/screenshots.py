@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -57,6 +58,56 @@ class Shot:
 
 class ShotError(RuntimeError):
     """A screenshot could not be captured."""
+
+
+def _find_chromium() -> str | None:
+    """Locate a Chromium that Playwright itself could not resolve.
+
+    Prebuilt CI images often ship a browser build whose revision does not
+    match the pinned ``playwright`` package, so Playwright asks for
+    ``playwright install`` even though a perfectly good binary is sitting in
+    ``PLAYWRIGHT_BROWSERS_PATH``. Find it rather than fail.
+
+    Returns:
+        Path to a Chromium executable, or ``None`` if none was found.
+    """
+    root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if not root or not Path(root).is_dir():
+        return None
+
+    direct = Path(root) / "chromium"
+    if direct.is_file() and os.access(direct, os.X_OK):
+        return str(direct)
+
+    candidates = sorted(Path(root).glob("chromium-*/chrome-linux/chrome"))
+    return str(candidates[-1]) if candidates else None
+
+
+def _launch_chromium(playwright: Any) -> Any:
+    """Start Chromium, preferring whatever Playwright resolves for itself.
+
+    Args:
+        playwright: The running Playwright instance.
+
+    Returns:
+        The launched browser.
+
+    Raises:
+        ShotError: If no usable Chromium could be found.
+    """
+    if override := os.environ.get("HARNESS_CHROMIUM"):
+        return playwright.chromium.launch(executable_path=override)
+
+    try:
+        return playwright.chromium.launch()
+    except Exception as err:
+        fallback = _find_chromium()
+        if fallback is None:
+            raise ShotError(
+                "no usable Chromium: run `playwright install chromium`, or set "
+                f"HARNESS_CHROMIUM to an executable ({err})"
+            ) from err
+        return playwright.chromium.launch(executable_path=fallback)
 
 
 def _install_auth(context: Any, instance: Instance) -> None:
@@ -307,9 +358,7 @@ def capture(
     shots = [shot for shot in build_shots(instance) if not only or shot.name in only]
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            executable_path="/opt/pw-browsers/chromium"
-        )
+        browser = _launch_chromium(playwright)
         context = browser.new_context(
             viewport=VIEWPORT, device_scale_factor=2, color_scheme="light"
         )

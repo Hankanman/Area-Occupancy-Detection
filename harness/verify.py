@@ -674,30 +674,54 @@ def check_subentry_linkage(instance: Instance) -> Result:
         if item.get("platform") == DOMAIN
     ]
 
+    # Classify by the subentry the entity actually carries, not by its
+    # entity_id. With has_entity_name the id is built from the area's
+    # *name*, so a renamed area stops matching its slug -- and one area
+    # whose slug prefixes another's ("kitchen" and "kitchen_annex") matches
+    # the wrong one. The subentry id is the thing under test anyway.
+    area_by_subentry = {sub_id: slug for slug, sub_id in subentry_by_area.items()}
+
     wrong: list[str] = []
+    seen_areas: set[str] = set()
     linked = 0
     aggregates = 0
     for item in entities:
         entity_id = item["entity_id"]
-        object_id = entity_id.split(".", 1)[1]
-        area = next(
-            (slug for slug in subentry_by_area if object_id.startswith(f"{slug}_")),
-            None,
-        )
-        if area is None:
+        subentry_id = item.get("config_subentry_id")
+        if subentry_id is None:
             # "All Areas" and per-floor entities span areas, so they belong
             # to the entry itself and must not carry a subentry.
             aggregates += 1
-            if item.get("config_subentry_id"):
-                wrong.append(f"{entity_id} is an aggregate but has a subentry")
             continue
-        if item.get("config_subentry_id") != subentry_by_area[area]:
+        if subentry_id not in area_by_subentry:
+            wrong.append(f"{entity_id} has unknown subentry {subentry_id!r}")
+            continue
+
+        area = area_by_subentry[subentry_id]
+        seen_areas.add(area)
+        linked += 1
+
+        # Where the entity id still carries an area slug, it must be this
+        # area's. Skipped silently when it carries none, which is what a
+        # renamed area looks like.
+        object_id = entity_id.split(".", 1)[1]
+        named = next(
+            (
+                slug
+                for slug in sorted(subentry_by_area, key=len, reverse=True)
+                if object_id.startswith(f"{slug}_")
+            ),
+            None,
+        )
+        if named is not None and named != area:
             wrong.append(
-                f"{entity_id} has subentry {item.get('config_subentry_id')!r},"
-                f" expected {subentry_by_area[area]!r}"
+                f"{entity_id} looks like area {named!r} but is filed under {area!r}"
             )
-        else:
-            linked += 1
+
+    if missing := sorted(set(subentry_by_area) - seen_areas):
+        wrong.extend(
+            f"area {slug!r} has no entities filed under it" for slug in missing
+        )
 
     if wrong:
         return _fail(

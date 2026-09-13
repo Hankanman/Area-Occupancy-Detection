@@ -58,6 +58,18 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
             # Tables exist - verify schema is up to date
             _ensure_schema_up_to_date(db)
     except sa.exc.SQLAlchemyError as e:
+        # An environment failure is not this database's fault and not
+        # something recreating it would fix. Raise so setup turns it into
+        # ConfigEntryNotReady and Home Assistant retries once the disk has
+        # room or the path is readable again.
+        if _is_transient_storage_error(e):
+            _LOGGER.warning(
+                "Database is unavailable but not corrupted (error: %s); "
+                "Home Assistant will retry setup",
+                e,
+            )
+            raise
+
         # Check if this is a corruption error
         if _is_database_corrupted(db, e):
             # Recover here rather than deferring it. The recovery path used
@@ -70,6 +82,12 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
             # a restore from backup, and only recreates as a last resort.
             _LOGGER.warning("Database is corrupted (error: %s), recovering", e)
             if _handle_database_corruption(db):
+                # Recovery can hand back a database that is intact but old:
+                # _restore_database_from_backup() checks only that the tables
+                # are present, never the stamped db_version, so a backup taken
+                # under an earlier DB_SCHEMA_VERSION would otherwise be used
+                # with this version's queries.
+                _ensure_schema_up_to_date(db)
                 _LOGGER.info("Database recovered during startup")
                 return
             _LOGGER.error(
@@ -157,7 +175,13 @@ def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
         inspector = sa.inspect(db.engine)
         existing_tables = set(inspector.get_table_names())
         return required_tables.issubset(existing_tables)
-    except sa.exc.SQLAlchemyError:
+    except sa.exc.SQLAlchemyError as err:
+        # A full disk or an unopenable path is not "the tables are missing".
+        # Returning False here would send ensure_db_exists() into init_db(),
+        # which fails for the same reason and is then swallowed -- leaving
+        # setup to finish with no usable database. Let it out instead.
+        if _is_transient_storage_error(err):
+            raise
         return False
 
 
@@ -240,6 +264,20 @@ _TRANSIENT_INDICATORS: Final = (
 )
 
 
+def _is_transient_storage_error(error: Exception) -> bool:
+    """Whether an error is an environment failure rather than a damaged file.
+
+    Args:
+        error: The exception that occurred.
+
+    Returns:
+        bool: True when the file may be perfectly intact and only the
+        environment is at fault (full disk, unopenable path).
+    """
+    error_str = str(error).lower()
+    return any(indicator in error_str for indicator in _TRANSIENT_INDICATORS)
+
+
 def _is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
     """Whether an error means the database file itself is damaged.
 
@@ -252,8 +290,7 @@ def _is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
         failures that merely resemble corruption (full disk, unopenable
         file) return False so they are retried rather than recovered from.
     """
-    error_str = str(error).lower()
-    if any(indicator in error_str for indicator in _TRANSIENT_INDICATORS):
+    if _is_transient_storage_error(error):
         _LOGGER.warning(
             "Database is unavailable but not corrupted (error: %s); "
             "not attempting recovery, Home Assistant will retry",
@@ -261,6 +298,7 @@ def _is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
         )
         return False
 
+    error_str = str(error).lower()
     return any(indicator in error_str for indicator in _CORRUPTION_INDICATORS)
 
 

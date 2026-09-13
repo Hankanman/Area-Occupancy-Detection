@@ -553,5 +553,10 @@ def async_unload_services(hass: HomeAssistant) -> None:
     Called when the last config entry unloads; otherwise the handlers
     linger and raise once the coordinator is gone.
     """
-    for service in ("run_analysis", "export_config", "purge_area_history"):
+    for service in (
+        "run_analysis",
+        "export_config",
+        "purge_area_history",
+        "set_area_option",
+    ):
         hass.services.async_remove(DOMAIN, service)

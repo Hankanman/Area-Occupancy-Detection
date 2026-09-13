@@ -35,6 +35,7 @@ from custom_components.area_occupancy.service import (
     _run_analysis,
     _set_area_option,
     async_setup_services,
+    async_unload_services,
 )
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -944,3 +945,28 @@ class TestSetAreaOption:
             assert key not in SETTABLE_AREA_OPTIONS
             with pytest.raises(vol.Invalid):
                 SET_AREA_OPTION_SCHEMA({"area_id": "living_room", key: "x"})
+
+
+class TestAsyncUnloadServices:
+    """Unloading must remove every service setup registered."""
+
+    async def test_every_registered_service_is_removed(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A handler left behind raises once the coordinator is gone.
+
+        Asserting the domain is empty rather than naming services keeps this
+        honest when a new one is added: registering without unregistering
+        fails here instead of at the user's next service call.
+        """
+        hass.data[DOMAIN] = coordinator
+        await async_setup_services(hass)
+        registered = set(hass.services.async_services().get(DOMAIN, {}))
+        assert registered
+
+        async_unload_services(hass)
+
+        assert not hass.services.async_services().get(DOMAIN, {}), (
+            "services left registered after unload: "
+            f"{sorted(registered & set(hass.services.async_services().get(DOMAIN, {})))}"
+        )
