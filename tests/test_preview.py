@@ -37,19 +37,13 @@ from custom_components.area_occupancy.preview import (
 from homeassistant.core import HomeAssistant
 
 
-def _first_area(coordinator: AreaOccupancyCoordinator):
-    area = coordinator.get_area(coordinator.get_area_names()[0])
-    assert area is not None
-    return area
-
-
 class TestPreviewEntity:
     """The proxy overrides only what the form can change."""
 
     def test_overrides_and_delegation(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         live = next(
             e
             for e in area.entities.entities.values()
@@ -73,9 +67,9 @@ class TestPreviewEntity:
         assert proxy.effective_weight == pytest.approx(0.25 * proxy.information_gain)
 
     def test_unchanged_likelihoods_keep_live_information_gain(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         live = next(iter(area.entities.entities.values()))
         proxy = PreviewEntity(
             live, live.weight, live.prob_given_true, live.prob_given_false
@@ -87,9 +81,9 @@ class TestComputeAreaPreview:
     """The estimate reacts to candidate values and reports its inputs."""
 
     def test_candidate_weights_are_applied(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         entities = build_preview_entities(area, {CONF_WEIGHT_MOTION: 0.42})
         motion = [e for e in entities.values() if e.type.input_type == InputType.MOTION]
         assert motion
@@ -100,9 +94,9 @@ class TestComputeAreaPreview:
             assert proxy.weight == area.entities.entities[proxy.entity_id].weight
 
     def test_zero_weights_return_the_prior(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         candidate = dict.fromkeys(
             (
                 "weight_motion",
@@ -133,16 +127,16 @@ class TestComputeAreaPreview:
         assert "note" in attributes
 
     def test_threshold_defaults_to_area_config(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         _, attributes = compute_area_preview(area, {})
         assert attributes["threshold"] == pytest.approx(area.config.threshold * 100)
 
     def test_active_sensor_raises_estimate(
-        self, coordinator: AreaOccupancyCoordinator
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         motion_id = next(
             eid
             for eid, e in area.entities.entities.items()
@@ -265,11 +259,14 @@ class TestWsStartPreview:
         }
 
     def test_a_subentry_flow_gets_a_preview(
-        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        default_area: Any,
     ) -> None:
         # Reconfiguring an area from the integration page is a subentry flow,
         # and it is the main editing path -- its preview has to work.
-        area = _first_area(coordinator)
+        area = default_area
         register_preview_context(
             hass, "flow-sub", coordinator.config_entry.entry_id, area.config.area_id, {}
         )
@@ -296,9 +293,12 @@ class TestWsStartPreview:
         assert not connection.results
 
     def test_streams_preview_and_subscribes(
-        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        default_area: Any,
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         register_preview_context(
             hass, "flow-1", coordinator.config_entry.entry_id, area.config.area_id, {}
         )
@@ -345,9 +345,12 @@ class TestWsStartPreview:
         connection.subscriptions[7]()
 
     def test_bad_user_input_is_an_error(
-        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        default_area: Any,
     ) -> None:
-        area = _first_area(coordinator)
+        area = default_area
         register_preview_context(
             hass, "flow-3", coordinator.config_entry.entry_id, area.config.area_id, {}
         )
@@ -367,10 +370,13 @@ class TestCustomSensorPreview:
     """The custom channels take their weight from the form like typed ones."""
 
     def _add_custom_entity(
-        self, coordinator: AreaOccupancyCoordinator, input_type: InputType
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        input_type: InputType,
+        default_area: Any,
     ) -> str:
         entity_id = f"sensor.{input_type.value}"
-        area = _first_area(coordinator)
+        area = default_area
         factory = EntityFactory(coordinator, area_name=area.area_name)
         area.entities.add_entity(
             factory.create_from_config_spec(entity_id, input_type.value)
@@ -389,9 +395,10 @@ class TestCustomSensorPreview:
         coordinator: AreaOccupancyCoordinator,
         input_type: InputType,
         weight_key: str,
+        default_area: Any,
     ) -> None:
-        entity_id = self._add_custom_entity(coordinator, input_type)
-        area = _first_area(coordinator)
+        entity_id = self._add_custom_entity(coordinator, input_type, default_area)
+        area = default_area
 
         entities = build_preview_entities(area, {weight_key: 0.9})
 
@@ -401,10 +408,13 @@ class TestCustomSensorPreview:
         "input_type", [InputType.CUSTOM_BINARY, InputType.CUSTOM_NUMERIC]
     )
     def test_absent_weight_keeps_the_live_value(
-        self, coordinator: AreaOccupancyCoordinator, input_type: InputType
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        input_type: InputType,
+        default_area: Any,
     ) -> None:
-        entity_id = self._add_custom_entity(coordinator, input_type)
-        area = _first_area(coordinator)
+        entity_id = self._add_custom_entity(coordinator, input_type, default_area)
+        area = default_area
         live_weight = area.entities.entities[entity_id].weight
 
         entities = build_preview_entities(area, {})

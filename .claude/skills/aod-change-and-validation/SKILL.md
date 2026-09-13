@@ -168,14 +168,15 @@ version and every user's DB gets wiped for no reason, since
 `checkfirst=True` on `create_all` only adds what's missing without touching
 existing tables. `db/schema.py` on main now has 15 tables including
 `AreaTransitions`, and `CONF_VERSION` was **not** bumped for this change
-(still 18 — see §4). **Use `create_all(checkfirst=True)` for additive schema
-changes; reserve a `CONF_VERSION` bump for changes that genuinely require the
-nuclear wipe.**
+(unchanged — see §4). **Use `create_all(checkfirst=True)` for additive
+*tables*; it does not add columns to an existing table. Reserve a
+`DB_SCHEMA_VERSION` bump — not `CONF_VERSION`, which no longer touches the
+database — for changes that genuinely require the nuclear wipe.**
 
 **Config-entry migration pattern** (`migrations.py::async_migrate_entry`,
 current on `main`): runs under a module-level `asyncio.Lock` (prevents
 concurrent migrations), checks `config_entry.version` against `CONF_VERSION`
-(currently 18 — `const.py`) in an explicit ladder of `if
+(currently 19 — `const.py`) in an explicit ladder of `if
 config_entry.version == N` blocks, and every step calls
 `hass.config_entries.async_update_entry(config_entry, version=N+1, ...)` —
 re-running an already-migrated entry is a no-op because the version check
@@ -323,7 +324,7 @@ against the actual bump commit `704c89e` "chore: bump version to 2026.5.17
 3. `custom_components/area_occupancy/const.py` — `DEVICE_SW_VERSION: Final =
    "2026.5.17"` (note: not literally named `VERSION`)
 
-**Do not confuse this with `CONF_VERSION`** (currently 18) and
+**Do not confuse this with `CONF_VERSION`** (currently 19) and
 `CONF_VERSION_MINOR` (currently 0) in the same `const.py` file — those gate
 the config-entry migration ladder (`migrations.py`) and are a completely
 separate axis from the release version. Bumping one does not bump the other.

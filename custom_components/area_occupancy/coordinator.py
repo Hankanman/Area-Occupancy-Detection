@@ -214,9 +214,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
     ) -> list[str]:
-        """Load areas from config entry CONF_AREAS list.
+        """Load areas from the config entry's area subentries.
 
-        Reads area configurations from the merged data+options CONF_AREAS list.
+        Reads one area configuration per ``SUBENTRY_TYPE_AREA`` subentry;
+        the ``CONF_AREAS`` list it used to read is gone as of CONF_VERSION 19.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.

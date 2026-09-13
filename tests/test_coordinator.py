@@ -10,7 +10,6 @@ from custom_components.area_occupancy.area.area import Area
 from custom_components.area_occupancy.const import (
     ALL_AREAS_IDENTIFIER,
     CONF_AREA_ID,
-    CONF_AREAS,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
@@ -1395,57 +1394,53 @@ class TestAreaOccupancyCoordinator:
         mock_realistic_config_entry: Mock,
         error_type: str,
     ) -> None:
-        """Test _load_areas_from_config() handles error cases."""
+        """Test _load_areas_from_config() handles error cases.
+
+        The bad area has to go in as a config subentry: areas moved out of
+        ``CONF_AREAS`` in v19, so writing to ``config_entry.data`` injects
+        nothing and both branches would pass without testing anything.
+        """
         coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
-        original_data = mock_realistic_config_entry.data.copy()
+        original_subentries = mock_realistic_config_entry.subentries
+        existing = [dict(sub.data) for sub in original_subentries.values()]
+        assert existing, "fixture must carry at least one area subentry"
 
         try:
             if error_type == "invalid_area_id":
-                # Add invalid area ID to config
-                invalid_area_data = {
-                    CONF_AREAS: [
-                        *original_data.get(CONF_AREAS, []),
-                        {CONF_AREA_ID: "invalid_area_id_that_does_not_exist"},
-                    ]
-                }
-                mock_realistic_config_entry.data = invalid_area_data
+                mock_realistic_config_entry.subentries = make_area_subentries(
+                    [*existing, {CONF_AREA_ID: "invalid_area_id_that_does_not_exist"}],
+                    hass,
+                )
 
-                # Should handle invalid area ID gracefully
-                coordinator._load_areas_from_config()
+                orphaned = coordinator._load_areas_from_config()
 
-                # Valid areas should still be loaded
+                # Valid areas still load, and the unknown one is reported as
+                # orphaned rather than silently dropped.
                 area_names = coordinator.get_area_names()
-                assert len(area_names) > 0
-
-                # Invalid area should not be in the list
+                assert len(area_names) == len(existing)
                 assert "invalid_area_id_that_does_not_exist" not in area_names
+                assert "invalid_area_id_that_does_not_exist" in orphaned
 
             elif error_type == "duplicate_areas":
-                # Get first area from config
-                areas_list = original_data.get(CONF_AREAS, [])
-                if areas_list:
-                    # Duplicate the first area
-                    duplicate_area = areas_list[0].copy()
-                    duplicate_config = {CONF_AREAS: [*areas_list, duplicate_area]}
-                    mock_realistic_config_entry.data = duplicate_config
+                mock_realistic_config_entry.subentries = make_area_subentries(
+                    [*existing, dict(existing[0])], hass
+                )
 
-                    coordinator._load_areas_from_config()
+                coordinator._load_areas_from_config()
 
-                    # Should only load one instance of the duplicate area
-                    area_names = coordinator.get_area_names()
-                    # Count occurrences of the first area's name
-                    first_area_id = areas_list[0].get(CONF_AREA_ID)
-                    if first_area_id:
-                        area_reg = ar.async_get(hass)
-                        area_entry = area_reg.async_get_area(first_area_id)
-                        if area_entry:
-                            area_name = area_entry.name
-                            assert area_names.count(area_name) == 1, (
-                                "Duplicate area should only be loaded once"
-                            )
+                # Areas are keyed by name, so the duplicate collapses onto the
+                # original rather than appearing twice.
+                area_names = coordinator.get_area_names()
+                assert len(area_names) == len(existing)
+                area_entry = ar.async_get(hass).async_get_area(
+                    existing[0][CONF_AREA_ID]
+                )
+                assert area_entry is not None
+                assert area_names.count(area_entry.name) == 1, (
+                    "Duplicate area should only be loaded once"
+                )
         finally:
-            # Restore original data
-            mock_realistic_config_entry.data = original_data
+            mock_realistic_config_entry.subentries = original_subentries
 
     def test_load_areas_from_config_with_target_dict(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

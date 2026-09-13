@@ -49,40 +49,28 @@ def _flatten(data: Any, prefix: str = "") -> dict[str, Any]:
     return {prefix: data}
 
 
-@pytest.fixture(name="strings")
-def strings_fixture() -> dict[str, Any]:
-    """The source strings file."""
-    return _load(STRINGS)
-
-
 class TestSensorSections:
     """Each sensor group needs a section string in every flow that shows it."""
 
     @pytest.mark.parametrize("scope", SENSOR_STEP_SCOPES)
-    def test_every_group_has_a_section(
-        self, strings: dict[str, Any], scope: tuple[str, ...]
-    ) -> None:
-        sections = _dig(strings, scope)["sections"]
+    def test_every_group_has_a_section(self, scope: tuple[str, ...]) -> None:
+        sections = _dig(_load(STRINGS), scope)["sections"]
         assert set(SENSOR_GROUPS) <= set(sections), (
             f"{'.'.join(scope)} is missing sections for "
             f"{sorted(set(SENSOR_GROUPS) - set(sections))}"
         )
 
     @pytest.mark.parametrize("scope", SENSOR_STEP_SCOPES)
-    def test_every_section_is_a_real_group(
-        self, strings: dict[str, Any], scope: tuple[str, ...]
-    ) -> None:
-        sections = _dig(strings, scope)["sections"]
+    def test_every_section_is_a_real_group(self, scope: tuple[str, ...]) -> None:
+        sections = _dig(_load(STRINGS), scope)["sections"]
         assert set(sections) <= set(SENSOR_GROUPS), (
             f"{'.'.join(scope)} has sections for groups the flow never "
             f"renders: {sorted(set(sections) - set(SENSOR_GROUPS))}"
         )
 
     @pytest.mark.parametrize("scope", SENSOR_STEP_SCOPES)
-    def test_every_field_is_labelled(
-        self, strings: dict[str, Any], scope: tuple[str, ...]
-    ) -> None:
-        for name, section in _dig(strings, scope)["sections"].items():
+    def test_every_field_is_labelled(self, scope: tuple[str, ...]) -> None:
+        for name, section in _dig(_load(STRINGS), scope)["sections"].items():
             assert section.get("name"), f"{'.'.join(scope)}.{name} has no name"
             assert section.get("data"), f"{'.'.join(scope)}.{name} has no labels"
 

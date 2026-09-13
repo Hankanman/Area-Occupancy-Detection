@@ -390,7 +390,7 @@ sequenceDiagram
 
 ### Prior Not Loading on Startup
 
-**Symptom**: Prior defaults to `MIN_PRIOR` even though it was calculated.
+**Symptom**: Prior falls back to `DEFAULT_AREA_PRIOR` (0.15), capped just below the area's threshold, even though it was calculated.
 
 **Possible Causes**:
 

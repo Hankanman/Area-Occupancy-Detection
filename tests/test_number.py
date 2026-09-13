@@ -349,9 +349,13 @@ class TestThreshold:
         area = coordinator.get_area(area_name)
         area.config.area_id = "test_area_id"
 
-        # Mock device registry to return None (device doesn't exist)
+        # Mock device registry to return None (device doesn't exist).
+        # It has to be the lookup production actually calls: a bare Mock()
+        # answers async_get_device_by_identifier() with a truthy auto-Mock,
+        # so this test used to exercise the device-found path and assign an
+        # area to a phantom device.
         mock_registry = Mock()
-        mock_registry.async_get_device.return_value = None
+        mock_registry.async_get_device_by_identifier.return_value = None
 
         # Act & Assert: Should handle gracefully without crashing
         with (
@@ -364,4 +368,7 @@ class TestThreshold:
             ),
         ):
             await threshold_entity_with_hass.async_added_to_hass()
-            # No exception should be raised
+
+        # No exception, and nothing was assigned: there was no device to assign.
+        mock_registry.async_get_device_by_identifier.assert_called_once()
+        mock_registry.async_update_device.assert_not_called()
