@@ -164,13 +164,16 @@ def _template_entities(profile: Profile) -> list[dict[str, Any]]:
                 if spec.device_class:
                     entity["device_class"] = spec.device_class
                 if spec.is_numeric:
-                    entity["unit_of_measurement"] = spec.unit
+                    # A unitless channel (the custom numeric escape hatch)
+                    # must not emit a null unit -- template setup rejects it.
+                    if spec.unit is not None:
+                        entity["unit_of_measurement"] = spec.unit
                     entity["state"] = f"{{{{ states('input_number.{object_id}') }}}}"
                     entity["state_class"] = "measurement"
                     numeric.append(entity)
                 elif spec.idle_state != "off":
-                    # Word-state sensors live in the sensor domain with no
-                    # device class -- exactly what a custom sensor is for.
+                    # A channel whose states are words rather than on/off is
+                    # a plain sensor with no device class.
                     entity.pop("device_class", None)
                     entity["state"] = f"{{{{ states('input_select.{object_id}') }}}}"
                     numeric.append(entity)

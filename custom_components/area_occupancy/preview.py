@@ -32,14 +32,13 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .config_helpers import flatten_sectioned_input
 from .const import (
-    CONF_CUSTOM_ENTITY_ID,
-    CONF_CUSTOM_SENSORS,
-    CONF_CUSTOM_WEIGHT,
     CONF_MOTION_PROB_GIVEN_FALSE,
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_THRESHOLD,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_LOCK,
@@ -94,6 +93,8 @@ _WEIGHT_KEY_FOR_INPUT_TYPE: dict[InputType, str] = {
     InputType.COVER: CONF_WEIGHT_COVER,
     InputType.POWER: CONF_WEIGHT_POWER,
     InputType.WIFI_CLIENTS: CONF_WEIGHT_WIFI_CLIENTS,
+    InputType.CUSTOM_BINARY: CONF_WEIGHT_CUSTOM_BINARY,
+    InputType.CUSTOM_NUMERIC: CONF_WEIGHT_CUSTOM_NUMERIC,
     **dict.fromkeys(_ENVIRONMENTAL_TYPES, CONF_WEIGHT_ENVIRONMENTAL),
 }
 
@@ -162,40 +163,21 @@ class PreviewEntity:
         return self.weight * self.information_gain
 
 
-def _candidate_custom_weights(candidate: dict[str, Any]) -> dict[str, float]:
-    """Map entity id to its candidate weight for custom-sensor rows."""
-    weights: dict[str, float] = {}
-    for row in candidate.get(CONF_CUSTOM_SENSORS) or []:
-        if not isinstance(row, dict):
-            continue
-        entity_id = row.get(CONF_CUSTOM_ENTITY_ID)
-        raw_weight = row.get(CONF_CUSTOM_WEIGHT)
-        if entity_id and isinstance(raw_weight, (int, float)):
-            weights[str(entity_id)] = float(raw_weight)
-    return weights
-
-
 def build_preview_entities(
     area: Area, candidate: dict[str, Any]
 ) -> dict[str, PreviewEntity]:
     """Wrap the area's live entities with the candidate configuration.
 
-    Only entities the area already tracks are wrapped, so a custom row added
-    in the form but not yet saved does not appear until the area reloads --
-    the same as adding an entity to any typed channel.
+    Only entities the area already tracks are wrapped, so an entity added in
+    the form but not yet saved does not appear until the area reloads.
     """
-    custom_weights = _candidate_custom_weights(candidate)
     wrapped: dict[str, PreviewEntity] = {}
     for entity_id, entity in area.entities.entities.items():
         input_type = entity.type.input_type
         weight = float(entity.weight)
-        if input_type == InputType.CUSTOM:
-            # Custom rows carry a per-entity weight rather than a per-type one.
-            weight = custom_weights.get(entity_id, weight)
-        else:
-            weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(input_type)
-            if weight_key is not None and weight_key in candidate:
-                weight = float(candidate[weight_key])
+        weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(input_type)
+        if weight_key is not None and weight_key in candidate:
+            weight = float(candidate[weight_key])
 
         pgt, pgf = float(entity.prob_given_true), float(entity.prob_given_false)
         if input_type == InputType.MOTION:

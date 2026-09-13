@@ -12,18 +12,15 @@ from custom_components.area_occupancy.config_flow import (
     AreaSubentryFlowHandler,
 )
 from custom_components.area_occupancy.const import (
-    CONF_CUSTOM_ACTIVE_STATES,
-    CONF_CUSTOM_ENTITY_ID,
-    CONF_CUSTOM_SENSORS,
-    CONF_CUSTOM_WEIGHT,
     CONF_MOTION_PROB_GIVEN_FALSE,
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_THRESHOLD,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_MOTION,
     DOMAIN,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.config import CustomSensor
 from custom_components.area_occupancy.data.entity import EntityFactory
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.preview import (
@@ -367,61 +364,49 @@ class TestWsStartPreview:
 
 
 class TestCustomSensorPreview:
-    """Custom rows carry a per-entity weight, not a per-type one."""
+    """The custom channels take their weight from the form like typed ones."""
 
-    def _add_custom_entity(self, coordinator: AreaOccupancyCoordinator) -> str:
+    def _add_custom_entity(
+        self, coordinator: AreaOccupancyCoordinator, input_type: InputType
+    ) -> str:
+        entity_id = f"sensor.{input_type.value}"
         area = _first_area(coordinator)
-        area.config.custom_sensors = [
-            CustomSensor(entity_id="sensor.pc", active_states=["in_use"], weight=0.3)
-        ]
         factory = EntityFactory(coordinator, area_name=area.area_name)
         area.entities.add_entity(
-            factory.create_from_config_spec("sensor.pc", InputType.CUSTOM.value)
+            factory.create_from_config_spec(entity_id, input_type.value)
         )
-        return "sensor.pc"
+        return entity_id
 
-    def test_candidate_row_weight_is_applied(
-        self, coordinator: AreaOccupancyCoordinator
+    @pytest.mark.parametrize(
+        ("input_type", "weight_key"),
+        [
+            (InputType.CUSTOM_BINARY, CONF_WEIGHT_CUSTOM_BINARY),
+            (InputType.CUSTOM_NUMERIC, CONF_WEIGHT_CUSTOM_NUMERIC),
+        ],
+    )
+    def test_candidate_weight_is_applied(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        input_type: InputType,
+        weight_key: str,
     ) -> None:
-        entity_id = self._add_custom_entity(coordinator)
+        entity_id = self._add_custom_entity(coordinator, input_type)
         area = _first_area(coordinator)
 
-        entities = build_preview_entities(
-            area,
-            {
-                CONF_CUSTOM_SENSORS: [
-                    {
-                        CONF_CUSTOM_ENTITY_ID: entity_id,
-                        CONF_CUSTOM_ACTIVE_STATES: ["in_use"],
-                        CONF_CUSTOM_WEIGHT: 0.9,
-                    }
-                ]
-            },
-        )
+        entities = build_preview_entities(area, {weight_key: 0.9})
 
         assert entities[entity_id].weight == 0.9
 
-    def test_row_without_a_weight_keeps_the_live_value(
-        self, coordinator: AreaOccupancyCoordinator
+    @pytest.mark.parametrize(
+        "input_type", [InputType.CUSTOM_BINARY, InputType.CUSTOM_NUMERIC]
+    )
+    def test_absent_weight_keeps_the_live_value(
+        self, coordinator: AreaOccupancyCoordinator, input_type: InputType
     ) -> None:
-        entity_id = self._add_custom_entity(coordinator)
+        entity_id = self._add_custom_entity(coordinator, input_type)
         area = _first_area(coordinator)
+        live_weight = area.entities.entities[entity_id].weight
 
-        entities = build_preview_entities(
-            area,
-            {CONF_CUSTOM_SENSORS: [{CONF_CUSTOM_ENTITY_ID: entity_id}]},
-        )
+        entities = build_preview_entities(area, {})
 
-        assert entities[entity_id].weight == 0.3
-
-    def test_malformed_rows_are_ignored(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        entity_id = self._add_custom_entity(coordinator)
-        area = _first_area(coordinator)
-
-        entities = build_preview_entities(
-            area, {CONF_CUSTOM_SENSORS: ["not-a-row", {}, None]}
-        )
-
-        assert entities[entity_id].weight == 0.3
+        assert entities[entity_id].weight == live_weight

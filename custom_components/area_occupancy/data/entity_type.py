@@ -61,8 +61,9 @@ class InputType(StrEnum):
     POWER = "power"
     SLEEP = "sleep"
     ENVIRONMENTAL = "environmental"
-    CUSTOM = "custom"
     WIFI_CLIENTS = "wifi_clients"
+    CUSTOM_BINARY = "custom_binary"
+    CUSTOM_NUMERIC = "custom_numeric"
     UNKNOWN = "unknown"
 
 
@@ -206,8 +207,12 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     # not a weak indirect correlate — deliberately NOT in
     # ENVIRONMENTAL_INPUT_TYPES. See issue #515.
     InputType.WIFI_CLIENTS,
-    # User-declared signals are presence evidence, not ambient correlates.
-    InputType.CUSTOM,
+    # Custom entities have no fixed semantics — the user decides what they
+    # mean by configuring active_states/active_range — but both default to
+    # a direct presence signal rather than an environmental correlate,
+    # matching how wifi_clients was judged in #515. See #531.
+    InputType.CUSTOM_BINARY,
+    InputType.CUSTOM_NUMERIC,
 }
 
 BINARY_INPUT_TYPES: set[InputType] = {
@@ -216,9 +221,7 @@ BINARY_INPUT_TYPES: set[InputType] = {
     InputType.DOOR,
     InputType.LOCK,
     InputType.WINDOW,
-    # State-based like the rest of this set: likelihoods can be learned and
-    # no numeric active_range is ever derived for it.
-    InputType.CUSTOM,
+    InputType.CUSTOM_BINARY,
 }
 
 ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {
@@ -244,6 +247,7 @@ ENVIRONMENTAL_INPUT_TYPES: set[InputType] = {
 NUMERIC_INPUT_TYPES: set[InputType] = ENVIRONMENTAL_INPUT_TYPES | {
     InputType.POWER,
     InputType.WIFI_CLIENTS,
+    InputType.CUSTOM_NUMERIC,
 }
 
 DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
@@ -421,25 +425,33 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "active_range": (1.0, float("inf")),
         "strength_multiplier": 2.0,
     },
-    InputType.CUSTOM: {
-        # A user-declared binary presence signal for entities the typed
-        # channels cannot express. Deliberately mirrors APPLIANCE -- the
-        # closest existing generic binary channel -- rather than inventing
-        # new likelihoods; correlation analysis refines them per home, and
-        # each row carries its own weight and active states from config.
-        "weight": 0.4,
-        "prob_given_true": 0.2,
-        "prob_given_false": 0.02,
-        "active_states": [STATE_ON],
-        "active_range": None,
-        "strength_multiplier": 2.0,
-    },
     InputType.ENVIRONMENTAL: {
         "weight": 0.1,
         "prob_given_true": 0.09,
         "prob_given_false": 0.01,
         "active_states": None,
         "active_range": (0.0, 0.2),
+        "strength_multiplier": 2.0,
+    },
+    InputType.CUSTOM_BINARY: {
+        "weight": 0.4,  # Matches DEFAULT_WEIGHT_CUSTOM_BINARY
+        "prob_given_true": 0.6,
+        "prob_given_false": 0.05,
+        "active_states": [STATE_ON],
+        "active_range": None,
+        "strength_multiplier": 2.0,
+    },
+    InputType.CUSTOM_NUMERIC: {
+        "weight": 0.3,  # Matches DEFAULT_WEIGHT_CUSTOM_NUMERIC
+        "prob_given_true": 0.3,
+        "prob_given_false": 0.03,
+        "active_states": None,
+        # Unbounded-above default, same rationale as WIFI_CLIENTS: the
+        # threshold that indicates presence for an arbitrary custom sensor
+        # varies enormously, so config_flow's min/max override
+        # (CONF_CUSTOM_NUMERIC_ACTIVE_MIN/MAX) is expected to be tuned
+        # per-install rather than relying on this default alone.
+        "active_range": (1.0, float("inf")),
         "strength_multiplier": 2.0,
     },
     InputType.UNKNOWN: {

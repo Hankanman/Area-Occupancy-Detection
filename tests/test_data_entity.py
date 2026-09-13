@@ -7,22 +7,16 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.config import CustomSensor
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
 )
-from custom_components.area_occupancy.data.entity_type import (
-    DEFAULT_TYPES,
-    EntityType,
-    InputType,
-)
+from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.types import GaussianParams
 from homeassistant.components.lock import LockState
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
@@ -2185,6 +2179,91 @@ class TestEntityFactory:
         assert entity.type.active_range == (1.0, float("inf"))
         assert entity.type.active_states is None
 
+    def test_get_entity_type_mapping_includes_custom_binary_and_numeric(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that custom_binary/custom_numeric sensors are included in the mapping."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.sensors.custom_binary = ["binary_sensor.custom_flag"]
+        area.config.sensors.custom_numeric = ["sensor.custom_metric"]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        mapping = factory.get_entity_type_mapping()
+
+        assert mapping["binary_sensor.custom_flag"] == "custom_binary"
+        assert mapping["sensor.custom_metric"] == "custom_numeric"
+
+    def test_custom_binary_uses_user_supplied_active_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A custom_binary entity must use the user-configured active_states.
+
+        Unlike appliance/door/etc, custom_binary has no meaningful default
+        active state ahead of time -- the whole point of #531 is supporting
+        entities with unknown state semantics.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.sensor_states.custom_binary = ["detected", "active"]
+
+        entity_id = "binary_sensor.hassagent_pc_active"
+        area.config.sensors.custom_binary = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "custom_binary")
+
+        assert entity.type.active_states == ["detected", "active"]
+        assert entity.type.active_range is None
+        assert entity.type.input_type == InputType.CUSTOM_BINARY
+
+    def test_custom_numeric_uses_user_supplied_active_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A custom_numeric entity must use the user-configured min/max range.
+
+        custom_numeric is the first InputType to actually populate the
+        generic ``f"{input_type.value}_active_range"`` override hook on
+        AreaConfig -- every other numeric type still relies on the
+        DEFAULT_TYPES fallback.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.custom_numeric_active_range = (5.0, 50.0)
+
+        entity_id = "sensor.custom_metric"
+        area.config.sensors.custom_numeric = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "custom_numeric")
+
+        assert entity.type.active_range == (5.0, 50.0)
+        assert entity.type.active_states is None
+        assert entity.type.input_type == InputType.CUSTOM_NUMERIC
+
+    def test_custom_binary_and_numeric_use_own_weights(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """custom_binary/custom_numeric must resolve their own weight keys."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.weights.custom_binary = 0.55
+        area.config.weights.custom_numeric = 0.15
+
+        area.config.sensors.custom_binary = ["binary_sensor.custom_flag"]
+        area.config.sensors.custom_numeric = ["sensor.custom_metric"]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        binary_entity = factory.create_from_config_spec(
+            "binary_sensor.custom_flag", "custom_binary"
+        )
+        numeric_entity = factory.create_from_config_spec(
+            "sensor.custom_metric", "custom_numeric"
+        )
+
+        assert binary_entity.weight == 0.55
+        assert numeric_entity.weight == 0.15
+
     @pytest.mark.parametrize(
         ("input_type", "sensor_attr", "entity_id"),
         [
@@ -2622,76 +2701,3 @@ class TestGaussianLikelihood:
         # Should use configured values, not Gaussian params or EntityType defaults
         assert p_t == 0.9
         assert p_f == 0.05
-
-
-class TestEntityFactoryCustomSensors:
-    """Custom rows become entities carrying their own weight and states."""
-
-    @staticmethod
-    def _row(coordinator, area_name, **kwargs):
-        area = coordinator.areas[area_name]
-        area.config.custom_sensors = [
-            CustomSensor(
-                entity_id=kwargs.get("entity_id", "sensor.pc"),
-                active_states=kwargs.get("active_states", ["in_use"]),
-                weight=kwargs.get("weight", 0.6),
-            )
-        ]
-        return area
-
-    def test_row_drives_weight_and_active_states(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        area_name = coordinator.get_area_names()[0]
-        self._row(coordinator, area_name)
-        factory = EntityFactory(coordinator, area_name=area_name)
-
-        entity = factory.create_from_config_spec("sensor.pc", InputType.CUSTOM.value)
-
-        assert entity.type.input_type == InputType.CUSTOM
-        assert entity.weight == 0.6
-        assert entity.active_states == ["in_use"]
-        # Anything not in the row falls back to the type defaults.
-        assert (
-            entity.prob_given_true == DEFAULT_TYPES[InputType.CUSTOM]["prob_given_true"]
-        )
-
-    def test_rows_appear_in_the_type_mapping(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        area_name = coordinator.get_area_names()[0]
-        self._row(coordinator, area_name)
-        factory = EntityFactory(coordinator, area_name=area_name)
-
-        mapping = factory.get_entity_type_mapping()
-
-        assert mapping["sensor.pc"] == InputType.CUSTOM.value
-
-    def test_a_typed_channel_keeps_an_entity_it_already_owns(
-        self, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        # Hand-edited storage could name the same entity twice; the typed
-        # channel wins so its curated semantics are not silently replaced.
-        area_name = coordinator.get_area_names()[0]
-        area = coordinator.areas[area_name]
-        motion_id = area.config.sensors.motion[0]
-        self._row(coordinator, area_name, entity_id=motion_id)
-        factory = EntityFactory(coordinator, area_name=area_name)
-
-        mapping = factory.get_entity_type_mapping()
-
-        assert mapping[motion_id] == InputType.MOTION.value
-
-    def test_evidence_uses_the_row_states(
-        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
-    ) -> None:
-        area_name = coordinator.get_area_names()[0]
-        self._row(coordinator, area_name, active_states=["gaming"])
-        factory = EntityFactory(coordinator, area_name=area_name)
-        entity = factory.create_from_config_spec("sensor.pc", InputType.CUSTOM.value)
-
-        hass.states.async_set("sensor.pc", "gaming")
-        assert entity.evidence is True
-
-        hass.states.async_set("sensor.pc", "idle")
-        assert entity.evidence is False

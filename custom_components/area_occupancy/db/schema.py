@@ -272,9 +272,10 @@ class Intervals(Base):
     # Relationship removed - SQLite doesn't support composite FKs properly
     # Use manual joins in queries instead (see db/queries.py)
 
-    # Add unique constraint on (entity_id, start_time, end_time, aggregation_level)
+    # Add unique constraint on (entry_id, entity_id, start_time, end_time, aggregation_level)
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "start_time",
             "end_time",
@@ -366,6 +367,7 @@ class IntervalAggregates(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "aggregation_period",
             "period_start",
@@ -467,6 +469,7 @@ class NumericSamples(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "timestamp",
             name="uq_numeric_samples_entity_timestamp",
@@ -512,6 +515,7 @@ class NumericAggregates(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "aggregation_period",
             "period_start",

@@ -935,7 +935,12 @@ class TestSetAreaOption:
         Adjacency in particular has to be mirrored onto the neighbouring
         areas, which only the config flow does.
         """
-        for key in ("motion_sensors", "adjacent_areas", "custom_sensors", "purpose"):
+        for key in (
+            "motion_sensors",
+            "adjacent_areas",
+            "custom_binary_sensors",
+            "purpose",
+        ):
             assert key not in SETTABLE_AREA_OPTIONS
             with pytest.raises(vol.Invalid):
                 SET_AREA_OPTION_SCHEMA({"area_id": "living_room", key: "x"})

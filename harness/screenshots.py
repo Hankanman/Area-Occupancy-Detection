@@ -228,7 +228,7 @@ def build_shots(instance: Instance) -> list[Shot]:
         ),
         Shot(
             name="config_custom_sensors",
-            description="custom sensors: any entity, its own states and weight",
+            description="custom sensors: unfiltered binary and numeric entities",
             steps=[
                 lambda page: _open_area_menu(page, instance),
                 lambda page: _click_text(page, "Additional sensors"),

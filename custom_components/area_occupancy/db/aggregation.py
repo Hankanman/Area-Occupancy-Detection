@@ -157,8 +157,8 @@ def aggregate_raw_to_daily(
                 _LOGGER.debug("No raw intervals to aggregate to daily")
                 return 0, []
 
-            # Group by entity_id, state, and day
-            aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
+            # Group by entry_id, entity_id, state, and day
+            aggregates: dict[tuple[str, str, str, datetime], dict[str, Any]] = {}
 
             for interval in raw_intervals:
                 # DB stores naive UTC; bucket by local day boundary and persist naive UTC.
@@ -169,7 +169,12 @@ def aggregate_raw_to_daily(
                 period_start = to_db_utc(day_start_local)
                 period_end = to_db_utc(day_start_local + timedelta(days=1))
 
-                key = (interval.entity_id, interval.state, period_start)
+                key = (
+                    interval.entry_id,
+                    interval.entity_id,
+                    interval.state,
+                    period_start,
+                )
 
                 if key not in aggregates:
                     aggregates[key] = {
@@ -234,6 +239,7 @@ def aggregate_raw_to_daily(
                 existing = (
                     session.query(db.IntervalAggregates)
                     .filter_by(
+                        entry_id=agg_data["entry_id"],
                         entity_id=agg_data["entity_id"],
                         aggregation_period=AGGREGATION_PERIOD_DAILY,
                         period_start=agg_data["period_start"],
@@ -320,8 +326,8 @@ def aggregate_daily_to_weekly(
                 _LOGGER.debug("No daily aggregates to aggregate to weekly")
                 return 0, []
 
-            # Group by entity_id, state, and week
-            aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
+            # Group by entry_id, entity_id, state, and week
+            aggregates: dict[tuple[str, str, str, datetime], dict[str, Any]] = {}
 
             for daily in daily_aggregates:
                 # DB stores naive UTC; bucket by local week boundary and persist naive UTC.
@@ -335,7 +341,7 @@ def aggregate_daily_to_weekly(
                 week_start = to_db_utc(week_start_local)
                 week_end = to_db_utc(week_end_local)
 
-                key = (daily.entity_id, daily.state, week_start)
+                key = (daily.entry_id, daily.entity_id, daily.state, week_start)
 
                 if key not in aggregates:
                     aggregates[key] = {
@@ -400,6 +406,7 @@ def aggregate_daily_to_weekly(
                 existing = (
                     session.query(db.IntervalAggregates)
                     .filter_by(
+                        entry_id=agg_data["entry_id"],
                         entity_id=agg_data["entity_id"],
                         aggregation_period=AGGREGATION_PERIOD_WEEKLY,
                         period_start=agg_data["period_start"],
@@ -486,8 +493,8 @@ def aggregate_weekly_to_monthly(
                 _LOGGER.debug("No weekly aggregates to aggregate to monthly")
                 return 0
 
-            # Group by entity_id, state, and month
-            aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
+            # Group by entry_id, entity_id, state, and month
+            aggregates: dict[tuple[str, str, str, datetime], dict[str, Any]] = {}
 
             for weekly in weekly_aggregates:
                 # DB stores naive UTC; bucket by local month boundary and persist naive UTC.
@@ -506,7 +513,7 @@ def aggregate_weekly_to_monthly(
                 month_start = to_db_utc(month_start_local)
                 month_end = to_db_utc(month_end_local)
 
-                key = (weekly.entity_id, weekly.state, month_start)
+                key = (weekly.entry_id, weekly.entity_id, weekly.state, month_start)
 
                 if key not in aggregates:
                     aggregates[key] = {
@@ -571,6 +578,7 @@ def aggregate_weekly_to_monthly(
                 existing = (
                     session.query(db.IntervalAggregates)
                     .filter_by(
+                        entry_id=agg_data["entry_id"],
                         entity_id=agg_data["entity_id"],
                         aggregation_period=AGGREGATION_PERIOD_MONTHLY,
                         period_start=agg_data["period_start"],
@@ -849,9 +857,9 @@ def aggregate_numeric_samples_to_hourly(
                 _LOGGER.debug("No numeric samples to aggregate to hourly")
                 return 0, []
 
-            # Group by entity_id and hour
-            aggregates: dict[tuple[str, datetime], dict[str, Any]] = {}
-            sample_ids_by_hour: dict[tuple[str, datetime], list[int]] = {}
+            # Group by entry_id, entity_id, and hour
+            aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
+            sample_ids_by_hour: dict[tuple[str, str, datetime], list[int]] = {}
 
             for sample in raw_samples:
                 # DB stores naive UTC; bucket by local hour boundary and persist naive UTC.
@@ -862,7 +870,7 @@ def aggregate_numeric_samples_to_hourly(
                 period_start = to_db_utc(hour_start_local)
                 period_end = to_db_utc(hour_start_local + timedelta(hours=1))
 
-                key = (sample.entity_id, period_start)
+                key = (sample.entry_id, sample.entity_id, period_start)
 
                 if key not in aggregates:
                     aggregates[key] = {
@@ -917,6 +925,7 @@ def aggregate_numeric_samples_to_hourly(
                 existing = (
                     session.query(db.NumericAggregates)
                     .filter_by(
+                        entry_id=agg_data["entry_id"],
                         entity_id=agg_data["entity_id"],
                         aggregation_period=AGGREGATION_PERIOD_HOURLY,
                         period_start=agg_data["period_start"],
@@ -1010,8 +1019,8 @@ def aggregate_hourly_to_weekly(
                 _LOGGER.debug("No hourly aggregates to aggregate to weekly")
                 return 0, []
 
-            # Group by entity_id and week
-            aggregates: dict[tuple[str, datetime], dict[str, Any]] = {}
+            # Group by entry_id, entity_id, and week
+            aggregates: dict[tuple[str, str, datetime], dict[str, Any]] = {}
 
             for hourly in hourly_aggregates:
                 # DB stores naive UTC; bucket by local week boundary and persist naive UTC.
@@ -1025,7 +1034,7 @@ def aggregate_hourly_to_weekly(
                 week_start = to_db_utc(week_start_local)
                 week_end = to_db_utc(week_end_local)
 
-                key = (hourly.entity_id, week_start)
+                key = (hourly.entry_id, hourly.entity_id, week_start)
 
                 if key not in aggregates:
                     aggregates[key] = {
@@ -1109,6 +1118,7 @@ def aggregate_hourly_to_weekly(
                 existing = (
                     session.query(db.NumericAggregates)
                     .filter_by(
+                        entry_id=agg_data["entry_id"],
                         entity_id=agg_data["entity_id"],
                         aggregation_period=AGGREGATION_PERIOD_WEEKLY,
                         period_start=agg_data["period_start"],

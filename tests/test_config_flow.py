@@ -44,10 +44,11 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_CUSTOM_ACTIVE_STATES,
-    CONF_CUSTOM_ENTITY_ID,
-    CONF_CUSTOM_SENSORS,
-    CONF_CUSTOM_WEIGHT,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -68,6 +69,7 @@ from custom_components.area_occupancy.const import (
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_MEDIA,
     CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WIFI_CLIENTS,
@@ -881,6 +883,45 @@ class TestHelperFunctions:
 
         assert f"sensor.{DOMAIN}_living_room_probability" not in result["wifi_clients"]
         assert "sensor.unifi_guest_ssid_clients" in result["wifi_clients"]
+
+    def test_get_include_entities_custom_has_no_domain_filter(
+        self, hass, entity_registry
+    ):
+        """Custom sensor selectors must accept entities every typed section rejects.
+
+        The whole point of #531 is supporting entities with no device_class
+        that fit no other section -- e.g. an MQTT/HASS.Agent sensor. Unlike
+        every other selector, no device_class filtering is applied at all.
+        """
+        # An entity with no recognizable device_class -- appliance/motion/etc
+        # selectors would all reject this.
+        entity_registry.async_get_or_create(
+            "sensor",
+            "hassagent",
+            "pc_active_window",
+        )
+        # A binary_sensor with no recognizable device_class either.
+        entity_registry.async_get_or_create(
+            "binary_sensor",
+            "mqtt",
+            "custom_flag",
+        )
+        # This integration's own output sensor must still be excluded.
+        entity_registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            "living_room_probability",
+        )
+
+        result = _get_include_entities(hass)
+
+        assert "sensor.hassagent_pc_active_window" in result["custom_binary"]
+        assert "sensor.hassagent_pc_active_window" in result["custom_numeric"]
+        assert "binary_sensor.mqtt_custom_flag" in result["custom_binary"]
+        assert f"sensor.{DOMAIN}_living_room_probability" not in result["custom_binary"]
+        assert (
+            f"sensor.{DOMAIN}_living_room_probability" not in result["custom_numeric"]
+        )
 
     def test_wizard_steps_always_include_advanced_fields(self, hass, entity_registry):
         """Test that the former advanced-mode fields are always in the schema.
@@ -1800,6 +1841,42 @@ class TestNewHelperFunctions:
         }
         assert "wifi_clients" in section_names
 
+    def test_flatten_sectioned_input_custom(self):
+        """Test flattening the custom section like other sensor sections."""
+        user_input = {
+            "custom": {
+                CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+                CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+                CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+            },
+        }
+        result = flatten_sectioned_input(user_input)
+        assert result[CONF_CUSTOM_BINARY_SENSORS] == ["binary_sensor.custom_flag"]
+        assert result[CONF_CUSTOM_NUMERIC_SENSORS] == ["sensor.custom_metric"]
+        assert result[CONF_WEIGHT_CUSTOM_NUMERIC] == 0.25
+
+    def test_nest_config_for_sections_custom(self):
+        """Test that custom config keys are nested under a custom section."""
+        flat_config = {
+            CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+            CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+            CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+        }
+        nested = _nest_config_for_sections(flat_config)
+        assert nested["custom"] == {
+            CONF_CUSTOM_BINARY_SENSORS: ["binary_sensor.custom_flag"],
+            CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.custom_metric"],
+            CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
+        }
+
+    def test_sensors_step_schema_includes_custom_section(self, hass):
+        """Test that the sensors step schema exposes a custom section."""
+        schema_dict = _create_sensors_step_schema(hass)
+        section_names = {
+            key.schema if hasattr(key, "schema") else key for key in schema_dict
+        }
+        assert "custom" in section_names
+
     @pytest.mark.parametrize(
         ("areas", "search_name", "expected_found", "expected_name"),
         [
@@ -2335,32 +2412,21 @@ class TestSectionEditing:
         assert flow._area_edit_section is None
 
     def test_sensors_schema_group_filter(self, hass: HomeAssistant) -> None:
-        full = _create_sensors_step_schema(hass, include_entities=_empty_entities())
+        full = _create_sensors_step_schema(hass, include_entities=_empty_entities(hass))
         assert [m.schema for m in full] == list(SENSOR_GROUPS)
         only_power = _create_sensors_step_schema(
-            hass, include_entities=_empty_entities(), groups=("power",)
+            hass, include_entities=_empty_entities(hass), groups=("power",)
         )
         assert [m.schema for m in only_power] == ["power"]
 
 
-def _empty_entities() -> dict[str, list[str]]:
-    """Candidate-entity map with nothing in it, for schema-shape tests."""
-    keys = (
-        "motion",
-        "door",
-        "window",
-        "cover",
-        "lock",
-        "appliance",
-        "temperature",
-        "humidity",
-        "pressure",
-        "air_quality",
-        "pm25",
-        "pm10",
-        "wifi_clients",
-    )
-    return {key: [] for key in keys}
+def _empty_entities(hass: HomeAssistant) -> dict[str, list[str]]:
+    """Candidate-entity map with nothing in it, for schema-shape tests.
+
+    Derived from the real map so a new channel cannot leave this helper
+    behind and fail the schema builders with a ``KeyError``.
+    """
+    return {key: [] for key in _get_include_entities(hass)}
 
 
 class TestAreaDescriptionPlaceholders:
@@ -2469,13 +2535,6 @@ class TestCustomSensorsSpoke:
         assert areas
         return areas[0][CONF_AREA_ID]
 
-    def _row(self, entity_id="sensor.pc", states=("in_use",), weight=0.6) -> dict:
-        return {
-            CONF_CUSTOM_ENTITY_ID: entity_id,
-            CONF_CUSTOM_ACTIVE_STATES: list(states),
-            CONF_CUSTOM_WEIGHT: weight,
-        }
-
     async def test_group_menu_lists_the_custom_spoke(
         self, config_flow_options_flow
     ) -> None:
@@ -2499,38 +2558,7 @@ class TestCustomSensorsSpoke:
         assert result["step_id"] == "area_sensors"
         assert [marker.schema for marker in result["data_schema"].schema] == ["custom"]
 
-    async def test_saving_rows_persists_them(self, config_flow_options_flow) -> None:
-        flow = config_flow_options_flow
-        flow._area_being_edited = self._area_id(flow)
-        await flow.async_step_edit_sensors_custom()
-
-        result = await flow.async_step_area_sensors(
-            {"custom": {CONF_CUSTOM_SENSORS: [self._row()]}}
-        )
-
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        saved = _saved_area(flow)
-        assert saved[CONF_CUSTOM_SENSORS] == [self._row()]
-        # An unrelated page is untouched by a single-group save.
-        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
-
-    async def test_row_without_states_is_rejected(
-        self, config_flow_options_flow
-    ) -> None:
-        flow = config_flow_options_flow
-        flow._area_being_edited = self._area_id(flow)
-        await flow.async_step_edit_sensors_custom()
-
-        result = await flow.async_step_area_sensors(
-            {"custom": {CONF_CUSTOM_SENSORS: [self._row(states=())]}}
-        )
-
-        assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {
-            CONF_CUSTOM_SENSORS: "custom_sensor_states_required"
-        }
-
-    async def test_row_shadowing_a_typed_sensor_is_rejected(
+    async def test_saving_entities_persists_them(
         self, config_flow_options_flow
     ) -> None:
         flow = config_flow_options_flow
@@ -2540,26 +2568,72 @@ class TestCustomSensorsSpoke:
         result = await flow.async_step_area_sensors(
             {
                 "custom": {
-                    CONF_CUSTOM_SENSORS: [self._row(entity_id="binary_sensor.motion1")]
+                    CONF_CUSTOM_BINARY_SENSORS: ["sensor.pc"],
+                    CONF_CUSTOM_BINARY_ACTIVE_STATES: ["in_use"],
                 }
             }
         )
 
-        assert result["errors"] == {CONF_CUSTOM_SENSORS: "custom_sensor_duplicate"}
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = _saved_area(flow)
+        assert saved[CONF_CUSTOM_BINARY_SENSORS] == ["sensor.pc"]
+        assert saved[CONF_CUSTOM_BINARY_ACTIVE_STATES] == ["in_use"]
+        # An unrelated page is untouched by a single-group save.
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
 
-    async def test_saved_rows_repopulate_the_form(
+    async def test_binary_entities_without_states_are_rejected(
         self, config_flow_options_flow
     ) -> None:
         flow = config_flow_options_flow
         flow._area_being_edited = self._area_id(flow)
         await flow.async_step_edit_sensors_custom()
-        await flow.async_step_area_sensors(
-            {"custom": {CONF_CUSTOM_SENSORS: [self._row()]}}
+
+        result = await flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_BINARY_SENSORS: ["sensor.pc"],
+                    CONF_CUSTOM_BINARY_ACTIVE_STATES: [],
+                }
+            }
         )
 
-        nested = _nest_config_for_sections({CONF_CUSTOM_SENSORS: [self._row()]})
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {
+            CONF_CUSTOM_BINARY_SENSORS: "custom_binary_states_required"
+        }
 
-        assert nested["custom"] == {CONF_CUSTOM_SENSORS: [self._row()]}
+    async def test_inverted_numeric_range_is_rejected(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.counter"],
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN: 10.0,
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX: 2.0,
+                }
+            }
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {
+            CONF_CUSTOM_NUMERIC_SENSORS: "custom_numeric_range_invalid"
+        }
+
+    async def test_saved_entities_repopulate_the_form(self) -> None:
+        nested = _nest_config_for_sections(
+            {
+                CONF_CUSTOM_BINARY_SENSORS: ["sensor.pc"],
+                CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.counter"],
+            }
+        )
+
+        assert nested["custom"][CONF_CUSTOM_BINARY_SENSORS] == ["sensor.pc"]
+        assert nested["custom"][CONF_CUSTOM_NUMERIC_SENSORS] == ["sensor.counter"]
 
 
 class TestAreaSubentryFlow:

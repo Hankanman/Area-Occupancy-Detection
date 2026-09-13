@@ -86,19 +86,25 @@ This step also includes the [Wasp in Box](../features/wasp-in-box.md) configurat
 
 ## Custom Sensors
 
-The typed sensor sections carry built-in meaning: a door counts as occupied when it is *closed*, a media player when it is playing or paused, and so on. When an entity does not fit any of them, add it under **Custom Sensors** instead of forcing it into a section that would apply the wrong semantics.
+The typed sensor sections carry built-in meaning: a door counts as occupied when it is *closed*, a media player when it is playing or paused, and so on. They also filter the entity picker by domain and device class, so an entity without the expected device class never appears. When an entity does not fit any of them, add it under **Custom Sensors** instead of forcing it into a section that would apply the wrong semantics.
 
-![A custom sensor row: the entity, the states that count, and its weight](../images/config_custom_sensors.png)
+![The custom sensors section: unfiltered binary and numeric entities](../images/config_custom_sensors.png)
 
-A custom sensor is a row with three parts:
+The section has two halves, because the integration treats binary and numeric evidence differently:
 
-- **Entity** – any entity, from any integration or domain. Nothing is filtered out.
-- **Active states** – the states that count as evidence of occupancy for this entity. Pick from the list or type a state your installation uses, such as `in_use` or `gaming`.
-- **Weight** – how much this entity influences the result, from 0 to 1. Leave the slider at 0 to use the default.
+**Custom binary sensors** — any `binary_sensor` or `sensor` entity, with no domain or device-class filter at all. Alongside it:
 
-Use it for a sensor from a custom integration or MQTT, an entity whose active state is the opposite of its type default, or a domain the sections above do not cover. Each row keeps its own states and weight, so two custom sensors in the same area can behave completely differently.
+- **Custom binary active states** – the states that count as evidence of occupancy. Defaults to `on`; type a state your installation uses, such as `in_use` or `gaming`, if your sensor reports something else.
+- **Custom binary weight** – how much these entities influence the result, from 0 to 1.
 
-An entity already configured in another section cannot also be a custom sensor; the form rejects the row rather than silently ignoring it. Custom sensors take part in the hourly correlation analysis like every other non-motion sensor, so their likelihoods are refined from your own history over time.
+**Custom numeric sensors** — any `sensor` entity, again unfiltered. Alongside it:
+
+- **Custom numeric active minimum / maximum** – the inclusive band of readings that counts as evidence of occupancy. The default band is 1 to 1,000,000, which treats "at least 1" as presence; tune it to your sensor. The minimum must be below the maximum, or the form rejects it — an inverted band would match nothing.
+- **Custom numeric weight** – as above.
+
+Use these for a sensor from a custom integration or MQTT, an entity whose active state is the opposite of its type default, a HASS.Agent sensor reporting a bespoke state, or a domain the sections above do not cover. As with the typed sections, the active states and the band apply to every entity in that half, so put entities that behave differently in different areas — or use the typed section that already matches them.
+
+Custom sensors take part in the hourly correlation analysis like every other non-motion sensor, so their likelihoods are refined from your own history over time.
 
 ## Where Areas Live
 

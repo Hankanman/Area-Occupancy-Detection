@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_CO2_SENSORS,
-    CONF_CUSTOM_SENSORS,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DOOR_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
@@ -137,18 +138,26 @@ CHANNELS: dict[str, ChannelSpec] = {
         p_active_empty=0.08,
         mean_active_minutes=45.0,
     ),
-    # A state no typed section can express -- the case custom sensors exist
-    # for. Written into the config as a row with its own states and weight,
-    # not as a bare entity id.
-    "custom": ChannelSpec(
-        conf_key=CONF_CUSTOM_SENSORS,
-        input_type=InputType.CUSTOM,
-        domain="sensor",
-        active_states=("in_use",),
-        idle_state="idle",
+    # The escape hatch for entities no typed section accepts: a plain
+    # ``binary_sensor`` with no device class, which every typed binary
+    # channel filters out. Left on the default active state ("on") so the
+    # seeds exercise the shipped default rather than an override.
+    "custom_binary": ChannelSpec(
+        conf_key=CONF_CUSTOM_BINARY_SENSORS,
+        input_type=InputType.CUSTOM_BINARY,
+        domain="binary_sensor",
         p_active_occupied=0.45,
         p_active_empty=0.03,
         mean_active_minutes=35.0,
+    ),
+    # The numeric half of the same escape hatch: an unclassed count that
+    # straddles the shipped default active range of [1.0, 1000000], so an
+    # empty area reads below 1 and an occupied one above it.
+    "custom_numeric": ChannelSpec(
+        conf_key=CONF_CUSTOM_NUMERIC_SENSORS,
+        input_type=InputType.CUSTOM_NUMERIC,
+        domain="sensor",
+        numeric=NumericModel(empty_mean=0.2, occupied_mean=3.1, sd=0.5),
     ),
     "temperature": ChannelSpec(
         conf_key=CONF_TEMPERATURE_SENSORS,
@@ -318,7 +327,8 @@ _LIVING_ROOM = AreaSpec(
         "media": 1,
         "appliance": 2,
         "door": 1,
-        "custom": 1,
+        "custom_binary": 1,
+        "custom_numeric": 1,
         "temperature": 1,
         "humidity": 1,
         "illuminance": 1,

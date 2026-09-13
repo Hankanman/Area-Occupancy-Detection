@@ -21,7 +21,6 @@ from custom_components.area_occupancy.config_helpers import (
     duration_to_seconds,
     seconds_to_duration,
     validate_area_config,
-    validate_custom_sensors,
     validate_decay_half_life,
     validate_person_input,
     validate_threshold,
@@ -32,10 +31,11 @@ from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
-    CONF_CUSTOM_ACTIVE_STATES,
-    CONF_CUSTOM_ENTITY_ID,
-    CONF_CUSTOM_SENSORS,
-    CONF_CUSTOM_WEIGHT,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -318,94 +318,56 @@ class TestValidatePersonInput:
             validate_person_input(data)
 
 
-def _row(entity_id: str = "sensor.pc", states=("in_use",), weight: float = 0.4) -> dict:
-    """Build one custom-sensor row."""
-    return {
-        CONF_CUSTOM_ENTITY_ID: entity_id,
-        CONF_CUSTOM_ACTIVE_STATES: list(states),
-        CONF_CUSTOM_WEIGHT: weight,
-    }
-
-
 class TestValidateCustomSensors:
-    """Custom rows are free-form, so validation only blocks broken rows."""
+    """The two custom channels validate like the typed ones they mimic."""
 
-    def test_no_rows_is_valid(self) -> None:
-        assert validate_custom_sensors({}) is None
-        assert validate_custom_sensors({CONF_CUSTOM_SENSORS: []}) is None
+    def test_no_custom_entities_is_valid(self) -> None:
+        assert validate_area_config(_valid_area()) == {}
 
-    def test_valid_rows(self) -> None:
-        data = {CONF_CUSTOM_SENSORS: [_row(), _row("switch.desk", ("on",), 1.0)]}
-        assert validate_custom_sensors(data) is None
-
-    def test_rows_must_be_a_list(self) -> None:
-        assert (
-            validate_custom_sensors({CONF_CUSTOM_SENSORS: {"a": 1}})
-            == "custom_sensor_invalid"
-        )
-
-    def test_row_must_be_a_mapping(self) -> None:
-        assert (
-            validate_custom_sensors({CONF_CUSTOM_SENSORS: ["sensor.pc"]})
-            == "custom_sensor_invalid"
-        )
-
-    @pytest.mark.parametrize("entity_id", ["", "   ", None])
-    def test_entity_required(self, entity_id: object) -> None:
-        row = _row()
-        row[CONF_CUSTOM_ENTITY_ID] = entity_id
-        assert (
-            validate_custom_sensors({CONF_CUSTOM_SENSORS: [row]})
-            == "custom_sensor_entity_required"
-        )
-
-    @pytest.mark.parametrize("states", [[], None, [""], ["  "]])
-    def test_active_states_required(self, states: object) -> None:
-        row = _row()
-        row[CONF_CUSTOM_ACTIVE_STATES] = states
-        assert (
-            validate_custom_sensors({CONF_CUSTOM_SENSORS: [row]})
-            == "custom_sensor_states_required"
-        )
-
-    def test_a_single_state_string_is_accepted(self) -> None:
-        row = _row()
-        row[CONF_CUSTOM_ACTIVE_STATES] = "in_use"
-        assert validate_custom_sensors({CONF_CUSTOM_SENSORS: [row]}) is None
-
-    def test_weight_defaults_when_absent(self) -> None:
-        row = _row()
-        del row[CONF_CUSTOM_WEIGHT]
-        assert validate_custom_sensors({CONF_CUSTOM_SENSORS: [row]}) is None
-
-    @pytest.mark.parametrize("weight", [-0.1, 1.5, "0.5", None, True])
-    def test_weight_out_of_range(self, weight: object) -> None:
-        row = _row()
-        row[CONF_CUSTOM_WEIGHT] = weight
-        assert validate_custom_sensors({CONF_CUSTOM_SENSORS: [row]}) == "invalid_weight"
-
-    def test_duplicate_between_rows(self) -> None:
-        data = {CONF_CUSTOM_SENSORS: [_row(), _row()]}
-        assert validate_custom_sensors(data) == "custom_sensor_duplicate"
-
-    def test_duplicate_of_a_typed_channel(self) -> None:
-        # Silently losing to the typed channel would look like the row was
-        # ignored, so it is rejected up front instead.
-        data = {
-            CONF_MOTION_SENSORS: ["binary_sensor.motion"],
-            CONF_CUSTOM_SENSORS: [_row("binary_sensor.motion", ("on",))],
-        }
-        assert validate_custom_sensors(data) == "custom_sensor_duplicate"
-
-    def test_wired_into_area_validation(self) -> None:
+    def test_binary_entities_need_active_states(self) -> None:
         config = _valid_area()
-        config[CONF_CUSTOM_SENSORS] = [_row("sensor.pc", ())]
+        config[CONF_CUSTOM_BINARY_SENSORS] = ["sensor.pc"]
+        config[CONF_CUSTOM_BINARY_ACTIVE_STATES] = []
         assert (
-            validate_area_config(config)[CONF_CUSTOM_SENSORS]
-            == "custom_sensor_states_required"
+            validate_area_config(config)[CONF_CUSTOM_BINARY_SENSORS]
+            == "custom_binary_states_required"
         )
 
-    def test_valid_custom_rows_do_not_break_area_validation(self) -> None:
+    def test_binary_entities_fall_back_to_the_default_state(self) -> None:
         config = _valid_area()
-        config[CONF_CUSTOM_SENSORS] = [_row()]
+        config[CONF_CUSTOM_BINARY_SENSORS] = ["sensor.pc"]
+        assert validate_area_config(config) == {}
+
+    def test_numeric_range_must_not_be_inverted(self) -> None:
+        config = _valid_area()
+        config[CONF_CUSTOM_NUMERIC_SENSORS] = ["sensor.counter"]
+        config[CONF_CUSTOM_NUMERIC_ACTIVE_MIN] = 10.0
+        config[CONF_CUSTOM_NUMERIC_ACTIVE_MAX] = 2.0
+        assert (
+            validate_area_config(config)[CONF_CUSTOM_NUMERIC_SENSORS]
+            == "custom_numeric_range_invalid"
+        )
+
+    def test_equal_bounds_match_nothing_and_are_rejected(self) -> None:
+        config = _valid_area()
+        config[CONF_CUSTOM_NUMERIC_SENSORS] = ["sensor.counter"]
+        config[CONF_CUSTOM_NUMERIC_ACTIVE_MIN] = 5.0
+        config[CONF_CUSTOM_NUMERIC_ACTIVE_MAX] = 5.0
+        assert (
+            validate_area_config(config)[CONF_CUSTOM_NUMERIC_SENSORS]
+            == "custom_numeric_range_invalid"
+        )
+
+    def test_an_inverted_range_without_entities_is_ignored(self) -> None:
+        # The bounds only matter once something reads them.
+        config = _valid_area()
+        config[CONF_CUSTOM_NUMERIC_ACTIVE_MIN] = 10.0
+        config[CONF_CUSTOM_NUMERIC_ACTIVE_MAX] = 2.0
+        assert validate_area_config(config) == {}
+
+    def test_valid_custom_entities_do_not_break_area_validation(self) -> None:
+        config = _valid_area()
+        config[CONF_CUSTOM_BINARY_SENSORS] = ["sensor.pc"]
+        config[CONF_CUSTOM_BINARY_ACTIVE_STATES] = ["in_use"]
+        config[CONF_CUSTOM_NUMERIC_SENSORS] = ["sensor.counter"]
         assert validate_area_config(config) == {}

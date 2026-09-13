@@ -22,10 +22,6 @@ from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
     CONF_AREA_ID,
     CONF_AREAS,
-    CONF_CUSTOM_ACTIVE_STATES,
-    CONF_CUSTOM_ENTITY_ID,
-    CONF_CUSTOM_SENSORS,
-    CONF_CUSTOM_WEIGHT,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_PURPOSE,
@@ -117,19 +113,7 @@ def area_config(area: AreaSpec, profile: Profile) -> dict[str, Any]:
         config[CONF_ADJACENT_AREAS] = adjacent
 
     for channel, entities in area_entities(area).items():
-        spec = CHANNELS[channel]
-        if spec.conf_key == CONF_CUSTOM_SENSORS:
-            # Custom sensors carry their own states and weight per row.
-            config[CONF_CUSTOM_SENSORS] = [
-                {
-                    CONF_CUSTOM_ENTITY_ID: entity,
-                    CONF_CUSTOM_ACTIVE_STATES: list(spec.active_states),
-                    CONF_CUSTOM_WEIGHT: 0.55,
-                }
-                for entity in entities
-            ]
-            continue
-        config[spec.conf_key] = entities
+        config[CHANNELS[channel].conf_key] = entities
 
     if area.wasp_enabled:
         config[CONF_WASP_ENABLED] = True
