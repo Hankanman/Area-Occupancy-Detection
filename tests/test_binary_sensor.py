@@ -2273,8 +2273,9 @@ class TestOccupancyEntityEdgeCases:
         # Verify results
         if should_register_config_entry:
             # Device should now have area_id assigned
-            device_entry = device_registry.async_get_device(
-                identifiers=entity.device_info["identifiers"]
+            device_entry = device_registry.async_get_device_by_identifier(
+                next(iter(entity.device_info["identifiers"])),
+                coordinator.entry_id,
             )
             assert device_entry is not None
             assert device_entry.area_id == expected_area_id

@@ -6,10 +6,11 @@ import asyncio
 from difflib import SequenceMatcher
 import logging
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
@@ -24,6 +25,7 @@ from .const import (
     CONF_PERSON_SLEEP_SENSORS,
     CONF_VERSION,
     DOMAIN,
+    SUBENTRY_TYPE_AREA,
 )
 from .db import DB_NAME
 
@@ -161,8 +163,7 @@ async def _cleanup_registry_devices_and_entities(
         # Find and remove all devices with matching config_entry_id
         devices_to_remove = [
             device.id
-            for device in device_registry.devices.values()
-            if entry_id in device.config_entries
+            for device in dr.async_entries_for_config_entry(device_registry, entry_id)
         ]
 
         for device_id in devices_to_remove:
@@ -512,6 +513,120 @@ def _combine_config_entries(
     return area_configs
 
 
+@callback
+def _migrate_areas_to_subentries(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Move each area from the CONF_AREAS list into its own config subentry.
+
+    Areas are keyed by their Home Assistant ``area_id``, which is also the
+    subentry's ``unique_id``, so the resulting ``Area`` objects keep the same
+    names and the learned history in SQLite -- which is keyed by area name --
+    is untouched.
+
+    Existing devices are re-linked to their new subentry here rather than
+    left for the entity platforms, so the integration page shows each device
+    under its area immediately after the upgrade instead of after the first
+    entity refresh.
+
+    Idempotent: an area that already has a subentry is skipped, and the
+    legacy key is only stripped once every area has one.
+    """
+    merged = dict(config_entry.data)
+    merged.update(config_entry.options)
+    areas = merged.get(CONF_AREAS) or []
+    if not isinstance(areas, list):
+        _LOGGER.warning(
+            "CONF_AREAS has unexpected type %s during subentry migration, ignoring",
+            type(areas).__name__,
+        )
+        areas = []
+
+    existing = {
+        subentry.unique_id
+        for subentry in config_entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_AREA
+    }
+    area_reg = ar.async_get(hass)
+    dev_reg = dr.async_get(hass)
+
+    for area_data in areas:
+        if not isinstance(area_data, dict):
+            _LOGGER.warning("Skipping malformed area during migration: %s", area_data)
+            continue
+        area_id = area_data.get(CONF_AREA_ID)
+        if not area_id or area_id in existing:
+            continue
+
+        area_entry = area_reg.async_get_area(area_id)
+        title = area_entry.name if area_entry else str(area_id)
+        subentry = ConfigSubentry(
+            data=MappingProxyType(dict(area_data)),
+            subentry_type=SUBENTRY_TYPE_AREA,
+            title=title,
+            unique_id=str(area_id),
+        )
+        hass.config_entries.async_add_subentry(config_entry, subentry)
+        existing.add(str(area_id))
+
+        # Re-home the area's existing device and entities under the new
+        # subentry. Two details are load-bearing:
+        #   * ``add_config_subentry_id`` only arms a deferred move, so the
+        #     explicit "new"/update forms are what actually re-link them.
+        #   * the entities must move first. Moving the device drops every
+        #     entity that does not already belong to the target subentry, so
+        #     doing the device first would delete them along with whatever
+        #     the user had customised on them.
+        device = dev_reg.async_get_device_by_identifier(
+            (DOMAIN, str(area_id)), config_entry.entry_id
+        )
+        if device is not None:
+            ent_reg = er.async_get(hass)
+            for entity in er.async_entries_for_device(
+                ent_reg, device.id, include_disabled_entities=True
+            ):
+                if entity.config_entry_id == config_entry.entry_id:
+                    ent_reg.async_update_entity(
+                        entity.entity_id, config_subentry_id=subentry.subentry_id
+                    )
+            dev_reg.async_update_device(
+                device.id, new_config_subentry_id=subentry.subentry_id
+            )
+
+        _LOGGER.info(
+            "Migrated area '%s' (%s) to subentry %s",
+            title,
+            area_id,
+            subentry.subentry_id,
+        )
+
+    # Only drop the legacy key once every area survived the move, so a
+    # partial failure leaves something to retry from.
+    migrated = {
+        subentry.unique_id
+        for subentry in config_entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_AREA
+    }
+    wanted = {
+        str(area.get(CONF_AREA_ID))
+        for area in areas
+        if isinstance(area, dict) and area.get(CONF_AREA_ID)
+    }
+    if wanted - migrated:
+        _LOGGER.warning(
+            "Not clearing the legacy areas list: %s still have no subentry",
+            sorted(wanted - migrated),
+        )
+        return
+
+    new_data = {k: v for k, v in config_entry.data.items() if k != CONF_AREAS}
+    new_options = {k: v for k, v in config_entry.options.items() if k != CONF_AREAS}
+    if new_data != dict(config_entry.data) or new_options != dict(config_entry.options):
+        hass.config_entries.async_update_entry(
+            config_entry, data=new_data, options=new_options
+        )
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:  # noqa: C901
     """Migrate old entry to the new version.
 
@@ -581,13 +696,19 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             )
 
         # Note: adjacent_areas (introduced by feat/adjacent-areas) does NOT
-        # bump CONF_VERSION. Bumping the version triggers the destructive
-        # _ensure_schema_up_to_date path (delete + recreate the DB), wiping
-        # all learned priors and history. Since the change is purely
-        # additive (new Areas.adjacent_areas JSON column with default-on-
-        # missing in the loader, plus a new AreaTransitions table created
-        # by Base.metadata.create_all(checkfirst=True) once the table is
-        # listed as required), users upgrade without losing data.
+        # bump CONF_VERSION. Historically a bump also wiped the SQLite
+        # database, because _ensure_schema_up_to_date compared its stamp
+        # against CONF_VERSION. That is no longer true -- the stamp is
+        # DB_SCHEMA_VERSION now -- but adjacent_areas remains additive and
+        # needs no migration either way.
+
+        if config_entry.version == 18:
+            _migrate_areas_to_subentries(hass, config_entry)
+            hass.config_entries.async_update_entry(config_entry, version=19)
+            _LOGGER.debug(
+                "Migrated entry %s from v18 to v19 (areas as config subentries)",
+                config_entry.entry_id,
+            )
 
         # If entry is already at current version or higher, no migration needed
         if config_entry.version >= CONF_VERSION:

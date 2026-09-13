@@ -115,7 +115,12 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         # Let the coordinator know our entity_id. Only for per-area entities, not aggregates.
         if self._handle is not None and (area := self._get_area()) is not None:
             area.occupancy_entity_id = self.entity_id
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
@@ -992,6 +997,19 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
         return self._handle.resolve()
 
 
+def _area_subentry_id(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> str | None:
+    """Config subentry an area's entities belong to, if it has one.
+
+    Registering entities under the area's subentry is what makes the
+    integration page group each area's device and entities beneath it.
+    Aggregate entities ("All Areas", floors) span areas and stay on the entry.
+    """
+    area = coordinator.get_area(area_name)
+    return area.config.subentry_id if area else None
+
+
 async def async_setup_entry(
     hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: Any
 ) -> None:
@@ -1038,6 +1056,7 @@ async def async_setup_entry(
         async_add_entities(
             area_entities,
             update_before_add=False,
+            config_subentry_id=_area_subentry_id(coordinator, area_name),
         )
 
     # Create "All Areas" aggregation occupancy sensor.

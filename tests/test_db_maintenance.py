@@ -12,9 +12,9 @@ import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from custom_components.area_occupancy.const import CONF_VERSION
+from custom_components.area_occupancy.const import CONF_VERSION, DB_SCHEMA_VERSION
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.db import Base
+from custom_components.area_occupancy.db import Base, maintenance as db_maintenance
 from custom_components.area_occupancy.db.maintenance import (
     _attempt_database_recovery,
     _backup_database,
@@ -35,7 +35,7 @@ from custom_components.area_occupancy.db.maintenance import (
     verify_all_tables_exist,
 )
 from homeassistant.util import dt as dt_util
-from tests.conftest import setup_test_db_engine  # noqa: TID251
+from tests.conftest import setup_test_db_engine
 
 
 class TestEnsureDbExists:
@@ -99,7 +99,7 @@ class TestEnsureDbExists:
         # Create database with old version
         init_db(db)
         with db.get_session() as session:
-            session.add(db.Metadata(key="db_version", value=str(CONF_VERSION - 1)))
+            session.add(db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1)))
             session.commit()
 
         # Add some test data to verify it's cleared
@@ -112,12 +112,42 @@ class TestEnsureDbExists:
 
         # Verify database was recreated with correct version
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
         # Verify old data was cleared
         with db.get_session() as session:
             result = session.query(db.Metadata).filter_by(key="test_key").first()
             assert result is None
+
+    def test_config_entry_version_bump_does_not_reset_db(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        """A ``CONF_VERSION`` bump must never wipe learned history.
+
+        The SQLite reset in ``_ensure_schema_up_to_date`` is keyed on
+        ``DB_SCHEMA_VERSION`` only. A config entry that has been migrated to
+        a newer format version keeps its database untouched.
+        """
+        assert "CONF_VERSION" not in vars(db_maintenance), (
+            "db/maintenance.py must not key the destructive reset on CONF_VERSION"
+        )
+
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "test_entry_version_bump.db")
+        init_db(db)
+        _set_db_version(db)
+        with db.get_session() as session:
+            session.add(db.Metadata(key="learned_marker", value="precious"))
+            session.commit()
+
+        with patch.object(coordinator.config_entry, "version", CONF_VERSION + 1):
+            ensure_db_exists(db)
+
+        assert get_db_version(db) == DB_SCHEMA_VERSION
+        with db.get_session() as session:
+            result = session.query(db.Metadata).filter_by(key="learned_marker").first()
+            assert result is not None
+            assert result.value == "precious"
 
     def test_ensure_db_exists_adds_missing_table_without_wiping_data(
         self, coordinator: AreaOccupancyCoordinator, tmp_path
@@ -129,7 +159,7 @@ class TestEnsureDbExists:
         additive ``init_db`` (which is ``Base.metadata.create_all`` with
         ``checkfirst=True``), not the destructive
         ``_ensure_schema_up_to_date`` delete-and-recreate. Bumping
-        ``CONF_VERSION`` would trigger the destructive path; we
+        ``DB_SCHEMA_VERSION`` would trigger the destructive path; we
         deliberately don't bump it for additive-only schema changes.
         """
         db = coordinator.db
@@ -341,14 +371,14 @@ class TestSetDbVersion:
 
         # Verify the version was set correctly
         version = get_db_version(db)
-        assert version == CONF_VERSION
+        assert version == DB_SCHEMA_VERSION
 
         # Call _set_db_version again - should update existing
         _set_db_version(db)
 
         # Verify version is still correct
         version_after = get_db_version(db)
-        assert version_after == CONF_VERSION
+        assert version_after == DB_SCHEMA_VERSION
 
     def test_set_db_version_insert_new(self, coordinator: AreaOccupancyCoordinator):
         """Test _set_db_version when version doesn't exist."""
@@ -365,7 +395,7 @@ class TestSetDbVersion:
 
         # Verify version was set
         version = get_db_version(db)
-        assert version == CONF_VERSION
+        assert version == DB_SCHEMA_VERSION
 
     def test_set_db_version_error(
         self, coordinator: AreaOccupancyCoordinator, monkeypatch
@@ -391,7 +421,7 @@ class TestGetDbVersion:
         _set_db_version(db)
 
         version = get_db_version(db)
-        assert version == CONF_VERSION
+        assert version == DB_SCHEMA_VERSION
 
     def test_get_db_version_no_metadata(self, coordinator: AreaOccupancyCoordinator):
         """Test get_db_version when no metadata exists."""
@@ -459,6 +489,208 @@ class TestDeleteDb:
             delete_db(db)
 
 
+class TestStartupCorruptionRecovery:
+    """A corrupt database file must not leave the integration unable to load.
+
+    Recovery used to be reachable only from periodic_health_check(), a step
+    of the hourly analysis pipeline -- which never runs, because setup raises
+    ConfigEntryNotReady on the very error that needs recovering. A file with
+    a valid SQLite header but a damaged body (the shape a partial write or
+    power loss leaves behind) therefore put the entry in setup_retry forever,
+    with no entities, retrying into the same failure.
+    """
+
+    def _corrupt(self, path: Path) -> None:
+        """Write a file that passes the header check and fails to open."""
+        path.write_bytes(b"SQLite format 3\x00" + b"\x00" * 512)
+
+    def test_a_damaged_file_is_recovered_during_startup(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "corrupt.db")
+        db.engine.dispose()
+        self._corrupt(db.db_path)
+
+        ensure_db_exists(db)
+
+        # Usable again: the schema is present and stamped.
+        assert verify_all_tables_exist(db)
+        assert get_db_version(db) == DB_SCHEMA_VERSION
+
+    def test_recovery_prefers_the_backup_over_recreating(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "with_backup.db")
+        db.init_db()
+        _set_db_version(db)
+        with db.get_session() as session:
+            session.add(db.Metadata(key="learned_marker", value="kept"))
+            session.commit()
+
+        # Use the integration's own backup path, which checkpoints the WAL
+        # before copying -- a plain file copy can leave the rows behind in
+        # the -wal file and produce a backup that restores empty.
+        assert _backup_database(db) is True
+
+        db.engine.dispose()
+        self._corrupt(db.db_path)
+
+        ensure_db_exists(db)
+
+        # The marker only survives if the backup was restored rather than the
+        # database recreated from scratch.
+        with db.get_session() as session:
+            row = (
+                session.query(db.Metadata)
+                .filter(db.Metadata.key == "learned_marker")
+                .one_or_none()
+            )
+        assert row is not None
+        assert row.value == "kept"
+
+    def test_a_full_disk_is_not_treated_as_corruption(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # SQLITE_FULL says the environment is out of space, not that the file
+        # is damaged. Recovering here would delete a perfectly good database.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "full_disk.db")
+        db.init_db()
+        _set_db_version(db)
+
+        with (
+            patch.object(
+                db_maintenance,
+                "verify_all_tables_exist",
+                side_effect=SQLAlchemyError("database or disk is full"),
+            ),
+            patch.object(db_maintenance, "_handle_database_corruption") as recovery,
+            patch.object(db_maintenance, "delete_db") as delete,
+            pytest.raises(SQLAlchemyError, match="disk is full"),
+        ):
+            # The error has to reach the caller: setup turns it into
+            # ConfigEntryNotReady and Home Assistant retries. Swallowing it
+            # would let setup finish with no usable database.
+            ensure_db_exists(db)
+
+        recovery.assert_not_called()
+        delete.assert_not_called()
+
+    def test_an_unopenable_file_also_propagates(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # The other transient case: the path is not readable right now. Same
+        # rule -- retry, never recover.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "unopenable.db")
+        db.init_db()
+        _set_db_version(db)
+
+        with (
+            patch.object(
+                db_maintenance,
+                "verify_all_tables_exist",
+                side_effect=SQLAlchemyError("unable to open database file"),
+            ),
+            patch.object(db_maintenance, "_handle_database_corruption") as recovery,
+            patch.object(db_maintenance, "delete_db") as delete,
+            pytest.raises(SQLAlchemyError, match="unable to open"),
+        ):
+            ensure_db_exists(db)
+
+        recovery.assert_not_called()
+        delete.assert_not_called()
+
+    def test_verify_all_tables_exist_lets_a_transient_error_out(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # Reporting "tables are missing" for a full disk is what sent the
+        # caller into the initialise-and-swallow path.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "verify_transient.db")
+
+        with (
+            patch.object(
+                db_maintenance.sa,
+                "inspect",
+                side_effect=SQLAlchemyError("database or disk is full"),
+            ),
+            pytest.raises(SQLAlchemyError, match="disk is full"),
+        ):
+            db_maintenance.verify_all_tables_exist(db)
+
+    def test_verify_all_tables_exist_still_reports_missing_tables(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # A genuine "no such table" is still a False, not an exception.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "verify_missing.db")
+
+        with patch.object(
+            db_maintenance.sa,
+            "inspect",
+            side_effect=SQLAlchemyError("no such table: areas"),
+        ):
+            assert db_maintenance.verify_all_tables_exist(db) is False
+
+    def test_a_restored_backup_on_an_old_schema_is_recreated(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # _restore_database_from_backup() checks the tables are present but
+        # never the stamped db_version, so recovery can hand back an intact
+        # database built for an older DB_SCHEMA_VERSION. Startup must notice.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "stale_backup.db")
+        db.init_db()
+
+        def _restore_stale(_db) -> bool:
+            """Stand in for a recovery that returns a version-behind database."""
+            with db.get_session() as session:
+                session.add(
+                    db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1))
+                )
+                session.commit()
+            return True
+
+        with (
+            patch.object(
+                db_maintenance,
+                "verify_all_tables_exist",
+                side_effect=SQLAlchemyError("database disk image is malformed"),
+            ),
+            patch.object(
+                db_maintenance,
+                "_handle_database_corruption",
+                side_effect=_restore_stale,
+            ),
+        ):
+            ensure_db_exists(db)
+
+        # The stale stamp was caught and the database rebuilt at the current
+        # version, rather than being queried with this version's schema.
+        assert db_maintenance.get_db_version(db) == DB_SCHEMA_VERSION
+
+    def test_a_failed_recovery_reports_rather_than_loading_broken(
+        self, coordinator: AreaOccupancyCoordinator, tmp_path
+    ):
+        # If recovery cannot fix it, setup must fail loudly so Home Assistant
+        # retries, rather than coming up with an unusable database.
+        db = coordinator.db
+        setup_test_db_engine(db, tmp_path / "unfixable.db")
+        db.engine.dispose()
+        self._corrupt(db.db_path)
+
+        with (
+            patch.object(
+                db_maintenance, "_handle_database_corruption", return_value=False
+            ),
+            pytest.raises(SQLAlchemyError),
+        ):
+            ensure_db_exists(db)
+
+
 class TestIsDatabaseCorrupted:
     """Test _is_database_corrupted function."""
 
@@ -466,7 +698,15 @@ class TestIsDatabaseCorrupted:
         ("error_message", "expected"),
         [
             ("database disk image is malformed", True),
+            ("malformed database schema", True),
+            ("file is not a database", True),
             ("connection error", False),
+            # Environment failures, not damaged files. Recovery recreates the
+            # database as a last resort, so treating these as corruption
+            # would destroy learned history over a full disk or an
+            # unreadable path -- conditions that clear on their own.
+            ("database or disk is full", False),
+            ("unable to open database file", False),
         ],
     )
     def test_is_database_corrupted(
@@ -653,7 +893,7 @@ class TestHandleDatabaseCorruption:
         # Verify database is healthy after restore
         assert verify_all_tables_exist(db) is True
         assert _check_database_integrity(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
         # Verify test data was restored from backup
         # Note: If tables were missing and reinitialized, data might be lost
@@ -690,7 +930,7 @@ class TestHandleDatabaseCorruption:
         assert result is True
         assert verify_all_tables_exist(db) is True
         assert _check_database_integrity(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
         # Verify database is empty (recreated, not restored)
         with db.get_session() as session:
@@ -722,7 +962,7 @@ class TestPeriodicHealthCheck:
         # Verify database is still healthy after health check
         assert _check_database_integrity(db) is True
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
     def test_periodic_health_check_error(self, coordinator: AreaOccupancyCoordinator):
         """Test periodic health check with error."""
@@ -1165,7 +1405,7 @@ class TestEnsureSchemaUpToDate:
 
         # Verify database was not recreated (data still exists)
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
         with db.get_session() as session:
             result = session.query(db.Metadata).filter_by(key="test_key").first()
             assert result is not None
@@ -1181,7 +1421,7 @@ class TestEnsureSchemaUpToDate:
         # Create database with old version
         init_db(db)
         with db.get_session() as session:
-            session.add(db.Metadata(key="db_version", value=str(CONF_VERSION - 1)))
+            session.add(db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1)))
             session.commit()
 
         # Add some test data to verify it's cleared
@@ -1194,7 +1434,7 @@ class TestEnsureSchemaUpToDate:
 
         # Verify database was deleted and recreated with correct version
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
         # Verify old data was cleared
         with db.get_session() as session:
@@ -1226,7 +1466,7 @@ class TestEnsureSchemaUpToDate:
 
         # Verify database was recreated
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
     def test_ensure_schema_up_to_date_recreation_failure(
         self, coordinator: AreaOccupancyCoordinator, tmp_path, monkeypatch
@@ -1238,7 +1478,7 @@ class TestEnsureSchemaUpToDate:
         # Create database with old version
         init_db(db)
         with db.get_session() as session:
-            session.add(db.Metadata(key="db_version", value=str(CONF_VERSION - 1)))
+            session.add(db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION - 1)))
             session.commit()
 
         # Mock delete_db to raise error
@@ -1383,7 +1623,7 @@ class TestPeriodicHealthCheckEdgeCases:
         # Verify database is still healthy and accessible
         assert _check_database_integrity(db) is True
         assert verify_all_tables_exist(db) is True
-        assert get_db_version(db) == CONF_VERSION
+        assert get_db_version(db) == DB_SCHEMA_VERSION
 
     def test_periodic_health_check_error(self, coordinator: AreaOccupancyCoordinator):
         """Test health check with error."""

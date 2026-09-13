@@ -82,7 +82,12 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
         # Assign device to Home Assistant area if area_id is configured.
         # Only for specific areas, not "All Areas" or floor aggregates.
         if self._area_handle is not None and (area := self._get_area()) is not None:
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""
@@ -611,6 +616,19 @@ class SensorHealthSensor(AreaOccupancySensorBase):
             return {}
 
 
+def _area_subentry_id(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> str | None:
+    """Config subentry an area's entities belong to, if it has one.
+
+    Registering entities under the area's subentry is what makes the
+    integration page group each area's device and entities beneath it.
+    Aggregate entities ("All Areas", floors) span areas and stay on the entry.
+    """
+    area = coordinator.get_area(area_name)
+    return area.config.subentry_id if area else None
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: Any
 ) -> None:
@@ -637,6 +655,7 @@ async def async_setup_entry(
         async_add_entities(
             area_entities,
             update_before_add=False,
+            config_subentry_id=_area_subentry_id(coordinator, area_name),
         )
 
     # Create "All Areas" aggregation sensors.

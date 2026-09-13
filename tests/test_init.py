@@ -18,7 +18,6 @@ from custom_components.area_occupancy import (
 )
 from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
-    CONF_AREAS,
     CONF_VERSION,
     DB_NAME,
     DOMAIN as DOMAIN_CONST,
@@ -33,6 +32,7 @@ from custom_components.area_occupancy.service import async_setup_services
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
+from tests.conftest import make_area_subentries
 
 
 class TestAsyncSetupEntry:
@@ -545,7 +545,10 @@ class TestEntryUpdated:
         """Test settings-only change triggers lightweight update, not reload."""
         # Config entry has one area; coordinator also has one area (same IDs)
         area_data = {CONF_AREA_ID: "test_area"}
-        object.__setattr__(mock_config_entry, "data", {CONF_AREAS: [area_data]})
+        object.__setattr__(mock_config_entry, "data", {})
+        object.__setattr__(
+            mock_config_entry, "subentries", make_area_subentries([area_data])
+        )
         object.__setattr__(mock_config_entry, "options", {})
 
         mock_coordinator = self._setup_coordinator_mock(
@@ -573,10 +576,13 @@ class TestEntryUpdated:
         # Config entry has two areas; coordinator only has one (new area added)
         area_data_1 = {CONF_AREA_ID: "area_1"}
         area_data_2 = {CONF_AREA_ID: "area_2"}
-        object.__setattr__(
-            mock_config_entry, "data", {CONF_AREAS: [area_data_1, area_data_2]}
-        )
+        object.__setattr__(mock_config_entry, "data", {})
         object.__setattr__(mock_config_entry, "options", {})
+        object.__setattr__(
+            mock_config_entry,
+            "subentries",
+            make_area_subentries([area_data_1, area_data_2]),
+        )
 
         mock_coordinator = self._setup_coordinator_mock(
             hass, mock_config_entry, area_ids=["area_1"]
@@ -597,7 +603,10 @@ class TestEntryUpdated:
         """Test removing an area triggers a full reload."""
         # Config entry has one area; coordinator has two (area removed)
         area_data = {CONF_AREA_ID: "area_1"}
-        object.__setattr__(mock_config_entry, "data", {CONF_AREAS: [area_data]})
+        object.__setattr__(mock_config_entry, "data", {})
+        object.__setattr__(
+            mock_config_entry, "subentries", make_area_subentries([area_data])
+        )
         object.__setattr__(mock_config_entry, "options", {})
 
         mock_coordinator = self._setup_coordinator_mock(
@@ -699,17 +708,15 @@ class TestAsyncRemoveEntry:
             assert _path_exists(path)
 
         # Configure entry to reference those two areas
+        object.__setattr__(mock_config_entry, "data", {})
+        object.__setattr__(mock_config_entry, "options", {})
         object.__setattr__(
             mock_config_entry,
-            "data",
-            {
-                CONF_AREAS: [
-                    {CONF_AREA_ID: "kitchen_id"},
-                    {CONF_AREA_ID: "living_id"},
-                ]
-            },
+            "subentries",
+            make_area_subentries(
+                [{CONF_AREA_ID: "kitchen_id"}, {CONF_AREA_ID: "living_id"}]
+            ),
         )
-        object.__setattr__(mock_config_entry, "options", {})
 
         # Simulate no other entries remain (this is the last one)
         hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
@@ -741,12 +748,13 @@ class TestAsyncRemoveEntry:
             ],
         )
 
+        object.__setattr__(mock_config_entry, "data", {})
+        object.__setattr__(mock_config_entry, "options", {})
         object.__setattr__(
             mock_config_entry,
-            "data",
-            {CONF_AREAS: [{CONF_AREA_ID: "kitchen_id"}]},
+            "subentries",
+            make_area_subentries([{CONF_AREA_ID: "kitchen_id"}]),
         )
-        object.__setattr__(mock_config_entry, "options", {})
 
         # Simulate another entry exists for the domain
         other_entry = Mock()
@@ -788,7 +796,8 @@ class TestAsyncRemoveEntry:
         survive entry removal forever.
         """
         entry_id = mock_config_entry.entry_id
-        object.__setattr__(mock_config_entry, "data", {CONF_AREAS: []})
+        object.__setattr__(mock_config_entry, "data", {})
+        object.__setattr__(mock_config_entry, "subentries", make_area_subentries([]))
         object.__setattr__(mock_config_entry, "options", {})
         hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
 
@@ -824,7 +833,7 @@ class TestAsyncRemoveEntry:
         object.__setattr__(
             mock_config_entry,
             "data",
-            {CONF_AREAS: [{CONF_AREA_ID: "missing_id"}]},
+            {},
         )
         object.__setattr__(mock_config_entry, "options", {})
         hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])

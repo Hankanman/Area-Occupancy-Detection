@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AreaDeviceHandle
+from .config_helpers import THRESHOLD_MAX, THRESHOLD_MIN, validate_threshold
 from .const import CONF_THRESHOLD
 from .coordinator import AreaOccupancyCoordinator
 from .utils import assign_device_to_ha_area, generate_entity_unique_id
@@ -50,8 +51,8 @@ class Threshold(CoordinatorEntity, NumberEntity):
             area_handle.device_info(),
             NAME_THRESHOLD_NUMBER,
         )
-        self._attr_native_min_value = 1.0
-        self._attr_native_max_value = 99.0
+        self._attr_native_min_value = float(THRESHOLD_MIN)
+        self._attr_native_max_value = float(THRESHOLD_MAX)
         self._attr_native_step = 1.0
         self._attr_mode = NumberMode.BOX
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -66,7 +67,12 @@ class Threshold(CoordinatorEntity, NumberEntity):
         # Assign device to Home Assistant area if area_id is configured
         area = self._get_area()
         if area is not None:
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     @property
     def native_value(self) -> float:
@@ -78,9 +84,11 @@ class Threshold(CoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new threshold value (already in percentage)."""
-        if value < self._attr_native_min_value or value > self._attr_native_max_value:
+        # Same rule as the config flow (config_helpers.validate_threshold), so
+        # every threshold writer agrees on the accepted range.
+        if validate_threshold(value) is not None:
             raise ServiceValidationError(
-                f"Threshold value must be between {self._attr_native_min_value} and {self._attr_native_max_value}"
+                f"Threshold value must be between {THRESHOLD_MIN} and {THRESHOLD_MAX}"
             )
         # Update the area's config threshold, guarding against a missing area
         area = self._get_area()
@@ -98,6 +106,19 @@ class Threshold(CoordinatorEntity, NumberEntity):
         return self._area_handle.resolve()
 
 
+def _area_subentry_id(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> str | None:
+    """Config subentry an area's entities belong to, if it has one.
+
+    Registering entities under the area's subentry is what makes the
+    integration page group each area's device and entities beneath it.
+    Aggregate entities ("All Areas", floors) span areas and stay on the entry.
+    """
+    area = coordinator.get_area(area_name)
+    return area.config.subentry_id if area else None
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -112,4 +133,5 @@ async def async_setup_entry(
         async_add_entities(
             [Threshold(area_handle=handle)],
             update_before_add=False,
+            config_subentry_id=_area_subentry_id(coordinator, area_name),
         )

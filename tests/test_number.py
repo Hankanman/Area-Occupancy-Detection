@@ -18,7 +18,7 @@ from homeassistant.exceptions import ServiceValidationError
 from tests.conftest import create_test_area
 
 
-# ruff: noqa: SLF001, TID251
+# ruff: noqa: SLF001
 @pytest.fixture
 def threshold_entity(coordinator: AreaOccupancyCoordinator) -> Threshold:
     """Create a Threshold entity for testing."""
@@ -107,7 +107,7 @@ class TestThreshold:
         assert threshold_entity._attr_has_entity_name is True
         assert threshold_entity._attr_translation_key == "threshold"
         assert threshold_entity._attr_native_min_value == 1.0
-        assert threshold_entity._attr_native_max_value == 99.0
+        assert threshold_entity._attr_native_max_value == 100.0
         assert threshold_entity._attr_native_step == 1.0
         assert threshold_entity._attr_mode == NumberMode.BOX
         assert threshold_entity._attr_native_unit_of_measurement == PERCENTAGE
@@ -179,8 +179,8 @@ class TestThreshold:
         [
             0.0,  # zero
             0.9,  # just below minimum
-            99.1,  # just above maximum
-            100.0,  # above maximum
+            100.1,  # just above maximum
+            101.0,  # above maximum
             -1.0,  # negative
         ],
         ids=[
@@ -196,7 +196,7 @@ class TestThreshold:
         threshold_entity: Threshold,
         invalid_value: float,
     ) -> None:
-        """Test async_set_native_value raises ServiceValidationError for values outside 1.0-99.0 range."""
+        """Test async_set_native_value raises ServiceValidationError for values outside 1.0-100.0 range."""
         # Act & Assert
         with pytest.raises(ServiceValidationError) as exc_info:
             await threshold_entity.async_set_native_value(invalid_value)
@@ -262,8 +262,9 @@ class TestThreshold:
             mock_parent.assert_called_once()
 
         # Assert: Device should now have area_id assigned
-        device_entry = device_registry.async_get_device(
-            identifiers=threshold_entity_with_hass.device_info["identifiers"]
+        device_entry = device_registry.async_get_device_by_identifier(
+            next(iter(threshold_entity_with_hass.device_info["identifiers"])),
+            coordinator.entry_id,
         )
         assert device_entry is not None
         assert device_entry.area_id == "test_area_id"
@@ -315,8 +316,9 @@ class TestThreshold:
         )
         device_registry.async_update_device(device_entry.id, area_id="test_area_id")
         # Re-fetch device to get updated area_id
-        device_entry = device_registry.async_get_device(
-            identifiers=threshold_entity_with_hass.device_info["identifiers"]
+        device_entry = device_registry.async_get_device_by_identifier(
+            next(iter(threshold_entity_with_hass.device_info["identifiers"])),
+            coordinator.entry_id,
         )
         assert device_entry is not None
         assert device_entry.area_id == "test_area_id"
@@ -347,9 +349,13 @@ class TestThreshold:
         area = coordinator.get_area(area_name)
         area.config.area_id = "test_area_id"
 
-        # Mock device registry to return None (device doesn't exist)
+        # Mock device registry to return None (device doesn't exist).
+        # It has to be the lookup production actually calls: a bare Mock()
+        # answers async_get_device_by_identifier() with a truthy auto-Mock,
+        # so this test used to exercise the device-found path and assign an
+        # area to a phantom device.
         mock_registry = Mock()
-        mock_registry.async_get_device.return_value = None
+        mock_registry.async_get_device_by_identifier.return_value = None
 
         # Act & Assert: Should handle gracefully without crashing
         with (
@@ -362,4 +368,7 @@ class TestThreshold:
             ),
         ):
             await threshold_entity_with_hass.async_added_to_hass()
-            # No exception should be raised
+
+        # No exception, and nothing was assigned: there was no device to assign.
+        mock_registry.async_get_device_by_identifier.assert_called_once()
+        mock_registry.async_update_device.assert_not_called()

@@ -8,13 +8,13 @@ import logging
 from pathlib import Path
 import shutil
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..const import CONF_VERSION
+from ..const import DB_SCHEMA_VERSION
 from .schema import Base
 
 if TYPE_CHECKING:
@@ -58,14 +58,44 @@ def ensure_db_exists(db: AreaOccupancyDB) -> None:
             # Tables exist - verify schema is up to date
             _ensure_schema_up_to_date(db)
     except sa.exc.SQLAlchemyError as e:
-        # Check if this is a corruption error
-        if _is_database_corrupted(db, e):
+        # An environment failure is not this database's fault and not
+        # something recreating it would fix. Raise so setup turns it into
+        # ConfigEntryNotReady and Home Assistant retries once the disk has
+        # room or the path is readable again.
+        if _is_transient_storage_error(e):
             _LOGGER.warning(
-                "Database may be corrupted (error: %s), will attempt recovery in background",
+                "Database is unavailable but not corrupted (error: %s); "
+                "Home Assistant will retry setup",
                 e,
             )
-            # Don't block startup - will attempt recovery in background
-            return
+            raise
+
+        # Check if this is a corruption error
+        if _is_database_corrupted(db, e):
+            # Recover here rather than deferring it. The recovery path used
+            # to be reachable only from periodic_health_check(), which runs
+            # as a step of the hourly analysis pipeline -- and the pipeline
+            # never runs, because setup raises ConfigEntryNotReady on this
+            # very error. A corrupt file therefore left the integration in
+            # setup_retry forever, with no entities, retrying into the same
+            # failure. _handle_database_corruption() tries repair first, then
+            # a restore from backup, and only recreates as a last resort.
+            _LOGGER.warning("Database is corrupted (error: %s), recovering", e)
+            if _handle_database_corruption(db):
+                # Recovery can hand back a database that is intact but old:
+                # _restore_database_from_backup() checks only that the tables
+                # are present, never the stamped db_version, so a backup taken
+                # under an earlier DB_SCHEMA_VERSION would otherwise be used
+                # with this version's queries.
+                _ensure_schema_up_to_date(db)
+                _LOGGER.info("Database recovered during startup")
+                return
+            _LOGGER.error(
+                "Database recovery failed for %s. The integration cannot load "
+                "until that file is repaired or removed",
+                db.db_path,
+            )
+            raise
 
         # Database doesn't exist or is not initialized, create it
         _LOGGER.debug("Database error during table check, initializing database: %s", e)
@@ -145,7 +175,13 @@ def verify_all_tables_exist(db: AreaOccupancyDB) -> bool:
         inspector = sa.inspect(db.engine)
         existing_tables = set(inspector.get_table_names())
         return required_tables.issubset(existing_tables)
-    except sa.exc.SQLAlchemyError:
+    except sa.exc.SQLAlchemyError as err:
+        # A full disk or an unopenable path is not "the tables are missing".
+        # Returning False here would send ensure_db_exists() into init_db(),
+        # which fails for the same reason and is then swallowed -- leaving
+        # setup to finish with no usable database. Let it out instead.
+        if _is_transient_storage_error(err):
+            raise
         return False
 
 
@@ -171,16 +207,19 @@ def get_missing_tables(db: AreaOccupancyDB) -> set[str]:
 def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
     """Ensure database schema matches current version.
 
-    If version doesn't match CONF_VERSION, delete and recreate from scratch.
+    If the stored ``db_version`` doesn't match ``DB_SCHEMA_VERSION``, delete
+    and recreate from scratch. This is intentionally keyed on the SQLite
+    schema version, not on ``CONF_VERSION``: config-entry migrations must
+    never wipe learned history.
     """
     try:
         db_version = get_db_version(db)
-        if db_version != CONF_VERSION:
+        if db_version != DB_SCHEMA_VERSION:
             _LOGGER.info(
                 "Database version mismatch (found %d, expected %d). "
                 "Deleting existing database and recreating from scratch.",
                 db_version,
-                CONF_VERSION,
+                DB_SCHEMA_VERSION,
             )
             delete_db(db)
             # Recreate database with new schema
@@ -188,7 +227,7 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
             _set_db_version(db)
             _LOGGER.info(
                 "Database recreated with schema version %d. All previous data has been cleared.",
-                CONF_VERSION,
+                DB_SCHEMA_VERSION,
             )
 
     except (SQLAlchemyError, OSError, RuntimeError) as e:
@@ -204,26 +243,63 @@ def _ensure_schema_up_to_date(db: AreaOccupancyDB) -> None:
             raise
 
 
+# Errors that mean the file's contents are genuinely damaged, so the only way
+# forward is repair, restore, or recreate. Recovery is destructive as a last
+# resort, so this list has to stay narrow.
+_CORRUPTION_INDICATORS: Final = (
+    "database disk image is malformed",
+    "malformed database schema",
+    "file is not a database",
+    "corrupted",
+)
+
+# Errors that look like corruption but are not: the database is fine and the
+# environment is not. A full disk or an unopenable path must never trigger
+# recovery -- recreating the database would destroy learned history over a
+# condition that clears itself once there is disk space, or once the path is
+# readable again. Setup fails and Home Assistant retries instead.
+_TRANSIENT_INDICATORS: Final = (
+    "database or disk is full",
+    "unable to open database file",
+)
+
+
+def _is_transient_storage_error(error: Exception) -> bool:
+    """Whether an error is an environment failure rather than a damaged file.
+
+    Args:
+        error: The exception that occurred.
+
+    Returns:
+        bool: True when the file may be perfectly intact and only the
+        environment is at fault (full disk, unopenable path).
+    """
+    error_str = str(error).lower()
+    return any(indicator in error_str for indicator in _TRANSIENT_INDICATORS)
+
+
 def _is_database_corrupted(db: AreaOccupancyDB, error: Exception) -> bool:
-    """Check if an error indicates database corruption.
+    """Whether an error means the database file itself is damaged.
 
     Args:
         db: Database instance
         error: The exception that occurred
 
     Returns:
-        bool: True if the error indicates corruption, False otherwise
+        bool: True if the error indicates real corruption. Environment
+        failures that merely resemble corruption (full disk, unopenable
+        file) return False so they are retried rather than recovered from.
     """
-    error_str = str(error).lower()
-    corruption_indicators = [
-        "database disk image is malformed",
-        "corrupted",
-        "file is not a database",
-        "database or disk is full",
-        "unable to open database file",
-    ]
+    if _is_transient_storage_error(error):
+        _LOGGER.warning(
+            "Database is unavailable but not corrupted (error: %s); "
+            "not attempting recovery, Home Assistant will retry",
+            error,
+        )
+        return False
 
-    return any(indicator in error_str for indicator in corruption_indicators)
+    error_str = str(error).lower()
+    return any(indicator in error_str for indicator in _CORRUPTION_INDICATORS)
 
 
 def _attempt_database_recovery(db: AreaOccupancyDB) -> bool:
@@ -506,10 +582,12 @@ def _set_db_version(db: AreaOccupancyDB) -> None:
                 )
                 if metadata_entry:
                     # Update existing entry
-                    metadata_entry.value = str(CONF_VERSION)
+                    metadata_entry.value = str(DB_SCHEMA_VERSION)
                 else:
                     # Insert new entry
-                    session.add(db.Metadata(key="db_version", value=str(CONF_VERSION)))
+                    session.add(
+                        db.Metadata(key="db_version", value=str(DB_SCHEMA_VERSION))
+                    )
         except Exception as e:
             _LOGGER.error("Failed to set db_version in metadata table: %s", e)
             raise
