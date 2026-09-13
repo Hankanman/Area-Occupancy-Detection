@@ -18,6 +18,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from .client import ApiError
 from .instance import Instance
 
 #: Where the docs keep their images.
@@ -75,6 +76,20 @@ def _install_auth(context: Any, instance: Instance) -> None:
     token = instance.meta.get("token")
     if not token:
         raise ShotError("the instance has no token; start it with the harness first")
+
+    # Access tokens last half an hour and the marker's is minted once, at
+    # onboarding, so any instance that has been up (or sitting stopped) for
+    # longer carries a dead one. The frontend trusts what is in localStorage
+    # and never refreshes, so it would open on a 401 instead of the UI --
+    # mint a fresh token first and keep it for the next run.
+    if instance.meta.get("refresh_token"):
+        client = instance.client()
+        try:
+            token = client.refresh()
+        except ApiError as err:
+            raise ShotError(f"could not renew the instance token: {err}") from err
+        instance.meta["token"] = token
+        instance.save()
 
     tokens = {
         "access_token": token,
@@ -235,6 +250,9 @@ def build_shots(instance: Instance) -> list[Shot]:
                 lambda page: _click_text(page, "Custom Sensors"),
             ],
             target=DIALOG,
+            # Taller than the default: the point of the shot is that the
+            # section has a binary half and a numeric half, so both must fit.
+            viewport={"width": 1440, "height": 1600},
         ),
         Shot(
             name="config_options_menu",
