@@ -57,6 +57,7 @@ The instance listens on a free port, so several can run at once.
 | `destroy` | Stop and delete it. |
 | `profiles` | List the available profiles. |
 | `verify` | Build an instance, run every check, print a report, delete it. `--keep` to keep it, `--reuse` to check an existing one. |
+| `shots` | Capture the documentation screenshots from a running instance into `docs/docs/images/`. |
 
 Build options (`new` and `verify`): `--profile`, `--entry-version`, `--days`,
 `--seed`, `--time-zone`, `--port`, `--no-frontend`, `--no-priors`, `--force`.
@@ -191,6 +192,29 @@ core builds them from area name, device name and entity name, so an area
 device named after its area produces
 `sensor.living_room_living_room_occupancy_probability`. The checks match on
 friendly name instead, which stayed stable.
+
+## Documentation screenshots
+
+Screenshots rot: the config flow changes, the pictures do not, and a reader
+following a walkthrough goes looking for a button that moved two releases ago.
+`scripts/harness shots` re-takes them from a seeded instance, so refreshing the
+whole set after a UI change is one command:
+
+```bash
+scripts/harness new --name shots --profile house --days 14 --detach
+scripts/harness shots --name shots
+scripts/harness destroy --name shots
+```
+
+It needs Playwright, which is an optional extra (`uv sync --extra shots`);
+everything else in the harness works without it. The shot list lives in
+`harness/screenshots.py` — each entry is the clicks to reach a screen and the
+element to crop to. `--only <name>` re-takes a single one.
+
+Because the shots come from a seeded instance, they show a populated
+installation rather than an empty one: five areas with their devices and
+entities, learned values in the summaries, and a live preview with a real
+number in it.
 
 ## Adding a check
 

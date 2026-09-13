@@ -2401,6 +2401,18 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         self._area_edit_section: str | None = None
         self._sensor_group_being_edited: str | None = None
 
+    @staticmethod
+    async def async_setup_preview(hass: HomeAssistant) -> None:
+        """Register the preview websocket command on first use.
+
+        Home Assistant calls this once per flow *class* that shows a form
+        with a preview, so the subentry flow needs its own copy: without it
+        the forms below advertise a preview the frontend then cannot
+        subscribe to, and the preview panel reads "Unknown command" unless
+        the options flow happened to register it earlier in the same run.
+        """
+        await preview.async_setup_preview(hass)
+
     def _get_wizard_areas(self) -> list[dict[str, Any]]:
         """Every configured area, for duplicate and adjacency checks."""
         return [data for _, data in iter_area_subentries(self._get_entry())]

@@ -22,10 +22,17 @@ classifiers = [
 ]
 requires-python = ">=3.14.2"
 dependencies = [
+  # These companions are not used by the integration; they are the
+  # requirements Home Assistant's own bundled components declare, pinned so
+  # the dev and test environment resolves. They have to move with the
+  # homeassistant pin above: 2026.9.0's conversation component calls
+  # get_intent_info(), which the older home-assistant-intents does not have,
+  # and the frontend fails to boot on the exception that raises.
   "homeassistant==2026.9.0",
-  "hassil==3.5.0",
+  "hassil==3.12.0",
   "unicode-rbnf==2.4.0",
-  "home-assistant-intents==2026.2.13",
+  "home-assistant-intents==2026.8.28",
+  "gazetteer-matcher==1.1.0",
   "mutagen==1.47.0",
   "ha-ffmpeg==3.2.2",
   "pymicro-vad==2.0.1",
@@ -44,6 +51,11 @@ test = [
 ]
 viz = [
   "matplotlib",
+]
+shots = [
+  # Documentation screenshots only (scripts/harness shots); nothing else in
+  # the harness or the test suite needs a browser.
+  "playwright",
 ]
 
 [project.urls]

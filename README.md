@@ -84,6 +84,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
   - **Environmental Sensors**: Temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors contribute subtle occupancy clues.
   - **Doors and Windows**: Entry/exit and ventilation patterns.
   - **Power Sensors**: Power consumption as an activity indicator.
+- **Custom Sensors**: Add any entity from any integration with the states that mean "active" for it and its own weight, for anything the built-in sensor types cannot express.
 - **Activity Detection**: Identifies what activity is happening in a room (showering, cooking, watching TV, working, sleeping, eating, etc.) — constrained by room purpose so "showering" only appears in bathrooms.
 - **Sleep Presence Detection**: Detects when people are sleeping using HA Person entities combined with phone sleep confidence from the Companion App, keeping bedrooms occupied overnight.
 - **Probability-Based Output**: Provides an occupancy probability (1-99%) and a binary occupancy status based on a configurable threshold.

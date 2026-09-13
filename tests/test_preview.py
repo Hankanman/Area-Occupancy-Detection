@@ -7,6 +7,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.config_flow import (
+    AreaOccupancyOptionsFlow,
+    AreaSubentryFlowHandler,
+)
 from custom_components.area_occupancy.const import (
     CONF_CUSTOM_ACTIVE_STATES,
     CONF_CUSTOM_ENTITY_ID,
@@ -25,6 +29,7 @@ from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.preview import (
     PREVIEW_COMPONENT,
     PREVIEW_DATA_KEY,
+    PREVIEW_FLOW_TYPES,
     PreviewEntity,
     build_preview_entities,
     compute_area_preview,
@@ -184,6 +189,48 @@ class TestPreviewContext:
         assert PREVIEW_COMPONENT == DOMAIN
 
 
+class TestPreviewIsReachableFromEveryFlow:
+    """Every flow that shows a preview must be able to serve one.
+
+    Home Assistant registers the preview websocket command once per flow
+    *class* that renders a form with ``preview=``. A class that advertises a
+    preview without providing ``async_setup_preview`` leaves the frontend
+    subscribing to a command nobody registered, and the preview panel shows
+    "Unknown command" -- unless another flow happened to register it earlier
+    in the same run, which is why this only appeared when reconfiguring an
+    area from the integration page in a fresh session.
+    """
+
+    @pytest.mark.parametrize(
+        "handler", [AreaOccupancyOptionsFlow, AreaSubentryFlowHandler]
+    )
+    def test_every_previewing_flow_registers_the_command(self, handler) -> None:
+        assert hasattr(handler, "async_setup_preview"), (
+            f"{handler.__name__} shows a preview but never registers its command"
+        )
+
+    @pytest.mark.parametrize(
+        "handler", [AreaOccupancyOptionsFlow, AreaSubentryFlowHandler]
+    )
+    async def test_setup_preview_registers_the_websocket_command(
+        self, hass: HomeAssistant, handler
+    ) -> None:
+        with patch(
+            "custom_components.area_occupancy.preview.websocket_api.async_register_command"
+        ) as register:
+            await handler.async_setup_preview(hass)
+
+        register.assert_called_once()
+        assert register.call_args[0][1] is ws_start_preview
+
+    def test_subentry_flow_type_is_accepted(self) -> None:
+        # The frontend reports a subentry flow as "config_subentries_flow"
+        # (plural); a schema that only knows the singular rejects the main
+        # editing path's preview.
+        assert "config_subentries_flow" in PREVIEW_FLOW_TYPES
+        assert {"config_flow", "options_flow"} <= set(PREVIEW_FLOW_TYPES)
+
+
 class _FakeConnection:
     """Minimal stand-in for websocket_api.ActiveConnection."""
 
@@ -206,14 +253,44 @@ class _FakeConnection:
 class TestWsStartPreview:
     """The websocket handler streams state/attributes and cleans up."""
 
-    def _msg(self, flow_id: str = "flow-1", **user_input: Any) -> dict[str, Any]:
+    def _msg(
+        self,
+        flow_id: str = "flow-1",
+        flow_type: str = "options_flow",
+        **user_input: Any,
+    ) -> dict[str, Any]:
         return {
             "id": 7,
             "type": f"{DOMAIN}/start_preview",
             "flow_id": flow_id,
-            "flow_type": "options_flow",
+            "flow_type": flow_type,
             "user_input": user_input,
         }
+
+    def test_a_subentry_flow_gets_a_preview(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        # Reconfiguring an area from the integration page is a subentry flow,
+        # and it is the main editing path -- its preview has to work.
+        area = _first_area(coordinator)
+        register_preview_context(
+            hass, "flow-sub", coordinator.config_entry.entry_id, area.config.area_id, {}
+        )
+        connection = _FakeConnection()
+        with patch.object(
+            hass.config_entries,
+            "async_get_entry",
+            return_value=Mock(runtime_data=coordinator),
+        ):
+            ws_start_preview(
+                hass,
+                connection,
+                self._msg("flow-sub", flow_type="config_subentries_flow"),
+            )
+
+        assert connection.results == [7]
+        assert not connection.errors
+        assert float(connection.messages[0]["event"]["state"]) >= 0
 
     def test_unknown_flow_is_an_error(self, hass: HomeAssistant) -> None:
         connection = _FakeConnection()

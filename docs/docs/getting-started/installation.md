@@ -27,7 +27,11 @@
 
 When you first create the integration you will be taken straight to configuring the first area.
 
-When adding new areas you will need to navigate to **Integrations** -> **Area Occupancy Detection** -> **Configure (⚙️ Cog icon)**. This will bring up the configuration menu.
+Each area is a **config subentry**, so after that first area everything lives on the
+integration's own page: **Settings** → **Devices & Services** → **Area Occupancy Detection**.
+Every area appears there as its own group with its device and entities beneath it.
+
+![The integration page, one group per area](../images/config_integration_page.png)
 
 There is detailed documentation on the configuration options here: [Configuration](configuration.md).
 
@@ -47,43 +51,47 @@ Almost every option in the config is optional, sensible defaults are available f
 
 The integration will work with just these configured. Everything else can be added as you get new devices. However the more you add in, the more accurate the predictions will be.
 
-### Main Menu
+### Adding an Area
 
-The main menu allows you to modify global settings, add a new area, manage existing areas, or manage people for sleep presence detection.
+Press **Add an area** at the top of the integration page. The first step asks for the Home
+Assistant area and its [purpose](../features/purpose.md); the purpose sets a sensible default
+for how quickly probability decays once activity stops.
 
-![Main Menu](../images/config_main_menu.png)
+![Adding an area](../images/config_add_area.png)
 
-### Global Settings
+The next steps ask for the motion sensors in that area, then any other sensors you have. On
+first setup just add the sensors you own and leave the weights and states at their defaults —
+everything after the motion step is optional.
 
-The global settings menu allows you to modify the global settings for the integration, these are limited for now and will be expanded in the future.
+### Editing an Area
 
-![Global Settings](../images/config_global_settings.png)
+Press the **gear icon** on an area to open its menu. Each entry summarises what it currently
+holds, so you can see the whole area at a glance and open only the page you want to change.
 
-### Add New Area
+![An area's edit menu](../images/config_area_menu.png)
 
-The add new area menu allows you to add a new area to the integration.
+The sensor, motion and behaviour pages show a **live preview**: the probability the area would
+read right now with the values you are editing, and whether that crosses the threshold.
 
-![Add New Area](../images/config_new_area.png)
+![Detection behaviour with its live preview](../images/config_area_behaviour.png)
 
-The next steps asks you for the motion sensors you have in that area. just add any sensors you have, leave the rest as default for initial config.
+Additional sensors are grouped, one page per kind, so you are never scrolling past sections
+that do not apply to the room.
 
-![Add Motion Sensors](../images/config_edit_area.png)
+![The additional sensors menu](../images/config_area_sensors_menu.png)
 
-You can then choose any other sensors you have in the area to contribute, again on first config, just add any sensors you have, leave the weights and states as default. Everything here is optional.
+### Global Settings and People
 
-![Add Other Sensors](../images/config_edit_sensors_area.png)
+The **Configure** button holds the settings that are not per-area — the household sleep
+schedule, sensor health reporting, state precision, and people.
 
-### Manage Areas
+![The Configure dialog](../images/config_options_menu.png)
 
-The manage areas menu allows you to manage existing areas, you can see a summary of each area and the sensors associated with it. You can then select one of the areas to edit or remove.
-
-![Manage Areas](../images/config_manage_areas.png)
-
-![Manage Area](../images/config_manage_area.png)
+![Global settings](../images/config_global_settings.png)
 
 ### Manage People
 
-The manage people menu allows you to add and configure people associated with your home, they must be set up as people in Home Assistant first so they can be selected in the people picker. Choosing entities for sleep confidence and device tracking (from HA Companion app for example) allows AOD to track sleep for a given area. Choosing an area for a person essentially defines their bedroom.
+The **Manage People** option lets you add and configure people associated with your home. They must be set up as people in Home Assistant first so they can be selected in the people picker. Choosing entities for sleep confidence and device tracking (from HA Companion app for example) allows AOD to track sleep for a given area. Choosing an area for a person essentially defines their bedroom.
 
 ![Manage People](../images/config_manage_people.png)
 

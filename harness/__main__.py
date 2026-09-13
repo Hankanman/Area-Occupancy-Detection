@@ -14,7 +14,7 @@ import time
 
 from custom_components.area_occupancy.const import CONF_VERSION
 
-from . import verify
+from . import screenshots, verify
 from .instance import DEFAULT_PASSWORD, DEFAULT_USERNAME, Instance, InstanceError
 from .profiles import DEFAULT_PROFILE, PROFILES
 from .storage import LEGACY_ENTRY_VERSION, SUPPORTED_ENTRY_VERSIONS
@@ -361,6 +361,41 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_shots(args: argparse.Namespace) -> int:
+    """Capture the documentation screenshots from a running instance.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        0 if every shot was captured, 1 otherwise.
+    """
+    instance = Instance.load(_instance_path(args))
+    if not instance.is_running():
+        print(f"starting {instance.path} ...")
+        instance.start()
+        instance.wait_for_entry()
+        instance.wait_for_running()
+
+    output = Path(args.output)
+    print(f"capturing into {output} ...\n")
+    try:
+        results = screenshots.capture(instance, output, only=args.only or None)
+    except screenshots.ShotError as err:
+        print(f"{_colour('error', RED)}: {err}", file=sys.stderr)
+        return 2
+
+    failures = [name for name, ok, _ in results if not ok]
+    for name, ok, detail in results:
+        mark = _colour("OK  ", GREEN) if ok else _colour("FAIL", RED)
+        print(f"{mark}  {name}: {detail}")
+
+    print()
+    summary = f"{len(results) - len(failures)}/{len(results)} captured"
+    print(_colour(summary, RED if failures else GREEN))
+    return 1 if failures else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser.
 
@@ -424,6 +459,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose", action="store_true", help="show the detail of passing checks too"
     )
     check.set_defaults(func=cmd_verify)
+
+    shots = subparsers.add_parser(
+        "shots", help="capture the documentation screenshots from an instance"
+    )
+    _add_target_arguments(shots)
+    shots.add_argument(
+        "--output",
+        default=str(screenshots.DEFAULT_OUTPUT),
+        help=f"where to write the PNGs (default: {screenshots.DEFAULT_OUTPUT})",
+    )
+    shots.add_argument(
+        "--only",
+        nargs="*",
+        default=[],
+        help="capture only these shots by name",
+    )
+    shots.set_defaults(func=cmd_shots)
 
     return parser
 

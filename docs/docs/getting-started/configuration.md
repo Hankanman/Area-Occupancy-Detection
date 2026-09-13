@@ -18,6 +18,8 @@ Area configuration uses a multi-step wizard that walks you through setup one sec
 
 ### Step 1: Area Basics
 
+![Area basics: the Home Assistant area, its purpose and its neighbours](../images/config_add_area.png)
+
 Select the Home Assistant area and its primary [Purpose](../features/purpose.md). The purpose sets a sensible default for the [decay](../features/decay.md) half-life used when probability decreases.
 
 You can also select **Adjacent Areas** — other configured areas that physically connect to this one (a hallway and the bedroom it leads to, for example). The selection is symmetric: adding an area here also adds this one to its neighbour's list. Adjacency has no fixed strength setting; the integration learns how your household actually moves between the rooms and uses that to influence probability and decay. See [Adjacent Areas](../features/adjacent-areas.md) for details and what to expect during the learning period.
@@ -54,6 +56,8 @@ Configure motion and presence sensors for the area. At least one motion sensor i
 
 ### Step 3: Additional Sensors
 
+![One page per kind of sensor](../images/config_area_sensors_menu.png)
+
 Configure optional sensors grouped into collapsible sections. You only need to add [sensors](../features/sensors.md) that are relevant to the area:
 
 - **Windows, Doors & Covers**: Door sensors, window sensors, cover entities with active state configuration
@@ -65,6 +69,8 @@ Configure optional sensors grouped into collapsible sections. You only need to a
 More information on the [Sensors](../features/sensors.md) page.
 
 ### Step 4: Detection Behavior
+
+![Detection behaviour, with the live preview under the form](../images/config_area_behaviour.png)
 
 Configure how occupancy is detected and reported:
 
@@ -82,6 +88,8 @@ This step also includes the [Wasp in Box](../features/wasp-in-box.md) configurat
 
 The typed sensor sections carry built-in meaning: a door counts as occupied when it is *closed*, a media player when it is playing or paused, and so on. When an entity does not fit any of them, add it under **Custom Sensors** instead of forcing it into a section that would apply the wrong semantics.
 
+![A custom sensor row: the entity, the states that count, and its weight](../images/config_custom_sensors.png)
+
 A custom sensor is a row with three parts:
 
 - **Entity** – any entity, from any integration or domain. Nothing is filtered out.
@@ -93,6 +101,8 @@ Use it for a sensor from a custom integration or MQTT, an entity whose active st
 An entity already configured in another section cannot also be a custom sensor; the form rejects the row rather than silently ignoring it. Custom sensors take part in the hourly correlation analysis like every other non-motion sensor, so their likelihoods are refined from your own history over time.
 
 ## Where Areas Live
+
+![Every area is a group on the integration page](../images/config_integration_page.png)
 
 Each area is a **config subentry** of the single Area Occupancy Detection entry. On the integration page every area appears as its own group with its device and entities beneath it, plus:
 
@@ -106,6 +116,8 @@ The **Configure** dialog still exists for settings that are not per-area: global
 
 ## Editing an Existing Area
 
+![Each entry summarises what it holds](../images/config_area_menu.png)
+
 Click the gear icon on the area you want to change (or open **Configure** and choose **Manage Areas**). The area menu lists each part of the configuration with a one-line summary of its current values:
 
 - **Basics** – purpose and adjacent areas
@@ -116,6 +128,8 @@ Click the gear icon on the area you want to change (or open **Configure** and ch
 Each entry opens just that page and saves when you press **Submit**, so changing one value no longer means stepping through the whole wizard. The motion, additional-sensor and behaviour pages show a **live preview** beside the form: the probability the area would read right now with the values you are editing, whether that crosses the threshold, and which sensors are currently contributing. It is a sensor-only estimate from current states and learned priors; activity and adjacency boosts, Wasp in Box and decay timing are not simulated, and the current live probability is listed for comparison. **Edit everything (wizard)** is still there if you want to walk all four pages in order.
 
 ## People Management
+
+![The Configure dialog holds everything that is not per-area](../images/config_options_menu.png)
 
 You can configure sleep presence detection through the **Manage People** option in the integration’s main menu. This allows the integration to detect when people are sleeping and maintain high occupancy probability in bedrooms overnight.
 

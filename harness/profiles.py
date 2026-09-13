@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCES,
     CONF_CO2_SENSORS,
+    CONF_CUSTOM_SENSORS,
     CONF_DOOR_SENSORS,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
@@ -135,6 +136,19 @@ CHANNELS: dict[str, ChannelSpec] = {
         p_active_occupied=0.1,
         p_active_empty=0.08,
         mean_active_minutes=45.0,
+    ),
+    # A state no typed section can express -- the case custom sensors exist
+    # for. Written into the config as a row with its own states and weight,
+    # not as a bare entity id.
+    "custom": ChannelSpec(
+        conf_key=CONF_CUSTOM_SENSORS,
+        input_type=InputType.CUSTOM,
+        domain="sensor",
+        active_states=("in_use",),
+        idle_state="idle",
+        p_active_occupied=0.45,
+        p_active_empty=0.03,
+        mean_active_minutes=35.0,
     ),
     "temperature": ChannelSpec(
         conf_key=CONF_TEMPERATURE_SENSORS,
@@ -304,6 +318,7 @@ _LIVING_ROOM = AreaSpec(
         "media": 1,
         "appliance": 2,
         "door": 1,
+        "custom": 1,
         "temperature": 1,
         "humidity": 1,
         "illuminance": 1,

@@ -103,6 +103,14 @@ def _helpers(profile: Profile) -> dict[str, Any]:
                         "initial": spec.numeric.empty_mean,
                         "mode": "box",
                     }
+                elif spec.idle_state != "off":
+                    # A channel whose states are words rather than on/off
+                    # needs a picker, not a toggle.
+                    selects[object_id] = {
+                        "name": name,
+                        "options": [*spec.active_states, spec.idle_state],
+                        "initial": spec.idle_state,
+                    }
                 elif spec.domain == "media_player":
                     selects[object_id] = {
                         "name": name,
@@ -159,6 +167,12 @@ def _template_entities(profile: Profile) -> list[dict[str, Any]]:
                     entity["unit_of_measurement"] = spec.unit
                     entity["state"] = f"{{{{ states('input_number.{object_id}') }}}}"
                     entity["state_class"] = "measurement"
+                    numeric.append(entity)
+                elif spec.idle_state != "off":
+                    # Word-state sensors live in the sensor domain with no
+                    # device class -- exactly what a custom sensor is for.
+                    entity.pop("device_class", None)
+                    entity["state"] = f"{{{{ states('input_select.{object_id}') }}}}"
                     numeric.append(entity)
                 else:
                     entity["state"] = f"{{{{ states('input_boolean.{object_id}') }}}}"

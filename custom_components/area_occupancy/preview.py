@@ -22,7 +22,7 @@ ends.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import voluptuous as vol
 
@@ -301,11 +301,22 @@ async def async_setup_preview(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_start_preview)
 
 
+#: Flow types the frontend's generic preview subscribes from. An area is
+#: reconfigured through a config subentry flow, which reports itself as
+#: "config_subentries_flow" (plural) -- omitting it makes the preview fail
+#: validation on the main editing path.
+PREVIEW_FLOW_TYPES: Final = (
+    "config_flow",
+    "options_flow",
+    "config_subentries_flow",
+)
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/start_preview",
         vol.Required("flow_id"): str,
-        vol.Required("flow_type"): vol.Any("config_flow", "options_flow"),
+        vol.Required("flow_type"): vol.Any(*PREVIEW_FLOW_TYPES),
         vol.Required("user_input"): dict,
     }
 )
@@ -315,7 +326,7 @@ def ws_start_preview(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Stream a preview for the area being edited in an options flow."""
+    """Stream a preview for the area being edited in a flow."""
     context = hass.data.get(PREVIEW_DATA_KEY, {}).get(msg["flow_id"])
     if context is None:
         connection.send_error(
