@@ -62,6 +62,24 @@ from .utils import format_area_names
 _LOGGER = logging.getLogger(__name__)
 
 
+class OnlinePriorStore(Store[dict[str, dict]]):
+    """Store for the online-prior shadow state, with v1->v2 passthrough.
+
+    v2 (2026.9.1) added the weekly slot accumulators and divergence
+    history to ``OnlinePriorState``. Nothing needs rewriting on upgrade:
+    ``OnlinePriorState.from_dict`` tolerates a v1 payload (new fields
+    default to empty), so the migration just hands the old data through —
+    but the hook must exist, or ``Store.async_load`` raises
+    ``NotImplementedError`` on the version mismatch and every user's
+    scalar accumulators silently reset.
+    """
+
+    async def _async_migrate_func(
+        self, old_version: int, old_data: dict[str, dict]
+    ) -> dict[str, dict]:
+        return old_data
+
+
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Manage fetching and combining data for area occupancy."""
 
@@ -140,7 +158,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # via the HA storage helper, and diffed against the DB-computed
         # prior each analysis cycle. Never read by the probability path.
         self._online_priors: dict[str, OnlinePriorEstimator] = {}
-        self._online_prior_store: Store[dict[str, dict]] = Store(
+        self._online_prior_store: Store[dict[str, dict]] = OnlinePriorStore(
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",

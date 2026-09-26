@@ -358,8 +358,21 @@ ACCURACY_WINDOW_HOURS: Final = 24
 # Store version and key prefix for the per-entry online-prior estimator
 # state. Shared between the coordinator (persistence) and __init__.py
 # (removal cleanup) so the two never drift apart.
-ONLINE_PRIOR_STORE_VERSION: Final = 1
+# v1->v2 (2026.9.1): added the 168 weekly slot accumulators and the
+# divergence history. The migration is a passthrough (OnlinePriorState.
+# from_dict tolerates a v1 payload, preserving the scalar accumulators) —
+# see OnlinePriorStore in coordinator.py.
+ONLINE_PRIOR_STORE_VERSION: Final = 2
 ONLINE_PRIOR_STORE_KEY_PREFIX: Final = f"{DOMAIN}.online_prior"
+# The scalar shadow diff a day must stay within to count toward the #500
+# promotion gate's "30 days within tolerance". First-pass value: wider
+# than the issue's ~1e-3 aspiration because the online estimator's known,
+# documented approximations (no motion-timeout extension, tick sampling)
+# bound the expected diff well above that on real homes. Tune from the
+# collected history before the gate is ever evaluated.
+ONLINE_PRIOR_DIFF_TOLERANCE: Final = 0.02
+# How many daily divergence summaries the store retains per area.
+ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 
 MIN_CORRELATION_SAMPLES: Final = 50
 # Minimum confidence for correlation to be considered significant

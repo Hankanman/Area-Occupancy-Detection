@@ -305,8 +305,11 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         )
 
     # Online-prior shadow diff (#500): compare the incremental estimator
-    # against the DB-computed prior that step 7 just recalculated. A
-    # persistent, growing divergence means a bug in one of them.
+    # against the DB-computed prior that step 7 just recalculated, fold
+    # the result into the persisted daily divergence history (what makes
+    # the issue's "30 days within tolerance" gate measurable), and do the
+    # same per weekly slot where both sides have data. A persistent,
+    # growing divergence means a bug in one of them.
     for area_name, area in coordinator.areas.items():
         estimator = coordinator.online_prior_for(area_name)
         if estimator is None:
@@ -324,13 +327,48 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
                 estimator.observed_days(now),
             )
             continue
+
+        # Per-slot comparison against the DB time priors. Reads the
+        # in-memory cache directly (never a public accessor that could
+        # fall through to a DB load — this runs on the event loop). Skips
+        # entirely when the cache isn't warm; skips slots the online
+        # estimator hasn't observed past its floor; and, when the
+        # points map exists, skips slots the DB side never learned
+        # (their cache value is a fill, not an observation).
+        bucket_diff: float | None = None
+        buckets_compared = 0
+        db_slots = area.prior._cached_time_priors  # noqa: SLF001
+        db_points = getattr(area.prior, "_cached_time_prior_points", None)
+        if db_slots:
+            diffs: list[float] = []
+            for (day_of_week, time_slot), db_value in db_slots.items():
+                if db_points is not None and not db_points.get(
+                    (day_of_week, time_slot)
+                ):
+                    continue
+                online_slot = estimator.time_prior(day_of_week * 24 + time_slot)
+                if online_slot is None:
+                    continue
+                diffs.append(abs(online_slot - db_value))
+            if diffs:
+                buckets_compared = len(diffs)
+                bucket_diff = sum(diffs) / buckets_compared
+
+        estimator.record_divergence(
+            now=now,
+            scalar_diff=online - stored,
+            bucket_diff=bucket_diff,
+            buckets_compared=buckets_compared,
+        )
         _LOGGER.debug(
             "Online prior (shadow) for area %s: online=%.4f db=%.4f diff=%+.4f "
-            "observed_days=%.2f",
+            "bucket_diff=%s buckets=%d observed_days=%.2f",
             area_name,
             online,
             stored,
             online - stored,
+            f"{bucket_diff:.4f}" if bucket_diff is not None else "n/a",
+            buckets_compared,
             estimator.observed_days(now),
         )
     await coordinator.async_save_online_priors()
