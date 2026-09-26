@@ -22,19 +22,28 @@ if TYPE_CHECKING:
 
 
 def assign_device_to_ha_area(
-    hass: HomeAssistant, device_info: DeviceInfo | None, area_id: str | None
+    hass: HomeAssistant,
+    device_info: DeviceInfo | None,
+    area_id: str | None,
+    config_entry_id: str,
 ) -> None:
     """Assign an entity's device to its configured Home Assistant area.
 
     Shared by the sensor, binary_sensor, and number platforms in
     ``async_added_to_hass``. No-op when the area has no ``area_id``
     configured or the device isn't registered yet.
+
+    The lookup is scoped to ``config_entry_id`` because device identifiers
+    are only unique per config entry since HA 2026.9 (the unscoped
+    ``async_get_device`` is deprecated).
     """
     if not area_id or not device_info:
         return
+    identifier = next(iter(device_info.get("identifiers", set())), None)
+    if identifier is None:
+        return
     device_registry = dr.async_get(hass)
-    identifiers = device_info.get("identifiers", set())
-    device = device_registry.async_get_device(identifiers=identifiers)
+    device = device_registry.async_get_device_by_identifier(identifier, config_entry_id)
     if device and device.area_id != area_id:
         device_registry.async_update_device(device.id, area_id=area_id)
 

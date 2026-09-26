@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
@@ -20,12 +21,15 @@ from custom_components.area_occupancy.const import (
     CONF_THRESHOLD,
     CONF_VERSION,
     CONF_VERSION_MINOR,
+    DOMAIN,
+    SUBENTRY_TYPE_AREA,
 )
 from custom_components.area_occupancy.migrations import (
     _cleanup_registry_devices_and_entities,
     _find_area_by_normalized_name,
     _find_or_create_area,
     _fuzzy_match_area,
+    _migrate_areas_to_subentries,
     _migrate_sleep_sensor_to_list,
     _normalize_area_name,
     async_migrate_entry,
@@ -690,10 +694,7 @@ class TestRegistryCleanup:
         device_2.id = "device_2"
         device_2.config_entries = {entry_id_2}
 
-        device_registry.devices = {
-            device_1.id: device_1,
-            device_2.id: device_2,
-        }
+        mock_devices = [device_1, device_2]
 
         # Track device remove calls
         device_remove_calls = []
@@ -702,10 +703,18 @@ class TestRegistryCleanup:
         )
 
         # Call cleanup
-        (
-            devices_removed,
-            entities_removed,
-        ) = await _cleanup_registry_devices_and_entities(hass, [entry_id_1, entry_id_2])
+        with patch(
+            "custom_components.area_occupancy.migrations.dr.async_entries_for_config_entry",
+            side_effect=lambda _reg, eid: [
+                d for d in mock_devices if eid in d.config_entries
+            ],
+        ):
+            (
+                devices_removed,
+                entities_removed,
+            ) = await _cleanup_registry_devices_and_entities(
+                hass, [entry_id_1, entry_id_2]
+            )
 
         # Verify entities were removed
         assert entities_removed == 2
@@ -733,14 +742,17 @@ class TestRegistryCleanup:
         entity_registry.async_remove = Mock()
 
         # Mock device registry with no devices
-        device_registry.devices = {}
         device_registry.async_remove_device = Mock()
 
         # Call cleanup - should not raise
-        (
-            devices_removed,
-            entities_removed,
-        ) = await _cleanup_registry_devices_and_entities(hass, [entry_id])
+        with patch(
+            "custom_components.area_occupancy.migrations.dr.async_entries_for_config_entry",
+            return_value=[],
+        ):
+            (
+                devices_removed,
+                entities_removed,
+            ) = await _cleanup_registry_devices_and_entities(hass, [entry_id])
 
         # Verify no errors and counts are zero
         assert devices_removed == 0
@@ -1510,3 +1522,149 @@ class TestMigrateSleepSensorToList:
         assert result is True
         assert data[CONF_PEOPLE][0][CONF_PERSON_SLEEP_SENSORS] == ["sensor.alice_sleep"]
         assert data[CONF_PEOPLE][1][CONF_PERSON_SLEEP_SENSORS] == ["sensor.bob_sleep"]
+
+
+class TestMigrateAreasToSubentries:
+    """v18 -> v19 moves each area from the CONF_AREAS list into a subentry."""
+
+    def _entry(self, hass: HomeAssistant, areas, *, in_options: bool = False):
+        """A v18 entry holding its areas in the legacy list."""
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Area Occupancy Detection",
+            version=18,
+            data={} if in_options else {CONF_AREAS: areas},
+            options={CONF_AREAS: areas} if in_options else {},
+        )
+        entry.add_to_hass(hass)
+        return entry
+
+    def _areas(self, entry) -> dict[str, dict]:
+        """Area data by title for the entry's area subentries."""
+        return {
+            subentry.title: dict(subentry.data)
+            for subentry in entry.subentries.values()
+            if subentry.subentry_type == SUBENTRY_TYPE_AREA
+        }
+
+    async def test_each_area_becomes_a_subentry(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        living_room = setup_area_registry["Living Room"]
+        kitchen = setup_area_registry["Kitchen"]
+        entry = self._entry(
+            hass,
+            [
+                {CONF_AREA_ID: living_room, CONF_THRESHOLD: 60},
+                {CONF_AREA_ID: kitchen, CONF_THRESHOLD: 40},
+            ],
+        )
+
+        _migrate_areas_to_subentries(hass, entry)
+
+        areas = self._areas(entry)
+        assert set(areas) == {"Living Room", "Kitchen"}
+        assert areas["Living Room"][CONF_THRESHOLD] == 60
+        assert areas["Kitchen"][CONF_THRESHOLD] == 40
+        # Titles come from the HA area registry; unique_id is the area id.
+        by_unique_id = {
+            subentry.unique_id: subentry.title for subentry in entry.subentries.values()
+        }
+        assert by_unique_id == {living_room: "Living Room", kitchen: "Kitchen"}
+        # The legacy key is gone once every area has moved.
+        assert CONF_AREAS not in entry.data
+        assert CONF_AREAS not in entry.options
+
+    async def test_areas_stored_in_options_also_migrate(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        living_room = setup_area_registry["Living Room"]
+        entry = self._entry(hass, [{CONF_AREA_ID: living_room}], in_options=True)
+
+        _migrate_areas_to_subentries(hass, entry)
+
+        assert set(self._areas(entry)) == {"Living Room"}
+        assert CONF_AREAS not in entry.options
+
+    async def test_running_twice_is_a_no_op(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        entry = self._entry(hass, [{CONF_AREA_ID: setup_area_registry["Living Room"]}])
+
+        _migrate_areas_to_subentries(hass, entry)
+        first = dict(entry.subentries)
+        _migrate_areas_to_subentries(hass, entry)
+
+        assert entry.subentries == first
+
+    async def test_unknown_area_id_still_migrates_using_the_id_as_title(
+        self, hass: HomeAssistant
+    ) -> None:
+        # A deleted HA area must not block the upgrade; the row is preserved
+        # so the orphan cleanup can deal with it after setup.
+        entry = self._entry(hass, [{CONF_AREA_ID: "deleted_area"}])
+
+        _migrate_areas_to_subentries(hass, entry)
+
+        assert set(self._areas(entry)) == {"deleted_area"}
+
+    async def test_malformed_rows_are_skipped(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        living_room = setup_area_registry["Living Room"]
+        entry = self._entry(hass, ["not-a-dict", {}, {CONF_AREA_ID: living_room}])
+
+        _migrate_areas_to_subentries(hass, entry)
+
+        assert set(self._areas(entry)) == {"Living Room"}
+
+    async def test_non_list_areas_key_is_ignored(self, hass: HomeAssistant) -> None:
+        entry = self._entry(hass, [])
+        hass.config_entries.async_update_entry(entry, data={CONF_AREAS: "nonsense"})
+
+        _migrate_areas_to_subentries(hass, entry)
+
+        assert self._areas(entry) == {}
+
+    async def test_existing_device_and_entities_are_relinked(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        living_room = setup_area_registry["Living Room"]
+        entry = self._entry(hass, [{CONF_AREA_ID: living_room}])
+
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, living_room)},
+            name="Living Room",
+        )
+        ent_reg = er.async_get(hass)
+        entity = ent_reg.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            "living_room_probability",
+            config_entry=entry,
+            device_id=device.id,
+        )
+        assert device.config_subentry_id is None
+        assert entity.config_subentry_id is None
+
+        _migrate_areas_to_subentries(hass, entry)
+
+        subentry_id = next(iter(entry.subentries))
+        moved = dev_reg.async_get_device_by_identifier(
+            (DOMAIN, living_room), entry.entry_id
+        )
+        assert moved is not None
+        assert moved.config_subentry_id == subentry_id
+        assert ent_reg.async_get(entity.entity_id).config_subentry_id == subentry_id
+
+    async def test_migrate_entry_bumps_version_to_19(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        entry = self._entry(hass, [{CONF_AREA_ID: setup_area_registry["Living Room"]}])
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        assert entry.version == CONF_VERSION
+        assert set(self._areas(entry)) == {"Living Room"}
