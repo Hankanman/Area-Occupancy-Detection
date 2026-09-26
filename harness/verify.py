@@ -30,7 +30,11 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
     SUBENTRY_TYPE_AREA,
 )
-from custom_components.area_occupancy.db.schema import GlobalPriors
+from custom_components.area_occupancy.db.schema import (
+    AreaRelationships,
+    AreaTransitions,
+    GlobalPriors,
+)
 
 from . import mock_config, storage
 from .client import ApiError, Client
@@ -736,6 +740,60 @@ def check_subentry_linkage(instance: Instance) -> Result:
 
 
 #: Checks that run against a live instance.
+def check_transitions(instance: Instance) -> Result:
+    """Adjacency is keyed by area name and learns transitions from history.
+
+    Configured adjacency holds Home Assistant area ids, but everything that
+    reads it keys areas by name. When the two were mixed up, every neighbour
+    lookup missed: transition learning recorded nothing and the decay
+    modifier read each neighbour as permanently empty. Both halves are held
+    here -- the relationship rows name real areas, and the analysis run
+    learned at least one transition from the seeded history.
+
+    Args:
+        instance: The stopped instance.
+
+    Returns:
+        The result.
+    """
+    adjacent = [area for area in instance.profile.areas if area.adjacent]
+    if not adjacent:
+        return _ok("transitions", "profile has no adjacency, skipped")
+    if int(instance.meta["days"]) <= 0:
+        return _ok("transitions", "instance has no seeded history, skipped")
+
+    db_path = instance.path / ".storage" / DB_NAME
+    if not db_path.is_file():
+        return _fail("transitions", "no integration database")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            neighbours = {
+                str(row[0])
+                for row in connection.execute(
+                    sa.select(AreaRelationships.related_area_name).where(
+                        AreaRelationships.relationship_type == "adjacent"
+                    )
+                )
+            }
+            learned = connection.execute(
+                sa.select(sa.func.count()).select_from(AreaTransitions)
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    names = {area.name for area in instance.profile.areas}
+    problems: list[str] = []
+    if unknown := sorted(neighbours - names):
+        problems.append(f"relationships name unknown areas {unknown}")
+    if not learned:
+        problems.append("no transitions were learned from the seeded history")
+    notes = [f"{len(neighbours)} neighbours by name, {learned} transition rows"]
+    if problems:
+        return _fail("transitions", "; ".join(problems), notes)
+    return _ok("transitions", f"{learned} transition rows learned", notes)
+
+
 LIVE_CHECKS = (
     check_entry_loaded,
     check_migration,
@@ -749,7 +807,7 @@ LIVE_CHECKS = (
 )
 
 #: Checks that need the instance stopped so its stores are flushed.
-STOPPED_CHECKS = (check_subentry_linkage,)
+STOPPED_CHECKS = (check_subentry_linkage, check_transitions)
 
 
 def run_all(instance: Instance, client: Client) -> list[Result]:

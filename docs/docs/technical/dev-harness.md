@@ -162,6 +162,7 @@ than only the first, and the exit code is non-zero if any check failed.
 | `subentry_flow` | Every reachable step of an area's reconfigure flow renders. |
 | `analysis` | `run_analysis` completes and derives a prior for every area that is not pinned at a bound. |
 | `subentry_linkage` | Each area's entities are filed under that area's subentry, and the aggregates are not. |
+| `transitions` | Adjacency rows name real areas (not Home Assistant area ids), and the analysis learned transitions from the seeded history. |
 
 The flow checks walk the menu graph breadth-first, starting a fresh flow for
 each path -- a flow is a state machine, so stepping into one spoke rules out
