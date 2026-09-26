@@ -63,6 +63,8 @@ scripts/harness profiles                      # what can be built
 scripts/harness new                           # five areas, 14 days of history, started
 scripts/harness new --entry-version 18        # seed a pre-subentry entry so startup migrates
 scripts/harness verify                        # build, run every check, report, delete
+scripts/harness upgrade-base --from 2026.8.1  # live on a real release (its own config flow)
+scripts/harness upgrade --to next             # restore that, upgrade, diff; run before every release
 scripts/harness destroy --name dev            # or clean up by hand
 ```
 

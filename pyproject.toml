@@ -28,7 +28,15 @@ dependencies = [
   # homeassistant pin above: 2026.9.0's conversation component calls
   # get_intent_info(), which the older home-assistant-intents does not have,
   # and the frontend fails to boot on the exception that raises.
+  # The frontend, radio_frequency, infrared and google_translate pins are
+  # there because scripts/harness boots with --skip-pip: without them in the
+  # venv the frontend fails, Home Assistant drops into recovery mode, and
+  # recovery mode loads no custom integrations at all.
   "homeassistant==2026.9.0",
+  "home-assistant-frontend==20260826.4",
+  "rf-protocols==4.3.0",
+  "infrared-protocols==9.0.0",
+  "gTTS==2.5.4",
   "hassil==3.12.0",
   "unicode-rbnf==2.4.0",
   "home-assistant-intents==2026.8.28",

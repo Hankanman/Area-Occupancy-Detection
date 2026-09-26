@@ -58,6 +58,8 @@ The instance listens on a free port, so several can run at once.
 | `profiles` | List the available profiles. |
 | `verify` | Build an instance, run every check, print a report, delete it. `--keep` to keep it, `--reuse` to check an existing one. |
 | `shots` | Capture the documentation screenshots from a running instance into `docs/docs/images/`. |
+| `upgrade-base` | Build a lived-in instance on a released version (`--from <tag>`) and snapshot it. See [Upgrade testing](#upgrade-testing). |
+| `upgrade` | Restore that snapshot, swap in another ref (`--to next`, `--to working`), and report what the upgrade changed. |
 
 Build options (`new` and `verify`): `--profile`, `--entry-version`, `--days`,
 `--seed`, `--time-zone`, `--port`, `--no-frontend`, `--no-priors`, `--force`.
@@ -167,6 +169,76 @@ The flow checks walk the menu graph breadth-first, starting a fresh flow for
 each path -- a flow is a state machine, so stepping into one spoke rules out
 its siblings. Only menu navigation is ever submitted, never form data, so the
 walk cannot change the instance's configuration.
+
+## Upgrade testing
+
+`--entry-version 18` tests one thing: that the current code migrates an entry
+the *harness* fabricated in the old shape. It cannot catch the upgrade bugs
+that matter most, the ones in state a previous release actually wrote: the
+config entry its config flow produced, its persisted stores, its database,
+and the entity registry after a user has renamed and enabled things. Before
+every release, run the real thing:
+
+```bash
+# Once per base release: install 2026.8.1's code, let it live a little
+scripts/harness upgrade-base --from 2026.8.1
+
+# Then as often as needed: restore that baseline, upgrade, diff
+scripts/harness upgrade --to next
+scripts/harness upgrade --to working       # the working tree, symlinked
+```
+
+`upgrade-base` builds `instances/upgrade` like this:
+
+1. Installs the `--from` ref's integration as a real copy of
+   `git archive <ref>`, not the usual symlink to the working tree.
+2. Boots once to onboard (`dev` / `devpassword`) and create the recorder
+   schema, then backfills the profile's synthetic history into the
+   **recorder** rather than the integration's database, so the old code
+   imports and learns it itself. Two floors are added so floor sensors exist.
+3. Adds the integration through that version's **real config flow**. Each
+   form's schema comes back from Home Assistant, and every field the
+   profile's area config has a value for is filled in (inside collapsible
+   sections too). A few hand-set values are layered on top so the migration
+   has to carry them: a custom decay half-life and threshold, a custom motion
+   timeout, an area excluded from "All Areas", an inverted door, a minimum
+   prior override and wasp-in-box. Config keys the old flow has no field for
+   are listed and skipped.
+4. Adds a person with sleep detection through the options flow.
+5. Makes the changes a user would: enables two areas' diagnostic entities,
+   renames and re-ids an occupancy sensor, and moves a threshold slider.
+6. Walks the house live (motion on, area by area) so the trajectory tracker,
+   online prior and shadow learners have real ticks, then runs the analysis.
+7. Captures everything below as `captures/baseline.json` and snapshots the
+   stopped instance to `instances/upgrade@baseline`.
+
+`upgrade` restores `instances/upgrade@baseline` (skip with `--no-restore`),
+swaps in the `--to` ref, boots it, lets it run for `--settle` seconds, runs
+the analysis, captures again, and writes
+`captures/baseline--<ref>.md`. It compares:
+
+| Area | Flagged when |
+| --- | --- |
+| Config entry | An area's stored value changed or disappeared (including areas moving into subentries), or the people config changed. |
+| Entity registry | An entity lost its registry entry, or its entity id, name, or enabled/hidden state changed. Keyed by unique id; a unique-id change is reported as a re-key. |
+| Entity states | An entity that had a state became `unavailable`/`unknown`. |
+| Services | A service disappeared. |
+| Persisted stores | A store vanished or lost a non-empty field (online prior, fusion). |
+| Integration database | Never flagged. Row counts, metadata and priors are reported so a deliberate `DB_SCHEMA_VERSION` reset is visible. |
+| Diagnostics | The download fails. |
+| Log | Any `ERROR`, or any `WARNING` from the integration, since the upgraded boot. |
+
+Additions are reported but never flagged: new entities, stores and config
+keys are what an upgrade is for. The standard [checks](#verification) run
+afterwards too (`--no-checks` skips them), so the `migration` and
+`subentry_linkage` checks hold a real old entry to the same bar as a
+fabricated one. The exit code is non-zero on any red flag or failed check,
+and the upgraded instance is left running to poke at.
+
+The config-flow driver speaks the 2026.7-2026.8 single-entry wizard (an
+area wizard, then an `add_area` / `finish_setup` menu). Once a release using
+subentries becomes the base, `run_config_flow` in `harness/upgrade.py` needs
+a subentry-flow branch.
 
 ## Three things worth knowing
 

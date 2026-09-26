@@ -27,7 +27,7 @@ from custom_components.area_occupancy.const import (
     DOMAIN,
     SUBENTRY_TYPE_AREA,
 )
-from harness import history, mock_config, storage
+from harness import history, mock_config, storage, upgrade
 from harness.profiles import (
     CHANNELS,
     PROFILES,
@@ -388,3 +388,148 @@ class TestHistory:
         assert FIXED_END - datetime.fromisoformat(end).replace(tzinfo=UTC) < timedelta(
             minutes=2
         )
+
+
+def _capture(**overrides: object) -> dict:
+    """A minimal upgrade capture, with sections replaced by ``overrides``."""
+    base: dict = {
+        "code": {"ref": "old", "version": "1", "sha": "a"},
+        "entry": {
+            "version": 18,
+            "minor_version": 0,
+            "areas": {"kitchen": {"area_id": "kitchen", "threshold": 50.0}},
+            "data": {},
+            "options": {},
+            "subentries": 0,
+        },
+        "registry": {
+            "uid-1": {
+                "entity_id": "binary_sensor.kitchen_occupancy_status",
+                "name": None,
+                "disabled_by": None,
+                "entity_category": None,
+            }
+        },
+        "states": {
+            "binary_sensor.kitchen_occupancy_status": {
+                "state": "off",
+                "attributes": ["friendly_name"],
+            }
+        },
+        "services": ["run_analysis"],
+        "stores": {"area_occupancy.online_prior.x": {"version": 1, "data": {"k": 1}}},
+        "db": {},
+        "diagnostics_ok": True,
+        "log_problems": [],
+    }
+    return base | overrides
+
+
+class TestUpgrade:
+    """The deterministic parts of upgrade testing: form filling and the diff."""
+
+    def test_fill_form_nests_sections_and_skips_unknown_keys(self) -> None:
+        form = {
+            "data_schema": [
+                {"name": "threshold", "selector": {"number": {}}},
+                {"name": "motion_timeout", "selector": {"duration": {}}},
+                {
+                    "type": "expandable",
+                    "name": "media",
+                    "schema": [{"name": "media_devices"}, {"name": "weight_media"}],
+                },
+            ]
+        }
+        values = {
+            "threshold": 60.0,
+            "motion_timeout": 120,
+            "media_devices": ["media_player.tv"],
+            "not_in_this_version": True,
+        }
+
+        assert upgrade._fill_form(form, values) == {  # noqa: SLF001
+            "threshold": 60.0,
+            "motion_timeout": {"seconds": 120},
+            "media": {"media_devices": ["media_player.tv"]},
+        }
+
+    def test_areas_by_id_reads_both_entry_shapes(self) -> None:
+        legacy = {"data": {"areas": [{"area_id": "kitchen", "threshold": 50.0}]}}
+        subentries = {
+            "data": {},
+            "subentries": [
+                {
+                    "subentry_type": SUBENTRY_TYPE_AREA,
+                    "unique_id": "kitchen",
+                    "data": {"area_id": "kitchen", "threshold": 50.0},
+                }
+            ],
+        }
+
+        assert upgrade._areas_by_id(legacy) == upgrade._areas_by_id(subentries)  # noqa: SLF001
+
+    def test_identical_captures_raise_no_flags(self) -> None:
+        assert upgrade.diff(_capture(), _capture()).flags == []
+
+    def test_additions_are_reported_not_flagged(self) -> None:
+        after = _capture()
+        after["registry"] = {
+            **after["registry"],
+            "uid-2": {
+                "entity_id": "sensor.kitchen_accuracy",
+                "name": None,
+                "disabled_by": "integration",
+                "entity_category": "diagnostic",
+            },
+        }
+        after["services"] = ["run_analysis", "get_time_priors"]
+        after["stores"] = {
+            "area_occupancy.online_prior.x": {"version": 2, "data": {"k": 1, "new": 2}}
+        }
+
+        report = upgrade.diff(_capture(), after)
+
+        assert report.flags == []
+        assert "sensor.kitchen_accuracy" in report.markdown
+        assert "added get_time_priors" in report.markdown
+
+    def test_losses_and_user_visible_changes_are_flagged(self) -> None:
+        after = _capture()
+        after["entry"] = {
+            **after["entry"],
+            "areas": {"kitchen": {"area_id": "kitchen", "threshold": 55.0}},
+        }
+        after["registry"] = {}
+        after["states"] = {}
+        after["services"] = []
+        after["stores"] = {"area_occupancy.online_prior.x": {"version": 2, "data": {}}}
+        after["diagnostics_ok"] = False
+
+        flags = "\n".join(upgrade.diff(_capture(), after).flags)
+
+        assert "kitchen.threshold" in flags
+        assert "binary_sensor.kitchen_occupancy_status lost its registry entry" in flags
+        assert "service run_analysis removed" in flags
+        assert "lost k" in flags
+        assert "diagnostics download failed" in flags
+
+    def test_rekeyed_entity_is_named_as_such(self) -> None:
+        after = _capture()
+        after["registry"] = {"uid-new": after["registry"]["uid-1"]}
+
+        report = upgrade.diff(_capture(), after)
+
+        assert any("now under unique_id uid-new" in flag for flag in report.flags)
+
+    def test_entity_turning_unavailable_is_flagged(self) -> None:
+        after = _capture()
+        after["states"] = {
+            "binary_sensor.kitchen_occupancy_status": {
+                "state": "unavailable",
+                "attributes": ["friendly_name"],
+            }
+        }
+
+        assert upgrade.diff(_capture(), after).flags == [
+            "binary_sensor.kitchen_occupancy_status became unavailable"
+        ]

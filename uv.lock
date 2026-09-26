@@ -249,14 +249,18 @@ version = "2026.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "gazetteer-matcher" },
+    { name = "gtts" },
     { name = "ha-ffmpeg" },
     { name = "hassil" },
+    { name = "home-assistant-frontend" },
     { name = "home-assistant-intents" },
     { name = "homeassistant" },
+    { name = "infrared-protocols" },
     { name = "mutagen" },
     { name = "pymicro-vad" },
     { name = "pyspeex-noise" },
     { name = "pyturbojpeg" },
+    { name = "rf-protocols" },
     { name = "unicode-rbnf" },
 ]
 
@@ -279,10 +283,13 @@ viz = [
 [package.metadata]
 requires-dist = [
     { name = "gazetteer-matcher", specifier = "==1.1.0" },
+    { name = "gtts", specifier = "==2.5.4" },
     { name = "ha-ffmpeg", specifier = "==3.2.2" },
     { name = "hassil", specifier = "==3.12.0" },
+    { name = "home-assistant-frontend", specifier = "==20260826.4" },
     { name = "home-assistant-intents", specifier = "==2026.8.28" },
     { name = "homeassistant", specifier = "==2026.9.0" },
+    { name = "infrared-protocols", specifier = "==9.0.0" },
     { name = "matplotlib", marker = "extra == 'viz'" },
     { name = "mutagen", specifier = "==1.47.0" },
     { name = "playwright", marker = "extra == 'shots'" },
@@ -292,6 +299,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-homeassistant-custom-component", marker = "extra == 'test'", specifier = "==0.13.363" },
     { name = "pyturbojpeg" },
+    { name = "rf-protocols", specifier = "==4.3.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.2" },
     { name = "unicode-rbnf", specifier = "==2.4.0" },
 ]
@@ -687,6 +695,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/c7/3c521d6779ee433d9596eb3fcded79549bbe371843f25e62006c04f74dc9/ciso8601-2.3.3-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:aa9df2f84ab25454f14df92b2dd4f9aae03dbfa581565a716b3e89b8e2110c03", size = 41313, upload-time = "2025-08-20T16:31:01.313Z" },
     { url = "https://files.pythonhosted.org/packages/f9/93/efd40db0d6b512be1cbe4e7e750882c2e88f580e17f35b3e9cc9c23004b5/ciso8601-2.3.3-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:32e06a35eb251cfc4bbe01a858c598da0a160e4ad7f42ff52477157ceaf48061", size = 41443, upload-time = "2025-08-20T16:31:02.357Z" },
     { url = "https://files.pythonhosted.org/packages/21/8e/515f9404faa39af8df5e2b899cafbca5dbe7cd2ffe5cc124ef393ffdaf1c/ciso8601-2.3.3-cp314-cp314-win_amd64.whl", hash = "sha256:7657ba9730dc1340d73b9e61eca14f341c41dd308128c808b8b084d2b85bc03e", size = 17977, upload-time = "2025-08-20T16:31:03.429Z" },
+]
+
+[[package]]
+name = "click"
+version = "8.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/d4/7ebdbd03970677812aac39c869717059dbb71a4cfc033ca6e5221787892c/click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2", size = 98188, upload-time = "2024-12-21T18:38:41.666Z" },
 ]
 
 [[package]]
@@ -1128,6 +1148,19 @@ wheels = [
 ]
 
 [[package]]
+name = "gtts"
+version = "2.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/79/5ddb1dfcd663581d0d3fca34ccb1d8d841b47c22a24dc8dce416e3d87dfa/gtts-2.5.4.tar.gz", hash = "sha256:f5737b585f6442f677dbe8773424fd50697c75bdf3e36443585e30a8d48c1884", size = 24018, upload-time = "2024-11-10T21:58:00.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/6c/8b8b1fdcaee7e268536f1bb00183a5894627726b54a9ddc6fc9909888447/gTTS-2.5.4-py3-none-any.whl", hash = "sha256:5dd579377f9f5546893bc26315ab1f846933dc27a054764b168f141065ca8436", size = 29184, upload-time = "2024-11-10T21:57:58.448Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1236,6 +1269,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bc/6f/914fd8086f502748907751766e26e3f7fe5204347a679703ee9954e55e4d/home_assistant_bluetooth-2.0.0.tar.gz", hash = "sha256:3febd16b194812b156024d9bc8ce8ec7622cdd8d159047cac504cc77ca034ea1", size = 7604, upload-time = "2025-07-09T18:01:47.541Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/3e/2ed9e59da8fc26c43cbd9d6abbd27217138a31c608b1d334cc5e680e4069/home_assistant_bluetooth-2.0.0-py3-none-any.whl", hash = "sha256:8d7c2ac48c303adacad73cb6cdfe7710f2fccd2a367d4c3106acf301b0d22b91", size = 7907, upload-time = "2025-07-09T18:01:46.506Z" },
+]
+
+[[package]]
+name = "home-assistant-frontend"
+version = "20260826.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/e2/86d3def0d249f4368089ae734662b7bbbe84eace414ed20cdadd51b0139f/home_assistant_frontend-20260826.4.tar.gz", hash = "sha256:cc3eb08443bd233e14dc6c606396c6ee9018055569389dc5212b33bf40ef4935", size = 128398973, upload-time = "2026-09-02T10:48:28.192Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/a8/a89894e4a84bb177f436c885353aad14dccaf49fa8c9c83fca1b1fc2c453/home_assistant_frontend-20260826.4-py3-none-any.whl", hash = "sha256:2ed46598e5fec12294fd937d78992527d691debe4441bf5fdd6f9c8b772ab150", size = 128378903, upload-time = "2026-09-02T10:48:23.106Z" },
 ]
 
 [[package]]
@@ -1368,6 +1410,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e8/ac/fb4c578f4a3256561548cd825646680edcadb9440f3f68add95ade1eb791/ifaddr-0.2.0.tar.gz", hash = "sha256:cc0cbfcaabf765d44595825fb96a99bb12c79716b73b44330ea38ee2b0c4aed4", size = 10485, upload-time = "2022-06-15T21:40:27.561Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9c/1f/19ebc343cc71a7ffa78f17018535adc5cbdd87afb31d7c34874680148b32/ifaddr-0.2.0-py3-none-any.whl", hash = "sha256:085e0305cfe6f16ab12d72e2024030f5d52674afad6911bb1eee207177b8a748", size = 12314, upload-time = "2022-06-15T21:40:25.756Z" },
+]
+
+[[package]]
+name = "infrared-protocols"
+version = "9.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/aa/fb324f9072974ef77004334ae46eec0498f4448bcb653799ce7291fb8c3c/infrared_protocols-9.0.0.tar.gz", hash = "sha256:3734faf7faf382f20c310905cd2548a3a14c6f0b9d62625b34b1782839f1ea3b", size = 30501, upload-time = "2026-08-03T10:09:10.203Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/c7/3824d41eb8fac446b6d272c5e4a3fe47cc7f9f0d434ff59e7989f2591d31/infrared_protocols-9.0.0-py3-none-any.whl", hash = "sha256:84d9236bc43991d11df4ff884caa1f154edc5d9bb92cac5b15c804f64f80a73f", size = 47732, upload-time = "2026-08-03T10:09:09.107Z" },
 ]
 
 [[package]]
@@ -2584,6 +2635,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/98/4e55c9c486404ec12373708d015ebce157966965a5ebe7f28ff2c784d41b/respx-0.23.1.tar.gz", hash = "sha256:242dcc6ce6b5b9bf621f5870c82a63997e8e82bc7c947f9ffe272b8f3dd5a780", size = 29243, upload-time = "2026-04-08T14:37:16.008Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1d/4a/221da6ca167db45693d8d26c7dc79ccfc978a440251bf6721c9aaf251ac0/respx-0.23.1-py2.py3-none-any.whl", hash = "sha256:b18004b029935384bccfa6d7d9d74b4ec9af73a081cc28600fffc0447f4b8c1a", size = 25557, upload-time = "2026-04-08T14:37:14.613Z" },
+]
+
+[[package]]
+name = "rf-protocols"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/7c/f8637deb356dfefd9db8994a3fb567477c1d86f6ea5dcc4c0726a74bc9ac/rf_protocols-4.3.0.tar.gz", hash = "sha256:a08c0f50708c7da417b3e49da7a3f9d90a116c4da178562c680243e28ac2002e", size = 15900, upload-time = "2026-06-14T17:19:57.671Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/74/981fd4028f5ba7f205b04882dcef377f3df74f044792266a47d7cabaa825/rf_protocols-4.3.0-py3-none-any.whl", hash = "sha256:1eeb63e2871aeb7f4cb794f6591f98f42953930c978d060e37e39a017a972526", size = 21955, upload-time = "2026-06-14T17:19:56.511Z" },
 ]
 
 [[package]]

@@ -10,11 +10,36 @@ with the code under test. Dropping those entries is a no-op on a healthy
 install and saves a confusing debugging detour on a broken one -- the
 integration is loaded from the instance's ``custom_components`` symlink
 either way.
+
+The repo root is dropped from ``sys.path`` too, for a subtler reason.
+``python -m`` puts the working directory (the repo root) on the path, and the
+repo root has its own ``custom_components``. Home Assistant imports the
+``custom_components`` namespace package with the config directory mounted,
+then unmounts it -- and a namespace package's search path is recomputed from
+``sys.path``, so from then on only the repo's copy is visible. With the usual
+symlink that is the same code, but an instance running a *different* version
+(``harness upgrade-base``) would silently run the working tree instead.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
+
+#: The checkout this launcher lives in.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _is_repo_root(entry: str) -> bool:
+    """Whether a ``sys.path`` entry points at the repo root.
+
+    Args:
+        entry: A ``sys.path`` entry; empty means the working directory.
+
+    Returns:
+        True if it resolves to the repo root.
+    """
+    return Path(entry or ".").resolve() == REPO_ROOT
 
 
 def main() -> int:
@@ -25,7 +50,18 @@ def main() -> int:
     """
     config_dir = sys.argv[1]
     extra = sys.argv[2:]
-    sys.path = [entry for entry in sys.path if "__editable__" not in entry]
+    sys.path = [
+        entry
+        for entry in sys.path
+        if "__editable__" not in entry and not _is_repo_root(entry)
+    ]
+    # The editable install's meta-path finder maps the integration package
+    # straight to the checkout, whatever ``sys.path`` says.
+    sys.meta_path = [
+        finder
+        for finder in sys.meta_path
+        if not getattr(finder, "__module__", "").startswith("__editable__")
+    ]
 
     # Imported after the path fix-up, which is the entire reason this
     # launcher exists.
