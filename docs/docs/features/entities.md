@@ -110,6 +110,21 @@ These entities provide insight into the internal calculations and are useful for
         *   `total_count`: Total number of sensors in the area.
         *   `last_check`: Timestamp of the last health check run.
 
+*   **`sensor.<area_name>_accuracy` (Accuracy)**
+    *   **State:** Agreement between the occupancy decision and motion-confirmed ground truth over the last 24 hours (0.0 to 100.0)
+    *   **Unit:** `%`
+    *   **Description:** The area's self-scored report card: how well the occupancy binary and probability track what the motion sensors later confirmed. Computed hourly by the analysis pipeline; unavailable until the first analysis run after a restart. Everything here is read-only observation — none of these values feed back into the probability, threshold, or decay calculations.
+    *   **Icon:** `mdi:school` (report card available) / `mdi:school-outline` (not yet computed)
+    *   **State Class:** `measurement`
+    *   **Entity Category:** `diagnostic`
+    *   **Attributes:**
+        *   `expected_calibration_error`: Mean gap between predicted probability and observed occupancy rate (lower is better-calibrated).
+        *   `false_on_rate` / `false_off_rate`: Time-weighted share of truly-empty time spent reporting occupied, and vice versa.
+        *   `decision_transitions` / `truth_transitions`: Occupancy flips vs. ground-truth flips over the window.
+        *   `suggested_threshold`: The threshold (%) the calibration data currently argues for. Informational only — nothing applies it automatically.
+        *   `calibration_bins`: Per-probability-band reliability rows (excluded from the recorder).
+        *   `sample_count`, `window_start`, `window_end`: The observation window behind the numbers.
+
 *   **`sensor.area_decay_status_<area_name>` (Decay Status)**
     *   **State:** Numeric value (0.0 to 100.0)
     *   **Unit:** `%`
