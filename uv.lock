@@ -245,7 +245,7 @@ wheels = [
 
 [[package]]
 name = "area-occupancy-detection"
-version = "2026.8.1"
+version = "2026.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "gazetteer-matcher" },
