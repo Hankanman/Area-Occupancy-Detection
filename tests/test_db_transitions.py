@@ -25,14 +25,14 @@ from custom_components.area_occupancy.db.transitions import (
     LEVEL_2HOP_HOUR_OF_WEEK,
     LEVEL_2HOP_UNBUCKETED,
     LEVEL_STATIC_DEFAULT,
+    AdjacencySnapshot,
     _apply_recency_decay,
     _AreaEvent,
     _detect_transitions,
     _hour_of_week,
     _upsert_transition_counts,
     build_adjacency_index,
-    lookup_transition_distribution,
-    lookup_transition_probability,
+    load_adjacency_snapshot,
     record_transitions_for_entry,
     summarize_transitions_for_diagnostics,
 )
@@ -524,7 +524,25 @@ def _seed(db, rows: list[tuple[str, str, str, int, float]]) -> None:
         session.commit()
 
 
-class TestLookupTransitionProbability:
+def _lookup(db, **kwargs):
+    """Load the in-memory snapshot the coordinator uses and look up through it.
+
+    Going through ``load_adjacency_snapshot`` exercises the same DB rows →
+    snapshot → fallback-level path as the per-tick refresh.
+    """
+    snapshot = load_adjacency_snapshot(db, db.coordinator.entry_id)
+    assert snapshot is not None
+    return snapshot.lookup(**kwargs)
+
+
+def _lookup_distribution(db, **kwargs):
+    """Snapshot-backed distribution lookup, mirroring ``_lookup``."""
+    snapshot = load_adjacency_snapshot(db, db.coordinator.entry_id)
+    assert snapshot is not None
+    return snapshot.lookup_distribution(**kwargs)
+
+
+class TestSnapshotLookup:
     """Six-level smoothing fallback exercised one level at a time."""
 
     def test_level1_specific_two_hop_at_exact_hour(
@@ -540,9 +558,8 @@ class TestLookupTransitionProbability:
             ],
         )
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="study",
             to_area="bathroom",
@@ -574,9 +591,8 @@ class TestLookupTransitionProbability:
             ],
         )
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="study",
             to_area="bathroom",
@@ -601,9 +617,8 @@ class TestLookupTransitionProbability:
             rows.append(("hall", "study", "bedroom", hour, 1.0))
         _seed(db, rows)
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="study",
             to_area="bathroom",
@@ -629,9 +644,8 @@ class TestLookupTransitionProbability:
             ],
         )
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="study",  # there's no 2-hop with this mid yet
             to_area="bathroom",
@@ -653,9 +667,8 @@ class TestLookupTransitionProbability:
             rows.append(("hall", "", "bedroom", hour, 1.0))
         _seed(db, rows)
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="study",
             to_area="bathroom",
@@ -672,9 +685,8 @@ class TestLookupTransitionProbability:
         """No data at any level → static default."""
         db = coordinator.db
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="study",
             to_area="bathroom",
@@ -690,9 +702,8 @@ class TestLookupTransitionProbability:
     ):
         """Caller-supplied static_default overrides the constants module value."""
         db = coordinator.db
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="A",
             mid_area="",
             to_area="B",
@@ -723,9 +734,8 @@ class TestLookupTransitionProbability:
             ],
         )
 
-        result = lookup_transition_probability(
+        result = _lookup(
             db,
-            db.coordinator.entry_id,
             from_area="hall",
             mid_area="",
             to_area="bathroom",
@@ -733,6 +743,85 @@ class TestLookupTransitionProbability:
         )
         assert result.level == LEVEL_1HOP_HOUR_OF_WEEK
         assert result.probability == pytest.approx(0.7)
+
+
+class TestLoadAdjacencySnapshot:
+    """Loading the in-memory copy the coordinator's refresh path reads."""
+
+    def test_snapshot_scoped_to_entry_and_adjacent_relationships(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Only this entry's adjacent rows and transition counts are loaded."""
+        db = coordinator.db
+        entry_id = db.coordinator.entry_id
+        with db.get_session() as session:
+            session.add_all(
+                [
+                    db.AreaRelationships(
+                        entry_id=entry_id,
+                        area_name="hall",
+                        related_area_name="study",
+                        relationship_type="adjacent",
+                        influence_weight=0.3,
+                    ),
+                    db.AreaRelationships(
+                        entry_id=entry_id,
+                        area_name="hall",
+                        related_area_name="garden",
+                        relationship_type="shared_wall",
+                        influence_weight=0.4,
+                    ),
+                    db.AreaRelationships(
+                        entry_id="other_entry",
+                        area_name="hall",
+                        related_area_name="attic",
+                        relationship_type="adjacent",
+                        influence_weight=0.3,
+                    ),
+                    db.AreaTransitions(
+                        entry_id="other_entry",
+                        from_area="hall",
+                        mid_area="",
+                        to_area="attic",
+                        hour_of_week=42,
+                        count=50.0,
+                    ),
+                ]
+            )
+            session.commit()
+        _seed(
+            db,
+            [
+                ("hall", "", "study", 42, 3.0),
+                ("hall", "", "study", 43, 2.0),
+                ("hall", "study", "bathroom", 42, 1.5),
+            ],
+        )
+
+        snapshot = load_adjacency_snapshot(db, entry_id)
+
+        assert snapshot is not None
+        assert snapshot.adjacency_index == {"hall": {"study"}}
+        assert snapshot.counts == {
+            ("hall", ""): {42: {"study": 3.0}, 43: {"study": 2.0}},
+            ("hall", "study"): {42: {"bathroom": 1.5}},
+        }
+
+    def test_database_error_returns_none(self, coordinator: AreaOccupancyCoordinator):
+        """A failed read returns None so the caller keeps its old snapshot."""
+        db = coordinator.db
+        with patch.object(
+            db, "get_session", side_effect=SQLAlchemyError("simulated read failure")
+        ):
+            assert load_adjacency_snapshot(db, db.coordinator.entry_id) is None
+
+    def test_empty_snapshot_uses_static_default(self):
+        """Before the first load, lookups behave like an empty table."""
+        result = AdjacencySnapshot().lookup(
+            from_area="hall", mid_area="study", to_area="bathroom", hour_of_week=42
+        )
+        assert result.level == LEVEL_STATIC_DEFAULT
+        assert result.probability == pytest.approx(0.3)
 
 
 # ─── diagnostics summary ────────────────────────────────────────────
@@ -840,12 +929,8 @@ class TestLookupTransitionDistribution:
             ],
         )
 
-        dist = lookup_transition_distribution(
-            db,
-            db.coordinator.entry_id,
-            from_area="hall",
-            mid_area="study",
-            hour_of_week=42,
+        dist = _lookup_distribution(
+            db, from_area="hall", mid_area="study", hour_of_week=42
         )
         assert dist.level == LEVEL_2HOP_HOUR_OF_WEEK
         assert dist.total_count == pytest.approx(10.0)
@@ -856,9 +941,8 @@ class TestLookupTransitionDistribution:
         assert sum(dist.probabilities.values()) == pytest.approx(1.0)
 
         for destination in ("bathroom", "bedroom", "kitchen"):
-            single = lookup_transition_probability(
+            single = _lookup(
                 db,
-                db.coordinator.entry_id,
                 from_area="hall",
                 mid_area="study",
                 to_area=destination,
@@ -881,13 +965,7 @@ class TestLookupTransitionDistribution:
                 ("hall", "", "bedroom", 42, 2.0),
             ],
         )
-        dist = lookup_transition_distribution(
-            db,
-            db.coordinator.entry_id,
-            from_area="hall",
-            mid_area="",
-            hour_of_week=42,
-        )
+        dist = _lookup_distribution(db, from_area="hall", mid_area="", hour_of_week=42)
         assert dist.level == LEVEL_1HOP_HOUR_OF_WEEK
         assert dist.probabilities["bathroom"] == pytest.approx(0.8)
 
@@ -896,12 +974,8 @@ class TestLookupTransitionDistribution:
     ):
         """With nothing seeded, the distribution is empty at level 6."""
         db = coordinator.db
-        dist = lookup_transition_distribution(
-            db,
-            db.coordinator.entry_id,
-            from_area="nowhere",
-            mid_area="",
-            hour_of_week=0,
+        dist = _lookup_distribution(
+            db, from_area="nowhere", mid_area="", hour_of_week=0
         )
         assert dist.level == LEVEL_STATIC_DEFAULT
         assert dist.probabilities == {}

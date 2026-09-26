@@ -227,13 +227,18 @@ The time prior retrieval follows this path:
 
 1. **Entry Point**: `prior.py:Prior.time_prior` property (line 115)
    - Called when calculating combined prior
-   - Property getter that triggers retrieval if needed
+   - Property getter that only reads the cache; it never queries the database
 
 2. **Cache Check**: Checks if `_cached_time_priors` dictionary is populated (line 118)
-   - If `None`, triggers `_load_time_priors()` to load all 168 slots from database
+   - If `None`, returns `DEFAULT_TIME_PRIOR` (0.5) without querying the database
    - Cache stores all time priors as a dictionary: `(day_of_week, time_slot) -> prior_value`
+   - The cache is filled by `load_time_priors()`, which `load_data()` and `start_prior_analysis()` run in the executor, so probability calculations on the event loop never query SQLite
 
-3. **Load All Time Priors**: `prior.py:_load_time_priors()`
+3. **Load All Time Priors**: `prior.py:load_time_priors()`
+   - Runs in the executor only (`load_data` on area load,
+     `start_prior_analysis` after new priors are saved) — `time_prior`
+     itself never reads the database, since every probability calculation
+     on the event loop calls it
    - Calls `db.get_stored_time_priors()` to retrieve only the slots actually
      stored for the area, in a single database query
    - Fills the rest of the weekly grid itself with
@@ -242,11 +247,12 @@ The time prior retrieval follows this path:
      opinion. `DEFAULT_TIME_PRIOR` (0.5) is used only before any global
      prior exists.
    - Applies safety bounds [`TIME_PRIOR_MIN_BOUND`, `TIME_PRIOR_MAX_BOUND`]
-     to stored values during loading
+     to stored values during loading, and publishes both maps atomically
+     (the event loop reads while the executor loads)
    - A parallel `data_points` map is cached alongside; `0` marks an
      unlearned (filled) slot
-   - On a failed database read neither cache is populated — callers fall
-     back per-call and the next access retries
+   - On a failed database read neither cache is touched — a previously
+     published grid keeps serving and the next load retries
 
 4. **Database Method**: `db/core.py:get_stored_time_priors()`
    - Wrapper that adds `entry_id` parameter
@@ -266,7 +272,7 @@ The time prior retrieval follows this path:
    - Looks up value in cached dictionary
    - Returns `unlearned_slot_prior` if slot not found (shouldn't happen after `_load_time_priors()`)
 
-7. **Safety Bounds**: Applied during `_load_time_priors()` (line 173-177)
+7. **Safety Bounds**: Applied during `load_time_priors()`
    - Clamps all values to [TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND] = [0.03, 0.9]
    - Prevents extreme values from affecting calculations
 
@@ -302,19 +308,19 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 
 **Cache Population**:
 
-- Loaded lazily on first access to `time_prior` property
+- Loaded by `load_time_priors()` in the executor: from `load_data()` when an area's data is loaded, and from `start_prior_analysis()` after new time priors are saved
 - Loads all 168 slots in a single database query for efficiency
 - Applied safety bounds during loading
 
 **Cache Invalidation**: `_invalidate_time_prior_cache()` (line 157)
 
-- Called when global prior changes (`set_global_prior()`)
-- Sets `_cached_time_priors = None` to force reload on next access
-- Also called by `clear_cache()` method
+- Called by `clear_cache()` (area removal and purge)
+- Sets `_cached_time_priors = None`; `time_prior` returns `DEFAULT_TIME_PRIOR` until the next `load_time_priors()`
+- `set_global_prior()` does not invalidate it: the previous snapshot stays in use until the prior analysis publishes the new time priors
 
 **TTL**: No time-based expiration
 
-- Cache persists until invalidated (when global prior changes)
+- Cache persists until `load_time_priors()` replaces it or `clear_cache()` clears it
 - Since all 168 slots are cached, no need to check day/slot on each access
 - Simply looks up current slot in the cached dictionary
 
@@ -423,6 +429,16 @@ sequenceDiagram
     participant DB as Database
     participant Query as Query Function
 
+    Note over Prior,Query: Executor: load_data() / start_prior_analysis() call load_time_priors()
+    Prior->>DB: get_all_time_priors(area_name)
+    DB->>Query: get_all_time_priors(entry_id, area_name)
+    Query->>Query: Query all Priors for area
+    Query-->>DB: Dictionary of all 168 slots
+    DB-->>Prior: Dictionary of all slots
+    Prior->>Prior: Apply safety bounds [0.1, 0.9]
+    Prior->>Cache: Publish all 168 slots
+
+    Note over Area,Cache: Event loop: every probability() calculation
     Area->>Prior: probability() calculation
     Prior->>Prior: value property
     Prior->>Prior: time_prior property
@@ -433,18 +449,8 @@ sequenceDiagram
         Prior->>Prior: Get current (day, slot)
         Prior->>Cache: Lookup (day, slot)
         Cache-->>Prior: prior_value for current slot
-    else Cache Empty (First Access)
-        Prior->>Prior: _load_time_priors()
-        Prior->>DB: get_all_time_priors(area_name)
-        DB->>Query: get_all_time_priors(entry_id, area_name)
-        Query->>Query: Query all Priors for area
-        Query-->>DB: Dictionary of all 168 slots
-        DB-->>Prior: Dictionary of all slots
-        Prior->>Prior: Apply safety bounds [0.1, 0.9]
-        Prior->>Cache: Store all 168 slots
-        Prior->>Prior: Get current (day, slot)
-        Prior->>Cache: Lookup (day, slot)
-        Cache-->>Prior: prior_value for current slot
+    else Cache Empty (not loaded yet)
+        Prior->>Prior: Use DEFAULT_TIME_PRIOR (no database query)
     end
 
     Prior->>Prior: combine_priors(global, time)
@@ -491,16 +497,15 @@ flowchart TD
 ### 7.1 Cache Invalidation Logic
 
 **Behaviour**: The cache holds all 168 slots, so a day/slot rollover needs no
-invalidation — the lookup simply reads a different key. Invalidation is only
-needed when the stored values themselves change.
+invalidation — the lookup simply reads a different key. The cache changes only
+when the stored values change.
 
-**Ordering constraint**: `calculate_and_update_prior()` calls `set_global_prior()`
-(which invalidates) *before* it writes the new rows via `save_time_priors()`.
-That method runs in an executor thread while the event loop can read
-`prior.value` in between, and such a read would repopulate the cache from the
-pre-write rows — leaving it stale until the next hourly run. The pipeline
-therefore calls `Prior.invalidate_time_prior_cache()` explicitly **after** a
-successful write.
+**Reload model**: reads never repopulate the cache (they run on the event
+loop). After `calculate_and_update_prior()` saves new rows,
+`start_prior_analysis` reloads the cache via `load_time_priors()` in the
+executor. This also removes the historical race where a probability read
+landing between `set_global_prior()` and `save_time_priors()` re-cached the
+previous run's rows for the next hour.
 
 ### 7.3 Default Value Handling
 

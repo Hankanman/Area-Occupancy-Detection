@@ -150,7 +150,7 @@ transition counts with exponential recency decay
 (`ADJACENCY_RECENCY_HALF_LIFE_DAYS = 30`), supporting both 1-hop
 (`mid_area = ""` sentinel) and 2-hop chains, bucketed into the same 168
 day-of-week × hour-of-day grid as the existing time-priors. The lookup
-(`db/transitions.py::lookup_transition_probability`) already implements a
+(`db/transitions.py::AdjacencySnapshot.lookup`) already implements a
 6-level specificity-with-minimum-sample-size smoothing fallback
 (`ADJACENCY_N_SPECIFIC=5` for a specific 2-hop/hour-of-week chain, down to
 `ADJACENCY_N_PAIR=20` for an un-bucketed 1-hop pair, down to a static
@@ -163,7 +163,7 @@ trajectory suggests the person is still nearby.
 
 **The built-in A/B toggle:** adjacency influence is **zero unless the user
 has configured adjacent-area pairs for that area** (`CONF_ADJACENT_AREAS`
-empty → no transitions recorded → `lookup_transition_probability` falls
+empty → no transitions recorded → `AdjacencySnapshot.lookup` falls
 through to the static default with `observed/total` forced to 0, which is
 the documented "no data" signal). That means every home with *some* areas
 configured with neighbors and some without already has a natural,

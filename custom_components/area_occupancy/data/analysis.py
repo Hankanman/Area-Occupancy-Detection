@@ -132,7 +132,13 @@ async def run_full_analysis(
         await coordinator.hass.async_add_executor_job(coordinator.db.save_data)
 
     async def _refresh() -> None:
-        await coordinator.async_refresh()
+        # The refresh path reads adjacency data from memory. Reload it first
+        # so it reflects everything this cycle wrote: learned transitions,
+        # relationships re-synced by the save, and any DB recovery.
+        try:
+            await coordinator.async_load_adjacency_snapshot()
+        finally:
+            await coordinator.async_refresh()
 
     try:
         await _run_step(1, "sync_states", _sync_states())
@@ -498,6 +504,10 @@ async def start_prior_analysis(
         )
     except (ValueError, TypeError, RuntimeError) as e:
         _LOGGER.error("Error during prior analysis for area %s: %s", area_name, e)
+
+    # Publish the time priors this run saved. Refreshes keep using the
+    # previous snapshot until this completes; time_prior never reads SQLite.
+    await coordinator.hass.async_add_executor_job(prior.load_time_priors)
 
 
 class PriorAnalyzer:

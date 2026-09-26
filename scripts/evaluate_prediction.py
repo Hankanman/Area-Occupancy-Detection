@@ -4,8 +4,8 @@
 Replays area-entry events from a copy of ``area_occupancy.db`` and asks:
 for each entry, would the trailing trajectory + hour-of-week bucket —
 fed through the REAL six-level transition fallback
-(``lookup_transition_distribution``, reused, not reimplemented) — have
-predicted the area a person entered next? Reports top-1/top-2 accuracy
+(``AdjacencySnapshot.lookup_distribution``, reused, not reimplemented) —
+have predicted the area a person entered next? Reports top-1/top-2 accuracy
 per area and per fallback level, plus the transition-gap distribution
 that tells us what a "P(occupied within N minutes)" horizon could
 honestly promise.
@@ -52,22 +52,26 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from custom_components.area_occupancy.const import ADJACENCY_TRAJECTORY_WINDOW_S
-from custom_components.area_occupancy.db.schema import AreaTransitions
+from custom_components.area_occupancy.db.schema import (
+    AreaRelationships,
+    AreaTransitions,
+)
 from custom_components.area_occupancy.db.transitions import (
     LEVEL_STATIC_DEFAULT,
-    lookup_transition_distribution,
+    load_adjacency_snapshot,
 )
 from custom_components.area_occupancy.time_utils import to_local
 
 
 class _DbStub:
-    """The minimal surface ``lookup_transition_distribution`` reads.
+    """The minimal surface ``load_adjacency_snapshot`` reads.
 
-    A real ``AreaOccupancyDB`` needs a live coordinator; the lookup only
-    touches ``get_session()`` and the ``AreaTransitions`` model.
+    A real ``AreaOccupancyDB`` needs a live coordinator; the loader only
+    touches ``get_session()`` and the two adjacency models.
     """
 
     AreaTransitions = AreaTransitions
+    AreaRelationships = AreaRelationships
 
     def __init__(self, db_path: Path) -> None:
         self._engine = create_engine(f"sqlite:///file:{db_path}?mode=ro&uri=true")
@@ -153,6 +157,11 @@ def main() -> int:
         print("No areas table / entry_id found", file=sys.stderr)
         return 1
 
+    snapshot = load_adjacency_snapshot(db, entry_id)
+    if snapshot is None:
+        print("Failed to load the adjacency snapshot", file=sys.stderr)
+        return 1
+
     cutoff = datetime.now(tz=UTC) - timedelta(days=args.days)
     spans = _load_occupancy_events(db, cutoff)
     if not spans:
@@ -191,17 +200,15 @@ def main() -> int:
 
         local = to_local(start)
         hour_of_week = local.weekday() * 24 + local.hour
-        dist = lookup_transition_distribution(
-            db,
-            entry_id,
+        dist = snapshot.lookup_distribution(
             from_area=prev_prev or "",
             mid_area=prev if prev_prev else "",
             hour_of_week=hour_of_week,
         )
         if dist.level == LEVEL_STATIC_DEFAULT and prev_prev:
             # 2-hop walk found nothing at all; retry as pure 1-hop.
-            dist = lookup_transition_distribution(
-                db, entry_id, from_area=prev, mid_area="", hour_of_week=hour_of_week
+            dist = snapshot.lookup_distribution(
+                from_area=prev, mid_area="", hour_of_week=hour_of_week
             )
 
         ranked = sorted(

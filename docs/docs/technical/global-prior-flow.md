@@ -166,7 +166,7 @@ self.area.prior.set_global_prior(global_prior)
 ```
 
 - Updates the `Prior` object's `global_prior` attribute
-- Invalidates time prior cache (forces reload on next access)
+- Leaves the time-prior cache in place; `start_prior_analysis()` reloads it in the executor after the new time priors are saved
 - Updates `_last_updated` timestamp
 
 #### Step 5: Save to Database

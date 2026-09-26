@@ -204,20 +204,27 @@ class Prior:
 
     @property
     def time_prior(self) -> float:
-        """Return the current time prior value or minimum if not calculated."""
-        # Load all time priors if cache is empty
-        if self._cached_time_priors is None:
-            self._load_time_priors()
+        """Return the cached time prior for the current day and hour slot.
+
+        Never reads the database, since every probability calculation on the
+        event loop calls this. ``load_time_priors()`` fills the cache in the
+        executor; until it has, this returns :attr:`unlearned_slot_prior`
+        (the area's own global prior — the value an unlearned slot gets,
+        per #536's fallback semantics). A failed load leaves the cache
+        unset, so this also serves as the per-call fallback that lets the
+        next executor load retry.
+        """
+        # Read the cache once into a local: the executor can replace it
+        # concurrently.
+        time_priors = self._cached_time_priors
+        if time_priors is None:
+            return self.unlearned_slot_prior
 
         current_day = self.day_of_week
         current_slot = self.time_slot
         slot_key = (current_day, current_slot)
 
-        # Cache stays None when the DB read failed — fall back per-call so
-        # the next access retries instead of serving a poisoned cache.
-        if self._cached_time_priors is None:
-            return self.unlearned_slot_prior
-        return self._cached_time_priors.get(slot_key, self.unlearned_slot_prior)
+        return time_priors.get(slot_key, self.unlearned_slot_prior)
 
     @property
     def day_of_week(self) -> int:
@@ -236,7 +243,7 @@ class Prior:
         The cache is loaded from the database on first access. Values are the
         raw per-slot time priors, bounds-clamped to
         ``[TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND]`` (see
-        :meth:`_load_time_priors`). Keys are ``(day_of_week, time_slot)``
+        :meth:`load_time_priors`). Keys are ``(day_of_week, time_slot)``
         with ``day_of_week`` 0=Monday…6=Sunday and ``time_slot`` in
         ``[0, 1440 // DEFAULT_SLOT_MINUTES)``.
 
@@ -248,7 +255,7 @@ class Prior:
             Mapping of ``(day_of_week, time_slot) -> raw time prior``.
         """
         if self._cached_time_priors is None:
-            self._load_time_priors()
+            self.load_time_priors()
         if self._cached_time_priors is None:
             # DB read failed: serve an uncached fallback grid so the shape
             # stays a full week and the next access retries the load.
@@ -268,7 +275,7 @@ class Prior:
             weeks of data behind that slot.
         """
         if self._cached_time_prior_points is None:
-            self._load_time_priors()
+            self.load_time_priors()
         if self._cached_time_prior_points is None:
             return self._unlearned_grid()[1]
         return dict(self._cached_time_prior_points)
@@ -299,7 +306,7 @@ class Prior:
             Forecast occupancy probability in ``[MIN_PRIOR, MAX_PRIOR]``.
         """
         if self._cached_time_priors is None:
-            self._load_time_priors()
+            self.load_time_priors()
         if self._cached_time_priors is None:
             slot_time_prior = self.unlearned_slot_prior
         else:
@@ -338,7 +345,9 @@ class Prior:
                 entirely.
         """
         self.global_prior = clamp_probability(prior)
-        self._invalidate_time_prior_cache()
+        # The time-prior cache is left alone: time priors live in their own
+        # table, and the prior analysis reloads them after saving new ones,
+        # so the current snapshot stays in use until its replacement is ready.
         now = dt_util.utcnow()
         self._last_updated = now
         self.last_calculation_at = (
@@ -399,7 +408,7 @@ class Prior:
     ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], int]]:
         """Return a full weekly grid of fallback priors and zero sample counts.
 
-        Used only when the database read behind :meth:`_load_time_priors`
+        Used only when the database read behind :meth:`load_time_priors`
         failed: callers get a complete, correctly-shaped week without the
         poisoned values being cached.
         """
@@ -411,21 +420,32 @@ class Prior:
             dict.fromkeys(keys, 0),
         )
 
-    def _load_time_priors(self) -> None:
+    def load_time_priors(self) -> dict[tuple[int, int], float] | None:
         """Load all 168 time priors from database into cache.
 
         Reads the stored slots in a single query and fills the rest of the
         weekly grid with :attr:`unlearned_slot_prior`, keeping a parallel map
         of sample counts so callers can tell learned slots from filled ones.
 
+        Blocking I/O, so it runs in the executor: ``load_data`` calls it when
+        an area's data is loaded, and ``start_prior_analysis`` after new time
+        priors are saved. ``time_prior`` never loads on its own. Both maps
+        are built fully before being published, since the event loop reads
+        the cache while this runs.
+
         On a failed database read (``get_stored_time_priors`` returns
-        ``None``) both caches are left unset so the next access retries,
-        rather than pinning a fallback-only grid that would misreport every
-        slot as unobserved until the next cache invalidation.
+        ``None``) both caches are left untouched — a previously published
+        grid keeps serving and the next load retries — rather than pinning
+        a fallback-only grid that would misreport every slot as unobserved
+        until the next cache invalidation.
+
+        Returns:
+            The newly cached mapping of (day_of_week, time_slot) to prior,
+            or ``None`` when the read failed.
         """
         stored = self.db.get_stored_time_priors(area_name=self.area_name)
         if stored is None:
-            return
+            return None
         fallback = self.unlearned_slot_prior
 
         priors: dict[tuple[int, int], float] = {}
@@ -448,3 +468,4 @@ class Prior:
 
         self._cached_time_priors = priors
         self._cached_time_prior_points = points
+        return priors

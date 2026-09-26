@@ -58,7 +58,7 @@ from .data.metrics import AccuracyMetrics, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
-from .db.transitions import build_adjacency_index, lookup_transition_probability
+from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
 from .time_utils import to_local
 from .utils import evidence_value, format_area_names, logit
 
@@ -143,9 +143,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # feed back on this tick's own outputs.
         self._trajectory_tracker = TrajectoryTracker()
         self._lagged_probabilities: dict[str, float] = {}
-        # Adjacency boosts precomputed once per tick in the executor
-        # (since ``lookup_transition_probability`` issues SQL queries),
-        # then read synchronously by ``Area.probability``.
+        # In-memory adjacency index + transition counts. ``update`` runs on
+        # every sensor state change, so it must not query SQLite; this is
+        # reloaded by ``async_load_adjacency_snapshot`` whenever the
+        # underlying tables can change (setup, options update, area purge,
+        # hourly analysis).
+        self._adjacency_snapshot = AdjacencySnapshot()
+        # Adjacency boosts computed once per tick from the snapshot, then
+        # read synchronously by ``Area.probability``.
         self._adjacency_boosts: dict[str, BoostContribution] = {}
         # Decay modifiers (Option 3a) precomputed alongside the boosts
         # and applied to each entity's ``Decay.modifier_factor``.
@@ -547,6 +552,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Failed to save area and entity data, continuing setup: %s", e
                 )
 
+            # save_data syncs AreaRelationships from each area's configured
+            # neighbours, so load the adjacency snapshot after it.
+            await self.async_load_adjacency_snapshot()
+
             # Track entity state changes for all areas
             all_entity_ids = []
             for area in self.areas.values():
@@ -614,15 +623,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         now = dt_util.utcnow()
-        # Precompute adjacency boosts and decay modifiers in the
-        # executor pool (one trip per tick) so the SQL lookups don't
-        # block the event loop. ``Area.probability`` reads boosts via
-        # the cached dict; entity ``Decay`` instances pick up the
-        # modifier through ``set_modifier_factor`` below.
+        # Compute adjacency boosts and decay modifiers from the in-memory
+        # snapshot. Nothing in this method awaits, so a state-change
+        # refresh completes without yielding to the event loop and
+        # without waiting on the executor pool. ``Area.probability``
+        # reads boosts via the cached dict; entity ``Decay`` instances
+        # pick up the modifier through ``set_modifier_factor`` below.
         (
             self._adjacency_boosts,
             self._adjacency_decay_modifiers,
-        ) = await self.hass.async_add_executor_job(self._compute_adjacency_state, now)
+        ) = self._compute_adjacency_state(now)
         for area_name, modifier in self._adjacency_decay_modifiers.items():
             area = self.areas.get(area_name)
             if area is None:
@@ -793,27 +803,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _compute_adjacency_state(
         self, now: datetime
     ) -> tuple[dict[str, BoostContribution], dict[str, DecayModifierContribution]]:
-        """Compute boosts and decay modifiers for every area, single executor trip.
+        """Compute boosts and decay modifiers for every area.
 
-        Runs in the thread-pool executor since
-        ``lookup_transition_probability`` issues synchronous SQL queries.
-        Reads the household adjacency index once and reuses it for every
-        per-area lookup.
+        Reads only the in-memory adjacency snapshot, so it is safe to
+        call on the event loop from every refresh.
         """
         boosts: dict[str, BoostContribution] = {}
         modifiers: dict[str, DecayModifierContribution] = {}
-        adjacency_index = build_adjacency_index(self.db, self.entry_id)
+        snapshot = self._adjacency_snapshot
+        adjacency_index = snapshot.adjacency_index
         lagged = self._lagged_probabilities
-
-        def _lookup(*, from_area, mid_area, to_area, hour_of_week):
-            return lookup_transition_probability(
-                self.db,
-                self.entry_id,
-                from_area=from_area,
-                mid_area=mid_area,
-                to_area=to_area,
-                hour_of_week=hour_of_week,
-            )
 
         for area_name in self.areas:
             trajectory = self.trajectory_for(area_name, now=now)
@@ -821,7 +820,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 boosts[area_name] = compute_adjacency_boost(
                     target_area=area_name,
                     trajectory=trajectory,
-                    lookup=_lookup,
+                    lookup=snapshot.lookup,
                 )
             # Decay modifier still fires even with no trajectory — the
             # 1-hop fallback ``P(target → neighbour)`` is meaningful when
@@ -836,10 +835,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     adjacency_index=adjacency_index,
                     lagged_probabilities=lagged,
                     trajectory=trajectory,
-                    lookup=_lookup,
+                    lookup=snapshot.lookup,
                     base_half_life_seconds=1.0,
                 )
         return boosts, modifiers
+
+    async def async_load_adjacency_snapshot(self) -> None:
+        """Reload the in-memory adjacency index and transition counts.
+
+        Called after anything that can change ``AreaRelationships`` or
+        ``AreaTransitions``. On a database error the previous snapshot is
+        kept, so a transient failure doesn't drop every learned
+        transition until the next reload.
+        """
+        snapshot = await self.hass.async_add_executor_job(
+            load_adjacency_snapshot, self.db, self.entry_id
+        )
+        if snapshot is not None:
+            self._adjacency_snapshot = snapshot
 
     def trajectory_for(self, target_area: str, *, now: datetime) -> Trajectory:
         """Return the trajectory describing recent ends excluding target.
@@ -1358,6 +1371,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Force immediate save after configuration changes
         await self.hass.async_add_executor_job(self.db.save_data)
+
+        # Neighbour lists may have changed; save_data has just re-synced them.
+        await self.async_load_adjacency_snapshot()
 
         # Only request refresh if setup is complete to avoid debouncer conflicts
         if self.setup_complete:

@@ -28,7 +28,7 @@ recorded via :func:`summarize_transitions_for_diagnostics`.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
@@ -112,21 +112,28 @@ def build_adjacency_index(db: AreaOccupancyDB, entry_id: str) -> dict[str, set[s
     """
     try:
         with db.get_session() as session:
-            rows = (
-                session.query(db.AreaRelationships)
-                .filter(
-                    db.AreaRelationships.entry_id == entry_id,
-                    db.AreaRelationships.relationship_type == "adjacent",
-                )
-                .all()
-            )
-            index: dict[str, set[str]] = {}
-            for row in rows:
-                index.setdefault(row.area_name, set()).add(row.related_area_name)
-            return index
+            return _query_adjacency_index(session, db, entry_id)
     except SQLAlchemyError:
         _LOGGER.exception("Error reading adjacency index")
         return {}
+
+
+def _query_adjacency_index(
+    session: Any, db: AreaOccupancyDB, entry_id: str
+) -> dict[str, set[str]]:
+    """Build the adjacency index inside an existing session."""
+    rows = (
+        session.query(db.AreaRelationships)
+        .filter(
+            db.AreaRelationships.entry_id == entry_id,
+            db.AreaRelationships.relationship_type == "adjacent",
+        )
+        .all()
+    )
+    index: dict[str, set[str]] = {}
+    for row in rows:
+        index.setdefault(row.area_name, set()).add(row.related_area_name)
+    return index
 
 
 def _collect_events_for_areas(
@@ -510,50 +517,6 @@ class TransitionLookupResult:
     total_count: float
 
 
-def _query_pair_counts(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    from_area: str,
-    mid_area: str,
-    *,
-    hour_of_week: int | None = None,
-    hour_of_day: int | None = None,
-) -> dict[str, float]:
-    """Sum counts grouped by ``to_area`` for the requested chain scope.
-
-    ``hour_of_week`` filters to a specific (weekday, hour) bucket.
-    ``hour_of_day`` (0..23) collapses across weekdays at a given hour.
-    Pass neither to aggregate over the entire week.
-    """
-    try:
-        with db.get_session() as session:
-            q = session.query(
-                db.AreaTransitions.to_area,
-                db.AreaTransitions.count,
-                db.AreaTransitions.hour_of_week,
-            ).filter(
-                db.AreaTransitions.entry_id == entry_id,
-                db.AreaTransitions.from_area == from_area,
-                db.AreaTransitions.mid_area == mid_area,
-            )
-            if hour_of_week is not None:
-                q = q.filter(db.AreaTransitions.hour_of_week == hour_of_week)
-            rows = q.all()
-    except SQLAlchemyError:
-        _LOGGER.exception("Error querying transition counts")
-        return {}
-
-    # SQLite has no integer modulo on a column expression that's clean
-    # to filter on, so do hour_of_day collapsing in Python — the row
-    # count is bounded by neighbours × hours so this is fine.
-    sums: dict[str, float] = {}
-    for to_area, count, hour in rows:
-        if hour_of_day is not None and (hour % 24) != hour_of_day:
-            continue
-        sums[to_area] = sums.get(to_area, 0.0) + float(count or 0.0)
-    return sums
-
-
 def _try_level(
     sums: dict[str, float], to_area: str, threshold: int
 ) -> tuple[float, float, float] | None:
@@ -587,125 +550,221 @@ class TransitionDistribution:
     total_count: float
 
 
-def lookup_transition_distribution(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    *,
-    from_area: str,
-    mid_area: str,
-    hour_of_week: int,
-) -> TransitionDistribution:
-    """Return the full next-area distribution with the six-level fallback.
+@dataclass(frozen=True)
+class AdjacencySnapshot:
+    """In-memory copy of one entry's adjacency index and transition counts.
 
-    Same walk as :func:`lookup_transition_probability` — which delegates
-    here so the two can never disagree — but returns every destination's
-    share instead of a single one's, which is what a predictive consumer
-    ("which area next?") needs. Levels and thresholds:
+    The coordinator refreshes on every sensor state change and every decay
+    tick, so its boost and decay-modifier lookups read this snapshot instead
+    of SQLite. Querying per tick meant a fresh SQLite connection for every
+    fallback level of every lookup, behind an executor round trip, which
+    delayed occupancy updates by seconds on slower hosts.
+    ``AreaRelationships`` and ``AreaTransitions`` only change when the
+    configuration is saved, an area is purged, or the hourly analysis runs;
+    the coordinator reloads the snapshot after each of those.
 
-    1. Specific 2-hop chain at the exact hour-of-week
-    2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
-    3. Specific 2-hop chain un-bucketed
-    4. Equivalent 1-hop chain at the exact hour-of-week
-    5. Equivalent 1-hop chain un-bucketed
-    6. Static default (empty distribution)
-
-    Pass ``mid_area=""`` to skip levels 1-3 when only a 1-hop trajectory
-    is known. Thresholds come from the ``ADJACENCY_N_*`` constants and
-    apply to each level's total, per ``_try_level``'s rationale.
+    ``counts`` maps ``(from_area, mid_area)`` → ``hour_of_week`` →
+    ``to_area`` → count. The hour-of-day and whole-week sums that the wider
+    fallback levels need are added up once, on construction, so each level
+    of a per-tick lookup is a dict read rather than a pass over every hour.
     """
-    hour_of_day = hour_of_week % 24
 
-    # When the caller already knows there's no 2-hop trajectory, skip
-    # straight to the 1-hop levels so we don't waste queries.
-    levels: list[tuple[dict[str, float], str, int]] = []
-    if mid_area:
+    adjacency_index: dict[str, set[str]] = field(default_factory=dict)
+    counts: dict[tuple[str, str], dict[int, dict[str, float]]] = field(
+        default_factory=dict
+    )
+    _by_hour_of_day: dict[tuple[str, str], dict[int, dict[str, float]]] = field(
+        init=False, repr=False, compare=False
+    )
+    _whole_week: dict[tuple[str, str], dict[str, float]] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        """Pre-sum the hour-of-day and whole-week scopes of ``counts``."""
+        by_hour_of_day: dict[tuple[str, str], dict[int, dict[str, float]]] = {}
+        whole_week: dict[tuple[str, str], dict[str, float]] = {}
+        for chain, by_hour in self.counts.items():
+            chain_by_hour_of_day = by_hour_of_day.setdefault(chain, {})
+            chain_week = whole_week.setdefault(chain, {})
+            for hour, per_to_area in by_hour.items():
+                day_sums = chain_by_hour_of_day.setdefault(hour % 24, {})
+                for to_area, count in per_to_area.items():
+                    day_sums[to_area] = day_sums.get(to_area, 0.0) + count
+                    chain_week[to_area] = chain_week.get(to_area, 0.0) + count
+        # Frozen dataclass: the derived views are assigned once, here.
+        object.__setattr__(self, "_by_hour_of_day", by_hour_of_day)
+        object.__setattr__(self, "_whole_week", whole_week)
+
+    def pair_counts(
+        self,
+        from_area: str,
+        mid_area: str,
+        *,
+        hour_of_week: int | None = None,
+        hour_of_day: int | None = None,
+    ) -> dict[str, float]:
+        """Return counts summed by ``to_area`` for the requested chain scope.
+
+        ``hour_of_week`` selects a specific (weekday, hour) bucket.
+        ``hour_of_day`` (0..23) collapses across weekdays at a given hour.
+        Pass neither to aggregate over the entire week. The returned dict
+        is shared with the snapshot and must not be mutated.
+        """
+        chain = (from_area, mid_area)
+        if hour_of_week is not None:
+            return self.counts.get(chain, {}).get(hour_of_week, {})
+        if hour_of_day is not None:
+            return self._by_hour_of_day.get(chain, {}).get(hour_of_day, {})
+        return self._whole_week.get(chain, {})
+
+    def lookup_distribution(
+        self,
+        *,
+        from_area: str,
+        mid_area: str,
+        hour_of_week: int,
+    ) -> TransitionDistribution:
+        """Return the full next-area distribution with the six-level fallback.
+
+        Walks six levels of progressively-wider scope until one has
+        enough observations to trust, and returns every destination's
+        share of that level's total — what a predictive consumer
+        ("which area next?") needs. :meth:`lookup` delegates here so
+        the single-destination and distribution answers can never
+        disagree. Levels:
+
+        1. Specific 2-hop chain at the exact hour-of-week
+        2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
+        3. Specific 2-hop chain un-bucketed
+        4. Equivalent 1-hop chain at the exact hour-of-week
+        5. Equivalent 1-hop chain un-bucketed
+        6. Static default (empty distribution, ``total_count`` 0)
+
+        Pass ``mid_area=""`` to skip levels 1-3 when only a 1-hop
+        trajectory is known. Thresholds come from the ``ADJACENCY_N_*``
+        constants and apply to each level's total, per ``_try_level``'s
+        rationale (an unobserved destination at a trusted level is a
+        real zero).
+        """
+        hour_of_day = hour_of_week % 24
+
+        levels: list[tuple[dict[str, float], str, int]] = []
+        if mid_area:
+            levels += [
+                (
+                    self.pair_counts(from_area, mid_area, hour_of_week=hour_of_week),
+                    LEVEL_2HOP_HOUR_OF_WEEK,
+                    ADJACENCY_N_SPECIFIC,
+                ),
+                (
+                    self.pair_counts(from_area, mid_area, hour_of_day=hour_of_day),
+                    LEVEL_2HOP_HOUR_OF_DAY,
+                    ADJACENCY_N_HOUR,
+                ),
+                (
+                    self.pair_counts(from_area, mid_area),
+                    LEVEL_2HOP_UNBUCKETED,
+                    ADJACENCY_N_CHAIN,
+                ),
+            ]
         levels += [
             (
-                _query_pair_counts(
-                    db, entry_id, from_area, mid_area, hour_of_week=hour_of_week
-                ),
-                LEVEL_2HOP_HOUR_OF_WEEK,
+                self.pair_counts(from_area, "", hour_of_week=hour_of_week),
+                LEVEL_1HOP_HOUR_OF_WEEK,
                 ADJACENCY_N_SPECIFIC,
             ),
             (
-                _query_pair_counts(
-                    db, entry_id, from_area, mid_area, hour_of_day=hour_of_day
-                ),
-                LEVEL_2HOP_HOUR_OF_DAY,
-                ADJACENCY_N_HOUR,
-            ),
-            (
-                _query_pair_counts(db, entry_id, from_area, mid_area),
-                LEVEL_2HOP_UNBUCKETED,
-                ADJACENCY_N_CHAIN,
+                self.pair_counts(from_area, ""),
+                LEVEL_1HOP_UNBUCKETED,
+                ADJACENCY_N_PAIR,
             ),
         ]
-    levels += [
-        (
-            _query_pair_counts(db, entry_id, from_area, "", hour_of_week=hour_of_week),
-            LEVEL_1HOP_HOUR_OF_WEEK,
-            ADJACENCY_N_SPECIFIC,
-        ),
-        (
-            _query_pair_counts(db, entry_id, from_area, ""),
-            LEVEL_1HOP_UNBUCKETED,
-            ADJACENCY_N_PAIR,
-        ),
-    ]
 
-    for sums, level, threshold in levels:
-        total = sum(sums.values())
-        if total >= threshold and total > 0:
-            return TransitionDistribution(
-                probabilities={dest: count / total for dest, count in sums.items()},
-                level=level,
-                total_count=total,
+        for sums, level, threshold in levels:
+            total = sum(sums.values())
+            if total >= threshold and total > 0:
+                return TransitionDistribution(
+                    probabilities={dest: count / total for dest, count in sums.items()},
+                    level=level,
+                    total_count=total,
+                )
+
+        return TransitionDistribution(
+            probabilities={}, level=LEVEL_STATIC_DEFAULT, total_count=0.0
+        )
+
+    def lookup(
+        self,
+        *,
+        from_area: str,
+        mid_area: str,
+        to_area: str,
+        hour_of_week: int,
+        static_default: float | None = None,
+    ) -> TransitionLookupResult:
+        """Look up ``P(to_area | from_area, mid_area, hour_of_week)`` with fallback.
+
+        Delegates to :meth:`lookup_distribution` (single source of the
+        six-level walk) and extracts one destination's share. The static
+        default (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless
+        overridden) fires only when no level had enough data —
+        observed/total stay 0 there to signal "no data".
+        """
+        if static_default is None:
+            static_default = DEFAULT_INFLUENCE_WEIGHTS["adjacent"]
+
+        distribution = self.lookup_distribution(
+            from_area=from_area, mid_area=mid_area, hour_of_week=hour_of_week
+        )
+        if distribution.level == LEVEL_STATIC_DEFAULT:
+            return TransitionLookupResult(
+                static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0
             )
 
-    return TransitionDistribution(
-        probabilities={}, level=LEVEL_STATIC_DEFAULT, total_count=0.0
-    )
+        probability = distribution.probabilities.get(to_area, 0.0)
+        return TransitionLookupResult(
+            probability,
+            distribution.level,
+            probability * distribution.total_count,
+            distribution.total_count,
+        )
 
 
-def lookup_transition_probability(
-    db: AreaOccupancyDB,
-    entry_id: str,
-    *,
-    from_area: str,
-    mid_area: str,
-    to_area: str,
-    hour_of_week: int,
-    static_default: float | None = None,
-) -> TransitionLookupResult:
-    """Look up ``P(to_area | from_area, mid_area, hour_of_week)`` with fallback.
+def load_adjacency_snapshot(
+    db: AreaOccupancyDB, entry_id: str
+) -> AdjacencySnapshot | None:
+    """Read an entry's adjacency index and transition counts in one session.
 
-    Delegates to :func:`lookup_transition_distribution` (single source
-    of the six-level walk) and extracts one destination's share. See the
-    distribution function for the level table; the static default
-    (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless overridden) fires
-    only when no level had enough data.
+    Runs in the executor. Returns ``None`` on a database error so the
+    caller keeps its previous snapshot instead of dropping every learned
+    transition until the next reload.
     """
-    if static_default is None:
-        static_default = DEFAULT_INFLUENCE_WEIGHTS["adjacent"]
+    try:
+        with db.get_session() as session:
+            adjacency_index = _query_adjacency_index(session, db, entry_id)
+            rows = (
+                session.query(
+                    db.AreaTransitions.from_area,
+                    db.AreaTransitions.mid_area,
+                    db.AreaTransitions.to_area,
+                    db.AreaTransitions.hour_of_week,
+                    db.AreaTransitions.count,
+                )
+                .filter(db.AreaTransitions.entry_id == entry_id)
+                .all()
+            )
+    except SQLAlchemyError:
+        _LOGGER.exception("Error loading adjacency snapshot for entry %s", entry_id)
+        return None
 
-    distribution = lookup_transition_distribution(
-        db,
-        entry_id,
-        from_area=from_area,
-        mid_area=mid_area,
-        hour_of_week=hour_of_week,
-    )
-    if distribution.level == LEVEL_STATIC_DEFAULT:
-        # observed/total stay 0 to signal "no data".
-        return TransitionLookupResult(static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0)
-
-    probability = distribution.probabilities.get(to_area, 0.0)
-    return TransitionLookupResult(
-        probability,
-        distribution.level,
-        probability * distribution.total_count,
-        distribution.total_count,
-    )
+    counts: dict[tuple[str, str], dict[int, dict[str, float]]] = {}
+    for from_area, mid_area, to_area, hour_of_week, count in rows:
+        per_to_area = counts.setdefault((from_area, mid_area), {}).setdefault(
+            hour_of_week, {}
+        )
+        per_to_area[to_area] = per_to_area.get(to_area, 0.0) + float(count or 0.0)
+    return AdjacencySnapshot(adjacency_index=adjacency_index, counts=counts)
 
 
 def summarize_transitions_for_diagnostics(

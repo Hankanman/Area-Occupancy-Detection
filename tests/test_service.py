@@ -697,6 +697,43 @@ class TestPurgeAreaHistory:
         # subsequent operations still find it.
         assert target_name in remaining
 
+    async def test_purge_reloads_adjacency_snapshot(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """The refresh path's in-memory adjacency copy follows the purge."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        target_name = coordinator.get_area_names()[0]
+        target_area = coordinator.get_area(target_name)
+
+        db = coordinator.db
+        db.save_area_data(target_name)
+        with db.get_session() as session:
+            session.add(
+                db.AreaRelationships(
+                    entry_id=coordinator.entry_id,
+                    area_name=target_name,
+                    related_area_name="Hallway",
+                    relationship_type="adjacent",
+                    influence_weight=0.3,
+                )
+            )
+            session.commit()
+        await coordinator.async_load_adjacency_snapshot()
+        snapshot = coordinator._adjacency_snapshot  # noqa: SLF001
+        assert snapshot.adjacency_index == {target_name: {"Hallway"}}
+
+        coordinator.async_request_refresh = AsyncMock()
+        call = _create_service_call(area_id=target_area.config.area_id)
+        await _purge_area_history(hass, call)
+
+        # The purge deleted the row, and the re-persisted shell has no
+        # configured neighbours to re-sync.
+        snapshot = coordinator._adjacency_snapshot  # noqa: SLF001
+        assert snapshot.adjacency_index == {}
+
     def test_find_area_by_area_id_returns_match(
         self,
         coordinator: AreaOccupancyCoordinator,
