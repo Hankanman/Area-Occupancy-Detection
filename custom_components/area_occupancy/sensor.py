@@ -628,9 +628,10 @@ class AccuracySensor(AreaOccupancySensorBase):
     exposure only — nothing in the decision path consumes these values;
     auto-threshold remains gated on the metric proving stable first.
 
-    Unavailable until the first hourly analysis run after startup, since
-    the metrics live in coordinator memory only (deliberate: they describe
-    a rolling observation window, which restarts with the process).
+    Shows ``unknown`` (native_value ``None``, entity still available)
+    until the first hourly analysis run after startup, since the metrics
+    live in coordinator memory only (deliberate: they describe a rolling
+    observation window, which restarts with the process).
     """
 
     _unrecorded_attributes = frozenset({"calibration_bins"})

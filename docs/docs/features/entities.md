@@ -111,9 +111,9 @@ These entities provide insight into the internal calculations and are useful for
         *   `last_check`: Timestamp of the last health check run.
 
 *   **`sensor.<area_name>_accuracy` (Accuracy)**
-    *   **State:** Agreement between the occupancy decision and motion-confirmed ground truth over the last 24 hours (0.0 to 100.0)
+    *   **State:** Agreement between the occupancy decision and motion-confirmed ground truth over the observation window (0.0 to 100.0). The window spans `window_start` to `window_end` — up to 24 hours, shorter right after a restart or when frequent evidence ticks bound the history.
     *   **Unit:** `%`
-    *   **Description:** The area's self-scored report card: how well the occupancy binary and probability track what the motion sensors later confirmed. Computed hourly by the analysis pipeline; unavailable until the first analysis run after a restart. Everything here is read-only observation — none of these values feed back into the probability, threshold, or decay calculations.
+    *   **Description:** The area's self-scored report card: how well the occupancy binary and probability track what the motion sensors later confirmed. Computed hourly by the analysis pipeline; shows `unknown` until the first analysis run after a restart. Everything here is read-only observation — none of these values feed back into the probability, threshold, or decay calculations.
     *   **Icon:** `mdi:school` (report card available) / `mdi:school-outline` (not yet computed)
     *   **State Class:** `measurement`
     *   **Entity Category:** `diagnostic`
