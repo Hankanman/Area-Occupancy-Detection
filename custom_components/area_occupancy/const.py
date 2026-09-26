@@ -30,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.8.1"
+DEVICE_SW_VERSION: Final = "2026.9.1"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
