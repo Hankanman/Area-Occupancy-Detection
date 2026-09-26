@@ -9,8 +9,6 @@ occupancy probability, with a **comfort-threshold** slider that highlights the
 slots each area is habitually occupied — a quick way to see when a predictive
 automation (e.g. climate pre-heating) would act.
 
-![weekly heatmap](../docs/docs/images/) <!-- add a screenshot if desired -->
-
 ## Requirements
 
 The Area Occupancy build that exposes the `get_time_priors` service

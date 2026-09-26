@@ -21,7 +21,6 @@ from custom_components.area_occupancy.db.queries import (
     build_motion_query,
     build_presence_query,
     get_all_time_priors,
-    get_stored_time_priors,
     get_area_data,
     get_entities_without_intervals,
     get_first_interval_timestamp,
@@ -29,6 +28,7 @@ from custom_components.area_occupancy.db.queries import (
     get_latest_interval,
     get_occupied_intervals,
     get_occupied_intervals_cache,
+    get_stored_time_priors,
     get_time_prior,
     is_occupied_intervals_cache_valid,
 )
