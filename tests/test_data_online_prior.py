@@ -199,8 +199,11 @@ class TestCoordinatorShadowWiring:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
 
+        # weight=0 keeps the stub out of the fusion feature loop (#501),
+        # which is not what this test exercises.
         evidence_only_entity = SimpleNamespace(
             evidence=True,
+            weight=0,
             type=SimpleNamespace(input_type=input_type),
         )
 

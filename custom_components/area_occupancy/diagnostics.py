@@ -294,6 +294,13 @@ def _area_snapshot(
                     # full 90-day history lives in the Store.
                     "diff_history": estimator.state.diff_history[-14:],
                 }
+        fusion = coordinator.fusion_learner_for(area_name)
+        if fusion is not None:
+            fusion_defaults = {
+                entity_id: getattr(entity, "effective_weight", entity.weight)
+                for entity_id, entity in area.entities.entities.items()
+            }
+            current["fusion"] = fusion.snapshot(fusion_defaults)
         snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
         _LOGGER.warning(

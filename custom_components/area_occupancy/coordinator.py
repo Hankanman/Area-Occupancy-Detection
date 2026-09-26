@@ -37,6 +37,8 @@ from .const import (
     CONF_AREA_ID,
     DEFAULT_NAME,
     DOMAIN,
+    FUSION_STORE_KEY_PREFIX,
+    FUSION_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
@@ -51,13 +53,14 @@ from .data.adjacency import (
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .data.entity_type import InputType
+from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.metrics import AccuracyMetrics, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
 from .db.transitions import build_adjacency_index, lookup_transition_probability
 from .time_utils import to_local
-from .utils import format_area_names
+from .utils import evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -162,6 +165,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Learned-fusion shadow state (#501): per-area training ticks
+        # (sparse per-entity features) and per-area learners, persisted
+        # like the online priors above. Never read by the probability path.
+        self._fusion_ticks: dict[str, deque[FusionTick]] = {}
+        self._fusion_learners: dict[str, FusionLearner] = {}
+        self._fusion_store: Store[dict[str, dict]] = Store(
+            hass,
+            FUSION_STORE_VERSION,
+            f"{FUSION_STORE_KEY_PREFIX}.{self.entry_id}",
         )
 
     async def async_init_database(self) -> None:
@@ -487,6 +500,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         OnlinePriorState.from_dict(stored_priors[area_name])
                     )
 
+            # Restore learned-fusion shadow state (#501) for known areas
+            stored_fusion = await self._fusion_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_fusion:
+                    self._fusion_learners[area_name] = FusionLearner(
+                        FusionState.from_dict(stored_fusion[area_name])
+                    )
+
             _LOGGER.info(
                 "Initializing Area Occupancy for %d area(s): %s",
                 len(self.areas),
@@ -664,6 +685,34 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=presence_active, now=now
         )
+        # Learned-fusion training row (#501): the bias and per-entity
+        # feature products the live pipeline would use, minus the weight
+        # being learned. evidence_value() is the same helper
+        # sigmoid_probability uses, so the features cannot drift from the
+        # live math. MOTION/SLEEP are excluded — the ground-truth labels
+        # are derived from them (self-labelling); correlation analysis
+        # excludes them for the same reason.
+        correlations = self.get_cached_correlations(area_name)
+        features: dict[str, float] = {}
+        for entity_id, entity in area.entities.entities.items():
+            if entity.weight <= 0 or entity.type.input_type in (
+                InputType.MOTION,
+                InputType.SLEEP,
+            ):
+                continue
+            evidence = evidence_value(entity)
+            if evidence <= 0.0:
+                continue
+            correlation = correlations.get(entity_id, 1.0)
+            strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
+            features[entity_id] = (
+                evidence * correlation * entity.prob_given_true * strength_multiplier
+            )
+        self._fusion_ticks.setdefault(
+            area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
+        ).append(
+            FusionTick(timestamp=now, bias=logit(area.prior.value), features=features)
+        )
 
     # --- Adjacent-areas (Phase 4) accessors ---
     @property
@@ -718,6 +767,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Persist online-prior shadow state via the HA storage helper."""
         await self._online_prior_store.async_save(
             {name: est.state.to_dict() for name, est in self._online_priors.items()}
+        )
+
+    def fusion_learner_for(self, area_name: str) -> FusionLearner | None:
+        """Return the area's shadow fusion learner, if any ticks/state exist."""
+        return self._fusion_learners.get(area_name)
+
+    def ensure_fusion_learner(self, area_name: str) -> FusionLearner:
+        """Return the area's shadow fusion learner, creating it if absent."""
+        return self._fusion_learners.setdefault(area_name, FusionLearner())
+
+    def fusion_ticks_for(self, area_name: str) -> list[FusionTick]:
+        """Return a snapshot of the area's fusion training ticks."""
+        return list(self._fusion_ticks.get(area_name, ()))
+
+    async def async_save_fusion_state(self) -> None:
+        """Persist learned-fusion shadow state via the HA storage helper."""
+        await self._fusion_store.async_save(
+            {
+                name: learner.state.to_dict()
+                for name, learner in self._fusion_learners.items()
+            }
         )
 
     def _compute_adjacency_state(
@@ -843,6 +913,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_fusion_state()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save learned-fusion shadow state for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

@@ -287,6 +287,33 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         )
         metrics = compute_accuracy_metrics(samples, intervals)
         coordinator.set_accuracy_metrics(area_name, metrics)
+
+        # Learned-fusion shadow update (#501): one gradient pass over the
+        # same window's fusion ticks against the SAME ground-truth
+        # intervals the metrics above scored with. Weight defaults (the
+        # L2 anchors / cold-start values) are the live pipeline's current
+        # effective weights.
+        fusion_ticks = [
+            t
+            for t in coordinator.fusion_ticks_for(area_name)
+            if t.timestamp >= window_start
+        ]
+        if fusion_ticks:
+            area = coordinator.areas[area_name]
+            defaults = {
+                entity_id: getattr(entity, "effective_weight", entity.weight)
+                for entity_id, entity in area.entities.entities.items()
+            }
+            learner = coordinator.ensure_fusion_learner(area_name)
+            consumed = learner.update(fusion_ticks, intervals, defaults)
+            _LOGGER.debug(
+                "Fusion (shadow) for area %s: consumed=%d total_samples=%d "
+                "tracked_entities=%d",
+                area_name,
+                consumed,
+                learner.state.samples,
+                len(learner.state.weights),
+            )
         _LOGGER.debug(
             "Accuracy (shadow) for area %s: samples=%d ece=%.4f agreement=%.3f "
             "false_on=%s false_off=%s decision_flips=%d truth_flips=%d",
@@ -372,6 +399,7 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
             estimator.observed_days(now),
         )
     await coordinator.async_save_online_priors()
+    await coordinator.async_save_fusion_state()
 
 
 async def _run_pipeline_health_check(

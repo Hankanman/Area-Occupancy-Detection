@@ -374,6 +374,25 @@ ONLINE_PRIOR_DIFF_TOLERANCE: Final = 0.02
 # How many daily divergence summaries the store retains per area.
 ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 
+# --- Learned sensor fusion (#501, shadow mode) ---
+# Store version and key prefix for the per-entry learned-weight state,
+# shared between the coordinator (persistence) and __init__.py (removal
+# cleanup), mirroring the online-prior pair above.
+FUSION_STORE_VERSION: Final = 1
+FUSION_STORE_KEY_PREFIX: Final = f"{DOMAIN}.fusion"
+# First-pass tunables (shadow-only: they shape what the diagnostics
+# report, not any live behavior). Tune from real diagnostics exports
+# before the #499-gated promotion is ever considered.
+# One gradient pass per hourly analysis cycle over a ~24h tick window;
+# the small rate + L2 anchor keep a day's batch from swinging a weight
+# far from its live default without sustained evidence.
+FUSION_LEARNING_RATE: Final = 0.05
+FUSION_L2: Final = 0.01
+# Ticks observed for an area before learned weights are even reported
+# (~3h at the 10s cadence — enough to stop reporting pure noise, small
+# enough that diagnostics become informative on day one).
+FUSION_MIN_SAMPLES: Final = 1000
+
 MIN_CORRELATION_SAMPLES: Final = 50
 # Minimum confidence for correlation to be considered significant
 CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
