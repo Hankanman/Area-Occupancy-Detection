@@ -448,33 +448,40 @@ async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     coordinator = get_coordinator(hass)
     area_id = call.data.get(CONF_AREA_ID)
 
-    # Warm every configured area's cache off the event loop; the aggregate zones
-    # reuse these same caches, so this is the only DB access.
-    for area in coordinator.areas.values():
-        await hass.async_add_executor_job(area.prior.all_time_priors)
+    def _build_areas_data() -> dict[str, Any]:
+        """Warm the caches and build every zone's forecast in one executor job.
 
-    areas_data: dict[str, Any] = {}
-    for area_name, area in coordinator.areas.items():
-        areas_data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
+        Cache load and forecast build must share the executor trip: the
+        analysis pipeline can invalidate an area's time-prior cache between
+        a separate warm-up and a later event-loop build, and the builders
+        would then reload the cache (a DB read) on the event loop.
+        """
+        data: dict[str, Any] = {}
+        for area_name, area in coordinator.areas.items():
+            data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
 
-    # Aggregate zones: "All Areas" + one per floor (averaged member forecasts).
-    all_areas = build_aggregate_time_priors(
-        coordinator.get_all_areas().areas(),
-        DEFAULT_SLOT_MINUTES,
-        ALL_AREAS_IDENTIFIER,
-        "All Areas",
-    )
-    if all_areas is not None:
-        areas_data["All Areas"] = all_areas
-    for floor_id, floor_agg in coordinator.get_floor_aggregators().items():
-        floor_data = build_aggregate_time_priors(
-            floor_agg.areas(),
+        # Aggregate zones: "All Areas" + one per floor (averaged member
+        # forecasts). These reuse the per-area caches warmed just above.
+        all_areas = build_aggregate_time_priors(
+            coordinator.get_all_areas().areas(),
             DEFAULT_SLOT_MINUTES,
-            f"floor_{floor_id}",
-            floor_agg.floor_name,
+            ALL_AREAS_IDENTIFIER,
+            "All Areas",
         )
-        if floor_data is not None:
-            areas_data[floor_agg.floor_name] = floor_data
+        if all_areas is not None:
+            data["All Areas"] = all_areas
+        for floor_id, floor_agg in coordinator.get_floor_aggregators().items():
+            floor_data = build_aggregate_time_priors(
+                floor_agg.areas(),
+                DEFAULT_SLOT_MINUTES,
+                f"floor_{floor_id}",
+                floor_agg.floor_name,
+            )
+            if floor_data is not None:
+                data[floor_agg.floor_name] = floor_data
+        return data
+
+    areas_data = await hass.async_add_executor_job(_build_areas_data)
 
     if area_id is not None:
         filtered = {

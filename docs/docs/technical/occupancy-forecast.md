@@ -258,7 +258,7 @@ measurement, and should be skipped or treated as unknown rather than acted upon.
 | Effective history window | ~28 days (`RETENTION_RAW_INTERVALS_DAYS`); ~10 days on a fresh install | At most ~4 weekly repetitions per slot |
 | Recency weighting | None — flat mean | A change of habits takes ~4 weeks to be absorbed |
 | Upper clamp | `TIME_PRIOR_MAX_BOUND = 0.9` | A permanently occupied hour saturates; long stuck-`on` sensors are indistinguishable from real occupancy |
-| Period start | First *occupied* interval, not window start | An area idle at the start of the window has those hours excluded from the denominator, biasing its prior upward |
+| Period start | `max(lookback_start, first_seen)` — the earliest interval of *any* state | Quiet time before the area produced any data is excluded; quiet time after the first interval counts in the denominator (the #520 Bug B fix) |
 | Slot resolution | 60 min (`DEFAULT_SLOT_MINUTES`) | No sub-hour structure |
 
 The nominal lookback is `DEFAULT_LOOKBACK_DAYS = 60`, but raw intervals older

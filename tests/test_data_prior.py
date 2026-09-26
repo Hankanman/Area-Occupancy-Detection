@@ -995,3 +995,51 @@ class TestUnlearnedPrior:
 
         assert value == pytest.approx(0.3)
         assert applied == "override"
+
+
+class TestFailedTimePriorLoad:
+    """A failed DB read must not poison the time-prior caches (#536 review).
+
+    ``get_stored_time_priors`` returning ``None`` (a read error) used to be
+    indistinguishable from an empty table: all 168 slots were filled with
+    the fallback, cached, and every consumer then reported unlearned slots
+    until the next invalidation. Now nothing is cached and the next access
+    retries.
+    """
+
+    def test_failure_leaves_caches_unset_and_retries(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        area_name = coordinator.get_area_names()[0]
+        prior = Prior(coordinator, area_name=area_name)
+        slot_key = (prior.day_of_week, prior.time_slot)
+
+        with patch.object(
+            prior.db, "get_stored_time_priors", return_value=None
+        ) as mock_get:
+            # Per-call fallbacks are served, but nothing is cached.
+            assert prior.time_prior == prior.unlearned_slot_prior
+            assert prior._cached_time_priors is None
+            assert prior._cached_time_prior_points is None
+
+            # Full-grid consumers still get a correctly-shaped week.
+            grid = prior.all_time_priors()
+            assert len(grid) == 168
+            assert all(v == prior.unlearned_slot_prior for v in grid.values())
+            points = prior.all_time_prior_points()
+            assert len(points) == 168
+            assert all(v == 0 for v in points.values())
+            assert prior._cached_time_priors is None
+
+            # Every access retried the load rather than trusting a cache.
+            assert mock_get.call_count >= 3
+
+        # Once the DB read succeeds, the cache populates normally.
+        with patch.object(
+            prior.db,
+            "get_stored_time_priors",
+            return_value={slot_key: (0.6, 4)},
+        ):
+            assert prior.time_prior == pytest.approx(0.6)
+            assert prior._cached_time_priors is not None
+            assert prior._cached_time_prior_points[slot_key] == 4

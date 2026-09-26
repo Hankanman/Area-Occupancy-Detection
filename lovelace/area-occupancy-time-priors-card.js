@@ -95,6 +95,9 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     this._threshold = (Number(this._config.threshold) || 50) / 100;
     this._retryCount = 0;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    // A config change while the card is attached must re-arm the timer,
+    // or a changed refresh_minutes has no effect until re-attach.
+    if (this.isConnected) this._startTimer();
     this._render();
   }
 
@@ -117,7 +120,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
 
   _startTimer() {
     this._stopTimer();
-    const mins = Number(this._config?.refresh_minutes) || 10;
+    const mins = Number(this._config?.refresh_minutes) || 3;
     this._timer = window.setInterval(() => this._fetch(), mins * 60000);
   }
 

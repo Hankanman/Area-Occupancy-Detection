@@ -118,7 +118,7 @@ def get_stored_time_priors(
     db: AreaOccupancyDB,
     entry_id: str,
     area_name: str,
-) -> dict[tuple[int, int], tuple[float, int]]:
+) -> dict[tuple[int, int], tuple[float, int]] | None:
     """Get only the time priors actually stored for an area.
 
     Unlike :func:`get_all_time_priors`, missing slots are *not* filled with a
@@ -133,7 +133,10 @@ def get_stored_time_priors(
 
     Returns:
         Dictionary mapping (day_of_week, time_slot) to
-        (prior_value, data_points). Slots with no stored row are absent.
+        (prior_value, data_points), with slots that have no stored row
+        absent — or ``None`` when the read fails, so callers can tell a
+        database error apart from a genuinely empty table and avoid
+        caching a fallback-only grid.
     """
     try:
         with db.get_session() as session:
@@ -157,7 +160,7 @@ def get_stored_time_priors(
         OSError,
     ) as e:
         _LOGGER.error("Error getting stored time priors: %s", e)
-        return {}
+        return None
 
 
 def get_all_time_priors(

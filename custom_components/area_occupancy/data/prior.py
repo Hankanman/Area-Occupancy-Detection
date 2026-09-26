@@ -213,7 +213,10 @@ class Prior:
         current_slot = self.time_slot
         slot_key = (current_day, current_slot)
 
-        # Get from cache (guaranteed to exist after _load_time_priors)
+        # Cache stays None when the DB read failed — fall back per-call so
+        # the next access retries instead of serving a poisoned cache.
+        if self._cached_time_priors is None:
+            return self.unlearned_slot_prior
         return self._cached_time_priors.get(slot_key, self.unlearned_slot_prior)
 
     @property
@@ -246,6 +249,10 @@ class Prior:
         """
         if self._cached_time_priors is None:
             self._load_time_priors()
+        if self._cached_time_priors is None:
+            # DB read failed: serve an uncached fallback grid so the shape
+            # stays a full week and the next access retries the load.
+            return self._unlearned_grid()[0]
         return dict(self._cached_time_priors)
 
     def all_time_prior_points(self) -> dict[tuple[int, int], int]:
@@ -262,7 +269,9 @@ class Prior:
         """
         if self._cached_time_prior_points is None:
             self._load_time_priors()
-        return dict(self._cached_time_prior_points or {})
+        if self._cached_time_prior_points is None:
+            return self._unlearned_grid()[1]
+        return dict(self._cached_time_prior_points)
 
     def prior_for(self, day_of_week: int, time_slot: int) -> float:
         """Return the learned occupancy-probability forecast for a given slot.
@@ -291,9 +300,12 @@ class Prior:
         """
         if self._cached_time_priors is None:
             self._load_time_priors()
-        slot_time_prior = self._cached_time_priors.get(
-            (day_of_week, time_slot), self.unlearned_slot_prior
-        )
+        if self._cached_time_priors is None:
+            slot_time_prior = self.unlearned_slot_prior
+        else:
+            slot_time_prior = self._cached_time_priors.get(
+                (day_of_week, time_slot), self.unlearned_slot_prior
+            )
         return forecast_prior(
             self.global_prior, slot_time_prior, prior_factor=PRIOR_FACTOR
         )
@@ -382,14 +394,38 @@ class Prior:
             return DEFAULT_TIME_PRIOR
         return max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, self.global_prior))
 
+    def _unlearned_grid(
+        self,
+    ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], int]]:
+        """Return a full weekly grid of fallback priors and zero sample counts.
+
+        Used only when the database read behind :meth:`_load_time_priors`
+        failed: callers get a complete, correctly-shaped week without the
+        poisoned values being cached.
+        """
+        fallback = self.unlearned_slot_prior
+        slots_per_day = 1440 // DEFAULT_SLOT_MINUTES
+        keys = [(d, t) for d in range(7) for t in range(slots_per_day)]
+        return (
+            dict.fromkeys(keys, fallback),
+            dict.fromkeys(keys, 0),
+        )
+
     def _load_time_priors(self) -> None:
         """Load all 168 time priors from database into cache.
 
         Reads the stored slots in a single query and fills the rest of the
         weekly grid with :attr:`unlearned_slot_prior`, keeping a parallel map
         of sample counts so callers can tell learned slots from filled ones.
+
+        On a failed database read (``get_stored_time_priors`` returns
+        ``None``) both caches are left unset so the next access retries,
+        rather than pinning a fallback-only grid that would misreport every
+        slot as unobserved until the next cache invalidation.
         """
         stored = self.db.get_stored_time_priors(area_name=self.area_name)
+        if stored is None:
+            return
         fallback = self.unlearned_slot_prior
 
         priors: dict[tuple[int, int], float] = {}

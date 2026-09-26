@@ -323,7 +323,7 @@ class AreaOccupancyDB:
     def get_stored_time_priors(
         self,
         area_name: str,
-    ) -> dict[tuple[int, int], tuple[float, int]]:
+    ) -> dict[tuple[int, int], tuple[float, int]] | None:
         """Get only the slots actually stored for an area, with their sample counts.
 
         Args:
@@ -331,7 +331,8 @@ class AreaOccupancyDB:
 
         Returns:
             Dictionary mapping (day_of_week, time_slot) to
-            (prior_value, data_points). Unlearned slots are absent.
+            (prior_value, data_points), unlearned slots absent — or ``None``
+            when the database read fails (see queries.get_stored_time_priors).
         """
         return queries.get_stored_time_priors(
             self,

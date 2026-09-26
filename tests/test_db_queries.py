@@ -1388,7 +1388,12 @@ class TestGetStoredTimePriors:
         coordinator: AreaOccupancyCoordinator,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A database failure degrades to 'nothing learned', never raises."""
+        """A database failure returns None (distinct from an empty table), never raises.
+
+        The sentinel matters: `{}` would read as "learned to be empty" and
+        get cached as a fallback-only grid; `None` tells the caller the read
+        failed so nothing is cached and the next access retries.
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
@@ -1396,4 +1401,4 @@ class TestGetStoredTimePriors:
             raise SQLAlchemyError("boom")
 
         monkeypatch.setattr(db, "get_session", _boom)
-        assert get_stored_time_priors(db, db.coordinator.entry_id, area_name) == {}
+        assert get_stored_time_priors(db, db.coordinator.entry_id, area_name) is None

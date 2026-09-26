@@ -233,26 +233,33 @@ The time prior retrieval follows this path:
    - If `None`, triggers `_load_time_priors()` to load all 168 slots from database
    - Cache stores all time priors as a dictionary: `(day_of_week, time_slot) -> prior_value`
 
-3. **Load All Time Priors**: `prior.py:_load_time_priors()` (line 161)
-   - Calls `db.get_all_time_priors()` to retrieve all time priors for the area
-   - Loads all 168 slots in a single database query for efficiency
-   - Applies safety bounds [0.1, 0.9] to all values during loading
-   - Falls back to default values if database query fails
+3. **Load All Time Priors**: `prior.py:_load_time_priors()`
+   - Calls `db.get_stored_time_priors()` to retrieve only the slots actually
+     stored for the area, in a single database query
+   - Fills the rest of the weekly grid itself with
+     `Prior.unlearned_slot_prior` — the area's own `global_prior`, which is
+     the identity of `combine_priors()` and therefore contributes no
+     opinion. `DEFAULT_TIME_PRIOR` (0.5) is used only before any global
+     prior exists.
+   - Applies safety bounds [`TIME_PRIOR_MIN_BOUND`, `TIME_PRIOR_MAX_BOUND`]
+     to stored values during loading
+   - A parallel `data_points` map is cached alongside; `0` marks an
+     unlearned (filled) slot
+   - On a failed database read neither cache is populated — callers fall
+     back per-call and the next access retries
 
-4. **Database Method**: `db/core.py:get_all_time_priors()` (line 304)
+4. **Database Method**: `db/core.py:get_stored_time_priors()`
    - Wrapper that adds `entry_id` parameter
    - Calls query function
 
-5. **Query Function**: `queries.py:get_all_time_priors()` (line 111)
+5. **Query Function**: `queries.py:get_stored_time_priors()`
    - Queries `Priors` table filtered by:
      - `entry_id`: Integration entry ID
      - `area_name`: Area name
-   - Returns dictionary mapping `(day_of_week, time_slot)` to `prior_value`
-   - Fills unwritten slots with `Prior.unlearned_slot_prior` — the area's own
-     `global_prior`, which is the identity of `combine_priors()` and therefore
-     contributes no opinion. `DEFAULT_TIME_PRIOR` (0.5) is used only before any
-     global prior exists.
-   - A parallel `data_points` map is cached alongside; `0` marks an unlearned slot
+   - Returns dictionary mapping `(day_of_week, time_slot)` to
+     `(prior_value, data_points)`; slots with no stored row are absent
+   - Returns `None` on a database error so the caller can tell a failed
+     read apart from a genuinely empty table
 
 6. **Get Current Slot**: After cache is loaded, retrieves value for current day/slot (line 121-126)
    - Gets current `day_of_week` and `time_slot`
