@@ -57,10 +57,7 @@ from custom_components.area_occupancy.db.schema import (
     AreaRelationships,
     AreaTransitions,
 )
-from custom_components.area_occupancy.db.transitions import (
-    LEVEL_STATIC_DEFAULT,
-    load_adjacency_snapshot,
-)
+from custom_components.area_occupancy.db.transitions import load_adjacency_snapshot
 from custom_components.area_occupancy.time_utils import to_local
 from homeassistant.util import dt as dt_util
 
@@ -221,14 +218,11 @@ def main() -> int:
             from_area, mid_area = prev_prev, prev
         else:
             from_area, mid_area = prev, ""
+        # A 2-hop miss falls back to the 1-hop chain prev → ? inside the walk
+        # itself (levels 4-5 key on mid_area), so no retry is needed here.
         dist = snapshot.lookup_distribution(
             from_area=from_area, mid_area=mid_area, hour_of_week=hour_of_week
         )
-        if dist.level == LEVEL_STATIC_DEFAULT and prev_prev:
-            # 2-hop walk found nothing at all; retry as pure 1-hop.
-            dist = snapshot.lookup_distribution(
-                from_area=prev, mid_area="", hour_of_week=hour_of_week
-            )
 
         ranked = sorted(
             dist.probabilities.items(), key=lambda item: item[1], reverse=True

@@ -641,8 +641,13 @@ class AdjacencySnapshot:
         5. Equivalent 1-hop chain un-bucketed
         6. Static default (empty distribution, ``total_count`` 0)
 
-        Pass ``mid_area=""`` to skip levels 1-3 when only a 1-hop
-        trajectory is known. Thresholds come from the ``ADJACENCY_N_*``
+        Chains are stored oldest first, so a 2-hop question ``W → X → ?``
+        is ``from_area=W, mid_area=X``, and its equivalent 1-hop chain is
+        ``X → ?`` -- levels 4-5 key on ``mid_area``, the most recent area.
+        Keying them on ``from_area`` would answer "where do people go
+        after W", a different question. Pass ``mid_area=""`` to skip
+        levels 1-3 when only a 1-hop trajectory ``from_area → ?`` is
+        known. Thresholds come from the ``ADJACENCY_N_*``
         constants and apply to each level's total, per ``_try_level``'s
         rationale (an unobserved destination at a trusted level is a
         real zero).
@@ -668,14 +673,15 @@ class AdjacencySnapshot:
                     ADJACENCY_N_CHAIN,
                 ),
             ]
+        one_hop_from = mid_area or from_area
         levels += [
             (
-                self.pair_counts(from_area, "", hour_of_week=hour_of_week),
+                self.pair_counts(one_hop_from, "", hour_of_week=hour_of_week),
                 LEVEL_1HOP_HOUR_OF_WEEK,
                 ADJACENCY_N_SPECIFIC,
             ),
             (
-                self.pair_counts(from_area, ""),
+                self.pair_counts(one_hop_from, ""),
                 LEVEL_1HOP_UNBUCKETED,
                 ADJACENCY_N_PAIR,
             ),

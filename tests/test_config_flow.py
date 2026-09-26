@@ -1270,9 +1270,9 @@ class TestConfigFlowIntegration:
 
     async def test_wizard_rejects_custom_sensor_errors_on_the_sensor_step(
         self,
-        config_flow_flow,
+        config_flow_flow: AreaOccupancyConfigFlow,
         setup_area_registry: dict[str, str],
-    ):
+    ) -> None:
         """An inverted custom range stops the sensor step, not a later one.
 
         Caught later, on the behavior step, the error is keyed on a field that

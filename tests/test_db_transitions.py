@@ -644,10 +644,13 @@ class TestSnapshotLookup:
             ],
         )
 
+        # Trajectory study → hall → ?: chains are stored oldest first, so
+        # from=study, mid=hall. No 2-hop rows yet, so the walk falls to the
+        # equivalent 1-hop chain hall → ?.
         result = _lookup(
             db,
-            from_area="hall",
-            mid_area="study",  # there's no 2-hop with this mid yet
+            from_area="study",
+            mid_area="hall",
             to_area="bathroom",
             hour_of_week=42,
         )
@@ -669,8 +672,8 @@ class TestSnapshotLookup:
 
         result = _lookup(
             db,
-            from_area="hall",
-            mid_area="study",
+            from_area="study",
+            mid_area="hall",
             to_area="bathroom",
             hour_of_week=42,
         )
@@ -678,6 +681,38 @@ class TestSnapshotLookup:
         # 21 bucket-pairs × 1.0 each = 21 to each → 42 total
         assert result.total_count == pytest.approx(42.0)
         assert result.probability == pytest.approx(0.5)
+
+    def test_one_hop_fallback_uses_the_most_recent_area(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """For ``study → hall → ?`` the 1-hop fallback is ``hall → ?``.
+
+        Both areas have 1-hop rows with different shapes, so the two readings
+        give different answers: from hall, P(bathroom) = 4 / (4 + 2) = 0.667;
+        from study (the bug, "where do people go after the study") it would
+        be 1 / (1 + 9) = 0.1.
+        """
+        db = coordinator.db
+        _seed(
+            db,
+            [
+                ("hall", "", "bathroom", 42, 4.0),
+                ("hall", "", "bedroom", 42, 2.0),
+                ("study", "", "bathroom", 42, 1.0),
+                ("study", "", "bedroom", 42, 9.0),
+            ],
+        )
+
+        result = _lookup(
+            db,
+            from_area="study",
+            mid_area="hall",
+            to_area="bathroom",
+            hour_of_week=42,
+        )
+
+        assert result.level == LEVEL_1HOP_HOUR_OF_WEEK
+        assert result.probability == pytest.approx(4 / 6)
 
     def test_level6_static_default_when_no_data(
         self, coordinator: AreaOccupancyCoordinator

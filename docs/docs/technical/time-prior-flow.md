@@ -242,10 +242,12 @@ The time prior retrieval follows this path:
    - Calls `db.get_stored_time_priors()` to retrieve only the slots actually
      stored for the area, in a single database query
    - Fills the rest of the weekly grid itself with
-     `Prior.unlearned_slot_prior` — the area's own `global_prior`, which is
-     the identity of `combine_priors()` and therefore contributes no
-     opinion. `DEFAULT_TIME_PRIOR` (0.5) is used only before any global
-     prior exists.
+     `Prior.unlearned_slot_prior` — the area's own `global_prior`, clamped
+     to [0.03, 0.9] like every time prior. Inside that band it is the
+     identity of `combine_priors()` and contributes no opinion; a
+     `global_prior` below 0.03 (or above 0.9) gets the bound instead, which
+     tilts the combined prior slightly toward it. `DEFAULT_TIME_PRIOR` (0.5)
+     is used only before any global prior exists.
    - Applies safety bounds [`TIME_PRIOR_MIN_BOUND`, `TIME_PRIOR_MAX_BOUND`]
      to stored values during loading, and publishes both maps atomically
      (the event loop reads while the executor loads)
@@ -520,8 +522,10 @@ just the forecast. Measured on a 13-area installation, areas whose global prior
 was 0.01–0.04 were reading a live prior 3× higher purely from unlearned slots.
 
 **Current behaviour**: unlearned slots fall back to the area's own `global_prior`
-(`Prior.unlearned_slot_prior`), which `combine_priors()` maps back to itself, so
-the slot adds no tilt in either direction. The parallel `data_points` map marks
+(`Prior.unlearned_slot_prior`), clamped to [0.03, 0.9]. Within that band
+`combine_priors()` maps it back to itself, so the slot adds no tilt in either
+direction; for a `global_prior` outside it (say 0.01) the fallback is the bound
+(0.03), a small upward tilt. The parallel `data_points` map marks
 these slots with `0` so consumers can render them as *no data* rather than as a
 probability — the `get_time_priors` service exposes it, and the Lovelace card
 hatches those cells.

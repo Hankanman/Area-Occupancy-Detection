@@ -393,8 +393,11 @@ class Prior:
         The area's own ``global_prior`` is the neutral choice: it is the
         identity of :func:`combine_priors` (combining a prior with itself
         returns it unchanged), so an unlearned slot contributes no opinion in
-        either direction. Before any global prior exists there is nothing
-        neutral to fall back to, so the historical default is kept.
+        either direction. It is clamped to the time-prior bounds like every
+        slot, so the identity holds only inside [``TIME_PRIOR_MIN_BOUND``,
+        ``TIME_PRIOR_MAX_BOUND``]; a global prior outside them gets the bound,
+        a slight tilt toward it. Before any global prior exists there is
+        nothing neutral to fall back to, so the historical default is kept.
 
         Returns:
             The fallback time prior for unlearned slots.
