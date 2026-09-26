@@ -570,6 +570,103 @@ def _try_level(
     return (observed / total if total > 0 else 0.0, observed, total)
 
 
+@dataclass(frozen=True)
+class TransitionDistribution:
+    """Full destination distribution from one trusted fallback level.
+
+    ``probabilities`` maps each observed destination to its share of the
+    level's total (an unobserved destination at a trusted level is a
+    real zero — simply absent). ``level`` is the ``LEVEL_*`` constant
+    that fired; ``total_count`` its normalisation denominator. At
+    ``LEVEL_STATIC_DEFAULT`` the map is empty and ``total_count`` is 0:
+    no level had enough data to trust.
+    """
+
+    probabilities: dict[str, float]
+    level: str
+    total_count: float
+
+
+def lookup_transition_distribution(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    *,
+    from_area: str,
+    mid_area: str,
+    hour_of_week: int,
+) -> TransitionDistribution:
+    """Return the full next-area distribution with the six-level fallback.
+
+    Same walk as :func:`lookup_transition_probability` — which delegates
+    here so the two can never disagree — but returns every destination's
+    share instead of a single one's, which is what a predictive consumer
+    ("which area next?") needs. Levels and thresholds:
+
+    1. Specific 2-hop chain at the exact hour-of-week
+    2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
+    3. Specific 2-hop chain un-bucketed
+    4. Equivalent 1-hop chain at the exact hour-of-week
+    5. Equivalent 1-hop chain un-bucketed
+    6. Static default (empty distribution)
+
+    Pass ``mid_area=""`` to skip levels 1-3 when only a 1-hop trajectory
+    is known. Thresholds come from the ``ADJACENCY_N_*`` constants and
+    apply to each level's total, per ``_try_level``'s rationale.
+    """
+    hour_of_day = hour_of_week % 24
+
+    # When the caller already knows there's no 2-hop trajectory, skip
+    # straight to the 1-hop levels so we don't waste queries.
+    levels: list[tuple[dict[str, float], str, int]] = []
+    if mid_area:
+        levels += [
+            (
+                _query_pair_counts(
+                    db, entry_id, from_area, mid_area, hour_of_week=hour_of_week
+                ),
+                LEVEL_2HOP_HOUR_OF_WEEK,
+                ADJACENCY_N_SPECIFIC,
+            ),
+            (
+                _query_pair_counts(
+                    db, entry_id, from_area, mid_area, hour_of_day=hour_of_day
+                ),
+                LEVEL_2HOP_HOUR_OF_DAY,
+                ADJACENCY_N_HOUR,
+            ),
+            (
+                _query_pair_counts(db, entry_id, from_area, mid_area),
+                LEVEL_2HOP_UNBUCKETED,
+                ADJACENCY_N_CHAIN,
+            ),
+        ]
+    levels += [
+        (
+            _query_pair_counts(db, entry_id, from_area, "", hour_of_week=hour_of_week),
+            LEVEL_1HOP_HOUR_OF_WEEK,
+            ADJACENCY_N_SPECIFIC,
+        ),
+        (
+            _query_pair_counts(db, entry_id, from_area, ""),
+            LEVEL_1HOP_UNBUCKETED,
+            ADJACENCY_N_PAIR,
+        ),
+    ]
+
+    for sums, level, threshold in levels:
+        total = sum(sums.values())
+        if total >= threshold and total > 0:
+            return TransitionDistribution(
+                probabilities={dest: count / total for dest, count in sums.items()},
+                level=level,
+                total_count=total,
+            )
+
+    return TransitionDistribution(
+        probabilities={}, level=LEVEL_STATIC_DEFAULT, total_count=0.0
+    )
+
+
 def lookup_transition_probability(
     db: AreaOccupancyDB,
     entry_id: str,
@@ -582,73 +679,33 @@ def lookup_transition_probability(
 ) -> TransitionLookupResult:
     """Look up ``P(to_area | from_area, mid_area, hour_of_week)`` with fallback.
 
-    Walks six levels of progressively-wider scope until one has enough
-    observations to trust:
-
-    1. Specific 2-hop chain at the exact hour-of-week
-    2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
-    3. Specific 2-hop chain un-bucketed
-    4. Equivalent 1-hop chain at the exact hour-of-week
-    5. Equivalent 1-hop chain un-bucketed
-    6. Static default (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless
-       overridden)
-
-    Caller should normally pass ``mid_area`` populated for the 2-hop
-    case. If only a 1-hop trajectory is available (no W known yet), pass
-    ``mid_area=""`` to skip levels 1-3 and start at level 4.
-
-    The thresholds come from ``ADJACENCY_N_*`` constants in ``const.py``.
+    Delegates to :func:`lookup_transition_distribution` (single source
+    of the six-level walk) and extracts one destination's share. See the
+    distribution function for the level table; the static default
+    (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless overridden) fires
+    only when no level had enough data.
     """
     if static_default is None:
         static_default = DEFAULT_INFLUENCE_WEIGHTS["adjacent"]
-    hour_of_day = hour_of_week % 24
 
-    # When the caller already knows there's no 2-hop trajectory, skip
-    # straight to the 1-hop levels so we don't waste queries.
-    if mid_area:
-        # Level 1: specific chain at exact (weekday, hour)
-        sums = _query_pair_counts(
-            db, entry_id, from_area, mid_area, hour_of_week=hour_of_week
-        )
-        result = _try_level(sums, to_area, ADJACENCY_N_SPECIFIC)
-        if result is not None:
-            prob, observed, total = result
-            return TransitionLookupResult(
-                prob, LEVEL_2HOP_HOUR_OF_WEEK, observed, total
-            )
+    distribution = lookup_transition_distribution(
+        db,
+        entry_id,
+        from_area=from_area,
+        mid_area=mid_area,
+        hour_of_week=hour_of_week,
+    )
+    if distribution.level == LEVEL_STATIC_DEFAULT:
+        # observed/total stay 0 to signal "no data".
+        return TransitionLookupResult(static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0)
 
-        # Level 2: specific chain collapsed across weekdays
-        sums = _query_pair_counts(
-            db, entry_id, from_area, mid_area, hour_of_day=hour_of_day
-        )
-        result = _try_level(sums, to_area, ADJACENCY_N_HOUR)
-        if result is not None:
-            prob, observed, total = result
-            return TransitionLookupResult(prob, LEVEL_2HOP_HOUR_OF_DAY, observed, total)
-
-        # Level 3: specific chain un-bucketed
-        sums = _query_pair_counts(db, entry_id, from_area, mid_area)
-        result = _try_level(sums, to_area, ADJACENCY_N_CHAIN)
-        if result is not None:
-            prob, observed, total = result
-            return TransitionLookupResult(prob, LEVEL_2HOP_UNBUCKETED, observed, total)
-
-    # Level 4: 1-hop equivalent at exact hour-of-week
-    sums = _query_pair_counts(db, entry_id, from_area, "", hour_of_week=hour_of_week)
-    result = _try_level(sums, to_area, ADJACENCY_N_SPECIFIC)
-    if result is not None:
-        prob, observed, total = result
-        return TransitionLookupResult(prob, LEVEL_1HOP_HOUR_OF_WEEK, observed, total)
-
-    # Level 5: 1-hop equivalent un-bucketed
-    sums = _query_pair_counts(db, entry_id, from_area, "")
-    result = _try_level(sums, to_area, ADJACENCY_N_PAIR)
-    if result is not None:
-        prob, observed, total = result
-        return TransitionLookupResult(prob, LEVEL_1HOP_UNBUCKETED, observed, total)
-
-    # Level 6: static default. observed/total stay 0 to signal "no data".
-    return TransitionLookupResult(static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0)
+    probability = distribution.probabilities.get(to_area, 0.0)
+    return TransitionLookupResult(
+        probability,
+        distribution.level,
+        probability * distribution.total_count,
+        distribution.total_count,
+    )
 
 
 def summarize_transitions_for_diagnostics(
