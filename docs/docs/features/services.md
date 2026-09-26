@@ -52,6 +52,104 @@ The `analysis_error` field in each entity's likelihood data indicates why correl
 - Services that query historical data can be resource-intensive.
 - Analysis results (including `analysis_error` values) are persisted to the database and will be restored when entities are reloaded. This ensures that `analysis_error` values are preserved across Home Assistant restarts and entity reloads.
 
+## `area_occupancy.get_time_priors`
+
+Returns the learned **weekly occupancy forecast** for every area: 7 days × 24
+hourly slots (168 per area). Unlike `occupancy_probability`, which estimates the
+present, this can be queried for *future* slots — so a climate controller can
+pre-heat a room before its habitual occupancy instead of reacting to it.
+
+This is a response-only service (`SupportsResponse.ONLY`): it reads state and
+never modifies it.
+
+**Example:**
+
+```yaml
+action: area_occupancy.get_time_priors
+data:
+  area_id: studio   # optional; omit for every area
+response_variable: forecast
+```
+
+**Returns:**
+
+- `slot_minutes`: Slot resolution in minutes (60)
+- `areas`: Dictionary mapping area name to:
+    - `area_id`: The area's Home Assistant area id
+    - `global_prior`: The area's learned area-wide prior (absent on aggregate zones)
+    - `slot_minutes`: Slot resolution, echoed per area
+    - `current_slot`: the `"day,slot"` key covering *now* — the anchor that
+      aligns the live estimate to the weekly grid
+    - `threshold`: the area's occupancy threshold
+    - `tau_slots`: how many slots the current evidence keeps influencing the
+      forecast, derived from the area's purpose
+    - `slots`: `"day,slot"` → **evidence-conditioned** forecast. `day` is
+      0=Monday…6=Sunday, `slot` is the hour index
+    - `slots_baseline`: `"day,slot"` → the same forecast *without* live evidence
+    - `slots_raw`: `"day,slot"` → the learned time prior itself, uncombined
+    - `data_points`: `"day,slot"` → weeks of observation behind the slot
+    - `aggregate`, `members`, `name`: present only on aggregate zones
+      (*All Areas*, per-floor devices), listing the member area ids
+
+**Which map should I use?**
+
+| Goal | Field |
+|---|---|
+| Act now — heat if the room is, or is about to be, occupied | `slots` |
+| Program a thermostat schedule that must not move between polls | `slots_baseline` |
+| Rank hours, audit the learned shape | `slots_raw` |
+| Decide whether to trust a slot at all | `data_points` |
+
+`slots` folds in what the area knows *right now*: at `current_slot` it equals the
+area's `occupancy_probability` exactly, and the lift relaxes back to habit over the
+next few slots. That makes it a forecast **issued at the moment of the call** —
+two calls a minute apart can differ, by design.
+
+`slots_baseline` is the stable weekly matrix: it only changes when the hourly
+analysis relearns, which is what an old-fashioned weekly programme needs.
+
+`slots_raw` is the learned time prior alone. Both `slots` and `slots_baseline` are
+blended with the area's global prior, which keeps 60% of the weight, so their
+dynamic range is compressed; `slots_raw` is not. See
+[Occupancy Forecast](../technical/occupancy-forecast.md#dynamic-range).
+
+!!! warning "Always check `data_points`"
+    A slot with `data_points: 0` was never observed. Its prior is a neutral
+    placeholder, not a measurement — skip it rather than acting on it. Freshly
+    installed areas, and hours the analysis window never covered, report zero.
+
+**Example automation** — pre-heat when the next hour is habitually occupied:
+
+```yaml
+triggers:
+  - trigger: time_pattern
+    minutes: "0"
+actions:
+  - action: area_occupancy.get_time_priors
+    data:
+      area_id: studio
+    response_variable: forecast
+  - variables:
+      slot: >-
+        {{ (now() + timedelta(hours=1)).weekday() }},{{ (now() + timedelta(hours=1)).hour }}
+      area: "{{ forecast.areas['Studio'] }}"
+  - condition: template
+    value_template: >-
+      {{ area.data_points[slot] | int > 0 and area.slots[slot] | float > 0.5 }}
+  - action: climate.set_temperature
+    target:
+      entity_id: climate.studio
+    data:
+      temperature: 21
+```
+
+**Notes:**
+
+- `slots_baseline`, `slots_raw` and `data_points` are refreshed by the hourly
+  analysis; calling more often than that returns the same values for them.
+  `slots` changes continuously, because it tracks the live estimate.
+- A companion Lovelace card visualises the matrix — see `lovelace/README.md`.
+
 ## `area_occupancy.export_config`
 
 Exports the complete integration configuration as YAML. This is useful for debugging, sharing your setup when reporting issues, or backing up your configuration.

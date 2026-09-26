@@ -114,6 +114,55 @@ def get_time_prior(
         return default_prior
 
 
+def get_stored_time_priors(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+) -> dict[tuple[int, int], tuple[float, int]] | None:
+    """Get only the time priors actually stored for an area.
+
+    Unlike :func:`get_all_time_priors`, missing slots are *not* filled with a
+    default: the caller can tell "learned to be empty" apart from "never
+    observed". That distinction matters because the two must not be rendered —
+    or fed to the Bayesian prior — as the same number.
+
+    Args:
+        db: Database instance
+        entry_id: The area entry ID to filter by
+        area_name: The area name to filter by
+
+    Returns:
+        Dictionary mapping (day_of_week, time_slot) to
+        (prior_value, data_points), with slots that have no stored row
+        absent — or ``None`` when the read fails, so callers can tell a
+        database error apart from a genuinely empty table and avoid
+        caching a fallback-only grid.
+    """
+    try:
+        with db.get_session() as session:
+            priors = (
+                session.query(db.Priors)
+                .filter_by(entry_id=entry_id, area_name=area_name)
+                .all()
+            )
+            return {
+                (p.day_of_week, p.time_slot): (
+                    float(p.prior_value),
+                    int(p.data_points or 0),
+                )
+                for p in priors
+            }
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error getting stored time priors: %s", e)
+        return None
+
+
 def get_all_time_priors(
     db: AreaOccupancyDB,
     entry_id: str,

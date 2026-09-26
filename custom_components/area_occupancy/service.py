@@ -21,6 +21,7 @@ from .config_helpers import (
     validate_area_config,
 )
 from .const import (
+    ALL_AREAS_IDENTIFIER,
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_DECAY_ENABLED,
@@ -33,6 +34,8 @@ from .const import (
     DEVICE_SW_VERSION,
     DOMAIN,
 )
+from .data.forecast import build_aggregate_time_priors, build_area_time_priors
+from .data.prior import DEFAULT_SLOT_MINUTES
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
 
@@ -45,6 +48,12 @@ _LOGGER = logging.getLogger(__name__)
 PURGE_AREA_HISTORY_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+    }
+)
+
+GET_TIME_PRIORS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
     }
 )
 
@@ -425,6 +434,80 @@ async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[st
     return await async_purge_area_data(hass, coordinator, area_name, area)
 
 
+async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Return the learned weekly occupancy-prior forecast per area.
+
+    The response includes every configured area plus the aggregate zones AOD
+    derives from them — the "All Areas" device and one per HA floor — whose
+    per-slot forecast is the clamped average of their member areas (mirroring
+    ``AllAreas.area_prior()``). Aggregates are handy for air-based devices that
+    condition a whole floor/home at once. With an ``area_id`` only the matching
+    zone (real or aggregate) is returned, raising ``ServiceValidationError``
+    when it is unknown. Time-prior caches are warmed off the event loop.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data.get(CONF_AREA_ID)
+
+    def _build_areas_data() -> dict[str, Any]:
+        """Warm the caches and build every zone's forecast in one executor job.
+
+        Cache load and forecast build must share the executor trip: the
+        analysis pipeline can invalidate an area's time-prior cache between
+        a separate warm-up and a later event-loop build, and the builders
+        would then reload the cache (a DB read) on the event loop.
+        """
+        data: dict[str, Any] = {}
+        for area_name, area in coordinator.areas.items():
+            data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
+
+        # Aggregate zones: "All Areas" + one per floor (averaged member
+        # forecasts). These reuse the per-area caches warmed just above.
+        all_areas = build_aggregate_time_priors(
+            coordinator.get_all_areas().areas(),
+            DEFAULT_SLOT_MINUTES,
+            ALL_AREAS_IDENTIFIER,
+            "All Areas",
+        )
+        if all_areas is not None:
+            data["All Areas"] = all_areas
+        for floor_id, floor_agg in coordinator.get_floor_aggregators().items():
+            floor_data = build_aggregate_time_priors(
+                floor_agg.areas(),
+                DEFAULT_SLOT_MINUTES,
+                f"floor_{floor_id}",
+                floor_agg.floor_name,
+            )
+            if floor_data is not None:
+                data[floor_agg.floor_name] = floor_data
+        return data
+
+    areas_data = await hass.async_add_executor_job(_build_areas_data)
+
+    if area_id is not None:
+        filtered = {
+            name: data
+            for name, data in areas_data.items()
+            if data.get("area_id") == area_id
+        }
+        if not filtered:
+            known = sorted(
+                str(data["area_id"])
+                for data in areas_data.values()
+                if isinstance(data.get("area_id"), str)
+            )
+            raise ServiceValidationError(
+                f"No area found for area_id '{area_id}'. "
+                f"Known area_ids: {', '.join(known) if known else '(none)'}"
+            )
+        areas_data = filtered
+
+    return {
+        "slot_minutes": DEFAULT_SLOT_MINUTES,
+        "generated_at": dt_util.utcnow().isoformat(),
+        "areas": areas_data,
+    }
+
+
 async def _set_area_option(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """Service handler: change one area's tunables from an automation.
 
@@ -510,6 +593,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def handle_purge_area_history(call: ServiceCall) -> dict[str, Any]:
         return await _purge_area_history(hass, call)
 
+    async def handle_get_time_priors(call: ServiceCall) -> dict[str, Any]:
+        return await _get_time_priors(hass, call)
+
     async def handle_set_area_option(call: ServiceCall) -> dict[str, Any]:
         return await _set_area_option(hass, call)
 
@@ -540,6 +626,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     hass.services.async_register(
         DOMAIN,
+        "get_time_priors",
+        handle_get_time_priors,
+        schema=GET_TIME_PRIORS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
         "set_area_option",
         handle_set_area_option,
         schema=SET_AREA_OPTION_SCHEMA,
@@ -557,6 +651,7 @@ def async_unload_services(hass: HomeAssistant) -> None:
         "run_analysis",
         "export_config",
         "purge_area_history",
+        "get_time_priors",
         "set_area_option",
     ):
         hass.services.async_remove(DOMAIN, service)

@@ -48,5 +48,7 @@ tmp/
 .claude/settings.local.json
 .claude/worktrees/
 
+.DS_Store
+
 # Throwaway Home Assistant instances built by scripts/harness
 instances/

@@ -22,6 +22,27 @@ purge_area_history:
       selector:
         area: {}
 
+get_time_priors:
+  name: Get Time Priors
+  description: >-
+    Return the learned weekly occupancy-prior forecast for each area: for every
+    weekly slot (day of week x time of day) the probability that the area tends
+    to be occupied. Unlike the occupancy_probability sensor (a current-state
+    estimate), this exposes priors for future slots so other integrations can
+    build a forward-looking occupancy profile (for example to pre-heat a room
+    before its habitual occupancy). Returns response data only.
+  fields:
+    area_id:
+      name: Area
+      description: >-
+        Optional Home Assistant area_id. When omitted, the forecast for all
+        configured areas is returned. The aggregate zone ids ("all_areas" and
+        "floor_[floor_id]") are also accepted, but the area picker only lists
+        real Home Assistant areas — pass an aggregate id in YAML mode.
+      required: false
+      selector:
+        area: {}
+
 set_area_option:
   name: Set Area Option
   description: >-
