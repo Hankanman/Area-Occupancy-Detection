@@ -271,8 +271,8 @@ async def load_data(db: AreaOccupancyDB) -> None:
                     calculation_date=global_prior_data.get("calculation_date"),
                 )
 
-            # Warm the time-prior cache here rather than letting the first
-            # probability calculation load it on the event loop.
+            # time_prior never reads SQLite itself, so load the cache here,
+            # off the event loop.
             await db.hass.async_add_executor_job(area_data.prior.load_time_priors)
 
             # Process entities

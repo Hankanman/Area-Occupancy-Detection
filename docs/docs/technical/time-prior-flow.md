@@ -225,12 +225,12 @@ The time prior retrieval follows this path:
 
 1. **Entry Point**: `prior.py:Prior.time_prior` property (line 115)
    - Called when calculating combined prior
-   - Property getter that triggers retrieval if needed
+   - Property getter that only reads the cache; it never queries the database
 
 2. **Cache Check**: Checks if `_cached_time_priors` dictionary is populated (line 118)
-   - If `None`, triggers `load_time_priors()` to load all 168 slots from database
+   - If `None`, returns `DEFAULT_TIME_PRIOR` (0.5) without querying the database
    - Cache stores all time priors as a dictionary: `(day_of_week, time_slot) -> prior_value`
-   - In normal operation the cache is already warm: `load_data()` and `start_prior_analysis()` call `load_time_priors()` in the executor right after `set_global_prior()` invalidates it, so probability calculations on the event loop don't query SQLite inline
+   - The cache is filled by `load_time_priors()`, which `load_data()` and `start_prior_analysis()` run in the executor, so probability calculations on the event loop never query SQLite
 
 3. **Load All Time Priors**: `prior.py:load_time_priors()`
    - Calls `db.get_all_time_priors()` to retrieve all time priors for the area
@@ -290,19 +290,19 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 
 **Cache Population**:
 
-- Loaded lazily on first access to `time_prior` property
+- Loaded by `load_time_priors()` in the executor: from `load_data()` when an area's data is loaded, and from `start_prior_analysis()` after new time priors are saved
 - Loads all 168 slots in a single database query for efficiency
 - Applied safety bounds during loading
 
 **Cache Invalidation**: `_invalidate_time_prior_cache()` (line 157)
 
-- Called when global prior changes (`set_global_prior()`)
-- Sets `_cached_time_priors = None` to force reload on next access
-- Also called by `clear_cache()` method
+- Called by `clear_cache()` (area removal and purge)
+- Sets `_cached_time_priors = None`; `time_prior` returns `DEFAULT_TIME_PRIOR` until the next `load_time_priors()`
+- `set_global_prior()` does not invalidate it: the previous snapshot stays in use until the prior analysis publishes the new time priors
 
 **TTL**: No time-based expiration
 
-- Cache persists until invalidated (when global prior changes)
+- Cache persists until `load_time_priors()` replaces it or `clear_cache()` clears it
 - Since all 168 slots are cached, no need to check day/slot on each access
 - Simply looks up current slot in the cached dictionary
 
@@ -403,6 +403,16 @@ sequenceDiagram
     participant DB as Database
     participant Query as Query Function
 
+    Note over Prior,Query: Executor: load_data() / start_prior_analysis() call load_time_priors()
+    Prior->>DB: get_all_time_priors(area_name)
+    DB->>Query: get_all_time_priors(entry_id, area_name)
+    Query->>Query: Query all Priors for area
+    Query-->>DB: Dictionary of all 168 slots
+    DB-->>Prior: Dictionary of all slots
+    Prior->>Prior: Apply safety bounds [0.1, 0.9]
+    Prior->>Cache: Publish all 168 slots
+
+    Note over Area,Cache: Event loop: every probability() calculation
     Area->>Prior: probability() calculation
     Prior->>Prior: value property
     Prior->>Prior: time_prior property
@@ -413,18 +423,8 @@ sequenceDiagram
         Prior->>Prior: Get current (day, slot)
         Prior->>Cache: Lookup (day, slot)
         Cache-->>Prior: prior_value for current slot
-    else Cache Empty (First Access)
-        Prior->>Prior: load_time_priors()
-        Prior->>DB: get_all_time_priors(area_name)
-        DB->>Query: get_all_time_priors(entry_id, area_name)
-        Query->>Query: Query all Priors for area
-        Query-->>DB: Dictionary of all 168 slots
-        DB-->>Prior: Dictionary of all slots
-        Prior->>Prior: Apply safety bounds [0.1, 0.9]
-        Prior->>Cache: Store all 168 slots
-        Prior->>Prior: Get current (day, slot)
-        Prior->>Cache: Lookup (day, slot)
-        Cache-->>Prior: prior_value for current slot
+    else Cache Empty (not loaded yet)
+        Prior->>Prior: Use DEFAULT_TIME_PRIOR (no database query)
     end
 
     Prior->>Prior: combine_priors(global, time)
@@ -470,9 +470,9 @@ flowchart TD
 
 ### 7.1 Cache Invalidation Logic
 
-**Issue**: Cache only invalidated when global prior changes, not on time slot change
+**Issue**: Cache is only reloaded when the stored time priors can change (data load, prior analysis), not on time slot change
 
-**Impact**: Cache persists across time slots if global prior unchanged
+**Impact**: The same cached dictionary serves every time slot
 
 **Current Behavior**: Cache checked against current day/slot on each access, so cache is automatically refreshed when day/slot changes
 

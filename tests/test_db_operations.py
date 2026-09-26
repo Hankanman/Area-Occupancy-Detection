@@ -207,6 +207,32 @@ class TestLoadData:
         assert reloaded_motion.prob_given_false == configured_pgf
 
     @pytest.mark.asyncio
+    async def test_load_data_loads_time_prior_cache(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Test load_data fills the time-prior cache from stored priors.
+
+        ``Prior.time_prior`` never reads SQLite itself (it runs on the event
+        loop), so load_data has to publish the cache.
+        """
+        db = coordinator.db
+        db.init_db()
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        slot = (2, 9)
+        assert save_time_priors(
+            db, area_name, {slot: 0.42}, now - timedelta(days=7), now, {slot: 5}
+        )
+        assert area.prior._cached_time_priors is None
+
+        await load_data(db)
+
+        assert area.prior._cached_time_priors is not None
+        assert area.prior._cached_time_priors[slot] == pytest.approx(0.42)
+
+    @pytest.mark.asyncio
     async def test_load_data_normalizes_naive_last_updated_from_sqlite(
         self, coordinator: AreaOccupancyCoordinator
     ):

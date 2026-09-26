@@ -439,10 +439,8 @@ async def start_prior_analysis(
     except (ValueError, TypeError, RuntimeError) as e:
         _LOGGER.error("Error during prior analysis for area %s: %s", area_name, e)
 
-    # set_global_prior() invalidated the time-prior cache before the new time
-    # priors were saved. Reload it now, off the event loop, so the next
-    # probability calculation neither queries SQLite inline nor keeps
-    # time priors a racing refresh loaded mid-analysis.
+    # Publish the time priors this run saved. Refreshes keep using the
+    # previous snapshot until this completes; time_prior never reads SQLite.
     await coordinator.hass.async_add_executor_job(prior.load_time_priors)
 
 

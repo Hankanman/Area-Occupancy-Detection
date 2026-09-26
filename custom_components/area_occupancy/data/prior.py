@@ -176,12 +176,18 @@ class Prior:
 
     @property
     def time_prior(self) -> float:
-        """Return the current time prior value or minimum if not calculated."""
-        # Load all time priors if cache is empty. Read the cache once into a
-        # local: the analysis executor can invalidate it concurrently.
+        """Return the cached time prior for the current day and hour slot.
+
+        Never reads the database, since every probability calculation on the
+        event loop calls this. ``load_time_priors()`` fills the cache in the
+        executor; until it has, this returns ``DEFAULT_TIME_PRIOR``, the value
+        a slot with no stored prior gets.
+        """
+        # Read the cache once into a local: the executor can replace it
+        # concurrently.
         time_priors = self._cached_time_priors
         if time_priors is None:
-            time_priors = self.load_time_priors()
+            return DEFAULT_TIME_PRIOR
 
         current_day = self.day_of_week
         current_slot = self.time_slot
@@ -228,7 +234,9 @@ class Prior:
                 entirely.
         """
         self.global_prior = clamp_probability(prior)
-        self._invalidate_time_prior_cache()
+        # The time-prior cache is left alone: time priors live in their own
+        # table, and the prior analysis reloads them after saving new ones,
+        # so the current snapshot stays in use until its replacement is ready.
         now = dt_util.utcnow()
         self._last_updated = now
         self.last_calculation_at = (
@@ -258,10 +266,9 @@ class Prior:
         This method loads time priors for the area in a single database query,
         eliminating the need for individual queries when accessing time priors.
 
-        Blocking I/O: ``load_data`` and the prior analysis run it in the
-        executor right after ``set_global_prior`` invalidates the cache, so
-        ``time_prior`` (read by every probability calculation on the event
-        loop) normally finds the cache already warm.
+        Blocking I/O, so it runs in the executor: ``load_data`` calls it when
+        an area's data is loaded, and ``start_prior_analysis`` after new time
+        priors are saved. ``time_prior`` never loads on its own.
 
         Returns:
             The newly cached mapping of (day_of_week, time_slot) to prior.

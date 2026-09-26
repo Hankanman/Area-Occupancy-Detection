@@ -97,8 +97,8 @@ Both the boost and the decay modifier read *last tick's* per-area probabilities 
 ```mermaid
 flowchart TD
     Tick["Coordinator.update() tick starts"] --> Snapshot["Snapshot previous tick's\nprobabilities + occupancy\n(lagged_probabilities)"]
-    Snapshot --> Executor["_compute_adjacency_state()\n(executor thread — issues SQL)"]
-    Executor --> Trajectory["TrajectoryTracker.trajectory_for(area)\nfor every area"]
+    Snapshot --> Compute["_compute_adjacency_state()\n(event loop — reads the\nin-memory AdjacencySnapshot)"]
+    Compute --> Trajectory["TrajectoryTracker.trajectory_for(area)\nfor every area"]
     Trajectory --> Boost["compute_adjacency_boost()\nper area with a trajectory"]
     Trajectory --> Modifier["compute_decay_modifier()\nper area with neighbours"]
     Boost --> Cache["Cached: _adjacency_boosts,\n_adjacency_decay_modifiers"]
@@ -111,7 +111,7 @@ flowchart TD
     Observe --> Done["Tick complete"]
 ```
 
-The SQL-issuing lookup runs once per tick in the executor pool (`_compute_adjacency_state`), reusing a single adjacency-index read across every area, so the event loop is never blocked by transition queries.
+`_compute_adjacency_state` runs synchronously on the event loop once per tick, reading the in-memory `AdjacencySnapshot` described above for both the adjacency index and the transition lookups. A tick issues no SQL and never waits on the executor pool.
 
 ## Tunables
 

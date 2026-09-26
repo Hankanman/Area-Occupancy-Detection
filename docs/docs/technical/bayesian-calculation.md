@@ -157,7 +157,7 @@ An empty `entities` dict, or every entity having `weight <= 0`, returns the (cla
 
 - **Single pass, O(n)**: one loop over entities accumulating a running sum — no separate "true" and "false" accumulators to maintain in parallel, and no final normalization/division step (`sigmoid()` is already bounded).
 - **Correlation lookups**: correlation strengths are precomputed by the hourly analysis pipeline (`db/correlation.py`) and passed in as a plain dict, not queried per-entity during the hot path.
-- **Prior caching**: time-based priors are cached by `(day_of_week, hour_slot)` and invalidated on update, so the real-time calculation never issues a database query.
+- **Prior caching**: time-based priors are cached by `(day_of_week, hour_slot)` and reloaded in the executor when they change, so the real-time calculation never issues a database query.
 
 ## See Also
 

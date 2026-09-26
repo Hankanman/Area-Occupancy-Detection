@@ -1058,11 +1058,9 @@ class TestOrchestrationFunctions:
     ) -> None:
         """Test the time-prior cache holds this run's saved values afterwards.
 
-        The analyzer invalidates the cache (via ``set_global_prior``) before
-        it saves the new time priors, so a refresh landing in between used
-        to cache the previous run's values until the next hourly analysis,
-        and the first refresh after analysis queried SQLite on the event
-        loop. Reloading in the executor once the save is done fixes both.
+        ``time_prior`` never reads SQLite, so refreshes during the analysis
+        keep using the previous snapshot; the executor reload once the save
+        is done is what publishes this run's values.
         """
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
@@ -1072,7 +1070,7 @@ class TestOrchestrationFunctions:
 
         def _analyze(_days: int) -> None:
             area.prior.set_global_prior(0.3)
-            # A refresh racing the analysis caches the old time priors.
+            # A refresh during the analysis reads the cache, not SQLite.
             _ = area.prior.time_prior
             assert coordinator.db.save_time_priors(
                 area_name=area_name,

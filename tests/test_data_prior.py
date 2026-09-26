@@ -364,18 +364,18 @@ def test_set_global_prior(coordinator: AreaOccupancyCoordinator):
     with patch(
         "custom_components.area_occupancy.data.prior.dt_util.utcnow", return_value=now
     ):
-        # Populate the time-prior cache via its public accessor so the
-        # assertion below proves set_global_prior actually invalidates it,
-        # rather than just confirming the cache was never populated.
-        _ = prior.time_prior
-        assert prior._cached_time_priors is not None
+        # Populate the time-prior cache so the assertion below proves
+        # set_global_prior keeps it, rather than just confirming it was
+        # never populated.
+        cached = prior.load_time_priors()
 
         prior.set_global_prior(0.75)
         assert prior.global_prior == 0.75
         assert prior._last_updated == now
         assert prior.last_calculation_at == now
-        # Verify cache is invalidated
-        assert prior._cached_time_priors is None
+        # The previous time-prior snapshot stays in use until the prior
+        # analysis reloads it, so no refresh has to read SQLite meanwhile.
+        assert prior._cached_time_priors is cached
 
 
 def test_set_global_prior_explicit_calculation_date(
@@ -472,20 +472,22 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
             "get_all_time_priors",
             return_value=test_cache.copy(),
         ) as mock_get_all:
-            # First access should trigger load_time_priors
-            result = prior.time_prior
+            # Before the cache is loaded, reads fall back to the default
+            # without touching the database (they run on the event loop).
+            assert prior.time_prior == DEFAULT_TIME_PRIOR
+            mock_get_all.assert_not_called()
+
+            prior.load_time_priors()
             mock_get_all.assert_called_once_with(
                 area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
             )
-            # Cache should now be populated
             assert prior._cached_time_priors is not None
-            assert result == 0.6  # Should return value for current slot
 
-            # Second access should use cache (no additional database call)
+            # Reads come from the cache (no additional database call)
             mock_get_all.reset_mock()
-            result2 = prior.time_prior
+            result = prior.time_prior
             mock_get_all.assert_not_called()
-            assert result2 == 0.6
+            assert result == 0.6  # Should return value for current slot
 
         # Test accessing a different slot by patching dt_util.utcnow()
         from datetime import datetime
@@ -558,7 +560,7 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
 
 
 def test_time_prior_cache_invalidation(coordinator: AreaOccupancyCoordinator):
-    """Test time_prior cache invalidation triggers reload."""
+    """Test the time-prior cache only changes on an explicit reload or clear."""
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
 
@@ -573,29 +575,37 @@ def test_time_prior_cache_invalidation(coordinator: AreaOccupancyCoordinator):
         "get_all_time_priors",
         return_value=cache1.copy(),
     ) as mock_get_all:
-        result1 = prior.time_prior
-        assert result1 == 0.6
+        prior.load_time_priors()
+        assert prior.time_prior == 0.6
         assert mock_get_all.call_count == 1
 
-    # Invalidate cache
+    # An invalidated cache reads as the default until reloaded, with no
+    # database call
     prior._invalidate_time_prior_cache()
     assert prior._cached_time_priors is None
+    with patch.object(
+        prior.db,
+        "get_all_time_priors",
+        side_effect=AssertionError("time_prior read the database"),
+    ):
+        assert prior.time_prior == DEFAULT_TIME_PRIOR
 
-    # Second cache load (should trigger reload)
+    # Reloading publishes the new values
     cache2 = {slot_key: 0.7}
     with patch.object(
         prior.db,
         "get_all_time_priors",
         return_value=cache2.copy(),
     ) as mock_get_all2:
-        result2 = prior.time_prior
-        assert result2 == 0.7
+        prior.load_time_priors()
+        assert prior.time_prior == 0.7
         assert mock_get_all2.call_count == 1
 
-    # Verify set_global_prior invalidates cache
+    # set_global_prior keeps the current snapshot; the prior analysis
+    # reloads it after saving new time priors
     prior._cached_time_priors = {slot_key: 0.5}
     prior.set_global_prior(0.8)
-    assert prior._cached_time_priors is None
+    assert prior._cached_time_priors == {slot_key: 0.5}
 
     # Verify clear_cache invalidates cache
     prior._cached_time_priors = {slot_key: 0.4}
