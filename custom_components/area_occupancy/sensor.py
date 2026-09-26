@@ -19,6 +19,7 @@ from .area import AllAreas, AreaDeviceHandle, FloorAreas
 from .const import ALL_AREAS_IDENTIFIER, DEFAULT_SENSOR_PRECISION
 from .data.activity import ActivityId
 from .data.entity_type import InputType
+from .data.metrics import AccuracyMetrics, suggest_threshold
 from .utils import (
     assign_device_to_ha_area,
     format_float,
@@ -41,6 +42,7 @@ NAME_ENVIRONMENTAL_CONFIDENCE_SENSOR = "Environmental Confidence"
 NAME_DETECTED_ACTIVITY_SENSOR = "Detected Activity"
 NAME_ACTIVITY_CONFIDENCE_SENSOR = "Activity Confidence"
 NAME_SENSOR_HEALTH_SENSOR = "Sensor Health"
+NAME_ACCURACY_SENSOR = "Accuracy"
 
 
 class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
@@ -82,7 +84,12 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
         # Assign device to Home Assistant area if area_id is configured.
         # Only for specific areas, not "All Areas" or floor aggregates.
         if self._area_handle is not None and (area := self._get_area()) is not None:
-            assign_device_to_ha_area(self.hass, self.device_info, area.config.area_id)
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
 
     def set_enabled_default(self, enabled: bool) -> None:
         """Set whether the entity should be enabled by default."""
@@ -611,6 +618,113 @@ class SensorHealthSensor(AreaOccupancySensorBase):
             return {}
 
 
+class AccuracySensor(AreaOccupancySensorBase):
+    """Diagnostic sensor exposing the shadow accuracy metrics (#499 phase 2).
+
+    State is the time-weighted agreement between the occupancy decision and
+    motion-confirmed ground truth over the metrics window; the attributes
+    carry the full report card (calibration error, false-on/false-off
+    rates, and the read-only ``suggested_threshold``). Everything here is
+    exposure only — nothing in the decision path consumes these values;
+    auto-threshold remains gated on the metric proving stable first.
+
+    Shows ``unknown`` (native_value ``None``, entity still available)
+    until the first hourly analysis run after startup, since the metrics
+    live in coordinator memory only (deliberate: they describe a rolling
+    observation window, which restarts with the process).
+    """
+
+    _unrecorded_attributes = frozenset({"calibration_bins"})
+
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle,
+    ) -> None:
+        """Initialize the accuracy sensor."""
+        super().__init__(area_handle=area_handle)
+        self._attr_translation_key = "accuracy"
+        self._attr_unique_id = generate_entity_unique_id(
+            self._entry_id,
+            self.device_info,
+            NAME_ACCURACY_SENSOR,
+        )
+        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self.set_enabled_default(False)
+
+    def _metrics(self) -> AccuracyMetrics | None:
+        return self.coordinator.accuracy_metrics_for(self._area_name)
+
+    @property
+    def native_value(self) -> float | None:
+        """Return decision/truth agreement over the window, as a percent."""
+        metrics = self._metrics()
+        if metrics is None or metrics.agreement is None:
+            return None
+        return format_float(metrics.agreement * 100, self._get_sensor_precision())
+
+    @property
+    def icon(self) -> str:
+        """Return an icon reflecting whether a report card exists yet."""
+        if self._metrics() is None:
+            return "mdi:school-outline"
+        return "mdi:school"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the full accuracy report card."""
+        try:
+            metrics = self._metrics()
+            if metrics is None:
+                return {}
+            suggested = suggest_threshold(metrics)
+            return {
+                "expected_calibration_error": metrics.expected_calibration_error,
+                "false_on_rate": metrics.false_on_rate,
+                "false_off_rate": metrics.false_off_rate,
+                "decision_transitions": metrics.decision_transitions,
+                "truth_transitions": metrics.truth_transitions,
+                "sample_count": metrics.sample_count,
+                "window_start": (
+                    metrics.window_start.isoformat() if metrics.window_start else None
+                ),
+                "window_end": (
+                    metrics.window_end.isoformat() if metrics.window_end else None
+                ),
+                # Percent, matching the threshold number entity's unit.
+                # Read-only: nothing consumes this — see suggest_threshold.
+                "suggested_threshold": (
+                    round(suggested * 100, 1) if suggested is not None else None
+                ),
+                "calibration_bins": [
+                    {
+                        "band": f"{b.lower:.1f}-{b.upper:.1f}",
+                        "count": b.count,
+                        "mean_probability": round(b.mean_probability, 4),
+                        "observed_rate": round(b.observed_rate, 4),
+                    }
+                    for b in metrics.bins
+                    if b.count
+                ],
+            }
+        except (TypeError, AttributeError, KeyError):
+            return {}
+
+
+def _area_subentry_id(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> str | None:
+    """Config subentry an area's entities belong to, if it has one.
+
+    Registering entities under the area's subentry is what makes the
+    integration page group each area's device and entities beneath it.
+    Aggregate entities ("All Areas", floors) span areas and stay on the entry.
+    """
+    area = coordinator.get_area(area_name)
+    return area.config.subentry_id if area else None
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: Any
 ) -> None:
@@ -632,11 +746,13 @@ async def async_setup_entry(
             DetectedActivitySensor(area_handle=area_handle),
             ActivityConfidenceSensor(area_handle=area_handle),
             SensorHealthSensor(area_handle=area_handle),
+            AccuracySensor(area_handle=area_handle),
         ]
 
         async_add_entities(
             area_entities,
             update_before_add=False,
+            config_subentry_id=_area_subentry_id(coordinator, area_name),
         )
 
     # Create "All Areas" aggregation sensors.

@@ -11,6 +11,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+import sqlalchemy as sa
 
 from custom_components.area_occupancy.const import (
     ADJACENCY_BOOST_GAIN,
@@ -23,7 +24,7 @@ from custom_components.area_occupancy.data.adjacency import (
 )
 from custom_components.area_occupancy.db.transitions import (
     LEVEL_1HOP_HOUR_OF_WEEK,
-    TransitionLookupResult,
+    LEVEL_2HOP_HOUR_OF_WEEK,
 )
 from custom_components.area_occupancy.time_utils import to_local
 from custom_components.area_occupancy.utils import logit
@@ -32,18 +33,44 @@ from homeassistant.util import dt as dt_util
 # ruff: noqa: SLF001
 
 
-def _lookup_stub(probability: float):
-    """Return a lookup function that always yields the given probability."""
+def _seed_adjacency(
+    coordinator: AreaOccupancyCoordinator,
+    adjacency: dict[str, set[str]],
+    counts: dict[tuple[str, str], dict[str, float]],
+) -> None:
+    """Seed adjacency rows and identical transition counts in every hour.
 
-    def lookup(db, entry_id, *, from_area, mid_area, to_area, hour_of_week):
-        return TransitionLookupResult(
-            probability=probability,
-            level=LEVEL_1HOP_HOUR_OF_WEEK,
-            observed_count=9.0,
-            total_count=10.0,
-        )
-
-    return lookup
+    ``counts`` maps ``(from_area, mid_area)`` to ``{to_area: count}``.
+    Filling all 168 hour-of-week buckets makes the exact-hour fallback
+    levels fire whatever hour the test runs in.
+    """
+    db = coordinator.db
+    with db.get_session() as session:
+        for area_name, neighbours in adjacency.items():
+            for neighbour in neighbours:
+                session.add(
+                    db.AreaRelationships(
+                        entry_id=coordinator.entry_id,
+                        area_name=area_name,
+                        related_area_name=neighbour,
+                        relationship_type="adjacent",
+                        influence_weight=0.3,
+                    )
+                )
+        for (from_area, mid_area), to_counts in counts.items():
+            for hour in range(168):
+                for to_area, count in to_counts.items():
+                    session.add(
+                        db.AreaTransitions(
+                            entry_id=coordinator.entry_id,
+                            from_area=from_area,
+                            mid_area=mid_area,
+                            to_area=to_area,
+                            hour_of_week=hour,
+                            count=count,
+                        )
+                    )
+        session.commit()
 
 
 class TestLaggedProbabilities:
@@ -91,24 +118,25 @@ class TestAdjacencyBoostWiring:
             "hallway", was_occupied=True, is_occupied=False, now=now
         )
 
-        with (
-            patch(
-                "custom_components.area_occupancy.coordinator.build_adjacency_index",
-                return_value={area_name: {"hallway"}, "hallway": {area_name}},
-            ),
-            patch(
-                "custom_components.area_occupancy.coordinator.lookup_transition_probability",
-                new=_lookup_stub(0.9),
-            ),
-        ):
-            await coordinator.update()
+        # 9 of 10 exits from the hallway went to this area → P = 0.9 at
+        # the 1-hop exact-hour level.
+        _seed_adjacency(
+            coordinator,
+            {area_name: {"hallway"}, "hallway": {area_name}},
+            {("hallway", ""): {area_name: 9.0, "kitchen": 1.0}},
+        )
+        await coordinator.async_load_adjacency_snapshot()
+
+        await coordinator.update()
 
         boost = coordinator.adjacency_boost_for(area_name)
         assert boost is not None
         assert boost.fired
         assert boost.trajectory_prev == "hallway"
-        assert boost.raw_probability == 0.9
+        assert boost.raw_probability == pytest.approx(0.9)
         assert boost.fallback_level == LEVEL_1HOP_HOUR_OF_WEEK
+        assert boost.observed_count == pytest.approx(9.0)
+        assert boost.total_count == pytest.approx(10.0)
         assert boost.logit_contribution == pytest.approx(
             ADJACENCY_BOOST_GAIN * logit(0.9)
         )
@@ -151,20 +179,17 @@ class TestDecayModifierWiring:
         area_name = coordinator_with_sensors.get_area_names()[0]
         area = coordinator_with_sensors.get_area(area_name)
 
-        # Neighbour is fully silent (no lagged data → 0.0) and the
-        # household always exits through it (P=0.8):
+        # Neighbour is fully silent (no lagged data → 0.0) and 8 of 10
+        # exits from this area go through it (P=0.8):
         # silence = (1 - 0) * 0.8 = 0.8 → modifier = 1 + 0.75 * 0.8 = 1.6
-        with (
-            patch(
-                "custom_components.area_occupancy.coordinator.build_adjacency_index",
-                return_value={area_name: {"hallway"}, "hallway": {area_name}},
-            ),
-            patch(
-                "custom_components.area_occupancy.coordinator.lookup_transition_probability",
-                new=_lookup_stub(0.8),
-            ),
-        ):
-            await coordinator_with_sensors.update()
+        _seed_adjacency(
+            coordinator_with_sensors,
+            {area_name: {"hallway"}, "hallway": {area_name}},
+            {(area_name, ""): {"hallway": 8.0, "kitchen": 2.0}},
+        )
+        await coordinator_with_sensors.async_load_adjacency_snapshot()
+
+        await coordinator_with_sensors.update()
 
         expected = 1.0 + ADJACENCY_DECAY_MODIFIER_GAIN * 0.8
         modifier = coordinator_with_sensors.adjacency_decay_modifier_for(area_name)
@@ -187,17 +212,14 @@ class TestDecayModifierWiring:
             "hallway": {"probability": 1.0, "occupied": True},
         }
 
-        with (
-            patch(
-                "custom_components.area_occupancy.coordinator.build_adjacency_index",
-                return_value={area_name: {"hallway"}, "hallway": {area_name}},
-            ),
-            patch(
-                "custom_components.area_occupancy.coordinator.lookup_transition_probability",
-                new=_lookup_stub(0.8),
-            ),
-        ):
-            await coordinator_with_sensors.update()
+        _seed_adjacency(
+            coordinator_with_sensors,
+            {area_name: {"hallway"}, "hallway": {area_name}},
+            {(area_name, ""): {"hallway": 8.0, "kitchen": 2.0}},
+        )
+        await coordinator_with_sensors.async_load_adjacency_snapshot()
+
+        await coordinator_with_sensors.update()
 
         modifier = coordinator_with_sensors.adjacency_decay_modifier_for(area_name)
         assert modifier is not None
@@ -270,3 +292,97 @@ class TestTrajectoryBookkeeping:
         )
         assert trajectory.prev_area == "bedroom"
         assert trajectory.prev_prev_area is None
+
+
+class TestAdjacencySnapshot:
+    """The refresh path reads adjacency data from memory, never SQLite."""
+
+    async def test_update_issues_no_sql_and_no_executor_jobs(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test a refresh stays off the database and the executor pool.
+
+        ``update`` runs on every sensor state change. It used to open a
+        SQLite connection per fallback level per adjacency lookup inside
+        an executor job, which delayed occupancy updates by seconds on
+        slow hosts. With adjacency configured, a 2-hop trajectory (so
+        every lookup level can be walked) and a learned prior, the whole
+        refresh must now complete without a single SQL statement.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        _seed_adjacency(
+            coordinator,
+            {area_name: {"hallway"}, "hallway": {area_name, "kitchen"}},
+            {("kitchen", "hallway"): {area_name: 6.0, "bedroom": 4.0}},
+        )
+        await coordinator.async_load_adjacency_snapshot()
+        # A learned global prior makes probability() consult the time-prior
+        # cache; load_data warms it, as it does at setup.
+        area.prior.set_global_prior(0.3)
+        await coordinator.db.load_data()
+
+        now = dt_util.utcnow()
+        tracker = coordinator._trajectory_tracker
+        tracker.observe(
+            "kitchen",
+            was_occupied=True,
+            is_occupied=False,
+            now=now - timedelta(seconds=2),
+        )
+        tracker.observe(
+            "hallway",
+            was_occupied=True,
+            is_occupied=False,
+            now=now - timedelta(seconds=1),
+        )
+
+        statements: list[str] = []
+
+        def _record(_conn, _cursor, statement, *_args) -> None:
+            statements.append(statement)
+
+        engine = coordinator.db.engine
+        sa.event.listen(engine, "before_cursor_execute", _record)
+        try:
+            with patch.object(
+                coordinator.hass,
+                "async_add_executor_job",
+                side_effect=AssertionError("refresh used the executor"),
+            ):
+                await coordinator.update()
+        finally:
+            sa.event.remove(engine, "before_cursor_execute", _record)
+
+        assert statements == []
+        boost = coordinator.adjacency_boost_for(area_name)
+        assert boost is not None
+        assert boost.trajectory_prev_prev == "kitchen"
+        assert boost.fallback_level == LEVEL_2HOP_HOUR_OF_WEEK
+        assert boost.raw_probability == pytest.approx(0.6)
+
+    async def test_failed_reload_keeps_previous_snapshot(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test a database error on reload doesn't drop learned transitions."""
+        area_name = coordinator.get_area_names()[0]
+        _seed_adjacency(
+            coordinator,
+            {area_name: {"hallway"}, "hallway": {area_name}},
+            {("hallway", ""): {area_name: 9.0, "kitchen": 1.0}},
+        )
+        await coordinator.async_load_adjacency_snapshot()
+        loaded = coordinator._adjacency_snapshot
+        assert loaded.adjacency_index == {
+            area_name: {"hallway"},
+            "hallway": {area_name},
+        }
+
+        # load_adjacency_snapshot returns None on SQLAlchemyError.
+        with patch(
+            "custom_components.area_occupancy.coordinator.load_adjacency_snapshot",
+            return_value=None,
+        ):
+            await coordinator.async_load_adjacency_snapshot()
+
+        assert coordinator._adjacency_snapshot is loaded

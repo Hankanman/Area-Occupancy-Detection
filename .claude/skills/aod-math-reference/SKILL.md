@@ -419,7 +419,7 @@ comment): `ADJACENCY_TRANSITION_WINDOW_S=60`, `ADJACENCY_RECENCY_HALF_LIFE_DAYS=
 
 ### 7. Six-level smoothing fallback for transition lookups
 
-`lookup_transition_probability()` (`db/transitions.py:573-651`) answers "`P(to_area | from_area,
+`AdjacencySnapshot.lookup()` (`db/transitions.py`; reads the in-memory snapshot from `load_adjacency_snapshot()`) answers "`P(to_area | from_area,
 mid_area, hour_of_week)`" by walking progressively wider (less-specific, more-populated) scopes
 until one has enough observations to trust. The threshold is on **total observations at that
 level**, not the specific `to_area` count — once trusted, an unobserved destination is a real
@@ -791,8 +791,8 @@ integration hard-codes that floor in **two structurally identical places**:
   ```
 
 **B. Adjacency transition smoothing — the same idea, four thresholds gating six fallback levels**
-(`custom_components/area_occupancy/db/transitions.py:487-651`, constants at `const.py:216-221`
-— **PR #454, merged to `main` 2026-07-06**): `lookup_transition_probability()` walks from most-specific to least-specific,
+(`custom_components/area_occupancy/db/transitions.py`, constants at `const.py:216-221`
+— **PR #454, merged to `main` 2026-07-06**): `AdjacencySnapshot.lookup()` walks from most-specific to least-specific,
 using the first level whose **total observation count** clears its threshold:
 
 | Level | Scope | Threshold constant | Value |

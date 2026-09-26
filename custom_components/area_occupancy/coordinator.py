@@ -31,12 +31,14 @@ from homeassistant.util import dt as dt_util
 
 # Local imports
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
+from .config_helpers import iter_area_subentries
 from .const import (
     ACCURACY_TICK_BUFFER_MAXLEN,
     CONF_AREA_ID,
-    CONF_AREAS,
     DEFAULT_NAME,
     DOMAIN,
+    FUSION_STORE_KEY_PREFIX,
+    FUSION_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
@@ -51,15 +53,34 @@ from .data.adjacency import (
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .data.entity_type import InputType
+from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.metrics import AccuracyMetrics, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
-from .db.transitions import build_adjacency_index, lookup_transition_probability
+from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
 from .time_utils import to_local
-from .utils import format_area_names
+from .utils import evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class OnlinePriorStore(Store[dict[str, dict]]):
+    """Store for the online-prior shadow state, with v1->v2 passthrough.
+
+    v2 (2026.9.1) added the weekly slot accumulators and divergence
+    history to ``OnlinePriorState``. Nothing needs rewriting on upgrade:
+    ``OnlinePriorState.from_dict`` tolerates a v1 payload (new fields
+    default to empty), so the migration just hands the old data through —
+    but the hook must exist, or ``Store.async_load`` raises
+    ``NotImplementedError`` on the version mismatch and every user's
+    scalar accumulators silently reset.
+    """
+
+    async def _async_migrate_func(
+        self, old_version: int, old_data: dict[str, dict]
+    ) -> dict[str, dict]:
+        return old_data
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -122,9 +143,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # feed back on this tick's own outputs.
         self._trajectory_tracker = TrajectoryTracker()
         self._lagged_probabilities: dict[str, float] = {}
-        # Adjacency boosts precomputed once per tick in the executor
-        # (since ``lookup_transition_probability`` issues SQL queries),
-        # then read synchronously by ``Area.probability``.
+        # In-memory adjacency index + transition counts. ``update`` runs on
+        # every sensor state change, so it must not query SQLite; this is
+        # reloaded by ``async_load_adjacency_snapshot`` whenever the
+        # underlying tables can change (setup, options update, area purge,
+        # hourly analysis).
+        self._adjacency_snapshot = AdjacencySnapshot()
+        # Adjacency boosts computed once per tick from the snapshot, then
+        # read synchronously by ``Area.probability``.
         self._adjacency_boosts: dict[str, BoostContribution] = {}
         # Decay modifiers (Option 3a) precomputed alongside the boosts
         # and applied to each entity's ``Decay.modifier_factor``.
@@ -140,10 +166,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # via the HA storage helper, and diffed against the DB-computed
         # prior each analysis cycle. Never read by the probability path.
         self._online_priors: dict[str, OnlinePriorEstimator] = {}
-        self._online_prior_store: Store[dict[str, dict]] = Store(
+        self._online_prior_store: Store[dict[str, dict]] = OnlinePriorStore(
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Learned-fusion shadow state (#501): per-area training ticks
+        # (sparse per-entity features) and per-area learners, persisted
+        # like the online priors above. Never read by the probability path.
+        self._fusion_ticks: dict[str, deque[FusionTick]] = {}
+        self._fusion_learners: dict[str, FusionLearner] = {}
+        self._fusion_store: Store[dict[str, dict]] = Store(
+            hass,
+            FUSION_STORE_VERSION,
+            f"{FUSION_STORE_KEY_PREFIX}.{self.entry_id}",
         )
 
     async def async_init_database(self) -> None:
@@ -214,9 +250,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _load_areas_from_config(
         self, target_dict: dict[str, Area] | None = None
     ) -> list[str]:
-        """Load areas from config entry CONF_AREAS list.
+        """Load areas from the config entry's area subentries.
 
-        Reads area configurations from the merged data+options CONF_AREAS list.
+        Reads one area configuration per ``SUBENTRY_TYPE_AREA`` subentry;
+        the ``CONF_AREAS`` list it used to read is gone as of CONF_VERSION 19.
 
         Args:
             target_dict: Optional dict to load areas into. If None, loads into self.areas.
@@ -231,12 +268,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         area_reg = ar.async_get(self.hass)
 
-        # Merge data and options to find CONF_AREAS.
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-        areas_list = merged.get(CONF_AREAS, [])
-
-        for area_data in areas_list:
+        for subentry_id, area_data in iter_area_subentries(self.config_entry):
             area_id = area_data.get(CONF_AREA_ID)
 
             if not area_id:
@@ -267,6 +299,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 coordinator=self,
                 area_name=area_name,
                 area_data=area_data,
+                subentry_id=subentry_id,
             )
             self.get_area_handle(area_name).attach(areas_dict[area_name])
             _LOGGER.debug("Loaded area: %s (ID: %s)", area_name, area_id)
@@ -472,6 +505,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         OnlinePriorState.from_dict(stored_priors[area_name])
                     )
 
+            # Restore learned-fusion shadow state (#501) for known areas
+            stored_fusion = await self._fusion_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_fusion:
+                    self._fusion_learners[area_name] = FusionLearner(
+                        FusionState.from_dict(stored_fusion[area_name])
+                    )
+
             _LOGGER.info(
                 "Initializing Area Occupancy for %d area(s): %s",
                 len(self.areas),
@@ -510,6 +551,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning(
                     "Failed to save area and entity data, continuing setup: %s", e
                 )
+
+            # save_data syncs AreaRelationships from each area's configured
+            # neighbours, so load the adjacency snapshot after it.
+            await self.async_load_adjacency_snapshot()
 
             # Track entity state changes for all areas
             all_entity_ids = []
@@ -578,15 +623,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         now = dt_util.utcnow()
-        # Precompute adjacency boosts and decay modifiers in the
-        # executor pool (one trip per tick) so the SQL lookups don't
-        # block the event loop. ``Area.probability`` reads boosts via
-        # the cached dict; entity ``Decay`` instances pick up the
-        # modifier through ``set_modifier_factor`` below.
+        # Compute adjacency boosts and decay modifiers from the in-memory
+        # snapshot. Nothing in this method awaits, so a state-change
+        # refresh completes without yielding to the event loop and
+        # without waiting on the executor pool. ``Area.probability``
+        # reads boosts via the cached dict; entity ``Decay`` instances
+        # pick up the modifier through ``set_modifier_factor`` below.
         (
             self._adjacency_boosts,
             self._adjacency_decay_modifiers,
-        ) = await self.hass.async_add_executor_job(self._compute_adjacency_state, now)
+        ) = self._compute_adjacency_state(now)
         for area_name, modifier in self._adjacency_decay_modifiers.items():
             area = self.areas.get(area_name)
             if area is None:
@@ -649,6 +695,34 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=presence_active, now=now
         )
+        # Learned-fusion training row (#501): the bias and per-entity
+        # feature products the live pipeline would use, minus the weight
+        # being learned. evidence_value() is the same helper
+        # sigmoid_probability uses, so the features cannot drift from the
+        # live math. MOTION/SLEEP are excluded — the ground-truth labels
+        # are derived from them (self-labelling); correlation analysis
+        # excludes them for the same reason.
+        correlations = self.get_cached_correlations(area_name)
+        features: dict[str, float] = {}
+        for entity_id, entity in area.entities.entities.items():
+            if entity.weight <= 0 or entity.type.input_type in (
+                InputType.MOTION,
+                InputType.SLEEP,
+            ):
+                continue
+            evidence = evidence_value(entity)
+            if evidence <= 0.0:
+                continue
+            correlation = correlations.get(entity_id, 1.0)
+            strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
+            features[entity_id] = (
+                evidence * correlation * entity.prob_given_true * strength_multiplier
+            )
+        self._fusion_ticks.setdefault(
+            area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
+        ).append(
+            FusionTick(timestamp=now, bias=logit(area.prior.value), features=features)
+        )
 
     # --- Adjacent-areas (Phase 4) accessors ---
     @property
@@ -705,30 +779,40 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {name: est.state.to_dict() for name, est in self._online_priors.items()}
         )
 
+    def fusion_learner_for(self, area_name: str) -> FusionLearner | None:
+        """Return the area's shadow fusion learner, if any ticks/state exist."""
+        return self._fusion_learners.get(area_name)
+
+    def ensure_fusion_learner(self, area_name: str) -> FusionLearner:
+        """Return the area's shadow fusion learner, creating it if absent."""
+        return self._fusion_learners.setdefault(area_name, FusionLearner())
+
+    def fusion_ticks_for(self, area_name: str) -> list[FusionTick]:
+        """Return a snapshot of the area's fusion training ticks."""
+        return list(self._fusion_ticks.get(area_name, ()))
+
+    async def async_save_fusion_state(self) -> None:
+        """Persist learned-fusion shadow state via the HA storage helper."""
+        await self._fusion_store.async_save(
+            {
+                name: learner.state.to_dict()
+                for name, learner in self._fusion_learners.items()
+            }
+        )
+
     def _compute_adjacency_state(
         self, now: datetime
     ) -> tuple[dict[str, BoostContribution], dict[str, DecayModifierContribution]]:
-        """Compute boosts and decay modifiers for every area, single executor trip.
+        """Compute boosts and decay modifiers for every area.
 
-        Runs in the thread-pool executor since
-        ``lookup_transition_probability`` issues synchronous SQL queries.
-        Reads the household adjacency index once and reuses it for every
-        per-area lookup.
+        Reads only the in-memory adjacency snapshot, so it is safe to
+        call on the event loop from every refresh.
         """
         boosts: dict[str, BoostContribution] = {}
         modifiers: dict[str, DecayModifierContribution] = {}
-        adjacency_index = build_adjacency_index(self.db, self.entry_id)
+        snapshot = self._adjacency_snapshot
+        adjacency_index = snapshot.adjacency_index
         lagged = self._lagged_probabilities
-
-        def _lookup(*, from_area, mid_area, to_area, hour_of_week):
-            return lookup_transition_probability(
-                self.db,
-                self.entry_id,
-                from_area=from_area,
-                mid_area=mid_area,
-                to_area=to_area,
-                hour_of_week=hour_of_week,
-            )
 
         for area_name in self.areas:
             trajectory = self.trajectory_for(area_name, now=now)
@@ -736,7 +820,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 boosts[area_name] = compute_adjacency_boost(
                     target_area=area_name,
                     trajectory=trajectory,
-                    lookup=_lookup,
+                    lookup=snapshot.lookup,
                 )
             # Decay modifier still fires even with no trajectory — the
             # 1-hop fallback ``P(target → neighbour)`` is meaningful when
@@ -751,10 +835,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     adjacency_index=adjacency_index,
                     lagged_probabilities=lagged,
                     trajectory=trajectory,
-                    lookup=_lookup,
+                    lookup=snapshot.lookup,
                     base_half_life_seconds=1.0,
                 )
         return boosts, modifiers
+
+    async def async_load_adjacency_snapshot(self) -> None:
+        """Reload the in-memory adjacency index and transition counts.
+
+        Called after anything that can change ``AreaRelationships`` or
+        ``AreaTransitions``. On a database error the previous snapshot is
+        kept, so a transient failure doesn't drop every learned
+        transition until the next reload.
+        """
+        snapshot = await self.hass.async_add_executor_job(
+            load_adjacency_snapshot, self.db, self.entry_id
+        )
+        if snapshot is not None:
+            self._adjacency_snapshot = snapshot
 
     def trajectory_for(self, target_area: str, *, now: datetime) -> Trajectory:
         """Return the trajectory describing recent ends excluding target.
@@ -831,6 +929,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 format_area_names(self),
                 err,
             )
+        try:
+            await self.async_save_fusion_state()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save learned-fusion shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
 
         # Step 3: Cancel all area state listeners
         for listener in self._area_state_listeners.values():
@@ -897,8 +1003,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Look up device for this area (used for both entity and device removal)
         device_registry = dr.async_get(self.hass)
-        device_identifiers = {(DOMAIN, area.config.area_id)}
-        device = device_registry.async_get_device(identifiers=device_identifiers)
+        device = device_registry.async_get_device_by_identifier(
+            (DOMAIN, area.config.area_id), self.entry_id
+        )
 
         # Remove entities from entity registry that belong to this device
         entity_registry = er.async_get(self.hass)
@@ -1010,7 +1117,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
             # Clean up device and entities from registries
-            device = device_registry.async_get_device(identifiers={(DOMAIN, area_id)})
+            device = device_registry.async_get_device_by_identifier(
+                (DOMAIN, area_id), self.entry_id
+            )
             if device:
                 # Remove entities belonging to this device
                 for entity_id, entity_entry in list(entity_registry.entities.items()):
@@ -1056,34 +1165,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 area_name or "unknown",
             )
 
-        # Remove orphaned areas from config entry to prevent repeated warnings
+        # Drop subentries for areas whose HA area was deleted, so the warning
+        # does not repeat on every reload.
         orphaned_set = set(orphaned_area_ids)
-        merged = dict(self.config_entry.data)
-        merged.update(self.config_entry.options)
-        areas_list = merged.get(CONF_AREAS, [])
-        updated_areas = [
-            a for a in areas_list if a.get(CONF_AREA_ID) not in orphaned_set
+        orphaned_subentry_ids = [
+            subentry_id
+            for subentry_id, area_data in iter_area_subentries(self.config_entry)
+            if area_data.get(CONF_AREA_ID) in orphaned_set
         ]
 
-        if len(updated_areas) != len(areas_list):
+        if orphaned_subentry_ids:
             try:
-                if CONF_AREAS in self.config_entry.options:
-                    new_options = dict(self.config_entry.options)
-                    new_options[CONF_AREAS] = updated_areas
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry,
-                        options=new_options,
-                    )
-                else:
-                    new_data = dict(self.config_entry.data)
-                    new_data[CONF_AREAS] = updated_areas
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry,
-                        data=new_data,
+                for subentry_id in orphaned_subentry_ids:
+                    self.hass.config_entries.async_remove_subentry(
+                        self.config_entry, subentry_id
                     )
                 _LOGGER.info(
                     "Removed %d orphaned area(s) from configuration",
-                    len(areas_list) - len(updated_areas),
+                    len(orphaned_subentry_ids),
                 )
             except (ValueError, KeyError, AttributeError) as err:
                 _LOGGER.error(
@@ -1272,6 +1371,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Force immediate save after configuration changes
         await self.hass.async_add_executor_job(self.db.save_data)
+
+        # Neighbour lists may have changed; save_data has just re-synced them.
+        await self.async_load_adjacency_snapshot()
 
         # Only request refresh if setup is complete to avoid debouncer conflicts
         if self.setup_complete:

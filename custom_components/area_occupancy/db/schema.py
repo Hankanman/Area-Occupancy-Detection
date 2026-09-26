@@ -272,9 +272,10 @@ class Intervals(Base):
     # Relationship removed - SQLite doesn't support composite FKs properly
     # Use manual joins in queries instead (see db/queries.py)
 
-    # Add unique constraint on (entity_id, start_time, end_time, aggregation_level)
+    # Add unique constraint on (entry_id, entity_id, start_time, end_time, aggregation_level)
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "start_time",
             "end_time",
@@ -366,6 +367,7 @@ class IntervalAggregates(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "aggregation_period",
             "period_start",
@@ -467,6 +469,7 @@ class NumericSamples(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "timestamp",
             name="uq_numeric_samples_entity_timestamp",
@@ -512,6 +515,7 @@ class NumericAggregates(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "entry_id",
             "entity_id",
             "aggregation_period",
             "period_start",
@@ -692,10 +696,12 @@ class AreaRelationships(Base):
 class AreaTransitions(Base):
     """Learned per-chain, per-hour transition counts between adjacent areas.
 
-    A row records how often a transition (``from_area`` → ``to_area``) was
+    A row records how often a transition chain ending in ``to_area`` was
     observed in a given ``hour_of_week`` bucket (0–167, weekday × 24 + hour).
-    For 2-hop chains ``mid_area`` is the area that was occupied immediately
-    before ``from_area``; for 1-hop chains it is the empty string. Only
+    A 1-hop chain ``X → Y`` is stored as ``from_area=X, mid_area="",
+    to_area=Y``. A 2-hop chain ``W → X → Y`` is stored oldest first:
+    ``from_area=W, mid_area=X, to_area=Y`` -- ``mid_area`` is the area
+    occupied *after* ``from_area`` and immediately before ``to_area``. Only
     transitions between configured-adjacent pairs are recorded, so the table
     stays sparse.
 

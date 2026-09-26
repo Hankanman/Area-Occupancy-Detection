@@ -20,7 +20,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, CONF_VERSION_MINOR, DEVICE_SW_VERSION
+from .const import (
+    CONF_VERSION,
+    CONF_VERSION_MINOR,
+    DEVICE_SW_VERSION,
+    ONLINE_PRIOR_DIFF_TOLERANCE,
+)
 from .data.metrics import metrics_to_diagnostics
 from .db import queries
 
@@ -105,6 +110,8 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
         "cover": len(sensors.cover),
         "power": len(sensors.power),
         "wifi_clients": len(sensors.wifi_clients),
+        "custom_binary": len(sensors.custom_binary),
+        "custom_numeric": len(sensors.custom_numeric),
         "illuminance": len(sensors.illuminance),
         "humidity": len(sensors.humidity),
         "temperature": len(sensors.temperature),
@@ -137,6 +144,8 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
             "environmental": weights.environmental,
             "power": weights.power,
             "wifi_clients": weights.wifi_clients,
+            "custom_binary": weights.custom_binary,
+            "custom_numeric": weights.custom_numeric,
             "wasp": weights.wasp,
         },
         "min_prior_override": getattr(config, "min_prior_override", None),
@@ -275,7 +284,23 @@ def _area_snapshot(
                     if db_prior is not None
                     else None,
                     "observed_days": round(estimator.observed_days(now), 2),
+                    # Weekly-bucket extension (#500 phase 2)
+                    "observed_slots": estimator.observed_slot_count(),
+                    "days_within_tolerance": estimator.days_within_tolerance(
+                        ONLINE_PRIOR_DIFF_TOLERANCE
+                    ),
+                    "diff_tolerance": ONLINE_PRIOR_DIFF_TOLERANCE,
+                    # Recent daily worst-case divergence summaries; the
+                    # full 90-day history lives in the Store.
+                    "diff_history": estimator.state.diff_history[-14:],
                 }
+        fusion = coordinator.fusion_learner_for(area_name)
+        if fusion is not None:
+            fusion_defaults = {
+                entity_id: getattr(entity, "effective_weight", entity.weight)
+                for entity_id, entity in area.entities.entities.items()
+            }
+            current["fusion"] = fusion.snapshot(fusion_defaults)
         snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
         _LOGGER.warning(

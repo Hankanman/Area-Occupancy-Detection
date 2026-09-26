@@ -5,21 +5,39 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import voluptuous as vol
 
-from custom_components.area_occupancy.const import DEVICE_SW_VERSION, DOMAIN
+from custom_components.area_occupancy.const import (
+    CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_DECAY_HALF_LIFE,
+    CONF_MOTION_SENSORS,
+    CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    DEVICE_SW_VERSION,
+    DOMAIN,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay as DecayClass
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.prior import DEFAULT_SLOT_MINUTES
+from custom_components.area_occupancy.data.purpose import get_default_decay_half_life
 from custom_components.area_occupancy.data.types import GaussianParams
 from custom_components.area_occupancy.service import (
+    SET_AREA_OPTION_SCHEMA,
+    SETTABLE_AREA_OPTIONS,
     _build_analysis_data,
     _collect_entity_states,
     _collect_likelihood_data,
+    _export_config,
     _find_area_by_area_id,
+    _get_time_priors,
     _purge_area_history,
     _run_analysis,
+    _set_area_option,
     async_setup_services,
+    async_unload_services,
 )
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -679,6 +697,43 @@ class TestPurgeAreaHistory:
         # subsequent operations still find it.
         assert target_name in remaining
 
+    async def test_purge_reloads_adjacency_snapshot(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """The refresh path's in-memory adjacency copy follows the purge."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        target_name = coordinator.get_area_names()[0]
+        target_area = coordinator.get_area(target_name)
+
+        db = coordinator.db
+        db.save_area_data(target_name)
+        with db.get_session() as session:
+            session.add(
+                db.AreaRelationships(
+                    entry_id=coordinator.entry_id,
+                    area_name=target_name,
+                    related_area_name="Hallway",
+                    relationship_type="adjacent",
+                    influence_weight=0.3,
+                )
+            )
+            session.commit()
+        await coordinator.async_load_adjacency_snapshot()
+        snapshot = coordinator._adjacency_snapshot  # noqa: SLF001
+        assert snapshot.adjacency_index == {target_name: {"Hallway"}}
+
+        coordinator.async_request_refresh = AsyncMock()
+        call = _create_service_call(area_id=target_area.config.area_id)
+        await _purge_area_history(hass, call)
+
+        # The purge deleted the row, and the re-persisted shell has no
+        # configured neighbours to re-sync.
+        snapshot = coordinator._adjacency_snapshot  # noqa: SLF001
+        assert snapshot.adjacency_index == {}
+
     def test_find_area_by_area_id_returns_match(
         self,
         coordinator: AreaOccupancyCoordinator,
@@ -695,3 +750,406 @@ class TestPurgeAreaHistory:
         miss_name, miss_area = _find_area_by_area_id(coordinator, "not_a_real_id")
         assert miss_name is None
         assert miss_area is None
+
+
+class TestExportConfig:
+    """The export users paste into bug reports and the simulator."""
+
+    async def test_areas_come_from_their_subentries(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        # Regression: the export read the legacy CONF_AREAS key, which v19
+        # emptied when areas moved into subentries, so it returned an export
+        # with no areas in it at all.
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        result = await _export_config(hass, _create_service_call())
+
+        areas = result[CONF_AREAS]
+        assert areas, "the export has no areas"
+        assert len(areas) == len(coordinator.get_area_names())
+        configured = {
+            coordinator.get_area(name).config.area_id
+            for name in coordinator.get_area_names()
+        }
+        assert {area[CONF_AREA_ID] for area in areas} == configured
+        # Sensors have to survive the export or it cannot describe an instance.
+        assert any(area.get(CONF_MOTION_SENSORS) for area in areas)
+
+    async def test_area_id_is_the_first_key_of_each_area(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        result = await _export_config(hass, _create_service_call())
+
+        for area in result[CONF_AREAS]:
+            assert next(iter(area)) == CONF_AREA_ID
+
+    async def test_global_settings_are_included(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        coordinator.config_entry.options = {"sleep_start": "22:30:00"}
+
+        result = await _export_config(hass, _create_service_call())
+
+        assert result["sleep_start"] == "22:30:00"
+
+    async def test_a_legacy_entry_still_exports_its_areas(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        # An entry that has not been migrated yet keeps its areas in the
+        # legacy list; the export has to describe that instance too.
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        legacy = [{CONF_AREA_ID: "legacy_area", CONF_THRESHOLD: 55.0}]
+        coordinator.config_entry.subentries = {}
+        coordinator.config_entry.data = {CONF_AREAS: legacy}
+
+        result = await _export_config(hass, _create_service_call())
+
+        assert [area[CONF_AREA_ID] for area in result[CONF_AREAS]] == ["legacy_area"]
+
+
+class TestSetAreaOption:
+    """The one automatable write path into an area's configuration."""
+
+    def _area(self, coordinator: AreaOccupancyCoordinator):
+        name = coordinator.get_area_names()[0]
+        return name, coordinator.get_area(name)
+
+    async def test_sets_a_tunable_through_the_shared_validator(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        area_name, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        result = await _set_area_option(
+            hass,
+            _create_service_call(area_id=area.config.area_id, threshold=70.0),
+        )
+
+        area.config.update_config.assert_awaited_once_with({CONF_THRESHOLD: 70.0})
+        assert result["area_name"] == area_name
+        assert result["updated"] == {CONF_THRESHOLD: 70.0}
+
+    async def test_only_the_named_options_are_written(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        # A call that names one option must not rewrite the rest of the area.
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        await _set_area_option(
+            hass,
+            _create_service_call(area_id=area.config.area_id, wasp_enabled=True),
+        )
+
+        assert area.config.update_config.await_args[0][0] == {CONF_WASP_ENABLED: True}
+
+    async def test_invalid_value_is_rejected_before_it_is_stored(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        with pytest.raises(ServiceValidationError, match="invalid_threshold"):
+            await _set_area_option(
+                hass,
+                _create_service_call(area_id=area.config.area_id, threshold=150.0),
+            )
+
+        area.config.update_config.assert_not_awaited()
+
+    async def test_half_life_matching_the_purpose_default_is_normalised(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """The #439/#440 rule applies here too, not just in the config flow.
+
+        Setting the half-life to exactly the area's own purpose default must
+        store the 0 sentinel, so the area keeps following its purpose instead
+        of pinning a value that only looks the same today.
+        """
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+        purpose_default = int(get_default_decay_half_life(area.config.purpose))
+
+        await _set_area_option(
+            hass,
+            _create_service_call(
+                area_id=area.config.area_id, decay_half_life=purpose_default
+            ),
+        )
+
+        assert area.config.update_config.await_args[0][0] == {CONF_DECAY_HALF_LIFE: 0}
+
+    async def test_a_custom_half_life_is_preserved(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        await _set_area_option(
+            hass, _create_service_call(area_id=area.config.area_id, decay_half_life=123)
+        )
+
+        assert area.config.update_config.await_args[0][0] == {CONF_DECAY_HALF_LIFE: 123}
+
+    async def test_out_of_range_half_life_is_rejected(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        _, area = self._area(coordinator)
+        area.config.update_config = AsyncMock()
+
+        with pytest.raises(ServiceValidationError, match="invalid_decay_half_life"):
+            await _set_area_option(
+                hass,
+                _create_service_call(area_id=area.config.area_id, decay_half_life=9),
+            )
+
+    async def test_unknown_area_raises_with_guidance(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        with pytest.raises(ServiceValidationError) as excinfo:
+            await _set_area_option(
+                hass, _create_service_call(area_id="nope", threshold=50)
+            )
+
+        assert "nope" in str(excinfo.value)
+        assert "Known area_ids" in str(excinfo.value)
+
+    def test_schema_rejects_a_call_that_changes_nothing(self) -> None:
+        with pytest.raises(vol.Invalid, match="at least one option"):
+            SET_AREA_OPTION_SCHEMA({"area_id": "living_room"})
+
+    def test_schema_coerces_a_duration_half_life_to_whole_seconds(self) -> None:
+        data = SET_AREA_OPTION_SCHEMA(
+            {"area_id": "living_room", "decay_half_life": {"minutes": 5}}
+        )
+        assert data[CONF_DECAY_HALF_LIFE] == 300
+
+    def test_structural_configuration_is_not_settable(self) -> None:
+        """Sensors, adjacency and the area id itself stay in the UI.
+
+        Adjacency in particular has to be mirrored onto the neighbouring
+        areas, which only the config flow does.
+        """
+        for key in (
+            "motion_sensors",
+            "adjacent_areas",
+            "custom_binary_sensors",
+            "purpose",
+        ):
+            assert key not in SETTABLE_AREA_OPTIONS
+            with pytest.raises(vol.Invalid):
+                SET_AREA_OPTION_SCHEMA({"area_id": "living_room", key: "x"})
+
+
+class TestAsyncUnloadServices:
+    """Unloading must remove every service setup registered."""
+
+    async def test_every_registered_service_is_removed(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A handler left behind raises once the coordinator is gone.
+
+        Asserting the domain is empty rather than naming services keeps this
+        honest when a new one is added: registering without unregistering
+        fails here instead of at the user's next service call.
+        """
+        hass.data[DOMAIN] = coordinator
+        await async_setup_services(hass)
+        registered = set(hass.services.async_services().get(DOMAIN, {}))
+        assert registered
+
+        async_unload_services(hass)
+
+        assert not hass.services.async_services().get(DOMAIN, {}), (
+            "services left registered after unload: "
+            f"{sorted(registered & set(hass.services.async_services().get(DOMAIN, {})))}"
+        )
+
+
+class TestGetTimePriors:
+    """Tests for the get_time_priors service (weekly occupancy forecast)."""
+
+    @staticmethod
+    def _seed_prior(area: Any, slots: dict[tuple[int, int], float]) -> None:
+        """Warm an area's prior cache so the service needs no DB access."""
+        area.prior.global_prior = 0.5
+        area.prior._cached_time_priors = dict(slots)  # noqa: SLF001
+
+    async def test_get_time_priors_all_areas(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """With no area_id, every configured area's forecast is returned."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        for area_name in coordinator.get_area_names():
+            self._seed_prior(
+                coordinator.get_area(area_name), {(0, 0): 0.4, (6, 23): 0.6}
+            )
+
+        result = await _get_time_priors(hass, _create_service_call())
+
+        assert set(result) == {"slot_minutes", "generated_at", "areas"}
+        assert result["slot_minutes"] == DEFAULT_SLOT_MINUTES
+        assert isinstance(result["generated_at"], str)
+        assert "T" in result["generated_at"]
+
+        for area_name in coordinator.get_area_names():
+            area = coordinator.get_area(area_name)
+            data = result["areas"][area_name]
+            assert set(data) == {
+                "area_id",
+                "global_prior",
+                "slot_minutes",
+                "current_slot",
+                "threshold",
+                "tau_slots",
+                "slots",
+                "slots_baseline",
+                "slots_raw",
+                "data_points",
+            }
+            # The four per-slot maps are parallel: same keys, one entry each.
+            assert (
+                set(data["slots"])
+                == set(data["slots_baseline"])
+                == set(data["slots_raw"])
+                == set(data["data_points"])
+            )
+            assert data["area_id"] == area.config.area_id
+            assert data["global_prior"] == 0.5
+            assert data["slot_minutes"] == DEFAULT_SLOT_MINUTES
+            # Slots keyed "day,slot"; the response wires through prior_for().
+            assert data["slots"]["0,0"] == round(area.prior.prior_for(0, 0), 4)
+            assert data["slots"]["6,23"] == round(area.prior.prior_for(6, 23), 4)
+
+    async def test_get_time_priors_single_area(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """A supplied area_id restricts the response to that area only."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        target_name = coordinator.get_area_names()[0]
+        target = coordinator.get_area(target_name)
+        self._seed_prior(target, {(1, 1): 0.5})
+
+        result = await _get_time_priors(
+            hass, _create_service_call(area_id=target.config.area_id)
+        )
+
+        assert set(result["areas"]) == {target_name}
+        assert result["areas"][target_name]["area_id"] == target.config.area_id
+
+    async def test_get_time_priors_unknown_area_raises(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """An unknown area_id raises ServiceValidationError with guidance."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+
+        call = _create_service_call(area_id="does_not_exist")
+        with pytest.raises(ServiceValidationError) as excinfo:
+            await _get_time_priors(hass, call)
+
+        message = str(excinfo.value)
+        assert "does_not_exist" in message
+        assert "Known area_ids" in message
+
+    async def test_get_time_priors_registered_supports_response_only(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """The service registers with SupportsResponse.ONLY."""
+        hass.data[DOMAIN] = coordinator
+        await async_setup_services(hass)
+
+        services = hass.services.async_services().get(DOMAIN, {})
+        assert "get_time_priors" in services
+        assert services["get_time_priors"].supports_response == SupportsResponse.ONLY
+
+    async def test_get_time_priors_includes_all_areas_aggregate(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """The 'All Areas' aggregate zone is included in the full response."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        for area_name in coordinator.get_area_names():
+            self._seed_prior(
+                coordinator.get_area(area_name), {(0, 0): 0.4, (6, 23): 0.6}
+            )
+
+        result = await _get_time_priors(hass, _create_service_call())
+
+        assert "All Areas" in result["areas"]
+        agg = result["areas"]["All Areas"]
+        assert agg["area_id"] == "all_areas"
+        assert agg["aggregate"] is True
+        # Single member → the aggregate equals that member's forecast.
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        assert agg["slots"]["0,0"] == round(area.prior.prior_for(0, 0), 4)
+
+    async def test_get_time_priors_filter_selects_aggregate(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: Mock,
+        coordinator: AreaOccupancyCoordinator,
+    ) -> None:
+        """An area_id of 'all_areas' returns only the aggregate zone."""
+        _setup_coordinator_test(hass, mock_config_entry, coordinator)
+        for area_name in coordinator.get_area_names():
+            self._seed_prior(coordinator.get_area(area_name), {(0, 0): 0.5})
+
+        result = await _get_time_priors(hass, _create_service_call(area_id="all_areas"))
+
+        assert set(result["areas"]) == {"All Areas"}

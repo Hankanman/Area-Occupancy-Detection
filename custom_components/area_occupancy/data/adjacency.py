@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 # A small Protocol matching the signature of
-# ``db.transitions.lookup_transition_probability`` so callers and tests
+# ``db.transitions.AdjacencySnapshot.lookup`` so callers and tests
 # can pass either the real function or a stub. Keyword-only fields match
 # the public API.
 class TransitionLookupFn(Protocol):

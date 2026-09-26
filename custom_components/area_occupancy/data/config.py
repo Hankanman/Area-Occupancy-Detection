@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.util import dt as dt_util
 
+from ..config_helpers import find_area_subentry_id, iter_area_subentries
 from ..const import (
     ANALYSIS_INTERVAL,
     CONF_ADJACENT_AREAS,
@@ -21,11 +21,15 @@ from ..const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_AREAS,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
+    CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
+    CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -69,6 +73,8 @@ from ..const import (
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_LOCK,
@@ -83,6 +89,9 @@ from ..const import (
     DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
     DEFAULT_COVER_ACTIVE_STATES,
+    DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
+    DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_DOOR_ACTIVE_STATE,
@@ -106,6 +115,8 @@ from ..const import (
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM_BINARY,
+    DEFAULT_WEIGHT_CUSTOM_NUMERIC,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -306,6 +317,8 @@ class Sensors:
     pm10: list[str] = field(default_factory=list)
     power: list[str] = field(default_factory=list)
     wifi_clients: list[str] = field(default_factory=list)
+    custom_binary: list[str] = field(default_factory=list)
+    custom_numeric: list[str] = field(default_factory=list)
     door: list[str] = field(default_factory=list)
     lock: list[str] = field(default_factory=list)
     window: list[str] = field(default_factory=list)
@@ -395,6 +408,9 @@ class SensorStates:
         default_factory=lambda: list(DEFAULT_APPLIANCE_ACTIVE_STATES)
     )
     media: list[str] = field(default_factory=lambda: list(DEFAULT_MEDIA_ACTIVE_STATES))
+    custom_binary: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CUSTOM_BINARY_ACTIVE_STATES)
+    )
 
 
 @dataclass
@@ -408,6 +424,8 @@ class Weights:
     lock: float = DEFAULT_WEIGHT_LOCK
     window: float = DEFAULT_WEIGHT_WINDOW
     cover: float = DEFAULT_WEIGHT_COVER
+    custom_binary: float = DEFAULT_WEIGHT_CUSTOM_BINARY
+    custom_numeric: float = DEFAULT_WEIGHT_CUSTOM_NUMERIC
     environmental: float = DEFAULT_WEIGHT_ENVIRONMENTAL
     power: float = DEFAULT_WEIGHT_POWER
     wifi_clients: float = DEFAULT_WEIGHT_WIFI_CLIENTS
@@ -441,19 +459,23 @@ class AreaConfig:
         coordinator: AreaOccupancyCoordinator,
         area_name: str | None = None,
         area_data: dict[str, Any] | None = None,
+        subentry_id: str | None = None,
     ):
         """Initialize the config from a coordinator.
 
         Args:
             coordinator: The coordinator instance
             area_name: Optional area name identifier (for multi-area support)
-            area_data: Optional area-specific configuration data (if None, uses config_entry)
+            area_data: Optional area-specific configuration data (if None, reads
+                the area's config subentry)
+            subentry_id: The config subentry holding this area, when known
         """
         self.coordinator = coordinator
         self.config_entry = coordinator.config_entry
         self.hass = coordinator.hass
         self.db = coordinator.db
         self.area_name = area_name  # Area identifier for multi-area support
+        self.subentry_id = subentry_id
 
         # Load configuration from the merged entry data or provided area_data
         if area_data is not None:
@@ -462,25 +484,20 @@ class AreaConfig:
             if coordinator.config_entry is None:
                 raise ValueError("Coordinator config_entry cannot be None")
 
-            merged = self._merge_entry(coordinator.config_entry)
-            if CONF_AREAS in merged and isinstance(merged[CONF_AREAS], list):
-                if area_name is None:
-                    raise ValueError(
-                        "area_name is required when using multi-area configuration format"
-                    )
-                area_data = self._extract_area_data_from_areas_list(
-                    merged[CONF_AREAS], area_name, coordinator.hass
+            if area_name is None:
+                raise ValueError(
+                    "area_name is required when using multi-area configuration format"
                 )
-                if area_data:
-                    self._load_config(area_data)
-                else:
-                    _LOGGER.warning(
-                        "Area '%s' not found in configuration. Loading default config.",
-                        area_name,
-                    )
-                    self._load_config({})
-            else:
+            found = self._find_area_subentry(coordinator.config_entry, area_name)
+            if found is None:
+                _LOGGER.warning(
+                    "Area '%s' not found in configuration. Loading default config.",
+                    area_name,
+                )
                 self._load_config({})
+            else:
+                self.subentry_id, area_data = found
+                self._load_config(area_data)
 
     def _load_config(self, data: dict[str, Any]) -> None:
         """Load configuration from merged data.
@@ -555,6 +572,8 @@ class AreaConfig:
             pm10=data.get(CONF_PM10_SENSORS, []),
             power=data.get(CONF_POWER_SENSORS, []),
             wifi_clients=data.get(CONF_WIFI_CLIENTS_SENSORS, []),
+            custom_binary=data.get(CONF_CUSTOM_BINARY_SENSORS, []),
+            custom_numeric=data.get(CONF_CUSTOM_NUMERIC_SENSORS, []),
             door=data.get(CONF_DOOR_SENSORS, []),
             lock=data.get(CONF_LOCK_SENSORS, []),
             window=data.get(CONF_WINDOW_SENSORS, []),
@@ -572,6 +591,10 @@ class AreaConfig:
                 CONF_APPLIANCE_ACTIVE_STATES, list(DEFAULT_APPLIANCE_ACTIVE_STATES)
             ),
             media=data.get(CONF_MEDIA_ACTIVE_STATES, list(DEFAULT_MEDIA_ACTIVE_STATES)),
+            custom_binary=data.get(
+                CONF_CUSTOM_BINARY_ACTIVE_STATES,
+                list(DEFAULT_CUSTOM_BINARY_ACTIVE_STATES),
+            ),
         )
 
         self.weights = Weights(
@@ -589,7 +612,30 @@ class AreaConfig:
             wifi_clients=data.get(
                 CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS
             ),
+            custom_binary=data.get(
+                CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY
+            ),
+            custom_numeric=data.get(
+                CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC
+            ),
             wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+        )
+
+        # Generic per-InputType active_range override hook (see
+        # data/entity.py's `f"{input_type.value}_active_range"` lookup).
+        # custom_numeric is the first InputType to actually populate it —
+        # every other numeric type still relies on DEFAULT_TYPES.
+        self.custom_numeric_active_range: tuple[float, float] = (
+            float(
+                data.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+                )
+            ),
+            float(
+                data.get(
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX
+                )
+            ),
         )
 
         # Resolve half-life: if 0 or not set, use purpose-based value
@@ -658,6 +704,8 @@ class AreaConfig:
             *self.sensors.pm10,
             *self.sensors.power,
             *self.sensors.wifi_clients,
+            *self.sensors.custom_binary,
+            *self.sensors.custom_numeric,
         ]
 
     def validate_entity_configuration(self) -> list[str]:
@@ -704,6 +752,8 @@ class AreaConfig:
             ("pm10", self.sensors.pm10),
             ("power", self.sensors.power),
             ("wifi_clients", self.sensors.wifi_clients),
+            ("custom_binary", self.sensors.custom_binary),
+            ("custom_numeric", self.sensors.custom_numeric),
         ]:
             if entity_list and not all(
                 isinstance(eid, str) and eid.strip() for eid in entity_list
@@ -719,60 +769,58 @@ class AreaConfig:
         merged.update(config_entry.options)
         return merged
 
-    @staticmethod
-    def _extract_area_data_from_areas_list(
-        areas_list: list[dict[str, Any]],
-        area_name: str | None,
-        hass: HomeAssistant,
-    ) -> dict[str, Any] | None:
-        """Extract area data from CONF_AREAS list for a specific area.
+    def _find_area_subentry(
+        self, config_entry: ConfigEntry, area_name: str | None
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Find the area subentry whose Home Assistant area is ``area_name``.
 
-        Args:
-            areas_list: List of area configuration dictionaries
-            area_name: Area name to find (resolved from area_id)
-            hass: Home Assistant instance for resolving area names
+        Areas are keyed internally by their registry name, so the lookup
+        resolves each subentry's ``area_id`` back to a name.
 
         Returns:
-            Area configuration dictionary if found, None otherwise
+            ``(subentry_id, area_data)`` when found, otherwise ``None``.
         """
         if not area_name:
             return None
 
-        area_reg = ar.async_get(hass)
-
-        # Try to find area by matching area_name with resolved area names
-        for area_data in areas_list:
+        area_reg = ar.async_get(self.hass)
+        for subentry_id, area_data in iter_area_subentries(config_entry):
             area_id = area_data.get(CONF_AREA_ID)
-            if area_id:
-                # Resolve area name from ID
-                area_entry = area_reg.async_get_area(area_id)
-                if area_entry and area_entry.name == area_name:
-                    return area_data
-
-        # Fallback: if no match found, return None
+            if not area_id:
+                continue
+            area_entry = area_reg.async_get_area(area_id)
+            if area_entry and area_entry.name == area_name:
+                return subentry_id, area_data
         return None
 
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry.
 
-        Finds the area in CONF_AREAS list and reloads config from its data.
+        Finds this area's subentry and reloads config from its data. The
+        known ``subentry_id`` is tried first: the name match alone breaks
+        after the Home Assistant area is renamed, because the coordinator
+        keeps the area under the name it had at load time, and a miss here
+        would load an empty config over the area's real one.
         """
         # Update the config entry reference
         self.config_entry = config_entry
 
-        # Find area data from CONF_AREAS list
-        merged = self._merge_entry(config_entry)
-        areas_list = merged.get(CONF_AREAS, [])
-        area_data = self._extract_area_data_from_areas_list(
-            areas_list, self.area_name, self.hass
-        )
-        if area_data:
+        found: tuple[str, dict[str, Any]] | None = None
+        if (
+            self.subentry_id
+            and (subentry := config_entry.subentries.get(self.subentry_id)) is not None
+        ):
+            found = (self.subentry_id, dict(subentry.data))
+        if found is None:
+            found = self._find_area_subentry(config_entry, self.area_name)
+        if found is not None:
+            self.subentry_id, area_data = found
             self._load_config(area_data)
             return
 
         # Fallback: area not found
         _LOGGER.warning(
-            "Area '%s' (ID: %s) not found in CONF_AREAS. Loading default config.",
+            "Area '%s' (ID: %s) has no config subentry. Loading default config.",
             self.area_name,
             self.area_id,
         )
@@ -783,9 +831,7 @@ class AreaConfig:
         return getattr(self, key, default)
 
     async def update_config(self, options: dict[str, Any]) -> None:
-        """Update configuration and persist to Home Assistant config entry.
-
-        Finds the area in CONF_AREAS list and updates its data with the new options.
+        """Update this area's configuration and persist it to its subentry.
 
         Args:
             options: Dictionary of configuration options to update
@@ -802,47 +848,30 @@ class AreaConfig:
             msg = "Area ID not available for config update"
             raise HomeAssistantError(msg)
 
-        # Get current CONF_AREAS from merged data+options
-        merged = self._merge_entry(self.config_entry)
-        areas_list = list(merged.get(CONF_AREAS, []))
-
-        # Find and update the area in the list
-        updated = False
-        for i, area_data in enumerate(areas_list):
-            if area_data.get(CONF_AREA_ID) == area_id:
-                updated_data = dict(area_data)
-                updated_data.update(options)
-                areas_list[i] = updated_data
-                updated = True
-                break
-
-        if not updated:
-            msg = f"Area ID '{area_id}' not found in CONF_AREAS"
+        subentry_id = self.subentry_id or find_area_subentry_id(
+            self.config_entry, area_id
+        )
+        subentry = (
+            self.config_entry.subentries.get(subentry_id) if subentry_id else None
+        )
+        if subentry is None:
+            msg = f"Area ID '{area_id}' has no config subentry"
             raise HomeAssistantError(msg)
 
-        # Persist updated CONF_AREAS — write to options if it exists there
-        # (options takes precedence in the merge), otherwise write to data
+        updated_data = dict(subentry.data)
+        updated_data.update(options)
+
         try:
-            if CONF_AREAS in self.config_entry.options:
-                new_options = dict(self.config_entry.options)
-                new_options[CONF_AREAS] = areas_list
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    options=new_options,
-                )
-            else:
-                new_data = dict(self.config_entry.data)
-                new_data[CONF_AREAS] = areas_list
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    data=new_data,
-                )
+            self.hass.config_entries.async_update_subentry(
+                self.config_entry, subentry, data=updated_data
+            )
         except (ValueError, KeyError, AttributeError) as err:
-            _LOGGER.exception("Failed to update config entry for area %s", area_id)
+            _LOGGER.exception("Failed to update subentry for area %s", area_id)
             raise HomeAssistantError(f"Failed to update configuration: {err}") from err
 
-        # Reload internal config from updated data
-        self._load_config(areas_list[i])
+        self.subentry_id = subentry_id
+        # Reload internal config from the updated data
+        self._load_config(updated_data)
 
         # Request update since threshold affects occupied calculation
         if self.coordinator.setup_complete:

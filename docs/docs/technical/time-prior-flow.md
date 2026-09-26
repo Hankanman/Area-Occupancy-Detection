@@ -126,8 +126,10 @@ The calculation follows these steps:
 
 4. **Calculate Prior Values**:
    - For each slot: `prior_value = occupied_seconds / total_slot_seconds`
-   - Applies safety bounds: clamps to [0.1, 0.9] range
-   - Only calculates priors for slots with data (missing slots default to 0.5 at retrieval)
+   - Applies safety bounds: clamps to `[TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND]` = `[0.03, 0.9]`
+   - Iterates the **denominators** (`slot_total_seconds`), so a slot the analysis
+     period covered but that saw no occupancy is stored at the lower bound. Only
+     slots the period never covered are left unwritten.
 
 5. **Save to Database**: Calls `save_time_priors()` to store all calculated priors with metadata:
    - `prior_value`: The calculated probability
@@ -225,36 +227,55 @@ The time prior retrieval follows this path:
 
 1. **Entry Point**: `prior.py:Prior.time_prior` property (line 115)
    - Called when calculating combined prior
-   - Property getter that triggers retrieval if needed
+   - Property getter that only reads the cache; it never queries the database
 
 2. **Cache Check**: Checks if `_cached_time_priors` dictionary is populated (line 118)
-   - If `None`, triggers `_load_time_priors()` to load all 168 slots from database
+   - If `None`, returns `unlearned_slot_prior` without querying the database (the area's `global_prior`; `DEFAULT_TIME_PRIOR` (0.5) only before any global prior is learned)
    - Cache stores all time priors as a dictionary: `(day_of_week, time_slot) -> prior_value`
+   - The cache is filled by `load_time_priors()`, which `load_data()` and `start_prior_analysis()` run in the executor, so probability calculations on the event loop never query SQLite
 
-3. **Load All Time Priors**: `prior.py:_load_time_priors()` (line 161)
-   - Calls `db.get_all_time_priors()` to retrieve all time priors for the area
-   - Loads all 168 slots in a single database query for efficiency
-   - Applies safety bounds [0.1, 0.9] to all values during loading
-   - Falls back to default values if database query fails
+3. **Load All Time Priors**: `prior.py:load_time_priors()`
+   - Runs in the executor only (`load_data` on area load,
+     `start_prior_analysis` after new priors are saved) — `time_prior`
+     itself never reads the database, since every probability calculation
+     on the event loop calls it
+   - Calls `db.get_stored_time_priors()` to retrieve only the slots actually
+     stored for the area, in a single database query
+   - Fills the rest of the weekly grid itself with
+     `Prior.unlearned_slot_prior` — the area's own `global_prior`, clamped
+     to [0.03, 0.9] like every time prior. Inside that band it is the
+     identity of `combine_priors()` and contributes no opinion; a
+     `global_prior` below 0.03 (or above 0.9) gets the bound instead, which
+     tilts the combined prior slightly toward it. `DEFAULT_TIME_PRIOR` (0.5)
+     is used only before any global prior exists.
+   - Applies safety bounds [`TIME_PRIOR_MIN_BOUND`, `TIME_PRIOR_MAX_BOUND`]
+     to stored values during loading, and publishes both maps atomically
+     (the event loop reads while the executor loads)
+   - A parallel `data_points` map is cached alongside; `0` marks an
+     unlearned (filled) slot
+   - On a failed database read neither cache is touched — a previously
+     published grid keeps serving and the next load retries
 
-4. **Database Method**: `db/core.py:get_all_time_priors()` (line 304)
+4. **Database Method**: `db/core.py:get_stored_time_priors()`
    - Wrapper that adds `entry_id` parameter
    - Calls query function
 
-5. **Query Function**: `queries.py:get_all_time_priors()` (line 111)
+5. **Query Function**: `queries.py:get_stored_time_priors()`
    - Queries `Priors` table filtered by:
      - `entry_id`: Integration entry ID
      - `area_name`: Area name
-   - Returns dictionary mapping `(day_of_week, time_slot)` to `prior_value`
-   - Fills in missing slots with `default_prior` (0.5) to ensure all 168 slots are present
+   - Returns dictionary mapping `(day_of_week, time_slot)` to
+     `(prior_value, data_points)`; slots with no stored row are absent
+   - Returns `None` on a database error so the caller can tell a failed
+     read apart from a genuinely empty table
 
 6. **Get Current Slot**: After cache is loaded, retrieves value for current day/slot (line 121-126)
    - Gets current `day_of_week` and `time_slot`
    - Looks up value in cached dictionary
-   - Returns `DEFAULT_TIME_PRIOR` (0.5) if slot not found (shouldn't happen after `get_all_time_priors()`)
+   - Returns `unlearned_slot_prior` if slot not found (shouldn't happen after `load_time_priors()`)
 
-7. **Safety Bounds**: Applied during `_load_time_priors()` (line 173-177)
-   - Clamps all values to [TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND] = [0.1, 0.9]
+7. **Safety Bounds**: Applied during `load_time_priors()`
+   - Clamps all values to [TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND] = [0.03, 0.9]
    - Prevents extreme values from affecting calculations
 
 ### 4.2 Time Slot Calculation
@@ -284,24 +305,24 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 
 - Stores all 168 time priors: `dict[tuple[int, int], float]`
 - Key: `(day_of_week, time_slot)` tuple
-- Value: `prior_value` (already clamped to [0.1, 0.9])
+- Value: `prior_value` (already clamped to [0.03, 0.9], `TIME_PRIOR_MIN_BOUND`/`TIME_PRIOR_MAX_BOUND`)
 - Loaded once per `Prior` instance lifecycle
 
 **Cache Population**:
 
-- Loaded lazily on first access to `time_prior` property
+- Loaded by `load_time_priors()` in the executor: from `load_data()` when an area's data is loaded, and from `start_prior_analysis()` after new time priors are saved
 - Loads all 168 slots in a single database query for efficiency
 - Applied safety bounds during loading
 
 **Cache Invalidation**: `_invalidate_time_prior_cache()` (line 157)
 
-- Called when global prior changes (`set_global_prior()`)
-- Sets `_cached_time_priors = None` to force reload on next access
-- Also called by `clear_cache()` method
+- Called by `clear_cache()` (area removal and purge)
+- Sets `_cached_time_priors = None`; `time_prior` returns `unlearned_slot_prior` until the next `load_time_priors()`
+- `set_global_prior()` does not invalidate it: the previous snapshot stays in use until the prior analysis publishes the new time priors
 
 **TTL**: No time-based expiration
 
-- Cache persists until invalidated (when global prior changes)
+- Cache persists until `load_time_priors()` replaces it or `clear_cache()` clears it
 - Since all 168 slots are cached, no need to check day/slot on each access
 - Simply looks up current slot in the cached dictionary
 
@@ -311,11 +332,19 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 
 ### 5.1 Prior Combination
 
-**Location**: `utils.py:combine_priors()` (line 329)
+**Location**: `utils.py:combine_priors()`
 
 **Method**: Weighted averaging in logit space
 
-**Default Weight**: `time_weight=0.2` (20% time prior, 80% global prior)
+**Default Weight**: `time_weight=0.4` (40% time prior, 60% global prior)
+
+!!! warning "The blend compresses the dynamic range"
+    Because the global prior keeps 60% of the weight, the combined value can
+    never move far from it. With `global_prior = 0.15`, a slot spanning the full
+    `[0.03, 0.9]` time-prior range only produces `0.081 … 0.460` — so an area
+    whose global prior is below ~0.19 can never reach a 50% threshold at any
+    hour of the week. See [Occupancy Forecast](occupancy-forecast.md#dynamic-range)
+    for the derivation and for the raw values that avoid this compression.
 
 **Process**:
 
@@ -338,22 +367,22 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 ```python
 area_prior = 0.3  # 30% occupancy overall
 time_prior = 0.7  # 70% occupancy for this time slot
-time_weight = 0.2  # 20% weight to time prior
+time_weight = 0.4  # 40% weight to time prior
 
 # Convert to logit space
 area_logit = log(0.3 / 0.7) ≈ -0.847
 time_logit = log(0.7 / 0.3) ≈ 0.847
 
 # Weighted average
-combined_logit = 0.8 * (-0.847) + 0.2 * 0.847 ≈ -0.508
+combined_logit = 0.6 * (-0.847) + 0.4 * 0.847 ≈ -0.169
 
 # Convert back
-combined_prior = 1 / (1 + exp(0.508)) ≈ 0.375
+combined_prior = 1 / (1 + exp(0.169)) ≈ 0.458
 ```
 
 ### 5.2 Integration Point
 
-**Location**: `prior.py:Prior.value` property (line 82)
+**Location**: `prior.py:Prior.value` property
 
 **Flow**:
 
@@ -402,6 +431,16 @@ sequenceDiagram
     participant DB as Database
     participant Query as Query Function
 
+    Note over Prior,Query: Executor: load_data() / start_prior_analysis() call load_time_priors()
+    Prior->>DB: get_stored_time_priors(area_name)
+    DB->>Query: get_stored_time_priors(entry_id, area_name)
+    Query->>Query: Query stored Priors for area
+    Query-->>DB: Stored slots -> (value, data_points), or None on error
+    DB-->>Prior: Stored slots (None leaves the cache untouched)
+    Prior->>Prior: Fill unstored slots with unlearned_slot_prior; clamp to [0.03, 0.9]
+    Prior->>Cache: Publish all 168 slots
+
+    Note over Area,Cache: Event loop: every probability() calculation
     Area->>Prior: probability() calculation
     Prior->>Prior: value property
     Prior->>Prior: time_prior property
@@ -412,18 +451,8 @@ sequenceDiagram
         Prior->>Prior: Get current (day, slot)
         Prior->>Cache: Lookup (day, slot)
         Cache-->>Prior: prior_value for current slot
-    else Cache Empty (First Access)
-        Prior->>Prior: _load_time_priors()
-        Prior->>DB: get_all_time_priors(area_name)
-        DB->>Query: get_all_time_priors(entry_id, area_name)
-        Query->>Query: Query all Priors for area
-        Query-->>DB: Dictionary of all 168 slots
-        DB-->>Prior: Dictionary of all slots
-        Prior->>Prior: Apply safety bounds [0.1, 0.9]
-        Prior->>Cache: Store all 168 slots
-        Prior->>Prior: Get current (day, slot)
-        Prior->>Cache: Lookup (day, slot)
-        Cache-->>Prior: prior_value for current slot
+    else Cache Empty (not loaded yet)
+        Prior->>Prior: Use unlearned_slot_prior (no database query)
     end
 
     Prior->>Prior: combine_priors(global, time)
@@ -441,7 +470,7 @@ flowchart TD
     ForEachSlot --> CalcOccupied[Calculate Occupied Seconds]
     CalcOccupied --> CalcTotal[Calculate Total Slot Seconds]
     CalcTotal --> CalcPercent[Calculate Percentage]
-    CalcPercent --> ApplyBounds[Apply Safety Bounds<br/>[0.1, 0.9]]
+    CalcPercent --> ApplyBounds[Apply Safety Bounds<br/>[0.03, 0.9]]
     ApplyBounds --> StorePrior[Store in Priors Table]
 
     StorePrior --> MoreSlots{More Slots?}
@@ -469,25 +498,37 @@ flowchart TD
 
 ### 7.1 Cache Invalidation Logic
 
-**Issue**: Cache only invalidated when global prior changes, not on time slot change
+**Behaviour**: The cache holds all 168 slots, so a day/slot rollover needs no
+invalidation — the lookup simply reads a different key. The cache changes only
+when the stored values change.
 
-**Impact**: Cache persists across time slots if global prior unchanged
-
-**Current Behavior**: Cache checked against current day/slot on each access, so cache is automatically refreshed when day/slot changes
-
-**Analysis**: This is actually correct behavior - the cache check ensures we always get the right value for the current time slot, even if the global prior hasn't changed.
-
-**Recommendation**: No change needed - current implementation is correct
+**Reload model**: reads never repopulate the cache (they run on the event
+loop). After `calculate_and_update_prior()` saves new rows,
+`start_prior_analysis` reloads the cache via `load_time_priors()` in the
+executor. This also removes the historical race where a probability read
+landing between `set_global_prior()` and `save_time_priors()` re-cached the
+previous run's rows for the next hour.
 
 ### 7.3 Default Value Handling
 
-**Issue**: Missing time priors return `DEFAULT_TIME_PRIOR` (0.5) without metadata
+**Issue**: An unlearned slot has no probability, but the retrieval path has to
+return one.
 
-**Impact**: No way to distinguish "no data" from "50% occupancy"
+**Why 0.5 was wrong**: A flat `DEFAULT_TIME_PRIOR` of 0.5 is neutral only in
+isolation. Fed through `combine_priors()` against a typical small global prior it
+becomes *higher* than every genuinely low-occupancy slot, so "never observed"
+outranked "observed to be empty" — and the inflation reached the live sensor, not
+just the forecast. Measured on a 13-area installation, areas whose global prior
+was 0.01–0.04 were reading a live prior 3× higher purely from unlearned slots.
 
-**Current Behavior**: Returns 0.5 for missing slots, which is reasonable default
-
-**Recommendation**: Consider adding metadata flag or logging when default is used, but current behavior is acceptable
+**Current behaviour**: unlearned slots fall back to the area's own `global_prior`
+(`Prior.unlearned_slot_prior`), clamped to [0.03, 0.9]. Within that band
+`combine_priors()` maps it back to itself, so the slot adds no tilt in either
+direction; for a `global_prior` outside it (say 0.01) the fallback is the bound
+(0.03), a small upward tilt. The parallel `data_points` map marks
+these slots with `0` so consumers can render them as *no data* rather than as a
+probability — the `get_time_priors` service exposes it, and the Lovelace card
+hatches those cells.
 
 ### 7.4 Time Slot Granularity
 

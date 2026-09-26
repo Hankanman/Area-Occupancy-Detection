@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.adjacency import compute_decay_modifier
+from custom_components.area_occupancy.data.trajectory import Trajectory
 from custom_components.area_occupancy.db.relationships import (
     DEFAULT_INFLUENCE_WEIGHTS,
     get_adjacent_areas,
@@ -13,7 +15,11 @@ from custom_components.area_occupancy.db.relationships import (
     save_area_relationship,
     sync_adjacent_areas_from_config,
 )
-from tests.conftest import create_test_area  # noqa: TID251
+from custom_components.area_occupancy.db.transitions import (
+    build_adjacency_index,
+    load_adjacency_snapshot,
+)
+from tests.conftest import create_test_area
 
 if TYPE_CHECKING:
     from custom_components.area_occupancy.db.core import AreaOccupancyDB
@@ -607,7 +613,12 @@ class TestSyncAdjacentAreasFromConfig:
     def test_sync_adjacent_areas_from_config_with_nonexistent_areas(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test syncing creates relationships even for non-existent related areas."""
+        """A neighbour that is not a configured area gets no relationship row.
+
+        It can never produce an occupancy signal, so the decay modifier
+        would read it as permanently empty and stretch the half-life for
+        nothing.
+        """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
 
@@ -625,12 +636,97 @@ class TestSyncAdjacentAreasFromConfig:
                 area_record.adjacent_areas = ["Valid Area", "Nonexistent Area"]
             session.commit()
 
-        # Sync should succeed for both (no validation of related area existence)
         result = sync_adjacent_areas_from_config(db, area_name)
-        assert result is True  # Both relationships are created successfully
+        assert result is True
 
-        # Verify both relationships were created
         adjacent = get_adjacent_areas(db, area_name)
-        assert len(adjacent) == 2
-        adjacent_names = {a["related_area_name"] for a in adjacent}
-        assert adjacent_names == {"Valid Area", "Nonexistent Area"}
+        assert {a["related_area_name"] for a in adjacent} == {"Valid Area"}
+
+    def test_sync_resolves_area_ids_to_area_names(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Configured adjacency holds HA area ids; rows must hold AOD names.
+
+        Every reader (transition detection, the decay modifier, the
+        adjacency snapshot) keys areas by name. Rows keyed by id matched
+        nothing, so learning recorded no transitions.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        for name, area_id in (("Kitchen", "kitchen"), ("Main Bedroom", "bedroom_2")):
+            create_test_area(coordinator, area_name=name).config.area_id = area_id
+            db.save_area_data(name)
+        with db.get_session() as session:
+            record = session.query(db.Areas).filter_by(area_name=area_name).first()
+            record.adjacent_areas = ["kitchen", "bedroom_2"]
+            session.commit()
+
+        assert sync_adjacent_areas_from_config(db, area_name) is True
+
+        adjacent = get_adjacent_areas(db, area_name)
+        assert {a["related_area_name"] for a in adjacent} == {"Kitchen", "Main Bedroom"}
+        index = build_adjacency_index(db, db.coordinator.entry_id)
+        assert index[area_name] == {"Kitchen", "Main Bedroom"}
+
+    def test_sync_replaces_rows_written_by_id(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Rows an earlier release stored under the area id are replaced."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        create_test_area(coordinator, area_name="Kitchen").config.area_id = "kitchen"
+        db.save_area_data("Kitchen")
+        save_area_relationship(db, area_name, "kitchen", "adjacent")
+        with db.get_session() as session:
+            record = session.query(db.Areas).filter_by(area_name=area_name).first()
+            record.adjacent_areas = ["kitchen"]
+            session.commit()
+
+        assert sync_adjacent_areas_from_config(db, area_name) is True
+
+        adjacent = get_adjacent_areas(db, area_name)
+        assert [a["related_area_name"] for a in adjacent] == ["Kitchen"]
+
+    def test_decay_modifier_reads_real_neighbour_probabilities(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """End to end: config ids -> rows -> snapshot -> decay modifier.
+
+        Neighbours Kitchen (lagged 0.9) and Main Bedroom (lagged 0.2), no
+        learned transitions yet, so each lookup is the static default 0.3:
+
+            silence  = (1 - 0.9) * 0.3 + (1 - 0.2) * 0.3 = 0.27
+            modifier = 1 + 0.75 * 0.27                    = 1.2025
+
+        With rows keyed by id both lagged lookups missed and read as 0.0,
+        giving silence 0.6 and a modifier of 1.45 whatever the neighbours
+        were doing.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        for name, area_id in (("Kitchen", "kitchen"), ("Main Bedroom", "bedroom_2")):
+            create_test_area(coordinator, area_name=name).config.area_id = area_id
+            db.save_area_data(name)
+        with db.get_session() as session:
+            record = session.query(db.Areas).filter_by(area_name=area_name).first()
+            record.adjacent_areas = ["kitchen", "bedroom_2"]
+            session.commit()
+        sync_adjacent_areas_from_config(db, area_name)
+
+        snapshot = load_adjacency_snapshot(db, db.coordinator.entry_id)
+        assert snapshot is not None
+        out = compute_decay_modifier(
+            target_area=area_name,
+            adjacency_index=snapshot.adjacency_index,
+            lagged_probabilities={"Kitchen": 0.9, "Main Bedroom": 0.2},
+            trajectory=Trajectory(prev_area=None, prev_prev_area=None, hour_of_week=10),
+            lookup=snapshot.lookup,
+            base_half_life_seconds=300.0,
+        )
+
+        assert out.silence_score == pytest.approx(0.27)
+        assert out.decay_modifier == pytest.approx(1.2025)
+        assert out.effective_half_life_seconds == pytest.approx(360.75)

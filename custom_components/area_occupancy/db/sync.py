@@ -23,12 +23,18 @@ from ..const import (
 from ..data.entity_type import NUMERIC_INPUT_TYPES
 from ..time_utils import to_db_utc, to_utc
 from . import queries
-from .utils import chunked, is_valid_state
+from .utils import chunked, entity_active_states, is_active_state, is_valid_state
 
 if TYPE_CHECKING:
     from .core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
+# Active states for an entity the coordinator doesn't know about (it was
+# de-configured mid-sync, or a test passes a bare entity_id). Sync only ever
+# requests configured entities, so this is a safety net rather than a live
+# path; "on" preserves the behaviour this code had before active states were
+# resolved per entity.
+_FALLBACK_ACTIVE_STATES = frozenset({"on"})
 _INTERVAL_LOOKUP_BATCH = 250
 _NUMERIC_SAMPLE_LOOKUP_BATCH = 250
 _NUMERIC_INPUT_TYPES = NUMERIC_INPUT_TYPES
@@ -46,24 +52,27 @@ def _normalize_db_key_datetime(value: datetime) -> datetime:
 def _get_existing_interval_keys(
     session: sa.orm.Session,
     db: AreaOccupancyDB,
-    interval_keys: set[tuple[str, datetime, datetime]],
-) -> set[tuple[str, datetime, datetime]]:
+    interval_keys: set[tuple[str, str, datetime, datetime]],
+) -> set[tuple[str, str, datetime, datetime]]:
     """Return keys already stored in the database using batched tuple lookups."""
     if not interval_keys:
         return set()
 
     keys_list = list(interval_keys)
     interval_tuple = sa.tuple_(
-        db.Intervals.entity_id, db.Intervals.start_time, db.Intervals.end_time
+        db.Intervals.entry_id,
+        db.Intervals.entity_id,
+        db.Intervals.start_time,
+        db.Intervals.end_time,
     )
-    existing_keys: set[tuple[str, datetime, datetime]] = set()
+    existing_keys: set[tuple[str, str, datetime, datetime]] = set()
 
     for chunk in chunked(keys_list, _INTERVAL_LOOKUP_BATCH):
         matches = session.query(db.Intervals).filter(interval_tuple.in_(chunk)).all()
         for interval in matches:
             start = _normalize_db_key_datetime(interval.start_time)
             end = _normalize_db_key_datetime(interval.end_time)
-            existing_keys.add((interval.entity_id, start, end))
+            existing_keys.add((interval.entry_id, interval.entity_id, start, end))
 
     return existing_keys
 
@@ -71,21 +80,25 @@ def _get_existing_interval_keys(
 def _get_existing_numeric_sample_keys(
     session: sa.orm.Session,
     db: AreaOccupancyDB,
-    sample_keys: set[tuple[str, datetime]],
-) -> set[tuple[str, datetime]]:
+    sample_keys: set[tuple[str, str, datetime]],
+) -> set[tuple[str, str, datetime]]:
     """Return numeric samples already stored using batched tuple lookups."""
     if not sample_keys:
         return set()
 
     keys_list = list(sample_keys)
-    sample_tuple = sa.tuple_(db.NumericSamples.entity_id, db.NumericSamples.timestamp)
-    existing_keys: set[tuple[str, datetime]] = set()
+    sample_tuple = sa.tuple_(
+        db.NumericSamples.entry_id,
+        db.NumericSamples.entity_id,
+        db.NumericSamples.timestamp,
+    )
+    existing_keys: set[tuple[str, str, datetime]] = set()
 
     for chunk in chunked(keys_list, _NUMERIC_SAMPLE_LOOKUP_BATCH):
         matches = session.query(db.NumericSamples).filter(sample_tuple.in_(chunk)).all()
         for sample in matches:
             timestamp = _normalize_db_key_datetime(sample.timestamp)
-            existing_keys.add((sample.entity_id, timestamp))
+            existing_keys.add((sample.entry_id, sample.entity_id, timestamp))
 
     return existing_keys
 
@@ -156,6 +169,9 @@ def _states_to_intervals(
     retention_time_utc = to_utc(dt_util.utcnow() - timedelta(days=RETENTION_DAYS))
     created_at_db = to_db_utc(dt_util.utcnow())
     end_time_utc = to_utc(end_time)
+    # Resolved from the live Entity objects, so "active" here means exactly
+    # what Entity.evidence means (issue #520).
+    active_states = entity_active_states(db.coordinator)
 
     for entity_id, state_list in states.items():
         if not state_list:
@@ -183,19 +199,47 @@ def _states_to_intervals(
             end_utc = to_utc(interval_end)
             duration_seconds = (end_utc - start_utc).total_seconds()
 
-            # Apply filtering based on state and duration
-            if state.state == "on":
-                if duration_seconds <= MAX_INTERVAL_SECONDS:
-                    intervals.append(
-                        {
-                            "entity_id": entity_id,
-                            "state": state.state,
-                            "start_time": to_db_utc(start_utc),
-                            "end_time": to_db_utc(end_utc),
-                            "duration_seconds": duration_seconds,
-                            "created_at": created_at_db,
-                        }
-                    )
+            # Apply filtering based on state and duration.
+            #
+            # MAX_INTERVAL_SECONDS bounds how much occupancy a single *active*
+            # stretch may contribute. It used to be keyed on the literal string
+            # "on", which covers motion and sleep sensors but not media players
+            # — whose active states are "playing"/"paused" — so a media
+            # interval of any length went in uncapped and could dominate the
+            # prior's numerator on its own (issue #520). Key it on whether the
+            # state is active *for this entity* instead, so every presence type
+            # is bounded by the same rule.
+            #
+            # Over-cap stretches are truncated to the cap rather than dropped.
+            # Dropping them discarded the evidence entirely: an mmWave sensor
+            # that legitimately stays on overnight contributed nothing at all,
+            # biasing the prior down and — where it was an area's only ground
+            # truth — leaving the interval set empty, which is what stalled the
+            # prior recalculation in the first place (#520 Bug A). Keeping the
+            # leading MAX_INTERVAL_SECONDS credits the plausible part of the
+            # stretch (someone was there when it started) while refusing to
+            # trust the unbounded tail. The truncated end is deterministic, so
+            # repeated syncs of a still-active sensor produce the same row
+            # rather than a growing one.
+            #
+            # Inactive states keep the MIN_INTERVAL_SECONDS floor and no cap:
+            # they are the denominator's evidence that the area was observed,
+            # and shortening a long "off" stretch would bias the prior upward.
+            entity_active = active_states.get(entity_id) or _FALLBACK_ACTIVE_STATES
+            if is_active_state(state.state, entity_active):
+                if duration_seconds > MAX_INTERVAL_SECONDS:
+                    end_utc = start_utc + timedelta(seconds=MAX_INTERVAL_SECONDS)
+                    duration_seconds = float(MAX_INTERVAL_SECONDS)
+                intervals.append(
+                    {
+                        "entity_id": entity_id,
+                        "state": state.state,
+                        "start_time": to_db_utc(start_utc),
+                        "end_time": to_db_utc(end_utc),
+                        "duration_seconds": duration_seconds,
+                        "created_at": created_at_db,
+                    }
+                )
             elif (
                 is_valid_state(state.state) and duration_seconds >= MIN_INTERVAL_SECONDS
             ):
@@ -223,6 +267,7 @@ def _commit_intervals(db: AreaOccupancyDB, intervals: list[dict[str, Any]]) -> N
     with db.get_session() as session:
         interval_keys = {
             (
+                interval_data["entry_id"],
                 interval_data["entity_id"],
                 interval_data["start_time"],
                 interval_data["end_time"],
@@ -237,11 +282,11 @@ def _commit_intervals(db: AreaOccupancyDB, intervals: list[dict[str, Any]]) -> N
         )
 
         new_intervals = []
-        seen_keys: set[tuple[str, datetime, datetime]] = set()
+        seen_keys: set[tuple[str, str, datetime, datetime]] = set()
         for interval_data in mapped_intervals:
             start = _normalize_db_key_datetime(interval_data["start_time"])
             end = _normalize_db_key_datetime(interval_data["end_time"])
-            key = (interval_data["entity_id"], start, end)
+            key = (interval_data["entry_id"], interval_data["entity_id"], start, end)
             if key in existing_keys or key in seen_keys:
                 continue
             seen_keys.add(key)
@@ -260,6 +305,7 @@ def _commit_numeric_samples(
     with db.get_session() as session:
         sample_keys = {
             (
+                sample_data["entry_id"],
                 sample_data["entity_id"],
                 sample_data["timestamp"],
             )
@@ -273,10 +319,10 @@ def _commit_numeric_samples(
         )
 
         new_samples = []
-        seen_sample_keys: set[tuple[str, datetime]] = set()
+        seen_sample_keys: set[tuple[str, str, datetime]] = set()
         for sample_data in numeric_samples:
             timestamp = _normalize_db_key_datetime(sample_data["timestamp"])
-            key = (sample_data["entity_id"], timestamp)
+            key = (sample_data["entry_id"], sample_data["entity_id"], timestamp)
             if key in existing_samples or key in seen_sample_keys:
                 continue
             seen_sample_keys.add(key)

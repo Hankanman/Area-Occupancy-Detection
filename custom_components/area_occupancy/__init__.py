@@ -22,12 +22,14 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
+from .config_helpers import iter_area_subentries
 from .const import (
     CONF_AREA_ID,
-    CONF_AREAS,
     CONF_VERSION,
     DB_NAME,
     DOMAIN,
+    FUSION_STORE_KEY_PREFIX,
+    FUSION_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
@@ -350,9 +352,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     )
 
     try:
-        merged: dict[str, Any] = dict(entry.data)
-        merged.update(entry.options)
-        area_configs = merged.get(CONF_AREAS, []) or []
+        area_configs = [data for _, data in iter_area_subentries(entry)]
 
         db_path = _resolve_db_path(hass)
 
@@ -427,6 +427,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove online-prior storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the learned-fusion Store (#501).
+        try:
+            await Store(
+                hass,
+                FUSION_STORE_VERSION,
+                f"{FUSION_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove learned-fusion storage during entry removal %s",
                 entry.entry_id,
             )
 
@@ -512,7 +525,9 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     merged = dict(entry.data)
     merged.update(entry.options)
     config_area_ids = {
-        a.get(CONF_AREA_ID) for a in merged.get(CONF_AREAS, []) if a.get(CONF_AREA_ID)
+        data.get(CONF_AREA_ID)
+        for _, data in iter_area_subentries(entry)
+        if data.get(CONF_AREA_ID)
     }
 
     # Determine currently loaded area IDs.
@@ -535,7 +550,9 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if removed_area_ids:
             dev_reg = dr.async_get(hass)
             for area_id in removed_area_ids:
-                device = dev_reg.async_get_device(identifiers={(DOMAIN, area_id)})
+                device = dev_reg.async_get_device_by_identifier(
+                    (DOMAIN, area_id), entry.entry_id
+                )
                 if device:
                     _LOGGER.info("Removing device for deleted area: %s", area_id)
                     dev_reg.async_remove_device(device.id)

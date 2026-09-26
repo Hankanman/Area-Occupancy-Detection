@@ -2,16 +2,27 @@
 
 from contextlib import contextmanager
 from datetime import UTC, timedelta, timezone
+from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from custom_components.area_occupancy.const import (
+    DEFAULT_MEDIA_ACTIVE_STATES,
+    DEFAULT_WINDOW_ACTIVE_STATE,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.utils import (
+    area_active_states_by_type,
+    entity_active_states,
+    is_active_state,
     is_intervals_empty,
     is_timestamp_in_prepared_intervals,
     is_timestamp_occupied,
     is_valid_state,
     prepare_occupied_intervals,
+    resolve_active_states,
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -215,3 +226,106 @@ class TestPreparedIntervalLookup:
             (naive_now + timedelta(minutes=30)).replace(tzinfo=UTC).astimezone(plus_two)
         )
         assert is_timestamp_in_prepared_intervals(probe, starts, ends) is True
+
+
+class TestActiveStateResolution:
+    """Active-state resolution shared by the ground-truth and live paths.
+
+    Issue #520: ``build_presence_query`` resolved active states from
+    ``DEFAULT_TYPES`` while ``Entity.evidence`` resolved them from the area's
+    config. These helpers exist so both paths read one definition and cannot
+    drift apart again.
+    """
+
+    def test_configured_states_win(self) -> None:
+        """A non-empty configured list overrides the type default."""
+        sensor_states = SimpleNamespace(media=["playing"])
+        assert resolve_active_states(sensor_states, InputType.MEDIA) == {"playing"}
+
+    def test_empty_configured_list_falls_back_to_default(self) -> None:
+        """An empty list means "use defaults", matching ``EntityType``."""
+        sensor_states = SimpleNamespace(media=[])
+        assert resolve_active_states(sensor_states, InputType.MEDIA) == set(
+            DEFAULT_MEDIA_ACTIVE_STATES
+        )
+
+    def test_missing_field_falls_back_to_default(self) -> None:
+        """``SensorStates`` has no 'sleep' field, so sleep uses its default."""
+        sensor_states = SimpleNamespace(media=["playing"])
+        assert resolve_active_states(sensor_states, InputType.SLEEP) == {"on"}
+
+    def test_no_sensor_states_falls_back_to_default(self) -> None:
+        """A missing config object still resolves to the type default."""
+        assert resolve_active_states(None, InputType.MEDIA) == set(
+            DEFAULT_MEDIA_ACTIVE_STATES
+        )
+
+    def test_by_type_reads_area_config(
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
+    ) -> None:
+        """Per-area resolution reflects that area's configured states."""
+        default_area.config.sensor_states.media = ["playing"]
+
+        resolved = area_active_states_by_type(
+            coordinator, default_area.area_name, (InputType.MEDIA, InputType.SLEEP)
+        )
+
+        assert resolved[InputType.MEDIA] == {"playing"}
+        assert resolved[InputType.SLEEP] == {"on"}
+
+    def test_by_type_unknown_area_is_empty(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An unknown area resolves nothing rather than guessing defaults."""
+        assert (
+            area_active_states_by_type(coordinator, "No Such Area", (InputType.MEDIA,))
+            == {}
+        )
+
+    def test_entity_map_matches_live_entity_states(
+        self, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """The per-entity map is the same data ``Entity.evidence`` reads."""
+        resolved = entity_active_states(coordinator_with_sensors)
+        area = coordinator_with_sensors.get_area(
+            coordinator_with_sensors.get_area_names()[0]
+        )
+        for entity_id, entity in area.entities.entities.items():
+            if entity.active_states:
+                assert resolved[entity_id] == set(entity.active_states)
+
+    def test_entity_map_tolerates_entity_without_active_states(self) -> None:
+        """An entity object that doesn't expose active_states is skipped.
+
+        Numeric sensors resolve an active *range* rather than a state list,
+        and duck-typed stand-ins may carry neither. One unusual entity must
+        not take the whole sync down; ``db.sync`` falls back to its historic
+        "on" semantics for anything missing here.
+        """
+        entity = SimpleNamespace(entity_id="sensor.co2")
+        area = SimpleNamespace(
+            entities=SimpleNamespace(entities={"sensor.co2": entity})
+        )
+        coordinator = SimpleNamespace(areas={"Office": area})
+
+        assert entity_active_states(coordinator) == {}
+
+    def test_is_active_state_plain_match(self) -> None:
+        """A state present in the set is active."""
+        assert is_active_state("paused", {"playing", "paused"}) is True
+        assert is_active_state("idle", {"playing", "paused"}) is False
+
+    def test_is_active_state_empty_set_is_never_active(self) -> None:
+        """No configured states means nothing counts as active."""
+        assert is_active_state("on", set()) is False
+
+    def test_is_active_state_maps_binary_to_semantic(self) -> None:
+        """A window configured as 'open' matches the recorded 'on'.
+
+        Binary sensors record on/off; semantic configs say open/closed. The
+        live evidence path maps between them, so ground truth must too.
+        """
+        semantic = {DEFAULT_WINDOW_ACTIVE_STATE}
+        assert semantic == {"open"}
+        assert is_active_state("on", semantic) is True
+        assert is_active_state("off", semantic) is False
