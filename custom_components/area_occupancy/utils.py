@@ -161,6 +161,22 @@ def logit(p: float) -> float:
     return math.log(p / (1 - p))
 
 
+def evidence_value(entity: Entity) -> float:
+    """Return one entity's 0..1 evidence factor (active / decaying / off).
+
+    Extracted from ``sigmoid_probability``'s loop so the shadow fusion
+    learner (#501, ``data/fusion.py``) builds its training features from
+    the exact factor the live pipeline uses — a copy of this branch in
+    two places is how the two would silently drift. Pure refactor: the
+    live pipeline's behavior is unchanged.
+    """
+    if entity.evidence is True:
+        return 1.0
+    if entity.decay.is_decaying:
+        return entity.decay_factor  # Gradual fade (0.0 to 1.0)
+    return 0.0  # Inactive = no contribution (not negative!)
+
+
 def sigmoid_probability(
     entities: dict[str, Entity],
     prior: float = 0.5,
@@ -202,12 +218,7 @@ def sigmoid_probability(
 
         # Determine evidence contribution
         # Active = full contribution, Decaying = partial, Inactive = zero
-        if entity.evidence is True:
-            evidence = 1.0
-        elif entity.decay.is_decaying:
-            evidence = entity.decay_factor  # Gradual fade (0.0 to 1.0)
-        else:
-            evidence = 0.0  # Inactive = no contribution (not negative!)
+        evidence = evidence_value(entity)
 
         # Scale by sensor type strength (prob_given_true indicates signal strength)
         # Motion (0.95) contributes more than door (0.2)
