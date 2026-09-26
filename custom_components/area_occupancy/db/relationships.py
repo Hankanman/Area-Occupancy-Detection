@@ -238,12 +238,57 @@ def calculate_adjacent_influence(
         return base_probability
 
 
+def _resolve_neighbour_names(db: AreaOccupancyDB, configured: list[Any]) -> set[str]:
+    """Map configured adjacent areas to the area names the rest of AOD uses.
+
+    The config flow stores adjacent areas as Home Assistant area ids
+    (``living_room``), but every reader of ``AreaRelationships`` -- transition
+    detection, the decay modifier's neighbour probabilities, the adjacency
+    snapshot -- keys areas by their AOD area name (``Living Room``). Storing
+    the raw ids meant no neighbour ever matched: transition learning recorded
+    nothing, and the decay modifier read every neighbour as confidently empty
+    and stretched each half-life permanently.
+
+    A value that is already an AOD area name is kept as is. A value that
+    matches no configured AOD area is dropped: it could never produce an
+    occupancy signal, so keeping it would only feed the decay modifier a
+    neighbour that always looks empty.
+
+    Args:
+        db: Database instance, whose coordinator holds the configured areas.
+        configured: The raw ``Areas.adjacent_areas`` values.
+
+    Returns:
+        The neighbours' AOD area names.
+    """
+    areas = getattr(db.coordinator, "areas", None) or {}
+    name_by_id = {
+        str(area_id): name
+        for name, area in areas.items()
+        if (area_id := getattr(getattr(area, "config", None), "area_id", None))
+    }
+    resolved: set[str] = set()
+    for value in configured:
+        if not value:
+            continue
+        key = str(value)
+        if key in name_by_id:
+            resolved.add(name_by_id[key])
+        elif key in areas:
+            resolved.add(key)
+        else:
+            _LOGGER.debug("Ignoring adjacent area %r: it is not a configured area", key)
+    return resolved
+
+
 def sync_adjacent_areas_from_config(db: AreaOccupancyDB, area_name: str) -> bool:
     """Sync adjacent areas from area configuration to AreaRelationships table.
 
     Reads the canonical ``Areas.adjacent_areas`` JSON column for the given
-    area and reconciles the ``AreaRelationships`` rows of type ``adjacent``
-    so they exactly match: rows for neighbours that have been removed are
+    area, resolves its Home Assistant area ids to AOD area names (see
+    ``_resolve_neighbour_names``), and reconciles the ``AreaRelationships``
+    rows of type ``adjacent`` so they exactly match: rows for neighbours
+    that have been removed are
     deleted, missing rows are inserted, weights/types are preserved on
     existing rows. Performs the read, delete, and merge in a single
     session so partial failures don't leave the table in an inconsistent
@@ -265,9 +310,9 @@ def sync_adjacent_areas_from_config(db: AreaOccupancyDB, area_name: str) -> bool
                 _LOGGER.warning("Area record not found in database: %s", area_name)
                 return False
 
-            target_neighbours: set[str] = {
-                str(a) for a in (area_record.adjacent_areas or []) if a
-            }
+            target_neighbours = _resolve_neighbour_names(
+                db, list(area_record.adjacent_areas or [])
+            )
 
             existing_rows = (
                 session.query(db.AreaRelationships)
