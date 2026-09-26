@@ -1505,7 +1505,7 @@
             "fields": {
                 "area_id": {
                     "name": "Area",
-                    "description": "Optional Home Assistant area. When omitted, the forecast for all configured areas is returned. The aggregate zone ids (all_areas and floor_<floor_id>) are also accepted, but the area picker only lists real Home Assistant areas — pass an aggregate id in YAML mode."
+                    "description": "Optional Home Assistant area. When omitted, the forecast for all configured areas is returned. The aggregate zone ids (all_areas and floor_[floor_id]) are also accepted, but the area picker only lists real Home Assistant areas — pass an aggregate id in YAML mode."
                 }
             }
         },
