@@ -293,6 +293,33 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         )
         metrics = compute_accuracy_metrics(samples, intervals)
         coordinator.set_accuracy_metrics(area_name, metrics)
+
+        # Learned-fusion shadow update (#501): one gradient pass over the
+        # same window's fusion ticks against the SAME ground-truth
+        # intervals the metrics above scored with. Weight defaults (the
+        # L2 anchors / cold-start values) are the live pipeline's current
+        # effective weights.
+        fusion_ticks = [
+            t
+            for t in coordinator.fusion_ticks_for(area_name)
+            if t.timestamp >= window_start
+        ]
+        if fusion_ticks:
+            area = coordinator.areas[area_name]
+            defaults = {
+                entity_id: getattr(entity, "effective_weight", entity.weight)
+                for entity_id, entity in area.entities.entities.items()
+            }
+            learner = coordinator.ensure_fusion_learner(area_name)
+            consumed = learner.update(fusion_ticks, intervals, defaults)
+            _LOGGER.debug(
+                "Fusion (shadow) for area %s: consumed=%d total_samples=%d "
+                "tracked_entities=%d",
+                area_name,
+                consumed,
+                learner.state.samples,
+                len(learner.state.weights),
+            )
         _LOGGER.debug(
             "Accuracy (shadow) for area %s: samples=%d ece=%.4f agreement=%.3f "
             "false_on=%s false_off=%s decision_flips=%d truth_flips=%d",
@@ -311,8 +338,11 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         )
 
     # Online-prior shadow diff (#500): compare the incremental estimator
-    # against the DB-computed prior that step 7 just recalculated. A
-    # persistent, growing divergence means a bug in one of them.
+    # against the DB-computed prior that step 7 just recalculated, fold
+    # the result into the persisted daily divergence history (what makes
+    # the issue's "30 days within tolerance" gate measurable), and do the
+    # same per weekly slot where both sides have data. A persistent,
+    # growing divergence means a bug in one of them.
     for area_name, area in coordinator.areas.items():
         estimator = coordinator.online_prior_for(area_name)
         if estimator is None:
@@ -330,16 +360,52 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
                 estimator.observed_days(now),
             )
             continue
+
+        # Per-slot comparison against the DB time priors. Reads the
+        # in-memory cache directly (never a public accessor that could
+        # fall through to a DB load — this runs on the event loop). Skips
+        # entirely when the cache isn't warm; skips slots the online
+        # estimator hasn't observed past its floor; and, when the
+        # points map exists, skips slots the DB side never learned
+        # (their cache value is a fill, not an observation).
+        bucket_diff: float | None = None
+        buckets_compared = 0
+        db_slots = area.prior._cached_time_priors  # noqa: SLF001
+        db_points = getattr(area.prior, "_cached_time_prior_points", None)
+        if db_slots:
+            diffs: list[float] = []
+            for (day_of_week, time_slot), db_value in db_slots.items():
+                if db_points is not None and not db_points.get(
+                    (day_of_week, time_slot)
+                ):
+                    continue
+                online_slot = estimator.time_prior(day_of_week * 24 + time_slot)
+                if online_slot is None:
+                    continue
+                diffs.append(abs(online_slot - db_value))
+            if diffs:
+                buckets_compared = len(diffs)
+                bucket_diff = sum(diffs) / buckets_compared
+
+        estimator.record_divergence(
+            now=now,
+            scalar_diff=online - stored,
+            bucket_diff=bucket_diff,
+            buckets_compared=buckets_compared,
+        )
         _LOGGER.debug(
             "Online prior (shadow) for area %s: online=%.4f db=%.4f diff=%+.4f "
-            "observed_days=%.2f",
+            "bucket_diff=%s buckets=%d observed_days=%.2f",
             area_name,
             online,
             stored,
             online - stored,
+            f"{bucket_diff:.4f}" if bucket_diff is not None else "n/a",
+            buckets_compared,
             estimator.observed_days(now),
         )
     await coordinator.async_save_online_priors()
+    await coordinator.async_save_fusion_state()
 
 
 async def _run_pipeline_health_check(
@@ -676,13 +742,18 @@ class PriorAnalyzer:
                         data_points_per_slot=data_points_per_slot,
                     )
                     if success:
+                        # Invalidate *after* the write, not before. set_global_prior()
+                        # above already invalidated, but this method runs in an
+                        # executor thread while the event loop can read prior.value
+                        # in between — that read would repopulate the cache from the
+                        # pre-write rows and leave it stale until the next hourly
+                        # run. Invalidating here closes that window.
+                        self.area.prior.invalidate_time_prior_cache()
                         _LOGGER.info(
                             "Time priors saved for area %s: %d slots populated",
                             self.area_name,
                             len(time_priors),
                         )
-                        # Cache will be automatically reloaded on next time_prior access
-                        # since it was invalidated when global_prior was set above
                     else:
                         _LOGGER.warning(
                             "Failed to save time priors for area %s", self.area_name
@@ -813,10 +884,17 @@ class PriorAnalyzer:
         time_priors: dict[tuple[int, int], float] = {}
         data_points: dict[tuple[int, int], int] = {}
 
-        for slot_key, occupied_seconds in slot_occupied_seconds.items():
-            total_slot_seconds = slot_total_seconds.get(slot_key, 0.0)
+        # Iterate the *denominators*, not the occupied buckets: a slot that the
+        # analysis period covered but that saw zero occupancy is a real learned
+        # observation ("this area is empty on Tuesdays at 04:00") and must be
+        # persisted. Iterating slot_occupied_seconds instead left those slots
+        # unwritten, so they read back as DEFAULT_TIME_PRIOR — a neutral-high
+        # value that outranks genuinely low-occupancy slots and biases both the
+        # forecast and the live prior.
+        for slot_key, total_slot_seconds in slot_total_seconds.items():
             if total_slot_seconds <= 0:
                 continue
+            occupied_seconds = slot_occupied_seconds.get(slot_key, 0.0)
 
             prior_value = occupied_seconds / total_slot_seconds
             prior_value = max(
@@ -826,9 +904,11 @@ class PriorAnalyzer:
             data_points[slot_key] = len(slot_weeks_total.get(slot_key, set()))
 
         _LOGGER.debug(
-            "Time priors calculated for area %s: %d slots populated out of 168 total",
+            "Time priors calculated for area %s: %d slots populated out of 168 total "
+            "(%d with observed occupancy)",
             self.area_name,
             len(time_priors),
+            len(slot_occupied_seconds),
         )
 
         return time_priors, data_points

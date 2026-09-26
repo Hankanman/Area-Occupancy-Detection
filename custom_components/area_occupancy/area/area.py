@@ -99,6 +99,7 @@ class Area:
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
         area_data: dict | None = None,
+        subentry_id: str | None = None,
     ) -> None:
         """Initialize the Area instance.
 
@@ -106,6 +107,9 @@ class Area:
             coordinator: The coordinator instance managing this area
             area_name: Name/identifier for this area
             area_data: Optional area-specific configuration data
+            subentry_id: Config subentry this area is stored in. The entity
+                platforms need it to register their entities under the area's
+                subentry rather than the entry as a whole.
 
         Note:
             The area must be added to coordinator.areas BEFORE components
@@ -114,7 +118,12 @@ class Area:
         """
         self.coordinator = coordinator
         self.area_name = area_name
-        self.config = AreaConfig(coordinator, area_name=area_name, area_data=area_data)
+        self.config = AreaConfig(
+            coordinator,
+            area_name=area_name,
+            area_data=area_data,
+            subentry_id=subentry_id,
+        )
 
         # Components will be initialized lazily after area is added to coordinator.areas
         # This avoids circular dependency issues during initialization

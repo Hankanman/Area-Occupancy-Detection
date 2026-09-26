@@ -2018,6 +2018,98 @@ class TestEntityPropertiesAndMethods:
             assert mock_factory.create_all_from_config.call_count == 2
 
 
+class TestMediaIsTvSource:
+    """Test Entity.media_is_tv_source property."""
+
+    @pytest.fixture
+    def test_entity(self, coordinator: AreaOccupancyCoordinator) -> Entity:
+        """Create a test entity for property testing."""
+        return create_test_entity(coordinator=coordinator)
+
+    def test_true_when_source_is_tv(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A media_player with source='TV' is relaying TV audio."""
+        mock_state = Mock()
+        mock_state.attributes = {"source": "TV", "device_class": "speaker"}
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is True
+
+    def test_true_when_source_is_tv_case_insensitive(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Source comparison is case-insensitive."""
+        mock_state = Mock()
+        mock_state.attributes = {"source": "tv"}
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is True
+
+    def test_true_for_sonos_htastream_content_id(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Sonos ARC/optical passthrough uses an x-sonos-htastream content id."""
+        mock_state = Mock()
+        mock_state.attributes = {
+            "source": None,
+            "media_content_id": "x-sonos-htastream:RINCON_ABC123:spdif",
+        }
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is True
+
+    def test_false_for_playlist_source(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A named playlist/radio source is not TV passthrough."""
+        mock_state = Mock()
+        mock_state.attributes = {
+            "source": "Ghislain Late Night Vibes Mix",
+            "media_content_id": "spotify:playlist:abc123",
+        }
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is False
+
+    def test_false_when_no_state(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """No HA state available means we can't tell — default to False."""
+        _set_states_get(coordinator.hass, lambda _: None)
+        assert test_entity.media_is_tv_source is False
+
+    def test_false_when_no_attributes(
+        self, test_entity: Entity, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A state object with no/empty attributes defaults to False."""
+        mock_state = Mock()
+        mock_state.attributes = {}
+        _set_states_get(coordinator.hass, lambda _: mock_state)
+        assert test_entity.media_is_tv_source is False
+
+    def test_uses_state_provider_when_present(self) -> None:
+        """state_provider path is checked the same way as the hass path."""
+        entity_type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.4,
+            prob_given_true=0.5,
+            prob_given_false=0.1,
+            active_states=[STATE_ON],
+        )
+        decay = Decay(half_life=60.0)
+
+        state_obj = Mock()
+        state_obj.attributes = {"source": "TV"}
+
+        entity = Entity(
+            entity_id="media_player.speaker",
+            type=entity_type,
+            prob_given_true=0.5,
+            prob_given_false=0.1,
+            decay=decay,
+            state_provider=lambda _entity_id: state_obj,
+        )
+
+        assert entity.media_is_tv_source is True
+
+
 class TestEntityFactory:
     """Test the EntityFactory class."""
 
@@ -2178,6 +2270,91 @@ class TestEntityFactory:
 
         assert entity.type.active_range == (1.0, float("inf"))
         assert entity.type.active_states is None
+
+    def test_get_entity_type_mapping_includes_custom_binary_and_numeric(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that custom_binary/custom_numeric sensors are included in the mapping."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.sensors.custom_binary = ["binary_sensor.custom_flag"]
+        area.config.sensors.custom_numeric = ["sensor.custom_metric"]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        mapping = factory.get_entity_type_mapping()
+
+        assert mapping["binary_sensor.custom_flag"] == "custom_binary"
+        assert mapping["sensor.custom_metric"] == "custom_numeric"
+
+    def test_custom_binary_uses_user_supplied_active_states(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A custom_binary entity must use the user-configured active_states.
+
+        Unlike appliance/door/etc, custom_binary has no meaningful default
+        active state ahead of time -- the whole point of #531 is supporting
+        entities with unknown state semantics.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.sensor_states.custom_binary = ["detected", "active"]
+
+        entity_id = "binary_sensor.hassagent_pc_active"
+        area.config.sensors.custom_binary = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "custom_binary")
+
+        assert entity.type.active_states == ["detected", "active"]
+        assert entity.type.active_range is None
+        assert entity.type.input_type == InputType.CUSTOM_BINARY
+
+    def test_custom_numeric_uses_user_supplied_active_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A custom_numeric entity must use the user-configured min/max range.
+
+        custom_numeric is the first InputType to actually populate the
+        generic ``f"{input_type.value}_active_range"`` override hook on
+        AreaConfig -- every other numeric type still relies on the
+        DEFAULT_TYPES fallback.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.custom_numeric_active_range = (5.0, 50.0)
+
+        entity_id = "sensor.custom_metric"
+        area.config.sensors.custom_numeric = [entity_id]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec(entity_id, "custom_numeric")
+
+        assert entity.type.active_range == (5.0, 50.0)
+        assert entity.type.active_states is None
+        assert entity.type.input_type == InputType.CUSTOM_NUMERIC
+
+    def test_custom_binary_and_numeric_use_own_weights(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """custom_binary/custom_numeric must resolve their own weight keys."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.weights.custom_binary = 0.55
+        area.config.weights.custom_numeric = 0.15
+
+        area.config.sensors.custom_binary = ["binary_sensor.custom_flag"]
+        area.config.sensors.custom_numeric = ["sensor.custom_metric"]
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        binary_entity = factory.create_from_config_spec(
+            "binary_sensor.custom_flag", "custom_binary"
+        )
+        numeric_entity = factory.create_from_config_spec(
+            "sensor.custom_metric", "custom_numeric"
+        )
+
+        assert binary_entity.weight == 0.55
+        assert numeric_entity.weight == 0.15
 
     @pytest.mark.parametrize(
         ("input_type", "sensor_attr", "entity_id"),

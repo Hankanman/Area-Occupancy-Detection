@@ -49,6 +49,28 @@ uv run pytest -v
 uv run pytest tests/test_area_area.py::test_area_initialization -v
 ```
 
+### Throwaway Home Assistant instances
+
+`scripts/harness` builds disposable Home Assistant instances seeded with a
+config entry, matching HA areas, mock sensor entities and synthetic learned
+history, then runs end-to-end checks against the real frontend API. Use it
+for anything unit tests cannot see: config/options/subentry flow schemas the
+frontend rejects, entity-to-subentry filing, migrations that run but do not
+persist, or learned values coming out pinned.
+
+```bash
+scripts/harness profiles                      # what can be built
+scripts/harness new                           # five areas, 14 days of history, started
+scripts/harness new --entry-version 18        # seed a pre-subentry entry so startup migrates
+scripts/harness verify                        # build, run every check, report, delete
+scripts/harness destroy --name dev            # or clean up by hand
+```
+
+Instances live in `instances/` (gitignored) and are entirely self-contained;
+they never touch the repo's own `config/`. See
+[`docs/docs/technical/dev-harness.md`](docs/docs/technical/dev-harness.md)
+for profiles, what gets seeded, and how to add a check.
+
 ### Development Environment
 
 This project uses a **devcontainer** that provides a standalone Home Assistant instance. When opening in VS Code, accept the devcontainer prompt to get:
@@ -127,11 +149,14 @@ AreaOccupancyCoordinator (global singleton)
 
 ### Configuration Flow
 
-The integration uses Home Assistant's config flow with a **list-based multi-area architecture**:
-- Configuration stored in `config_entry.data[CONF_AREAS]` as a list of area configurations
-- Each area config contains: `area_id`, sensor lists, weights, thresholds, decay settings
-- Options flow allows adding/editing/removing areas
+The integration uses Home Assistant's config flow with a **subentry-per-area architecture** (`CONF_VERSION` 19 and later):
+- Each area is a config subentry of the single entry; `config_helpers.iter_area_subentries()` is the only place that knows this, so callers iterate areas without caring how they are stored
+- Each area's subentry data contains: `area_id`, sensor lists, weights, thresholds, decay settings
+- `AreaSubentryFlowHandler` provides the native add/reconfigure/delete on the integration page; the options flow keeps the same wizard for area management plus global settings and people
+- Per-area entities are registered with `config_subentry_id` so devices and entities group under their area
+- The pre-19 shape (`config_entry.data[CONF_AREAS]`, a list) only survives in `migrations.py`
 - Changes trigger `async_update_options()` which handles area lifecycle (create/update/delete)
+- Validation and list transforms that do not need `hass` live in `config_helpers.py` (`validate_area_config`, `validate_threshold`, `validate_decay_half_life`, `apply_symmetric_adjacency`, `update_area_in_list`, duration conversion, shared `THRESHOLD_*`/`WEIGHT_*` bounds). Every writer of area configuration (the flows, the threshold `number` entity, any future service or websocket API) must validate through it rather than re-implementing rules
 
 ### State Management
 
@@ -153,6 +178,9 @@ Tests use `pytest-homeassistant-custom-component` with extensive mocking:
 - Tests organized by component: area, coordinator, db, entities, config flow, etc.
 - Mock Home Assistant services, entity states, recorder data
 - Use `pytest-cov` for coverage reporting
+- `tests/test_harness.py` covers the deterministic parts of the harness
+  (profiles, generated YAML, seeded storage, synthesised history); the
+  instance-level checks run through `scripts/harness verify`, not pytest
 
 ## Important Development Notes
 
@@ -172,6 +200,8 @@ When updating `CONF_VERSION`, implement migration in `migrations.py`. Migrations
 - Preserve all user settings
 - Log migration steps
 - Be idempotent (safe to run multiple times)
+
+`CONF_VERSION` (config-entry format) and `DB_SCHEMA_VERSION` (SQLite schema stamp, both in `const.py`) are independent. Bumping `CONF_VERSION` never touches the database. Bumping `DB_SCHEMA_VERSION` makes `db/maintenance.py` delete and recreate the database, wiping all learned history, so only do it for an incompatible schema change; a new *table* goes through `Base.metadata.create_all(checkfirst=True)` with no bump. A new *column* on an existing table does not: `create_all` only creates missing tables and leaves existing ones untouched, so an upgraded install keeps the old columns and later queries fail. Adding a column needs either an explicit `ALTER TABLE` migration or a `DB_SCHEMA_VERSION` bump, which costs the user their learned history.
 
 ### Entity Evidence
 

@@ -534,6 +534,23 @@ def _try_level(
 
 
 @dataclass(frozen=True)
+class TransitionDistribution:
+    """Full destination distribution from one trusted fallback level.
+
+    ``probabilities`` maps each observed destination to its share of the
+    level's total (an unobserved destination at a trusted level is a
+    real zero — simply absent). ``level`` is the ``LEVEL_*`` constant
+    that fired; ``total_count`` its normalisation denominator. At
+    ``LEVEL_STATIC_DEFAULT`` the map is empty and ``total_count`` is 0:
+    no level had enough data to trust.
+    """
+
+    probabilities: dict[str, float]
+    level: str
+    total_count: float
+
+
+@dataclass(frozen=True)
 class AdjacencySnapshot:
     """In-memory copy of one entry's adjacency index and transition counts.
 
@@ -601,6 +618,82 @@ class AdjacencySnapshot:
             return self._by_hour_of_day.get(chain, {}).get(hour_of_day, {})
         return self._whole_week.get(chain, {})
 
+    def lookup_distribution(
+        self,
+        *,
+        from_area: str,
+        mid_area: str,
+        hour_of_week: int,
+    ) -> TransitionDistribution:
+        """Return the full next-area distribution with the six-level fallback.
+
+        Walks six levels of progressively-wider scope until one has
+        enough observations to trust, and returns every destination's
+        share of that level's total — what a predictive consumer
+        ("which area next?") needs. :meth:`lookup` delegates here so
+        the single-destination and distribution answers can never
+        disagree. Levels:
+
+        1. Specific 2-hop chain at the exact hour-of-week
+        2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
+        3. Specific 2-hop chain un-bucketed
+        4. Equivalent 1-hop chain at the exact hour-of-week
+        5. Equivalent 1-hop chain un-bucketed
+        6. Static default (empty distribution, ``total_count`` 0)
+
+        Pass ``mid_area=""`` to skip levels 1-3 when only a 1-hop
+        trajectory is known. Thresholds come from the ``ADJACENCY_N_*``
+        constants and apply to each level's total, per ``_try_level``'s
+        rationale (an unobserved destination at a trusted level is a
+        real zero).
+        """
+        hour_of_day = hour_of_week % 24
+
+        levels: list[tuple[dict[str, float], str, int]] = []
+        if mid_area:
+            levels += [
+                (
+                    self.pair_counts(from_area, mid_area, hour_of_week=hour_of_week),
+                    LEVEL_2HOP_HOUR_OF_WEEK,
+                    ADJACENCY_N_SPECIFIC,
+                ),
+                (
+                    self.pair_counts(from_area, mid_area, hour_of_day=hour_of_day),
+                    LEVEL_2HOP_HOUR_OF_DAY,
+                    ADJACENCY_N_HOUR,
+                ),
+                (
+                    self.pair_counts(from_area, mid_area),
+                    LEVEL_2HOP_UNBUCKETED,
+                    ADJACENCY_N_CHAIN,
+                ),
+            ]
+        levels += [
+            (
+                self.pair_counts(from_area, "", hour_of_week=hour_of_week),
+                LEVEL_1HOP_HOUR_OF_WEEK,
+                ADJACENCY_N_SPECIFIC,
+            ),
+            (
+                self.pair_counts(from_area, ""),
+                LEVEL_1HOP_UNBUCKETED,
+                ADJACENCY_N_PAIR,
+            ),
+        ]
+
+        for sums, level, threshold in levels:
+            total = sum(sums.values())
+            if total >= threshold and total > 0:
+                return TransitionDistribution(
+                    probabilities={dest: count / total for dest, count in sums.items()},
+                    level=level,
+                    total_count=total,
+                )
+
+        return TransitionDistribution(
+            probabilities={}, level=LEVEL_STATIC_DEFAULT, total_count=0.0
+        )
+
     def lookup(
         self,
         *,
@@ -612,75 +705,30 @@ class AdjacencySnapshot:
     ) -> TransitionLookupResult:
         """Look up ``P(to_area | from_area, mid_area, hour_of_week)`` with fallback.
 
-        Walks six levels of progressively-wider scope until one has enough
-        observations to trust:
-
-        1. Specific 2-hop chain at the exact hour-of-week
-        2. Specific 2-hop chain at the same hour-of-day (collapsed weekdays)
-        3. Specific 2-hop chain un-bucketed
-        4. Equivalent 1-hop chain at the exact hour-of-week
-        5. Equivalent 1-hop chain un-bucketed
-        6. Static default (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless
-           overridden)
-
-        Caller should normally pass ``mid_area`` populated for the 2-hop
-        case. If only a 1-hop trajectory is available (no W known yet), pass
-        ``mid_area=""`` to skip levels 1-3 and start at level 4.
-
-        The thresholds come from ``ADJACENCY_N_*`` constants in ``const.py``.
+        Delegates to :meth:`lookup_distribution` (single source of the
+        six-level walk) and extracts one destination's share. The static
+        default (``DEFAULT_INFLUENCE_WEIGHTS["adjacent"]`` unless
+        overridden) fires only when no level had enough data —
+        observed/total stay 0 there to signal "no data".
         """
         if static_default is None:
             static_default = DEFAULT_INFLUENCE_WEIGHTS["adjacent"]
-        hour_of_day = hour_of_week % 24
 
-        # When the caller already knows there's no 2-hop trajectory, skip
-        # straight to the 1-hop levels.
-        if mid_area:
-            # Level 1: specific chain at exact (weekday, hour)
-            sums = self.pair_counts(from_area, mid_area, hour_of_week=hour_of_week)
-            result = _try_level(sums, to_area, ADJACENCY_N_SPECIFIC)
-            if result is not None:
-                prob, observed, total = result
-                return TransitionLookupResult(
-                    prob, LEVEL_2HOP_HOUR_OF_WEEK, observed, total
-                )
-
-            # Level 2: specific chain collapsed across weekdays
-            sums = self.pair_counts(from_area, mid_area, hour_of_day=hour_of_day)
-            result = _try_level(sums, to_area, ADJACENCY_N_HOUR)
-            if result is not None:
-                prob, observed, total = result
-                return TransitionLookupResult(
-                    prob, LEVEL_2HOP_HOUR_OF_DAY, observed, total
-                )
-
-            # Level 3: specific chain un-bucketed
-            sums = self.pair_counts(from_area, mid_area)
-            result = _try_level(sums, to_area, ADJACENCY_N_CHAIN)
-            if result is not None:
-                prob, observed, total = result
-                return TransitionLookupResult(
-                    prob, LEVEL_2HOP_UNBUCKETED, observed, total
-                )
-
-        # Level 4: 1-hop equivalent at exact hour-of-week
-        sums = self.pair_counts(from_area, "", hour_of_week=hour_of_week)
-        result = _try_level(sums, to_area, ADJACENCY_N_SPECIFIC)
-        if result is not None:
-            prob, observed, total = result
+        distribution = self.lookup_distribution(
+            from_area=from_area, mid_area=mid_area, hour_of_week=hour_of_week
+        )
+        if distribution.level == LEVEL_STATIC_DEFAULT:
             return TransitionLookupResult(
-                prob, LEVEL_1HOP_HOUR_OF_WEEK, observed, total
+                static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0
             )
 
-        # Level 5: 1-hop equivalent un-bucketed
-        sums = self.pair_counts(from_area, "")
-        result = _try_level(sums, to_area, ADJACENCY_N_PAIR)
-        if result is not None:
-            prob, observed, total = result
-            return TransitionLookupResult(prob, LEVEL_1HOP_UNBUCKETED, observed, total)
-
-        # Level 6: static default. observed/total stay 0 to signal "no data".
-        return TransitionLookupResult(static_default, LEVEL_STATIC_DEFAULT, 0.0, 0.0)
+        probability = distribution.probabilities.get(to_area, 0.0)
+        return TransitionLookupResult(
+            probability,
+            distribution.level,
+            probability * distribution.total_count,
+            distribution.total_count,
+        )
 
 
 def load_adjacency_snapshot(

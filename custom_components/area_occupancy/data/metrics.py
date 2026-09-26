@@ -56,6 +56,10 @@ class CalibrationBin:
     count: int = 0
     mean_probability: float = 0.0
     observed_rate: float = 0.0
+    # Time-weighted seconds this band represents (see _tick_weights).
+    # ``count`` stays a raw sample count for diagnostics readability;
+    # weight is what the reliability stats and suggest_threshold use.
+    weight: float = 0.0
 
 
 @dataclass
@@ -199,6 +203,7 @@ def compute_accuracy_metrics(
     for i in range(bins):
         row = CalibrationBin(lower=i / bins, upper=(i + 1) / bins)
         row.count = bin_count[i]
+        row.weight = bin_weight[i]
         if bin_count[i] and bin_weight[i]:
             row.mean_probability = bin_prob_weight_sum[i] / bin_weight[i]
             row.observed_rate = bin_hit_weight[i] / bin_weight[i]
@@ -219,9 +224,80 @@ def compute_accuracy_metrics(
     return out
 
 
+# Below this many tick samples in the window, suggest_threshold returns
+# None — a handful of ticks says nothing about the false-on/false-off
+# tradeoff. At the ~10s decay-timer cadence this is under 20 minutes of
+# observation, a deliberately low floor: the gate protects against
+# near-empty windows (fresh restart, brand-new area), not against noisy
+# ones — noise shows up as the suggestion moving between analysis runs,
+# which is exactly what the #499 "stable for a release cycle" promotion
+# gate watches before auto-threshold may ever consume this value.
+SUGGEST_THRESHOLD_MIN_SAMPLES = 100
+
+
+def suggest_threshold(metrics: AccuracyMetrics) -> float | None:
+    """Return the decision threshold the calibration data argues for.
+
+    Scans every bin edge as a candidate threshold and picks the one
+    minimizing ``false_on_rate + false_off_rate`` (equal weighting —
+    treating a phantom "occupied" exactly as bad as a missed person),
+    computed from the time-weighted calibration bins: a bin at or above
+    the candidate decides "on" for ``weight`` seconds of which
+    ``weight × observed_rate`` were truly occupied.
+
+    Shadow-mode contract: nothing in the decision path reads this value.
+    It is exposed read-only (diagnostics + the Accuracy sensor attribute)
+    so the data for the #499 auto-threshold decision accumulates in the
+    open; promotion to actually driving the threshold routes through the
+    change-control gates.
+
+    Returns:
+        The candidate threshold (0-1 domain, a bin edge) with the lowest
+        combined error, or ``None`` when the window is too small
+        (< ``SUGGEST_THRESHOLD_MIN_SAMPLES``), the bins are empty, or the
+        window never observed one of the two truth classes (a threshold
+        tradeoff needs both). Ties resolve to the lowest such threshold.
+    """
+    if metrics.sample_count < SUGGEST_THRESHOLD_MIN_SAMPLES:
+        return None
+    populated = [b for b in metrics.bins if b.weight > 0]
+    if not populated:
+        return None
+
+    truth_on_total = sum(b.weight * b.observed_rate for b in populated)
+    truth_off_total = sum(b.weight * (1.0 - b.observed_rate) for b in populated)
+    if truth_on_total <= 0 or truth_off_total <= 0:
+        return None
+
+    best_threshold: float | None = None
+    best_cost = float("inf")
+    # Candidate thresholds are the interior bin edges (for 10 bins:
+    # 0.1 .. 0.9). The exterior edges (0.0 / 1.0) would mean "always on" /
+    # "always off", which is not a threshold suggestion.
+    for edge_bin in metrics.bins[1:]:
+        threshold = edge_bin.lower
+        false_on = sum(
+            b.weight * (1.0 - b.observed_rate)
+            for b in populated
+            if b.lower >= threshold
+        )
+        false_off = sum(
+            b.weight * b.observed_rate for b in populated if b.lower < threshold
+        )
+        cost = false_on / truth_off_total + false_off / truth_on_total
+        if cost < best_cost:
+            best_cost = cost
+            best_threshold = threshold
+    return best_threshold
+
+
 def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict:
     """Flatten an ``AccuracyMetrics`` into a JSON-safe diagnostics block."""
     return {
+        # Still shadow: the Accuracy sensor (2026.9.1) exposes these values
+        # read-only, but nothing in the decision path (probability,
+        # threshold, decay) consumes them. The flag flips only when
+        # auto-threshold actually engages, per #499's phase gates.
         "shadow_mode": True,
         "sample_count": metrics.sample_count,
         "window_start": metrics.window_start.isoformat()
@@ -229,6 +305,7 @@ def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict:
         else None,
         "window_end": metrics.window_end.isoformat() if metrics.window_end else None,
         "expected_calibration_error": metrics.expected_calibration_error,
+        "suggested_threshold": suggest_threshold(metrics),
         "agreement": metrics.agreement,
         "false_on_rate": metrics.false_on_rate,
         "false_off_rate": metrics.false_off_rate,

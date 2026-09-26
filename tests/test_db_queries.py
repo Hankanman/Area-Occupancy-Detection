@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from custom_components.area_occupancy.const import DEFAULT_MEDIA_ACTIVE_STATES
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db.operations import (
     save_global_prior,
@@ -27,6 +28,7 @@ from custom_components.area_occupancy.db.queries import (
     get_latest_interval,
     get_occupied_intervals,
     get_occupied_intervals_cache,
+    get_stored_time_priors,
     get_time_prior,
     is_occupied_intervals_cache_valid,
 )
@@ -859,11 +861,114 @@ class TestBuildFilters:
         )
 
         with db.get_session() as session:
-            query = build_presence_query(session, db, base_filters)
+            query = build_presence_query(session, db, base_filters, area_name)
             assert query is not None
 
             with suppress(Exception):
                 _ = query.all()
+
+    def test_build_presence_query_unknown_area(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An area the coordinator doesn't know resolves no states, so no query."""
+        db = coordinator.db
+        lookback_date = dt_util.utcnow() - timedelta(days=90)
+        base_filters = build_base_filters(
+            db, db.coordinator.entry_id, lookback_date, "No Such Area"
+        )
+
+        with db.get_session() as session:
+            assert (
+                build_presence_query(session, db, base_filters, "No Such Area") is None
+            )
+
+
+class TestPresenceGroundTruthActiveStates:
+    """Ground truth must honour the area's configured active states (issue #520).
+
+    ``Entity.evidence`` reads the area's configured active states while the
+    occupied-interval query used to read ``DEFAULT_TYPES``. A user who removed
+    ``paused`` from ``CONF_MEDIA_ACTIVE_STATES`` therefore still had every
+    ``paused`` stretch counted as occupancy ground truth, so a media player
+    parked in ``paused`` drove ``global_prior`` to the 0.99 clamp while the
+    live probability correctly read ~0.01.
+    """
+
+    @staticmethod
+    def _seed_paused_media(db: Any, area_name: str, now: datetime) -> float:
+        """Store one 4h 'paused' media interval; return its duration in seconds."""
+        start = now - timedelta(hours=6)
+        end = start + timedelta(hours=4)
+
+        with db.get_session() as session:
+            _create_test_entity(session, db, "media_player.amp", "media", area_name)
+            session.commit()
+
+        with db.get_session() as session:
+            _create_test_interval(
+                session, db, "media_player.amp", start, end, area_name, state="paused"
+            )
+            session.commit()
+
+        return (end - start).total_seconds()
+
+    def test_paused_counts_when_configured_active(
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
+    ) -> None:
+        """With the default media states, 'paused' is occupancy ground truth."""
+        db = coordinator.db
+        area_name = default_area.area_name
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        expected = self._seed_paused_media(db, area_name, now)
+
+        default_area.config.sensor_states.media = list(DEFAULT_MEDIA_ACTIVE_STATES)
+
+        result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
+
+        assert sum((e - s).total_seconds() for s, e in result) == expected
+
+    def test_paused_excluded_when_removed_from_config(
+        self, coordinator: AreaOccupancyCoordinator, default_area: Any
+    ) -> None:
+        """Removing 'paused' from the config removes it from ground truth too."""
+        db = coordinator.db
+        area_name = default_area.area_name
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        self._seed_paused_media(db, area_name, now)
+
+        # What the reporter in #520 had configured: paused is this player's
+        # idle state, so it was removed from the area's media active states.
+        default_area.config.sensor_states.media = ["playing"]
+
+        result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
+
+        assert result == []
+
+    def test_sleep_falls_back_to_type_default(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """SensorStates has no 'sleep' field, so sleep uses the type default."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        start = now - timedelta(hours=3)
+        end = start + timedelta(hours=1)
+
+        with db.get_session() as session:
+            _create_test_entity(session, db, "binary_sensor.bed", "sleep", area_name)
+            session.commit()
+        with db.get_session() as session:
+            _create_test_interval(
+                session, db, "binary_sensor.bed", start, end, area_name, state="on"
+            )
+            session.commit()
+
+        result = get_occupied_intervals(db, db.coordinator.entry_id, area_name, 1, 0)
+
+        assert sum((e - s).total_seconds() for s, e in result) == 3600.0
 
 
 class TestGetGlobalPrior:
@@ -1222,3 +1327,78 @@ class TestGetAllTimePriors:
         for day_of_week in range(7):
             for time_slot in range(24):
                 assert result[(day_of_week, time_slot)] == 0.5
+
+
+class TestGetStoredTimePriors:
+    """Test get_stored_time_priors — the learned-slots-only reader."""
+
+    def _seed(self, db, area_name: str) -> None:
+        """Insert one area and two learned slots."""
+        with db.get_session() as session:
+            session.add(
+                db.Areas(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    area_id="test",
+                    purpose="living",
+                    threshold=0.5,
+                )
+            )
+            session.add_all(
+                [
+                    db.Priors(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        day_of_week=0,
+                        time_slot=8,
+                        prior_value=0.6,
+                        data_points=10,
+                    ),
+                    db.Priors(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area_name,
+                        day_of_week=1,
+                        time_slot=14,
+                        prior_value=0.35,
+                        data_points=3,
+                    ),
+                ]
+            )
+            session.commit()
+
+    def test_returns_only_stored_slots_with_points(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Only learned slots come back, each with its sample count."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        self._seed(db, area_name)
+
+        result = get_stored_time_priors(db, db.coordinator.entry_id, area_name)
+
+        # Unlike get_all_time_priors, the grid is NOT filled: the caller needs
+        # to tell "learned to be empty" from "never observed".
+        assert len(result) == 2
+        assert result[(0, 8)] == (0.6, 10)
+        assert result[(1, 14)] == (0.35, 3)
+        assert (2, 3) not in result
+
+    def test_error_returns_empty(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A database failure returns None (distinct from an empty table), never raises.
+
+        The sentinel matters: `{}` would read as "learned to be empty" and
+        get cached as a fallback-only grid; `None` tells the caller the read
+        failed so nothing is cached and the next access retries.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+
+        def _boom():
+            raise SQLAlchemyError("boom")
+
+        monkeypatch.setattr(db, "get_session", _boom)
+        assert get_stored_time_priors(db, db.coordinator.entry_id, area_name) is None

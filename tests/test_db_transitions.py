@@ -535,6 +535,13 @@ def _lookup(db, **kwargs):
     return snapshot.lookup(**kwargs)
 
 
+def _lookup_distribution(db, **kwargs):
+    """Snapshot-backed distribution lookup, mirroring ``_lookup``."""
+    snapshot = load_adjacency_snapshot(db, db.coordinator.entry_id)
+    assert snapshot is not None
+    return snapshot.lookup_distribution(**kwargs)
+
+
 class TestSnapshotLookup:
     """Six-level smoothing fallback exercised one level at a time."""
 
@@ -899,3 +906,77 @@ class TestAreaTransitionsUpgrade:
             )
             session.commit()
             assert session.query(db.AreaTransitions).count() == 1
+
+
+class TestLookupTransitionDistribution:
+    """The full-distribution lookup (#502) and its probability equivalence."""
+
+    def test_distribution_matches_probability_per_destination(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Every destination's share equals the single-destination lookup.
+
+        The probability function delegates to the distribution function;
+        this guards the contract from the other side, including the
+        real-zero for a destination unobserved at a trusted level.
+        """
+        db = coordinator.db
+        _seed(
+            db,
+            [
+                ("hall", "study", "bathroom", 42, 6.0),
+                ("hall", "study", "bedroom", 42, 4.0),
+            ],
+        )
+
+        dist = _lookup_distribution(
+            db, from_area="hall", mid_area="study", hour_of_week=42
+        )
+        assert dist.level == LEVEL_2HOP_HOUR_OF_WEEK
+        assert dist.total_count == pytest.approx(10.0)
+        assert dist.probabilities == {
+            "bathroom": pytest.approx(0.6),
+            "bedroom": pytest.approx(0.4),
+        }
+        assert sum(dist.probabilities.values()) == pytest.approx(1.0)
+
+        for destination in ("bathroom", "bedroom", "kitchen"):
+            single = _lookup(
+                db,
+                from_area="hall",
+                mid_area="study",
+                to_area=destination,
+                hour_of_week=42,
+            )
+            assert single.probability == pytest.approx(
+                dist.probabilities.get(destination, 0.0)
+            )
+            assert single.level == dist.level
+
+    def test_empty_mid_area_skips_two_hop_levels(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """mid_area='' starts the walk at the 1-hop levels, like the scalar lookup."""
+        db = coordinator.db
+        _seed(
+            db,
+            [
+                ("hall", "", "bathroom", 42, 8.0),
+                ("hall", "", "bedroom", 42, 2.0),
+            ],
+        )
+        dist = _lookup_distribution(db, from_area="hall", mid_area="", hour_of_week=42)
+        assert dist.level == LEVEL_1HOP_HOUR_OF_WEEK
+        assert dist.probabilities["bathroom"] == pytest.approx(0.8)
+
+    def test_no_data_returns_static_default_level(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """With nothing seeded, the distribution is empty at level 6."""
+        db = coordinator.db
+        dist = _lookup_distribution(
+            db, from_area="nowhere", mid_area="", hour_of_week=0
+        )
+        assert dist.level == LEVEL_STATIC_DEFAULT
+        assert dist.probabilities == {}
+        assert dist.total_count == 0.0

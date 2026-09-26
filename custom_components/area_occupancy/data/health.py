@@ -42,6 +42,7 @@ _STUCK_CHECK_TYPES: set[InputType] = BINARY_INPUT_TYPES | {
     InputType.POWER,
     InputType.COVER,
     InputType.WIFI_CLIENTS,
+    InputType.CUSTOM_NUMERIC,
 }
 
 # Input types excluded from all health checks

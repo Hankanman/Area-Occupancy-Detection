@@ -19,7 +19,7 @@ from custom_components.area_occupancy.utils import generate_entity_unique_id
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 
-# ruff: noqa: SLF001, PLC0415, TID251
+# ruff: noqa: SLF001, PLC0415
 
 # Entities name via translation_key + strings.json, so entity.name does not
 # resolve to the literal in a bare unit test. Assert the translation_key
@@ -764,14 +764,15 @@ class TestAsyncSetupEntry:
         entities = []
         for call_args in mock_async_add_entities.call_args_list:
             entities.extend(call_args[0][0])
-        # Should have 9 sensors per area + 5 All Areas sensors (no EvidenceSensor/Activity/Health for All Areas)
-        # With 1 area: 9 (area) + 5 (All Areas) = 14 total
+        # Should have 10 sensors per area + 5 All Areas sensors (no Evidence/Activity/Health/Accuracy for All Areas)
+        # With 1 area: 10 (area) + 5 (All Areas) = 15 total
         # Area sensors: ProbabilitySensor, DecaySensor, PriorsSensor, EvidenceSensor,
         #               PresenceProbabilitySensor, EnvironmentalConfidenceSensor,
-        #               DetectedActivitySensor, ActivityConfidenceSensor, SensorHealthSensor
+        #               DetectedActivitySensor, ActivityConfidenceSensor,
+        #               SensorHealthSensor, AccuracySensor
         # All Areas: ProbabilitySensor, DecaySensor, PriorsSensor,
         #            PresenceProbabilitySensor, EnvironmentalConfidenceSensor
-        assert len(entities) == 14
+        assert len(entities) == 15
 
         entity_types = [type(entity).__name__ for entity in entities]
         expected_types = [
@@ -784,6 +785,7 @@ class TestAsyncSetupEntry:
             "DetectedActivitySensor",
             "ActivityConfidenceSensor",
             "SensorHealthSensor",
+            "AccuracySensor",
         ]
         # All expected types should be present (from area sensors)
         for expected_type in expected_types:
@@ -818,9 +820,9 @@ class TestAsyncSetupEntry:
         assert "DetectedActivitySensor" not in all_areas_types
         assert "ActivityConfidenceSensor" not in all_areas_types
 
-        # Should have 9 area sensors (one for each sensor type)
-        assert len(area_entities) == 9, (
-            f"Expected 9 area sensors, got {len(area_entities)}"
+        # Should have 10 area sensors (one for each sensor type)
+        assert len(area_entities) == 10, (
+            f"Expected 10 area sensors, got {len(area_entities)}"
         )
 
         # Verify all entities have correct coordinator assignment
@@ -1172,7 +1174,9 @@ class TestSensorErrorHandling:
 
         # Mock device registry to raise error when accessing
         mock_registry = Mock()
-        mock_registry.async_get_device.side_effect = Exception("Registry error")
+        mock_registry.async_get_device_by_identifier.side_effect = Exception(
+            "Registry error"
+        )
         with (
             patch(
                 "custom_components.area_occupancy.utils.dr.async_get",
@@ -1195,7 +1199,7 @@ class TestSensorErrorHandling:
 
         # Mock device registry to return None
         mock_registry = Mock()
-        mock_registry.async_get_device.return_value = None
+        mock_registry.async_get_device_by_identifier.return_value = None
         with patch(
             "custom_components.area_occupancy.utils.dr.async_get",
             return_value=mock_registry,
@@ -1222,7 +1226,7 @@ class TestSensorErrorHandling:
         mock_device.area_id = "different_area_id"  # Different from config
 
         mock_registry = Mock()
-        mock_registry.async_get_device.return_value = mock_device
+        mock_registry.async_get_device_by_identifier.return_value = mock_device
         mock_registry.async_update_device = Mock()
 
         with patch(
@@ -1245,7 +1249,7 @@ class TestSensorErrorHandling:
         sensor.hass = hass
 
         mock_registry = Mock()
-        mock_registry.async_get_device = Mock()
+        mock_registry.async_get_device_by_identifier = Mock()
 
         with patch(
             "custom_components.area_occupancy.utils.dr.async_get",
@@ -1254,7 +1258,7 @@ class TestSensorErrorHandling:
             await sensor.async_added_to_hass()
 
             # Verify device registry was not accessed (All Areas sensors skip this)
-            mock_registry.async_get_device.assert_not_called()
+            mock_registry.async_get_device_by_identifier.assert_not_called()
 
     async def test_async_added_to_hass_no_area_id_config(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
@@ -1500,12 +1504,6 @@ class TestDiagnosticSensorsDisabledByDefault:
     ) -> None:
         """Test that on a fresh setup, diagnostic sensors have disabled_by = 'integration' when registered."""
         from custom_components.area_occupancy.const import DOMAIN
-        from custom_components.area_occupancy.sensor import (
-            ActivityConfidenceSensor,
-            EnvironmentalConfidenceSensor,
-            PresenceProbabilitySensor,
-            SensorHealthSensor,
-        )
         from homeassistant.helpers import entity_registry as er
 
         mock_async_add_entities = Mock()
@@ -1539,19 +1537,11 @@ class TestDiagnosticSensorsDisabledByDefault:
                 else er.RegistryEntryDisabler.INTEGRATION,
             )
 
-            # Assert disabled state matches expectation
-            if isinstance(
-                entity,
-                (
-                    PriorsSensor,
-                    EvidenceSensor,
-                    DecaySensor,
-                    PresenceProbabilitySensor,
-                    EnvironmentalConfidenceSensor,
-                    ActivityConfidenceSensor,
-                    SensorHealthSensor,
-                ),
-            ):
+            # Assert disabled state matches expectation. Keyed on
+            # entity_category rather than a hardcoded class tuple so a newly
+            # added diagnostic sensor is automatically covered (the PR #488
+            # review flagged the tuple form as going stale on every addition).
+            if entity.entity_category == EntityCategory.DIAGNOSTIC:
                 assert entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
             else:
                 assert entry.disabled_by is None
@@ -1656,3 +1646,111 @@ class TestDiagnosticSensorsDisabledByDefault:
         )
         # The previous (enabled) state wins over enabled_default.
         assert entry.disabled_by is None
+
+
+class TestAccuracySensor:
+    """Test the shadow-accuracy diagnostic sensor (#499 phase 2)."""
+
+    @staticmethod
+    def _metrics():
+        from datetime import UTC, datetime
+
+        from custom_components.area_occupancy.data.metrics import (
+            AccuracyMetrics,
+            CalibrationBin,
+        )
+
+        bins = [CalibrationBin(lower=i / 10, upper=(i + 1) / 10) for i in range(10)]
+        # Well-separated report card: empty area predicted low, occupied
+        # predicted high. suggest_threshold hand-computation: any interior
+        # edge between bin 0 and bin 8 is a zero-error boundary; the tie
+        # resolves to the lowest edge, 0.1 -> attribute shows 10.0 (%).
+        bins[0] = CalibrationBin(
+            lower=0.0,
+            upper=0.1,
+            count=600,
+            mean_probability=0.05,
+            observed_rate=0.0,
+            weight=600.0,
+        )
+        bins[8] = CalibrationBin(
+            lower=0.8,
+            upper=0.9,
+            count=300,
+            mean_probability=0.85,
+            observed_rate=1.0,
+            weight=300.0,
+        )
+        return AccuracyMetrics(
+            sample_count=900,
+            window_start=datetime(2026, 9, 26, 0, 0, tzinfo=UTC),
+            window_end=datetime(2026, 9, 26, 12, 0, tzinfo=UTC),
+            expected_calibration_error=0.03,
+            bins=bins,
+            decision_transitions=4,
+            truth_transitions=5,
+            false_on_rate=0.02,
+            false_off_rate=0.05,
+            agreement=0.964,
+        )
+
+    def test_unavailable_before_first_analysis(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """No metrics cached yet -> state None, empty attributes."""
+        from custom_components.area_occupancy.sensor import AccuracySensor
+
+        area_name = coordinator.get_area_names()[0]
+        sensor = AccuracySensor(area_handle=coordinator.get_area_handle(area_name))
+
+        assert sensor.native_value is None
+        assert sensor.extra_state_attributes == {}
+        assert sensor.icon == "mdi:school-outline"
+
+    def test_state_and_attributes_from_cached_metrics(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """State is agreement %, attributes carry the report card."""
+        from custom_components.area_occupancy.sensor import AccuracySensor
+
+        area_name = coordinator.get_area_names()[0]
+        coordinator.set_accuracy_metrics(area_name, self._metrics())
+        sensor = AccuracySensor(area_handle=coordinator.get_area_handle(area_name))
+
+        # agreement 0.964 -> 96.4% at the default 1-decimal precision
+        assert sensor.native_value == pytest.approx(96.4)
+        assert sensor.icon == "mdi:school"
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["expected_calibration_error"] == 0.03
+        assert attrs["false_on_rate"] == 0.02
+        assert attrs["false_off_rate"] == 0.05
+        assert attrs["sample_count"] == 900
+        assert attrs["decision_transitions"] == 4
+        assert attrs["truth_transitions"] == 5
+        # suggest_threshold: 0.1 (see _metrics docstring), exposed as %
+        assert attrs["suggested_threshold"] == pytest.approx(10.0)
+        # Only populated bins are exported
+        assert [b["band"] for b in attrs["calibration_bins"]] == [
+            "0.0-0.1",
+            "0.8-0.9",
+        ]
+
+    def test_calibration_bins_not_recorded(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """The bins list stays out of the recorder (bloat guard, like issues)."""
+        from custom_components.area_occupancy.sensor import AccuracySensor
+
+        assert "calibration_bins" in AccuracySensor._unrecorded_attributes
+
+    def test_diagnostic_and_disabled_by_default(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """#488 convention: diagnostic category, disabled by default."""
+        from custom_components.area_occupancy.sensor import AccuracySensor
+
+        area_name = coordinator.get_area_names()[0]
+        sensor = AccuracySensor(area_handle=coordinator.get_area_handle(area_name))
+        assert sensor.entity_category == EntityCategory.DIAGNOSTIC
+        assert sensor.entity_registry_enabled_default is False
