@@ -80,6 +80,7 @@ from .config_helpers import (
     update_area_in_list,
     validate_area_config,
     validate_person_input,
+    validate_sensor_states,
 )
 from .const import (
     CONF_ACTION_ADD_AREA,
@@ -164,10 +165,8 @@ from .const import (
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN,
     DEFAULT_DECAY_ENABLED,
     DEFAULT_DECAY_HALF_LIFE,
-    DEFAULT_DOOR_ACTIVE_STATE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_HEALTH_ENABLED,
-    DEFAULT_LOCK_ACTIVE_STATE,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -2321,31 +2320,11 @@ class BaseOccupancyFlow:
         if user_input is not None:
             flattened = flatten_sectioned_input(user_input)
 
-            # Validate sensor-state combinations
-            if flattened.get(CONF_MEDIA_DEVICES, []) and not flattened.get(
-                CONF_MEDIA_ACTIVE_STATES, DEFAULT_MEDIA_ACTIVE_STATES
-            ):
-                errors["base"] = "media_states_required"
-            if flattened.get(CONF_APPLIANCES, []) and not flattened.get(
-                CONF_APPLIANCE_ACTIVE_STATES, DEFAULT_APPLIANCE_ACTIVE_STATES
-            ):
-                errors["base"] = "appliance_states_required"
-            if flattened.get(CONF_DOOR_SENSORS, []) and not flattened.get(
-                CONF_DOOR_ACTIVE_STATE, DEFAULT_DOOR_ACTIVE_STATE
-            ):
-                errors["base"] = "door_state_required"
-            if flattened.get(CONF_LOCK_SENSORS, []) and not flattened.get(
-                CONF_LOCK_ACTIVE_STATE, DEFAULT_LOCK_ACTIVE_STATE
-            ):
-                errors["base"] = "lock_state_required"
-            if flattened.get(CONF_WINDOW_SENSORS, []) and not flattened.get(
-                CONF_WINDOW_ACTIVE_STATE, DEFAULT_WINDOW_ACTIVE_STATE
-            ):
-                errors["base"] = "window_state_required"
-            if flattened.get(CONF_COVER_SENSORS, []) and not flattened.get(
-                CONF_COVER_ACTIVE_STATES, DEFAULT_COVER_ACTIVE_STATES
-            ):
-                errors["base"] = "cover_states_required"
+            # Validate here, while the fields are on screen: a sensor-state
+            # error raised on a later step has no field to show against.
+            errors.update(
+                validate_sensor_states({**self._area_config_draft, **flattened})
+            )
 
             if not errors:
                 if self._editing_single_section:

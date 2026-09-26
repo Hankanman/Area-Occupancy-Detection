@@ -987,6 +987,37 @@ class TestAreaConfigUpdate:
         assert config.threshold == 0.8
         assert config.config_entry == new_config_entry
 
+    def test_update_from_entry_survives_an_area_rename(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        hass: HomeAssistant,
+        setup_area_registry: dict[str, str],
+    ) -> None:
+        """A known subentry id finds the area even when its name no longer does.
+
+        After the Home Assistant area is renamed, the coordinator still holds
+        the area under its load-time name, so matching by name misses and
+        would load an empty config over the area's real one.
+        """
+        subentries = make_area_subentries(
+            [
+                {
+                    CONF_AREA_ID: setup_area_registry.get("Testing", "testing"),
+                    CONF_THRESHOLD: 80,
+                }
+            ]
+        )
+        config = AreaConfig(coordinator, area_name="Name Before The Rename")
+        config.subentry_id = next(iter(subentries))
+        new_config_entry = Mock()
+        new_config_entry.data = {}
+        new_config_entry.options = {}
+        new_config_entry.subentries = subentries
+
+        config.update_from_entry(new_config_entry)
+
+        assert config.threshold == 0.8
+
     def test_update_from_entry_with_area_not_found_loads_defaults(
         self,
         coordinator: AreaOccupancyCoordinator,

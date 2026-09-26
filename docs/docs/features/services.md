@@ -132,7 +132,9 @@ actions:
   - variables:
       slot: >-
         {{ (now() + timedelta(hours=1)).weekday() }},{{ (now() + timedelta(hours=1)).hour }}
-      area: "{{ forecast.areas['Studio'] }}"
+      # One area was requested, so take the only entry: the response keys
+      # areas by display name, which need not match the area_id.
+      area: "{{ (forecast.areas.values() | list)[0] }}"
   - condition: template
     value_template: >-
       {{ area.data_points[slot] | int > 0 and area.slots[slot] | float > 0.5 }}

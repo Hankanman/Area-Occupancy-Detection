@@ -27,13 +27,13 @@ You will be prompted to select entities for various categories. You only need to
 | Power Sensors                | `sensor`                            | Power sensors measuring power consumption (W/kW)                     | `0.1 - 10.0`         |
 | Wi-Fi Client Sensors          | `sensor`                            | Sensors reporting connected Wi-Fi client counts (e.g. UniFi Network's connected-clients sensors) for an SSID/AP | `1+` (no upper bound) |
 | Custom Binary Sensors         | any                                 | Any entity with no domain or device_class filter, for sensors the sections above reject (e.g. an MQTT/HASS.Agent sensor with a custom on/off-style state). | user-configured (default `on`) |
-| Custom Numeric Sensors        | any                                 | Any numeric entity with no domain or device_class filter, for sensors the sections above reject. | user-configured (default `1.0+`) |
+| Custom Numeric Sensors        | any                                 | Any numeric entity with no domain or device_class filter, for sensors the sections above reject. | user-configured (default `1`–`1,000,000`) |
 
 !!! note
     Wi-Fi client count is treated as a **presence-channel** signal (like motion, media, or power), not an environmental one — a device joining a network is a much stronger, more direct sign of a person than an ambient reading like temperature. The default active range (`1` and up, unbounded) treats any nonzero client count as evidence of presence, but the useful range varies enormously between networks (a guest SSID might swing 0-1 clients while a busy office SSID swings 5-45), so you will likely want to be selective about which sensors you include per area rather than relying on the raw count alone.
 
 !!! note
-    Custom sensors have **no domain or device_class filter at all** — every other section restricts you to entities HA can identify as door, motion, power, etc. Use custom sensors when your entity doesn't fit any of the typed sections above, such as an MQTT or [HASS.Agent](https://hassagent.spablo.com) sensor with unique state semantics. Since the active states/range can't be inferred, you must configure them yourself in the Custom Sensors section — there's no reliable default.
+    Custom sensors have **no domain or device_class filter at all** — every other section restricts you to entities HA can identify as door, motion, power, etc. Use custom sensors when your entity doesn't fit any of the typed sections above, such as an MQTT or [HASS.Agent](https://hassagent.spablo.com) sensor with unique state semantics. The active states and range can't be inferred from the entity, so the defaults (`on`, and a band of `1` to `1,000,000`) are only a starting point — set them to match your sensor in the Custom Sensors section.
 
 ## Sensor Weights
 

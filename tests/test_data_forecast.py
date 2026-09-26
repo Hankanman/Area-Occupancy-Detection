@@ -56,6 +56,9 @@ def test_build_area_time_priors_structure(coordinator: AreaOccupancyCoordinator)
     area = coordinator.get_area(area_name)
     area.prior.global_prior = 0.5
     area.prior._cached_time_priors = {(0, 0): 0.4, (2, 10): 0.6}
+    # Seed the points map too: an unset one makes the builder reload the grid
+    # from the database, replacing the values seeded above.
+    area.prior._cached_time_prior_points = {(0, 0): 1, (2, 10): 1}
 
     data = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
 
@@ -63,8 +66,12 @@ def test_build_area_time_priors_structure(coordinator: AreaOccupancyCoordinator)
     assert data["global_prior"] == 0.5
     assert data["slot_minutes"] == DEFAULT_SLOT_MINUTES
     assert set(data["slots"]) == {"0,0", "2,10"}
-    # Response wires through Prior.prior_for (which delegates to forecast_prior).
-    assert data["slots"]["2,10"] == round(area.prior.prior_for(2, 10), 4)
+    # The baseline is the evidence-free series, so it is the seeded slot's
+    # forecast whatever the clock says (``slots`` blends in live evidence for
+    # the slots just ahead of now).
+    assert data["slots_baseline"]["2,10"] == round(
+        forecast_prior(0.5, 0.6, prior_factor=PRIOR_FACTOR), 4
+    )
 
 
 def _member(

@@ -230,7 +230,7 @@ The time prior retrieval follows this path:
    - Property getter that only reads the cache; it never queries the database
 
 2. **Cache Check**: Checks if `_cached_time_priors` dictionary is populated (line 118)
-   - If `None`, returns `DEFAULT_TIME_PRIOR` (0.5) without querying the database
+   - If `None`, returns `unlearned_slot_prior` without querying the database (the area's `global_prior`; `DEFAULT_TIME_PRIOR` (0.5) only before any global prior is learned)
    - Cache stores all time priors as a dictionary: `(day_of_week, time_slot) -> prior_value`
    - The cache is filled by `load_time_priors()`, which `load_data()` and `start_prior_analysis()` run in the executor, so probability calculations on the event loop never query SQLite
 
@@ -270,7 +270,7 @@ The time prior retrieval follows this path:
 6. **Get Current Slot**: After cache is loaded, retrieves value for current day/slot (line 121-126)
    - Gets current `day_of_week` and `time_slot`
    - Looks up value in cached dictionary
-   - Returns `unlearned_slot_prior` if slot not found (shouldn't happen after `_load_time_priors()`)
+   - Returns `unlearned_slot_prior` if slot not found (shouldn't happen after `load_time_priors()`)
 
 7. **Safety Bounds**: Applied during `load_time_priors()`
    - Clamps all values to [TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND] = [0.03, 0.9]
@@ -303,7 +303,7 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 
 - Stores all 168 time priors: `dict[tuple[int, int], float]`
 - Key: `(day_of_week, time_slot)` tuple
-- Value: `prior_value` (already clamped to [0.1, 0.9])
+- Value: `prior_value` (already clamped to [0.03, 0.9], `TIME_PRIOR_MIN_BOUND`/`TIME_PRIOR_MAX_BOUND`)
 - Loaded once per `Prior` instance lifecycle
 
 **Cache Population**:
@@ -315,7 +315,7 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 **Cache Invalidation**: `_invalidate_time_prior_cache()` (line 157)
 
 - Called by `clear_cache()` (area removal and purge)
-- Sets `_cached_time_priors = None`; `time_prior` returns `DEFAULT_TIME_PRIOR` until the next `load_time_priors()`
+- Sets `_cached_time_priors = None`; `time_prior` returns `unlearned_slot_prior` until the next `load_time_priors()`
 - `set_global_prior()` does not invalidate it: the previous snapshot stays in use until the prior analysis publishes the new time priors
 
 **TTL**: No time-based expiration
@@ -430,12 +430,12 @@ sequenceDiagram
     participant Query as Query Function
 
     Note over Prior,Query: Executor: load_data() / start_prior_analysis() call load_time_priors()
-    Prior->>DB: get_all_time_priors(area_name)
-    DB->>Query: get_all_time_priors(entry_id, area_name)
-    Query->>Query: Query all Priors for area
-    Query-->>DB: Dictionary of all 168 slots
-    DB-->>Prior: Dictionary of all slots
-    Prior->>Prior: Apply safety bounds [0.1, 0.9]
+    Prior->>DB: get_stored_time_priors(area_name)
+    DB->>Query: get_stored_time_priors(entry_id, area_name)
+    Query->>Query: Query stored Priors for area
+    Query-->>DB: Stored slots -> (value, data_points), or None on error
+    DB-->>Prior: Stored slots (None leaves the cache untouched)
+    Prior->>Prior: Fill unstored slots with unlearned_slot_prior; clamp to [0.03, 0.9]
     Prior->>Cache: Publish all 168 slots
 
     Note over Area,Cache: Event loop: every probability() calculation
@@ -450,7 +450,7 @@ sequenceDiagram
         Prior->>Cache: Lookup (day, slot)
         Cache-->>Prior: prior_value for current slot
     else Cache Empty (not loaded yet)
-        Prior->>Prior: Use DEFAULT_TIME_PRIOR (no database query)
+        Prior->>Prior: Use unlearned_slot_prior (no database query)
     end
 
     Prior->>Prior: combine_priors(global, time)
@@ -468,7 +468,7 @@ flowchart TD
     ForEachSlot --> CalcOccupied[Calculate Occupied Seconds]
     CalcOccupied --> CalcTotal[Calculate Total Slot Seconds]
     CalcTotal --> CalcPercent[Calculate Percentage]
-    CalcPercent --> ApplyBounds[Apply Safety Bounds<br/>[0.1, 0.9]]
+    CalcPercent --> ApplyBounds[Apply Safety Bounds<br/>[0.03, 0.9]]
     ApplyBounds --> StorePrior[Store in Priors Table]
 
     StorePrior --> MoreSlots{More Slots?}

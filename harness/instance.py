@@ -43,6 +43,34 @@ class InstanceError(RuntimeError):
     """The instance could not be built, started, or inspected."""
 
 
+def _alive(pid: int) -> bool:
+    """Whether a process is running, reaping it first if it is our child.
+
+    An instance started by this same process (``verify``, ``upgrade``) is
+    our child, and a child that has exited stays a zombie until it is
+    waited on -- and ``kill(pid, 0)`` succeeds on a zombie. Without the
+    reap, ``stop`` waited out its whole timeout on a process that had
+    already exited. A pid that is not our child (an instance started by an
+    earlier invocation) raises ``ChildProcessError`` and falls through to
+    the signal probe.
+
+    Args:
+        pid: Process id to check.
+
+    Returns:
+        True if the process exists and has not exited.
+    """
+    with contextlib.suppress(ChildProcessError):
+        reaped, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped:
+            return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def free_port() -> int:
     """Pick a free TCP port on localhost.
 
@@ -115,6 +143,10 @@ class Instance:
         port = port or free_port()
 
         path.mkdir(parents=True)
+        # Mark the directory as ours before seeding anything: if a step below
+        # raises, the half-built instance can still be replaced with --force.
+        # The real marker overwrites this once the build completes.
+        (path / MARKER).write_text(json.dumps({"building": True}), encoding="utf-8")
         (path / "configuration.yaml").write_text(
             mock_config.render(
                 profile, time_zone=time_zone, frontend=frontend, port=port
@@ -260,10 +292,9 @@ class Instance:
         if not pid:
             return False
         try:
-            os.kill(int(pid), 0)
-        except (OSError, ValueError):
+            return _alive(int(pid))
+        except ValueError:
             return False
-        return True
 
     def start(self, *, timeout: float = 240.0, debug: bool = False) -> Client:
         """Start Home Assistant and return a ready, authenticated client.
@@ -454,14 +485,14 @@ class Instance:
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except OSError:
+            if not _alive(pid):
                 break
             time.sleep(0.5)
         else:
             with contextlib.suppress(OSError):
                 os.kill(pid, signal.SIGKILL)
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(pid, 0)
 
         self.meta["pid"] = None
         self.save()

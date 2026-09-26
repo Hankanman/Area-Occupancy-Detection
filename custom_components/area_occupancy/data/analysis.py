@@ -742,13 +742,11 @@ class PriorAnalyzer:
                         data_points_per_slot=data_points_per_slot,
                     )
                     if success:
-                        # Invalidate *after* the write, not before. set_global_prior()
-                        # above already invalidated, but this method runs in an
-                        # executor thread while the event loop can read prior.value
-                        # in between — that read would repopulate the cache from the
-                        # pre-write rows and leave it stale until the next hourly
-                        # run. Invalidating here closes that window.
-                        self.area.prior.invalidate_time_prior_cache()
+                        # No invalidation here: start_prior_analysis() publishes
+                        # these rows via load_time_priors() right after this
+                        # returns, and the previous snapshot keeps serving until
+                        # then. Clearing it would drop refreshes to the unlearned
+                        # fallback, and leave it there if that reload failed.
                         _LOGGER.info(
                             "Time priors saved for area %s: %d slots populated",
                             self.area_name,

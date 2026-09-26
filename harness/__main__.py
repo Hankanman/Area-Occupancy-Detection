@@ -323,7 +323,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
     Returns:
         0 if every check passed, 1 otherwise.
     """
-    if args.dir or args.reuse:
+    # Only --reuse checks an existing instance; --dir alone just says where
+    # to build. A reused instance is the user's, so it is never destroyed.
+    reused = args.reuse
+    if reused:
         instance = Instance.load(_instance_path(args))
         if not instance.is_running():
             instance.start()
@@ -353,7 +356,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     summary = f"{len(results) - len(failures)}/{len(results)} checks passed"
     print(_colour(summary, RED if failures else GREEN))
 
-    if args.keep:
+    if args.keep or reused:
         print(f"\ninstance kept at {instance.path}")
     else:
         instance.destroy()

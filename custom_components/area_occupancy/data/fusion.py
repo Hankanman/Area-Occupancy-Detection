@@ -76,10 +76,20 @@ class FusionState:
 
     weights: dict[str, float] = field(default_factory=dict)
     samples: int = 0
+    # Timestamp of the newest tick already trained on. The analysis passes
+    # its whole 24h window every hour, so without this each tick would be
+    # stepped ~24 times and ``samples`` would pass the reporting gate early.
+    trained_through: datetime | None = None
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
-        return {"weights": dict(self.weights), "samples": self.samples}
+        return {
+            "weights": dict(self.weights),
+            "samples": self.samples,
+            "trained_through": (
+                self.trained_through.isoformat() if self.trained_through else None
+            ),
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> FusionState:
@@ -90,6 +100,11 @@ class FusionState:
                     str(k): float(v) for k, v in (data.get("weights") or {}).items()
                 },
                 samples=int(data.get("samples", 0)),
+                trained_through=(
+                    datetime.fromisoformat(raw)
+                    if (raw := data.get("trained_through"))
+                    else None
+                ),
             )
         except (AttributeError, TypeError, ValueError):
             return cls()
@@ -128,7 +143,7 @@ class FusionLearner:
         it rather than silently relaxing back to the default.
 
         Args:
-            ticks: Training rows, any order.
+            ticks: Training rows, any order; already-trained ones are skipped.
             occupied_intervals: Motion-confirmed ``(start, end)`` ground
                 truth — the same source #499's metrics score against.
             defaults: entity_id -> the live pipeline's current
@@ -137,9 +152,17 @@ class FusionLearner:
             learning_rate: SGD step size (``FUSION_LEARNING_RATE``).
             l2: Anchor strength toward ``defaults`` (``FUSION_L2``).
 
+        Ticks at or before ``state.trained_through`` are skipped, so a tick
+        contributes one gradient step however many overlapping windows it
+        is offered in.
+
         Returns:
-            The number of ticks consumed.
+            The number of new ticks consumed.
         """
+        if self.state.trained_through is not None:
+            ticks = [t for t in ticks if t.timestamp > self.state.trained_through]
+        if not ticks:
+            return 0
         weights = self.state.weights
         for tick in ticks:
             y = 1.0 if _is_occupied_at(tick.timestamp, occupied_intervals) else 0.0
@@ -156,6 +179,7 @@ class FusionLearner:
                 w -= learning_rate * gradient
                 weights[entity_id] = min(max(w, 0.0), MAX_WEIGHT)
         self.state.samples += len(ticks)
+        self.state.trained_through = max(t.timestamp for t in ticks)
         return len(ticks)
 
     def snapshot(self, defaults: dict[str, float]) -> dict:

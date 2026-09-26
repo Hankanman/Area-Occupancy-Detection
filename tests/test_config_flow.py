@@ -1268,6 +1268,42 @@ class TestConfigFlowIntegration:
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert area_data.get(CONF_THRESHOLD) == 60
 
+    async def test_wizard_rejects_custom_sensor_errors_on_the_sensor_step(
+        self,
+        config_flow_flow,
+        setup_area_registry: dict[str, str],
+    ):
+        """An inverted custom range stops the sensor step, not a later one.
+
+        Caught later, on the behavior step, the error is keyed on a field that
+        step does not show, so the form re-renders with no visible message.
+        """
+        await config_flow_flow.async_step_user()
+        await config_flow_flow.async_step_area_basics(
+            {
+                CONF_AREA_ID: setup_area_registry.get("Living Room", "living_room"),
+                CONF_PURPOSE: "social",
+            }
+        )
+        await config_flow_flow.async_step_area_motion(
+            {CONF_MOTION_SENSORS: ["binary_sensor.motion1"]}
+        )
+
+        result = await config_flow_flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.counter"],
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN: 10.0,
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX: 2.0,
+                },
+            }
+        )
+
+        assert result.get("step_id") == "area_sensors"
+        assert result.get("errors") == {
+            CONF_CUSTOM_NUMERIC_SENSORS: "custom_numeric_range_invalid"
+        }
+
     async def test_complete_config_flow_with_lock_sensors(
         self,
         config_flow_flow,

@@ -48,6 +48,8 @@ from .const import (
     CONF_THRESHOLD,
     CONF_WEIGHT_APPLIANCE,
     CONF_WEIGHT_COVER,
+    CONF_WEIGHT_CUSTOM_BINARY,
+    CONF_WEIGHT_CUSTOM_NUMERIC,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_LOCK,
@@ -74,6 +76,8 @@ from .const import (
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_WEIGHT_APPLIANCE,
     DEFAULT_WEIGHT_COVER,
+    DEFAULT_WEIGHT_CUSTOM_BINARY,
+    DEFAULT_WEIGHT_CUSTOM_NUMERIC,
     DEFAULT_WEIGHT_DOOR,
     DEFAULT_WEIGHT_ENVIRONMENTAL,
     DEFAULT_WEIGHT_LOCK,
@@ -118,6 +122,8 @@ WEIGHT_KEYS: tuple[tuple[str, float], ...] = (
     (CONF_WEIGHT_ENVIRONMENTAL, DEFAULT_WEIGHT_ENVIRONMENTAL),
     (CONF_WEIGHT_POWER, DEFAULT_WEIGHT_POWER),
     (CONF_WEIGHT_WIFI_CLIENTS, DEFAULT_WEIGHT_WIFI_CLIENTS),
+    (CONF_WEIGHT_CUSTOM_BINARY, DEFAULT_WEIGHT_CUSTOM_BINARY),
+    (CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC),
 )
 
 # (entities key, active-state key, default active state, error key) for every
@@ -271,6 +277,34 @@ def validate_decay_half_life(value: Any) -> str | None:
     return None
 
 
+def validate_sensor_states(data: dict[str, Any]) -> dict[str, str]:
+    """Validate the sensor groups' state and range settings.
+
+    The one source of these rules for every writer. The config flow runs it
+    on the sensor step itself, while the fields are on screen: an error
+    raised later, on a step without those fields, has nowhere to show.
+
+    Args:
+        data: Flat area configuration (defaults apply to missing keys).
+
+    Returns:
+        Errors keyed by the sensor group's entities key; empty if valid.
+    """
+    errors = {
+        entities_key: error_key
+        for entities_key, state_key, default_state, error_key in _STATE_REQUIREMENTS
+        if data.get(entities_key, []) and not data.get(state_key, default_state)
+    }
+    # Custom numeric entities are the only channel whose active band is
+    # user-supplied on both ends, so an inverted range is possible here and
+    # nowhere else; it would silently match nothing.
+    if data.get(CONF_CUSTOM_NUMERIC_SENSORS, []) and data.get(
+        CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
+    ) >= data.get(CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX):
+        errors[CONF_CUSTOM_NUMERIC_SENSORS] = "custom_numeric_range_invalid"
+    return errors
+
+
 def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
     """Validate a flat area configuration dict.
 
@@ -310,26 +344,12 @@ def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
     if threshold is not None and (error := validate_threshold(threshold)):
         errors[CONF_THRESHOLD] = error
 
-    errors.update(
-        {
-            entities_key: error_key
-            for entities_key, state_key, default_state, error_key in _STATE_REQUIREMENTS
-            if data.get(entities_key, []) and not data.get(state_key, default_state)
-        }
-    )
+    errors.update(validate_sensor_states(data))
 
     for key, default in WEIGHT_KEYS:
         if not WEIGHT_MIN <= data.get(key, default) <= WEIGHT_MAX:
             errors[key] = "invalid_weight"
             break
-
-    # Custom numeric entities are the only channel whose active band is
-    # user-supplied on both ends, so an inverted range is possible here and
-    # nowhere else; it would silently match nothing.
-    if data.get(CONF_CUSTOM_NUMERIC_SENSORS, []) and data.get(
-        CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
-    ) >= data.get(CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX):
-        errors[CONF_CUSTOM_NUMERIC_SENSORS] = "custom_numeric_range_invalid"
 
     if data.get(CONF_DECAY_ENABLED, DEFAULT_DECAY_ENABLED):
         half_life = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)

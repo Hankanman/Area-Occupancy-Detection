@@ -36,7 +36,13 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Input types eligible for stuck-sensor detection (binary + power + motion)
+# Input types eligible for stuck-sensor and never-triggered detection
+# (binary + power + motion). A type only gets a stuck check when it also has
+# an entry in STUCK_ACTIVE_THRESHOLDS / STUCK_INACTIVE_THRESHOLDS. The custom
+# types (#531) deliberately have none: they exist for sensors whose meaning
+# AOD cannot infer, so any "normal" active or idle duration would be a guess,
+# and guessed thresholds are how #465/#466/#468's false repairs happened.
+# They still get the never-triggered check through this set.
 _STUCK_CHECK_TYPES: set[InputType] = BINARY_INPUT_TYPES | {
     InputType.MOTION,
     InputType.POWER,

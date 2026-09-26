@@ -70,12 +70,13 @@ class TestGradientStep:
         """
         learner = FusionLearner(FusionState(weights={"s.a": 0.01, "s.b": 0.0}))
         empty_tick = [_tick(0, {"s.a": 100.0}, logit(0.9))]
-        occupied_tick = [_tick(0, {"s.b": 100.0}, logit(0.05))]
+        # A second later: the learner skips ticks it has already trained on.
+        occupied_tick = [_tick(1, {"s.b": 100.0}, logit(0.05))]
 
         learner.update(empty_tick, [], {"s.a": 0.01})
         learner.update(
             occupied_tick,
-            [(T0 - timedelta(seconds=1), T0 + timedelta(seconds=1))],
+            [(T0, T0 + timedelta(seconds=2))],
             {"s.b": 0.0},
         )
 
@@ -120,6 +121,43 @@ class TestGradientStep:
         assert after < before
 
 
+class TestTrainedThrough:
+    """Each tick is trained on once, however many windows offer it."""
+
+    def test_overlapping_windows_train_each_tick_once(self) -> None:
+        """The analysis offers its whole 24h window every hour.
+
+        Offering the same two ticks again must change nothing: no second
+        gradient step and no double-counted samples.
+        """
+        learner = FusionLearner()
+        ticks = [
+            _tick(0, {"s.a": 1.9}, logit(0.3)),
+            _tick(60, {"s.a": 1.9}, logit(0.3)),
+        ]
+
+        assert learner.update(ticks, [], {"s.a": 0.5}) == 2
+        weight = learner.state.weights["s.a"]
+        assert learner.update(ticks, [], {"s.a": 0.5}) == 0
+
+        assert learner.state.weights["s.a"] == weight
+        assert learner.state.samples == 2
+        assert learner.state.trained_through == T0 + timedelta(seconds=60)
+
+    def test_only_newer_ticks_are_consumed(self) -> None:
+        learner = FusionLearner()
+        learner.update([_tick(0, {"s.a": 1.0}, 0.0)], [], {"s.a": 0.5})
+
+        consumed = learner.update(
+            [_tick(0, {"s.a": 1.0}, 0.0), _tick(30, {"s.a": 1.0}, 0.0)],
+            [],
+            {"s.a": 0.5},
+        )
+
+        assert consumed == 1
+        assert learner.state.samples == 2
+
+
 class TestSnapshot:
     """Diagnostics gating and shape."""
 
@@ -151,6 +189,18 @@ class TestStateSerialization:
         restored = FusionState.from_dict(state.to_dict())
         assert restored.weights == {"s.a": 0.42}
         assert restored.samples == 123
+        assert restored.trained_through is None
+
+    def test_round_trip_keeps_the_watermark(self) -> None:
+        state = FusionState(samples=5, trained_through=T0)
+        assert FusionState.from_dict(state.to_dict()).trained_through == T0
+
+    def test_payload_without_watermark_loads(self) -> None:
+        """State saved before the watermark existed still loads."""
+        state = FusionState.from_dict({"weights": {"s.a": 0.3}, "samples": 7})
+        assert state.weights == {"s.a": 0.3}
+        assert state.samples == 7
+        assert state.trained_through is None
 
     def test_malformed_falls_back_to_empty(self) -> None:
         state = FusionState.from_dict({"weights": "garbage", "samples": "x"})

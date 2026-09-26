@@ -796,12 +796,23 @@ class AreaConfig:
     def update_from_entry(self, config_entry: ConfigEntry) -> None:
         """Update the config from a new config entry.
 
-        Finds the area in CONF_AREAS list and reloads config from its data.
+        Finds this area's subentry and reloads config from its data. The
+        known ``subentry_id`` is tried first: the name match alone breaks
+        after the Home Assistant area is renamed, because the coordinator
+        keeps the area under the name it had at load time, and a miss here
+        would load an empty config over the area's real one.
         """
         # Update the config entry reference
         self.config_entry = config_entry
 
-        found = self._find_area_subentry(config_entry, self.area_name)
+        found: tuple[str, dict[str, Any]] | None = None
+        if (
+            self.subentry_id
+            and (subentry := config_entry.subentries.get(self.subentry_id)) is not None
+        ):
+            found = (self.subentry_id, dict(subentry.data))
+        if found is None:
+            found = self._find_area_subentry(config_entry, self.area_name)
         if found is not None:
             self.subentry_id, area_data = found
             self._load_config(area_data)

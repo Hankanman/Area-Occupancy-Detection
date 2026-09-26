@@ -15,7 +15,7 @@ Per the issue's fence: if no operating point clears the bar
 built and this report is the record of why.
 
 Usage:
-    python scripts/evaluate_prediction.py [--db-path PATH] [--days DAYS]
+    python scripts/evaluate_prediction.py --time-zone ZONE [--db-path PATH] [--days DAYS]
 
 Requirements on the source install: adjacency configured (the
 ``area_transitions`` table populated) and a warm
@@ -43,6 +43,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo
 
 # ruff: noqa: T201, E402
 project_root = Path(__file__).parent.parent
@@ -61,6 +62,7 @@ from custom_components.area_occupancy.db.transitions import (
     load_adjacency_snapshot,
 )
 from custom_components.area_occupancy.time_utils import to_local
+from homeassistant.util import dt as dt_util
 
 
 class _DbStub:
@@ -144,7 +146,18 @@ def main() -> int:
         help="Path to a COPY of area_occupancy.db (never the live file)",
     )
     parser.add_argument("--days", type=int, default=30)
+    parser.add_argument(
+        "--time-zone",
+        required=True,
+        help=(
+            "The source install's IANA time zone, e.g. Europe/London. "
+            "Transitions were learned in local hour_of_week buckets."
+        ),
+    )
     args = parser.parse_args()
+    # to_local() uses Home Assistant's default zone, which is UTC outside a
+    # running instance; every bucket would be off by the install's offset.
+    dt_util.set_default_time_zone(ZoneInfo(args.time_zone))
 
     db_path = Path(args.db_path)
     if not db_path.exists():
@@ -200,10 +213,16 @@ def main() -> int:
 
         local = to_local(start)
         hour_of_week = local.weekday() * 24 + local.hour
+        # Same chain mapping as the live boost (data/adjacency.py): rows
+        # store W -> X -> Y as from_area=W, mid_area=X, so a 2-hop trajectory
+        # prev_prev -> prev -> area asks from=prev_prev, mid=prev, and a
+        # 1-hop one asks from=prev, mid="".
+        if prev_prev is not None:
+            from_area, mid_area = prev_prev, prev
+        else:
+            from_area, mid_area = prev, ""
         dist = snapshot.lookup_distribution(
-            from_area=prev_prev or "",
-            mid_area=prev if prev_prev else "",
-            hour_of_week=hour_of_week,
+            from_area=from_area, mid_area=mid_area, hour_of_week=hour_of_week
         )
         if dist.level == LEVEL_STATIC_DEFAULT and prev_prev:
             # 2-hop walk found nothing at all; retry as pure 1-hop.

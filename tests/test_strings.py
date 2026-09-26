@@ -16,7 +16,9 @@ import pytest
 
 from custom_components.area_occupancy.config_flow import SENSOR_GROUPS
 
-COMPONENT = Path("custom_components/area_occupancy")
+COMPONENT = (
+    Path(__file__).resolve().parent.parent / "custom_components" / "area_occupancy"
+)
 STRINGS = COMPONENT / "strings.json"
 TRANSLATIONS = COMPONENT / "translations/en.json"
 

@@ -162,6 +162,7 @@ than only the first, and the exit code is non-zero if any check failed.
 | `sensor_response` | Turning a motion sensor on raises that area's probability. |
 | `options_flow` | Every reachable options-flow step renders. |
 | `subentry_flow` | Every reachable step of an area's reconfigure flow renders. |
+| `export_config` | The `export_config` service returns every area with its configured sensors. |
 | `analysis` | `run_analysis` completes and derives a prior for every area that is not pinned at a bound. |
 | `subentry_linkage` | Each area's entities are filed under that area's subentry, and the aggregates are not. |
 | `transitions` | Adjacency rows name real areas (not Home Assistant area ids), and the analysis learned transitions from the seeded history. |
@@ -295,10 +296,10 @@ number in it.
 
 ## Adding a check
 
-Checks live in `harness/verify.py`. A check takes the instance and a client,
-returns a `Result`, and is added to `LIVE_CHECKS` (runs against the live
-instance) or `STOPPED_CHECKS` (runs after shutdown, for anything that reads
-`.storage`).
+Checks live in `harness/verify.py` and return a `Result`. A live check takes
+the instance and a client and is added to `LIVE_CHECKS`. A stopped check takes
+only the instance, runs after shutdown (for anything that reads `.storage`),
+and is added to `STOPPED_CHECKS`.
 
 The client in `harness/client.py` is a small stdlib-only REST wrapper with
 helpers for states, services, config entries and the three flow managers, so
