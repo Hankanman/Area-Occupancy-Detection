@@ -13,7 +13,7 @@ from custom_components.area_occupancy.db.relationships import (
     save_area_relationship,
     sync_adjacent_areas_from_config,
 )
-from tests.conftest import create_test_area  # noqa: TID251
+from tests.conftest import create_test_area
 
 if TYPE_CHECKING:
     from custom_components.area_occupancy.db.core import AreaOccupancyDB

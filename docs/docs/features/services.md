@@ -116,3 +116,42 @@ data:
 ### Resetting from the UI
 
 The same purge is available without writing a service call. Open the integration's options (**Settings → Devices & Services → Area Occupancy Detection → Configure**), pick **Manage Areas**, choose the area, and click **Reset Learning**. A yes/no confirmation appears before anything is deleted, and you'll land back on the area's management menu when it's done. Same destructive behaviour — same trade-offs as the service call above.
+
+## `area_occupancy.set_area_option`
+
+Change one area's detection tunables from an automation or script. This is the only automatable way into an area's configuration, and it applies exactly the same validation and purpose-default handling as the configuration UI, so an automation cannot leave an area in a state the UI would reject.
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `area_id` | yes | The Home Assistant area of the configured area to change |
+| `threshold` | no | Occupancy threshold, 1 to 100 percent |
+| `decay_enabled` | no | Whether probability decays once evidence stops |
+| `decay_half_life` | no | Decay half-life; 0 follows the area's purpose default, any other value must be 10 seconds to 1 hour |
+| `min_prior_override` | no | Floor for the learned prior, 0 to 1; 0 disables it |
+| `wasp_enabled` | no | Whether the Wasp in Box virtual sensor runs |
+
+At least one option besides `area_id` must be given. Only the options you name are written; everything else in the area is left alone.
+
+```yaml
+# Lower the bar for calling the lounge occupied late in the evening.
+automation:
+  - alias: "Relax lounge occupancy at night"
+    triggers:
+      - trigger: time
+        at: "22:30:00"
+    actions:
+      - action: area_occupancy.set_area_option
+        data:
+          area_id: lounge
+          threshold: 35
+```
+
+### Setting the decay half-life
+
+A half-life of `0` means "follow this area's purpose default". If you set a value that happens to equal the area's own purpose default, the service stores `0` instead, so the area keeps following its purpose if you later change that purpose. Any other value is stored as given. This mirrors what the UI does and exists so the two paths cannot drift apart.
+
+### What this service will not change
+
+Structural configuration stays in the UI: which entities belong to an area, the adjacent areas, custom sensors, and the area's purpose. Adjacency has to be mirrored onto the neighbouring areas to stay consistent, and reshaping an area from an automation is not something the integration tries to support.
+
+Per-sensor-type weights are also not settable. They are calibration rather than automation, and learned sensor fusion is intended to derive them per home.

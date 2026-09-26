@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    DEFAULT_AREA_PRIOR,
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
     MIN_PRIOR,
@@ -119,8 +120,31 @@ class Prior:
             or ``"none"`` if the learned prior is already at or above every
             floor.
         """
+        # Capped the same way for the unlearned default below as for the
+        # floors: a prior the integration supplied itself must never be able
+        # to hold an area occupied with no active evidence (issue #435).
+        # Only a learned prior, which reflects real observed occupancy, is
+        # allowed above the threshold.
+        floor_cap = max(MIN_PRIOR, self.config.threshold - PRIOR_FLOOR_THRESHOLD_MARGIN)
+
         if self.global_prior is None:
-            learned = MIN_PRIOR
+            # Nothing learned yet -- a fresh install, or an area whose
+            # sensors have no recorder history to analyse. This used to fall
+            # to MIN_PRIOR (0.01), which is not "no information", it is
+            # "almost certainly empty": from a 0.01 prior a single active
+            # motion sensor only reaches ~14%, so a brand-new area could not
+            # report occupied at all until the first analysis cycle found
+            # enough history to compute a global prior. DEFAULT_AREA_PRIOR is
+            # the shipped no-data baseline, and from it the same sensor
+            # reaches ~74%.
+            #
+            # Note the consequence of the cap: an area with nothing learned
+            # and a threshold below DEFAULT_AREA_PRIOR rests just under its
+            # own threshold, so its prior moves when the threshold does. That
+            # is deliberate -- the alternative is an area that reads occupied
+            # with every sensor off -- and it lasts only until the first
+            # analysis cycle computes a real global prior.
+            learned = min(DEFAULT_AREA_PRIOR, floor_cap)
         else:
             if self.time_prior is None:
                 prior = self.global_prior
@@ -139,7 +163,6 @@ class Prior:
         if self.config.min_prior_override > 0.0:
             override_floor = self.config.min_prior_override
 
-        floor_cap = max(MIN_PRIOR, self.config.threshold - PRIOR_FLOOR_THRESHOLD_MARGIN)
         capped_purpose = min(purpose_floor, floor_cap)
         capped_override = min(override_floor, floor_cap)
 

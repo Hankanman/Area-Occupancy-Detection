@@ -6,6 +6,7 @@ from unittest.mock import PropertyMock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
+    DEFAULT_AREA_PRIOR,
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
     MAX_PROBABILITY,
@@ -45,7 +46,7 @@ def test_initialization(coordinator: AreaOccupancyCoordinator):
 @pytest.mark.parametrize(
     ("global_prior", "expected_value", "description"),
     [
-        (None, MIN_PRIOR, "not set"),
+        (None, DEFAULT_AREA_PRIOR, "not set -- the shipped default, not the floor"),
         (0.005, MIN_PRIOR, "below min after factor"),
         (
             0.9,
@@ -784,3 +785,79 @@ def test_diagnostic_snapshot_reports_no_floor_when_learned_dominates(
 
     assert snapshot["min_prior_floor_applied"] == "none"
     assert snapshot["prior_value"] == pytest.approx(0.7)
+
+
+class TestUnlearnedPrior:
+    """What the prior is before anything has been learned.
+
+    It used to be MIN_PRIOR (0.01), which reads as "almost certainly empty"
+    rather than "no information": from a 0.01 prior a single active motion
+    sensor reaches only ~14%, so a brand-new area could not report occupied
+    at all until an analysis cycle found enough history. Hand-computed
+    against the live pipeline (motion type defaults, weight 0.99,
+    strength_multiplier 3.0): contribution 2.7918 logits, so
+    sigmoid(logit(0.01) + 2.7918) = 14.1% but
+    sigmoid(logit(0.15) + 2.7918) = 74.2%.
+    """
+
+    def test_default_applies_when_nothing_is_learned(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        prior = Prior(coordinator, area_name=area_name)
+        assert prior.global_prior is None
+
+        with patch.object(
+            type(prior), "time_prior", new_callable=PropertyMock, return_value=None
+        ):
+            assert prior.value == pytest.approx(DEFAULT_AREA_PRIOR)
+
+    def test_default_cannot_hold_an_area_occupied_on_its_own(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        # Issue #435's invariant: a prior the integration supplied itself is
+        # capped below the threshold, so with no active evidence the area
+        # reads unoccupied whatever the threshold is set to. Only a learned
+        # prior may exceed it.
+        area_name = coordinator.get_area_names()[0]
+        prior = Prior(coordinator, area_name=area_name)
+
+        for threshold in (0.5, 0.2, 0.16, 0.1, 0.05, 0.02):
+            prior.config.threshold = threshold
+            with patch.object(
+                type(prior), "time_prior", new_callable=PropertyMock, return_value=None
+            ):
+                value = prior.value
+            assert value < threshold, f"prior {value} would occupy at {threshold}"
+            assert value <= DEFAULT_AREA_PRIOR
+            assert value >= MIN_PRIOR
+
+    def test_a_learned_prior_replaces_the_default(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        prior = Prior(coordinator, area_name=area_name)
+        prior.global_prior = 0.62
+
+        with patch.object(
+            type(prior), "time_prior", new_callable=PropertyMock, return_value=None
+        ):
+            # Learned priors are allowed above the threshold; the default is not.
+            assert prior.value == pytest.approx(
+                max(MIN_PRIOR, min(MAX_PRIOR, 0.62 * PRIOR_FACTOR))
+            )
+
+    def test_a_floor_still_wins_over_the_default(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        prior = Prior(coordinator, area_name=area_name)
+        prior.config.min_prior_override = 0.3
+
+        with patch.object(
+            type(prior), "time_prior", new_callable=PropertyMock, return_value=None
+        ):
+            value, applied = prior._compute_value_and_floor()
+
+        assert value == pytest.approx(0.3)
+        assert applied == "override"

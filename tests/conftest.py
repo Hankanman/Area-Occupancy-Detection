@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio import Lock
 from collections.abc import Generator
 import contextlib
 from contextlib import contextmanager, suppress
@@ -27,6 +26,8 @@ from homeassistant.helpers import area_registry as ar
 os.environ["AREA_OCCUPANCY_AUTO_INIT_DB"] = "1"
 
 # ruff: noqa: SLF001
+from types import MappingProxyType
+
 from custom_components.area_occupancy.area.area import Area
 from custom_components.area_occupancy.config_flow import (
     AreaOccupancyConfigFlow,
@@ -34,10 +35,9 @@ from custom_components.area_occupancy.config_flow import (
 )
 from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
+    # Import all config constants for comprehensive config entry,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_AREAS,
-    # Import all config constants for comprehensive config entry
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
@@ -84,6 +84,7 @@ from custom_components.area_occupancy.const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     DOMAIN,
     HA_RECORDER_DAYS,
+    SUBENTRY_TYPE_AREA,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import (
@@ -100,7 +101,12 @@ from custom_components.area_occupancy.data.entity_type import EntityType, InputT
 from custom_components.area_occupancy.data.prior import Prior as PriorClass
 from custom_components.area_occupancy.data.purpose import AreaPurpose, Purpose
 from custom_components.area_occupancy.db import Base
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigEntryState,
+    ConfigSubentry,
+    ConfigSubentryData,
+)
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.event import async_track_point_in_time
@@ -125,11 +131,16 @@ def ensure_config_entries_have_state(hass: HomeAssistant) -> Generator[None]:
     """
     original_async_entries = hass.config_entries.async_entries
 
-    def async_entries_with_state(domain=None):
-        """Wrapper that ensures all returned entries have state attribute."""
+    def async_entries_with_state(domain=None, **kwargs):
+        """Wrapper that ensures all returned entries have state attribute.
+
+        Extra keyword arguments (``include_ignore``, ``include_disabled``)
+        are forwarded so this shim keeps the signature Home Assistant's own
+        callers use; swallowing them made real integration setup fail.
+        """
         # Call original async_entries (could be real method or a mock)
         if callable(original_async_entries):
-            entries = original_async_entries(domain)
+            entries = original_async_entries(domain, **kwargs)
         else:
             # If it's not callable, try to get entries from _entries dict
             entries = (
@@ -160,6 +171,33 @@ def ensure_config_entries_have_state(hass: HomeAssistant) -> Generator[None]:
 
     # Restore original (though it may not matter after test)
     hass.config_entries.async_entries = original_async_entries
+
+
+def make_area_subentries(
+    areas: list[dict[str, Any]],
+    hass: HomeAssistant | None = None,
+) -> dict[str, ConfigSubentry]:
+    """Build the area subentry mapping a config entry carries since v19.
+
+    Areas moved out of the CONF_AREAS list into one config subentry each, so
+    fixtures build them the same way the migration and the flows do.
+    """
+    subentries: dict[str, ConfigSubentry] = {}
+    for index, area_data in enumerate(areas):
+        area_id = str(area_data.get(CONF_AREA_ID) or f"area_{index}")
+        title = area_id
+        if hass is not None:
+            area_entry = ar.async_get(hass).async_get_area(area_id)
+            if area_entry:
+                title = area_entry.name
+        subentry = ConfigSubentry(
+            data=MappingProxyType(dict(area_data)),
+            subentry_type=SUBENTRY_TYPE_AREA,
+            title=title,
+            unique_id=area_id,
+        )
+        subentries[subentry.subentry_id] = subentry
+    return subentries
 
 
 @pytest.fixture
@@ -1347,8 +1385,9 @@ def mock_realistic_config_entry(
         "window_active_state": "open",
         "window_sensors": ["binary_sensor.window_sensor"],
     }
-    entry.data = {CONF_AREAS: [area_data]}
+    entry.data = {}
     entry.options = {}
+    entry.subentries = make_area_subentries([area_data], hass)
     entry.add_update_listener = Mock()
     entry.async_on_unload = Mock()
     entry.async_setup = AsyncMock()
@@ -1770,17 +1809,16 @@ def config_flow_valid_user_input(
 
 @pytest.fixture
 def config_flow_mock_config_entry_with_areas(
+    hass: HomeAssistant,
     setup_area_registry: dict[str, str],
-) -> Mock:
-    """Create a mock config entry with multi-area format."""
-    entry = Mock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_id"
-    entry.unique_id = "test_unique_id"
-    entry.domain = DOMAIN
-    entry.state = ConfigEntryState.LOADED
-    entry.disabled_by = None
-    entry.setup_lock = Lock()
-    # Use actual area ID from registry
+) -> MockConfigEntry:
+    """A real config entry whose single area lives in a config subentry.
+
+    This is a real ``MockConfigEntry`` registered with hass rather than a
+    ``Mock``, because the flows persist areas through
+    ``hass.config_entries.async_update_subentry`` / ``async_add_subentry``,
+    which need an entry the manager actually knows about.
+    """
     living_room_area_id = setup_area_registry.get("Living Room", "living_room")
     area_data = {
         CONF_AREA_ID: living_room_area_id,
@@ -1788,8 +1826,25 @@ def config_flow_mock_config_entry_with_areas(
         CONF_MOTION_SENSORS: ["binary_sensor.motion1"],
         CONF_THRESHOLD: 60.0,
     }
-    entry.data = {CONF_AREAS: [area_data]}
-    entry.options = {}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Area Occupancy Detection",
+        unique_id="test_unique_id",
+        entry_id="test_entry_id",
+        version=CONF_VERSION,
+        minor_version=CONF_VERSION_MINOR,
+        data={},
+        options={},
+        subentries_data=[
+            ConfigSubentryData(
+                data=area_data,
+                subentry_type=SUBENTRY_TYPE_AREA,
+                title="Living Room",
+                unique_id=living_room_area_id,
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
     return entry
 
 

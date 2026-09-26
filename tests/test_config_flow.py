@@ -8,20 +8,20 @@ import pytest
 import voluptuous as vol
 
 from custom_components.area_occupancy.config_flow import (
+    AREA_EDIT_SPOKES,
+    SENSOR_GROUPS,
     AreaOccupancyConfigFlow,
     AreaOccupancyOptionsFlow,
+    AreaSubentryFlowHandler,
     BaseOccupancyFlow,
-    _apply_purpose_based_decay_default,
-    _apply_symmetric_adjacency,
     _build_area_description_placeholders,
     _create_area_selector_schema,
     _create_behavior_step_schema,
     _create_motion_step_schema,
     _create_sensors_step_schema,
     _entity_contains_keyword,
-    _find_area_by_id,
     _find_area_by_sanitized_id,
-    _flatten_sectioned_input,
+    _format_seconds,
     _get_area_summary_info,
     _get_include_entities,
     _get_purpose_display_name,
@@ -29,22 +29,32 @@ from custom_components.area_occupancy.config_flow import (
     _handle_step_error,
     _is_weather_entity,
     _nest_config_for_sections,
-    _remove_area_from_list,
-    _strip_adjacency_references,
-    _update_area_in_list,
+)
+from custom_components.area_occupancy.config_helpers import (
+    apply_purpose_based_decay_default,
+    apply_symmetric_adjacency,
+    find_area_by_id,
+    flatten_sectioned_input,
+    remove_area_from_list,
+    strip_adjacency_references,
+    update_area_in_list,
 )
 from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
-    CONF_AREAS,
+    CONF_CUSTOM_BINARY_ACTIVE_STATES,
     CONF_CUSTOM_BINARY_SENSORS,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
+    CONF_CUSTOM_NUMERIC_ACTIVE_MIN,
     CONF_CUSTOM_NUMERIC_SENSORS,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
+    CONF_EXCLUDE_FROM_ALL_AREAS,
+    CONF_ILLUMINANCE_SENSORS,
     CONF_LOCK_ACTIVE_STATE,
     CONF_LOCK_SENSORS,
     CONF_MEDIA_ACTIVE_STATES,
@@ -53,17 +63,23 @@ from custom_components.area_occupancy.const import (
     CONF_MOTION_PROB_GIVEN_FALSE,
     CONF_MOTION_PROB_GIVEN_TRUE,
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_OPTION_PREFIX_AREA,
     CONF_PURPOSE,
+    CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
     CONF_WEIGHT_CUSTOM_NUMERIC,
+    CONF_WEIGHT_MEDIA,
+    CONF_WEIGHT_MOTION,
     CONF_WEIGHT_WIFI_CLIENTS,
     CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DOMAIN,
+    SUBENTRY_TYPE_AREA,
 )
+from custom_components.area_occupancy.preview import PREVIEW_COMPONENT, PREVIEW_DATA_KEY
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
@@ -71,7 +87,7 @@ from homeassistant.exceptions import HomeAssistantError
 from tests.conftest import create_area_config
 
 
-# ruff: noqa: SLF001, TID251, PLC0415
+# ruff: noqa: SLF001, PLC0415
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 class TestBaseOccupancyFlow:
     """Test BaseOccupancyFlow class."""
@@ -313,7 +329,7 @@ class TestHelperFunctions:
         assert placeholders["door_count"] == "1"
         assert placeholders["window_count"] == "1"
         assert placeholders["appliance_count"] == "1"
-        assert placeholders["threshold"] == "60.0"
+        assert placeholders["threshold"] == "60"
 
     def test_get_area_summary_info(self):
         """Test _get_area_summary_info function."""
@@ -988,7 +1004,7 @@ class TestAreaOccupancyConfigFlow:
             assert result.get("step_id") == expected_step_id
         if expected_type == FlowResultType.CREATE_ENTRY:
             assert result.get("title") == "Area Occupancy Detection"
-            assert CONF_AREAS in result.get("data", {})
+            assert result.get("subentries")
         elif expected_step_id == "user" and expected_type == FlowResultType.FORM:
             assert "data_schema" in result
         elif expected_step_id == "user" and expected_type == FlowResultType.MENU:
@@ -1241,12 +1257,13 @@ class TestConfigFlowIntegration:
             assert result6.get("type") == FlowResultType.CREATE_ENTRY
             assert result6.get("title") == "Area Occupancy Detection"
 
-            # Areas stored in CONF_AREAS list in data
-            result_data = result6.get("data", {})
-            assert CONF_AREAS in result_data
-            areas_list = result_data[CONF_AREAS]
-            assert len(areas_list) == 1
-            area_data = areas_list[0]
+            # Each area is created as a config subentry, not a list entry
+            assert result6.get("data") == {}
+            subentries = result6.get("subentries", [])
+            assert len(subentries) == 1
+            area_data = dict(subentries[0]["data"])
+            assert subentries[0]["subentry_type"] == SUBENTRY_TYPE_AREA
+            assert subentries[0]["unique_id"] == expected_area_id
             assert area_data.get(CONF_AREA_ID) == expected_area_id
             assert area_data.get(CONF_MOTION_SENSORS) == ["binary_sensor.motion1"]
             assert area_data.get(CONF_THRESHOLD) == 60
@@ -1295,8 +1312,7 @@ class TestConfigFlowIntegration:
             result6 = await config_flow_flow.async_step_finish_setup()
 
             assert result6.get("type") == FlowResultType.CREATE_ENTRY
-            areas_list = result6.get("data", {})[CONF_AREAS]
-            area_data = areas_list[0]
+            area_data = dict(result6["subentries"][0]["data"])
             assert area_data.get(CONF_LOCK_SENSORS) == ["lock.front_door"]
             assert area_data.get(CONF_LOCK_ACTIVE_STATE) == "unlocked"
 
@@ -1461,7 +1477,10 @@ class TestAreaOccupancyOptionsFlow:
         assert "manage_people" in result["menu_options"]
 
     async def test_options_flow_global_settings_save(
-        self, config_flow_options_flow, config_flow_mock_config_entry_with_areas
+        self,
+        hass: HomeAssistant,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
     ):
         """Test that global settings are actually saved."""
         from custom_components.area_occupancy.const import (
@@ -1474,11 +1493,14 @@ class TestAreaOccupancyOptionsFlow:
         flow.config_entry = config_flow_mock_config_entry_with_areas
 
         # Set initial options
-        flow.config_entry.options = {
-            CONF_SLEEP_START: "22:00:00",
-            CONF_SLEEP_END: "07:00:00",
-            CONF_SENSOR_PRECISION: 2,
-        }
+        hass.config_entries.async_update_entry(
+            flow.config_entry,
+            options={
+                CONF_SLEEP_START: "22:00:00",
+                CONF_SLEEP_END: "07:00:00",
+                CONF_SENSOR_PRECISION: 2,
+            },
+        )
 
         # Update global settings
         user_input = {
@@ -1740,7 +1762,7 @@ class TestNewHelperFunctions:
     ):
         """Test applying purpose-based decay default."""
         flattened_input = {CONF_PURPOSE: purpose} if purpose else {}
-        _apply_purpose_based_decay_default(flattened_input, purpose)
+        apply_purpose_based_decay_default(flattened_input, purpose)
         if expected_has_decay_half_life:
             assert CONF_DECAY_HALF_LIFE in flattened_input
         else:
@@ -1755,20 +1777,20 @@ class TestNewHelperFunctions:
         """
         # "social" purpose default is 520s; 600s is the Office default.
         flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 600}
-        _apply_purpose_based_decay_default(flattened_input, "social")
+        apply_purpose_based_decay_default(flattened_input, "social")
         assert flattened_input[CONF_DECAY_HALF_LIFE] == 600
 
     def test_apply_purpose_based_decay_default_normalises_matching_value(self):
         """Entering the current purpose's default must normalise to 0 (auto)."""
         # "social" purpose default is 520s.
         flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 520}
-        _apply_purpose_based_decay_default(flattened_input, "social")
+        apply_purpose_based_decay_default(flattened_input, "social")
         assert flattened_input[CONF_DECAY_HALF_LIFE] == 0
 
     def test_apply_purpose_based_decay_default_preserves_arbitrary_value(self):
         """Arbitrary custom values must be preserved verbatim."""
         flattened_input = {CONF_PURPOSE: "social", CONF_DECAY_HALF_LIFE: 777}
-        _apply_purpose_based_decay_default(flattened_input, "social")
+        apply_purpose_based_decay_default(flattened_input, "social")
         assert flattened_input[CONF_DECAY_HALF_LIFE] == 777
 
     def test_flatten_sectioned_input(self):
@@ -1781,7 +1803,7 @@ class TestNewHelperFunctions:
             CONF_PURPOSE: "social",  # Purpose is now at root level
             "wasp_in_box": {CONF_WASP_ENABLED: True},
         }
-        result = _flatten_sectioned_input(user_input)
+        result = flatten_sectioned_input(user_input)
         assert result[CONF_AREA_ID] == "test_area"
         assert result[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
         assert result[CONF_PURPOSE] == "social"
@@ -1795,7 +1817,7 @@ class TestNewHelperFunctions:
                 CONF_WEIGHT_WIFI_CLIENTS: 0.42,
             },
         }
-        result = _flatten_sectioned_input(user_input)
+        result = flatten_sectioned_input(user_input)
         assert result[CONF_WIFI_CLIENTS_SENSORS] == ["sensor.wifi_clients_guest"]
         assert result[CONF_WEIGHT_WIFI_CLIENTS] == 0.42
 
@@ -1828,7 +1850,7 @@ class TestNewHelperFunctions:
                 CONF_WEIGHT_CUSTOM_NUMERIC: 0.25,
             },
         }
-        result = _flatten_sectioned_input(user_input)
+        result = flatten_sectioned_input(user_input)
         assert result[CONF_CUSTOM_BINARY_SENSORS] == ["binary_sensor.custom_flag"]
         assert result[CONF_CUSTOM_NUMERIC_SENSORS] == ["sensor.custom_metric"]
         assert result[CONF_WEIGHT_CUSTOM_NUMERIC] == 0.25
@@ -1877,7 +1899,7 @@ class TestNewHelperFunctions:
     )
     def test_find_area_by_id(self, areas, search_name, expected_found, expected_name):
         """Test finding area by ID."""
-        result = _find_area_by_id(areas, search_name)
+        result = find_area_by_id(areas, search_name)
         if expected_found:
             assert result is not None
             assert result[CONF_AREA_ID] == expected_name
@@ -1925,7 +1947,7 @@ class TestNewHelperFunctions:
         expected_name,
     ):
         """Test updating or adding area in list."""
-        result = _update_area_in_list(initial_areas.copy(), updated_area, old_name)
+        result = update_area_in_list(initial_areas.copy(), updated_area, old_name)
         assert len(result) == expected_count
         if expected_purpose:
             assert result[0][CONF_PURPOSE] == expected_purpose
@@ -1938,7 +1960,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "living_room", CONF_PURPOSE: "social"},
             {CONF_AREA_ID: "kitchen", CONF_PURPOSE: "work"},
         ]
-        result = _remove_area_from_list(areas, "living_room")
+        result = remove_area_from_list(areas, "living_room")
         assert len(result) == 1
         assert result[0][CONF_AREA_ID] == "kitchen"
 
@@ -1961,7 +1983,7 @@ class TestNewHelperFunctions:
                 CONF_ADJACENT_AREAS: ["hall"],
             },
         ]
-        result = _remove_area_from_list(areas, "hall")
+        result = remove_area_from_list(areas, "hall")
 
         assert [a[CONF_AREA_ID] for a in result] == ["bedroom", "kitchen"]
         assert result[0][CONF_ADJACENT_AREAS] == []
@@ -1974,7 +1996,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "C", CONF_ADJACENT_AREAS: []},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # A's list is unchanged (caller already wrote it)
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
@@ -1990,7 +2012,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["A"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         assert result[0][CONF_ADJACENT_AREAS] == []
         assert result[1][CONF_ADJACENT_AREAS] == []
@@ -2003,7 +2025,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "C", CONF_ADJACENT_AREAS: ["D"]},
             {CONF_AREA_ID: "D", CONF_ADJACENT_AREAS: ["C"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         assert result[2][CONF_ADJACENT_AREAS] == ["D"]
         assert result[3][CONF_ADJACENT_AREAS] == ["C"]
@@ -2023,7 +2045,7 @@ class TestNewHelperFunctions:
             # Partner row mistakenly lists itself, no link to A.
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["B"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # Target's own self-reference is cleaned out of the saved row.
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
@@ -2043,7 +2065,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # Target row is rewritten as a proper list[str].
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
@@ -2056,7 +2078,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: ["A"]},
         ]
-        result = _apply_symmetric_adjacency(areas, areas[0])
+        result = apply_symmetric_adjacency(areas, areas[0])
 
         # B's row is returned as-is (no spurious mutation)
         assert result[1] is areas[1]
@@ -2068,7 +2090,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "hallway_north", CONF_ADJACENT_AREAS: ["hall"]},
             {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: ["hall"]},
         ]
-        result = _strip_adjacency_references(areas, "hall")
+        result = strip_adjacency_references(areas, "hall")
 
         assert result[0][CONF_AREA_ID] == "hall"
         assert result[1][CONF_ADJACENT_AREAS] == []
@@ -2081,7 +2103,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
         updated_a = {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]}
-        result = _update_area_in_list(areas, updated_a, "A")
+        result = update_area_in_list(areas, updated_a, "A")
 
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
@@ -2094,7 +2116,7 @@ class TestNewHelperFunctions:
         ops would treat ``"hall"`` as ``["h", "a", "l", "l"]`` and silently
         corrupt the data. None and other scalars must also be handled.
         """
-        # _strip_adjacency_references with a bare-string adjacent must not
+        # strip_adjacency_references with a bare-string adjacent must not
         # substring-match (removed_id="hall" inside "hallway_north" → false
         # positive without normalisation).
         areas = [
@@ -2102,7 +2124,7 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "study", CONF_ADJACENT_AREAS: None},
             {CONF_AREA_ID: "lounge", CONF_ADJACENT_AREAS: ("hall",)},
         ]
-        result = _strip_adjacency_references(areas, "hall")
+        result = strip_adjacency_references(areas, "hall")
         # kitchen's bare "hallway_north" must NOT match "hall" (the
         # substring-on-string trap). Helper is non-destructive when
         # nothing matches → row identity preserved.
@@ -2112,7 +2134,7 @@ class TestNewHelperFunctions:
         # lounge had "hall" in a tuple → stripped, leaving [].
         assert result[2][CONF_ADJACENT_AREAS] == []
 
-        # _apply_symmetric_adjacency: target with bare-string adjacent should
+        # apply_symmetric_adjacency: target with bare-string adjacent should
         # not iterate characters. Target row is also sanitised on the way
         # out so the saved record carries a proper list[str], not the
         # original malformed value.
@@ -2120,42 +2142,42 @@ class TestNewHelperFunctions:
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: "B"},  # malformed
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: []},
         ]
-        result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
+        result = apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
         # Target row is rewritten as a clean list (single-element).
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         # B picks up A as a single id, not as a list of characters from "B"
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
-        # _apply_symmetric_adjacency: existing adjacents on a partner area
+        # apply_symmetric_adjacency: existing adjacents on a partner area
         # are also tolerated as a non-list.
         symmetric_areas = [
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: "A"},  # malformed
         ]
-        result = _apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
+        result = apply_symmetric_adjacency(symmetric_areas, symmetric_areas[0])
         # Already mutual after normalisation → B's row unchanged
         assert result[1] is symmetric_areas[1]
 
-        # _update_area_in_list end-to-end with a malformed sibling row.
+        # update_area_in_list end-to-end with a malformed sibling row.
         areas = [
             {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "B", CONF_ADJACENT_AREAS: None},
         ]
         updated_a = {CONF_AREA_ID: "A", CONF_ADJACENT_AREAS: ["B"]}
-        result = _update_area_in_list(areas, updated_a, "A")
+        result = update_area_in_list(areas, updated_a, "A")
         assert result[0][CONF_ADJACENT_AREAS] == ["B"]
         # B's None is replaced with the normalised single-element list,
         # not a list of None plus A.
         assert result[1][CONF_ADJACENT_AREAS] == ["A"]
 
-        # _remove_area_from_list: remove an area, surviving rows with
+        # remove_area_from_list: remove an area, surviving rows with
         # malformed adjacents must not crash.
         areas = [
             {CONF_AREA_ID: "hall", CONF_ADJACENT_AREAS: []},
             {CONF_AREA_ID: "kitchen", CONF_ADJACENT_AREAS: "hall"},  # malformed
             {CONF_AREA_ID: "lounge", CONF_ADJACENT_AREAS: ["hall", "kitchen"]},
         ]
-        result = _remove_area_from_list(areas, "hall")
+        result = remove_area_from_list(areas, "hall")
         assert [a[CONF_AREA_ID] for a in result] == ["kitchen", "lounge"]
         # kitchen's "hall" is treated as the single removed id → cleared
         assert result[0][CONF_ADJACENT_AREAS] == []
@@ -2187,3 +2209,599 @@ class TestNewHelperFunctions:
             assert "line" not in result.lower()
             # Should be readable (no excessive technical details)
             assert len(result) < 500  # Reasonable length for user-facing errors
+
+
+def _saved_area(flow, area_id: str | None = None) -> dict:
+    """The area data now stored on the entry, read back from its subentry."""
+    areas = [dict(sub.data) for sub in flow.config_entry.subentries.values()]
+    assert areas, "expected at least one area subentry"
+    if area_id is None:
+        return areas[0]
+    return next(area for area in areas if area.get(CONF_AREA_ID) == area_id)
+
+
+class TestSectionEditing:
+    """Hub-and-spoke editing: each wizard page reachable and saveable alone."""
+
+    def _area_id(self, flow) -> str:
+        areas = flow._get_areas_from_config()
+        assert areas
+        return areas[0][CONF_AREA_ID]
+
+    async def test_area_action_menu_lists_spokes_first(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_area_action()
+
+        assert result["type"] == FlowResultType.MENU
+        assert (
+            tuple(result["menu_options"][: len(AREA_EDIT_SPOKES)]) == AREA_EDIT_SPOKES
+        )
+        placeholders = result["description_placeholders"]
+        assert placeholders["threshold"] == "60"
+        assert placeholders["decay"] == "on (purpose default)"
+        assert placeholders["adjacent"] == "none"
+        assert placeholders["wasp"] == "off"
+
+    async def test_config_flow_area_action_menu_lists_spokes(
+        self, config_flow_flow, config_flow_sample_area
+    ) -> None:
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = config_flow_sample_area[CONF_AREA_ID]
+
+        result = await config_flow_flow.async_step_area_action()
+
+        assert result["type"] == FlowResultType.MENU
+        for spoke in AREA_EDIT_SPOKES:
+            assert spoke in result["menu_options"]
+        assert "reset_learning_confirm" not in result["menu_options"]
+
+    async def test_edit_behavior_spoke_saves_only_that_page(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_behavior()
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_behavior"
+        assert result["last_step"] is True
+
+        result = await flow.async_step_area_behavior(
+            {
+                CONF_THRESHOLD: 75,
+                CONF_DECAY_ENABLED: True,
+                CONF_EXCLUDE_FROM_ALL_AREAS: False,
+                CONF_DECAY_HALF_LIFE: {"hours": 0, "minutes": 10, "seconds": 0},
+                CONF_MIN_PRIOR_OVERRIDE: 0.0,
+                "wasp_in_box": {CONF_WASP_ENABLED: False},
+            }
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = _saved_area(flow)
+        assert saved[CONF_THRESHOLD] == 75
+        assert saved[CONF_DECAY_HALF_LIFE] == 600
+        # Untouched pages survive a single-section save
+        assert saved[CONF_PURPOSE] == "social"
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+        # Flow state is cleared for the next edit
+        assert flow._area_being_edited is None
+        assert flow._area_edit_section is None
+
+    async def test_edit_basics_spoke_changes_purpose_and_keeps_rest(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_basics()
+        assert result["step_id"] == "area_basics"
+        assert result["last_step"] is True
+
+        result = await flow.async_step_area_basics({CONF_PURPOSE: "sleeping"})
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = _saved_area(flow)
+        assert saved[CONF_PURPOSE] == "sleeping"
+        assert saved[CONF_THRESHOLD] == 60.0
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+    async def test_edit_motion_spoke_validation_error_keeps_form(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_motion()
+        assert result["step_id"] == "area_motion"
+        assert result["last_step"] is True
+
+        result = await flow.async_step_area_motion({CONF_MOTION_SENSORS: []})
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_motion"
+        assert result["errors"] == {"base": "motion_required"}
+        # Nothing was saved and the edit is still in progress
+        assert flow._area_being_edited == self._area_id(flow)
+        assert flow._area_edit_section == "motion"
+
+    async def test_edit_sensors_shows_group_menu(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors()
+
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "area_sensors_menu"
+        assert result["menu_options"] == [
+            *(f"edit_sensors_{group}" for group in SENSOR_GROUPS),
+            "cancel_sensors_menu",
+        ]
+        assert result["description_placeholders"]["media_count"] == "0"
+
+    async def test_edit_sensors_menu_without_area_falls_back(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = None
+
+        result = await flow.async_step_area_sensors_menu()
+
+        # No area selected: the hub sends the user back to the main menu
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "init"
+
+    async def test_edit_sensor_group_spoke_renders_only_that_group(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors_media()
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_sensors"
+        assert result["last_step"] is True
+        assert [marker.schema for marker in result["data_schema"].schema] == ["media"]
+
+        result = await flow.async_step_area_sensors(
+            {
+                "media": {
+                    CONF_MEDIA_DEVICES: ["media_player.tv"],
+                    CONF_MEDIA_ACTIVE_STATES: ["playing"],
+                    CONF_WEIGHT_MEDIA: 0.7,
+                }
+            }
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = _saved_area(flow)
+        assert saved[CONF_MEDIA_DEVICES] == ["media_player.tv"]
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+        assert saved[CONF_THRESHOLD] == 60.0
+        assert flow._sensor_group_being_edited is None
+
+    async def test_cancel_sensors_menu_returns_to_area_action(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_cancel_sensors_menu()
+
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "area_action"
+
+    async def test_add_area_still_runs_the_full_wizard(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        # A previous single-section edit must not leak into the add wizard
+        flow._area_edit_section = "behavior"
+
+        result = await flow.async_step_add_area()
+
+        assert result["step_id"] == "area_basics"
+        assert result["last_step"] is False
+        assert flow._area_edit_section is None
+
+    def test_sensors_schema_group_filter(self, hass: HomeAssistant) -> None:
+        full = _create_sensors_step_schema(hass, include_entities=_empty_entities(hass))
+        assert [m.schema for m in full] == list(SENSOR_GROUPS)
+        only_power = _create_sensors_step_schema(
+            hass, include_entities=_empty_entities(hass), groups=("power",)
+        )
+        assert [m.schema for m in only_power] == ["power"]
+
+
+def _empty_entities(hass: HomeAssistant) -> dict[str, list[str]]:
+    """Candidate-entity map with nothing in it, for schema-shape tests.
+
+    Derived from the real map so a new channel cannot leave this helper
+    behind and fail the schema builders with a ``KeyError``.
+    """
+    return {key: [] for key in _get_include_entities(hass)}
+
+
+class TestAreaDescriptionPlaceholders:
+    """Placeholders feed the hub menus' secondary lines."""
+
+    @pytest.mark.parametrize(
+        ("seconds", "expected"),
+        [
+            (0, "0s"),
+            (45, "45s"),
+            (60, "1m"),
+            (300, "5m"),
+            (5400, "1h 30m"),
+            (3661, "1h 1m 1s"),
+        ],
+    )
+    def test_format_seconds(self, seconds: int, expected: str) -> None:
+        assert _format_seconds(seconds) == expected
+
+    def test_placeholders_summarise_every_page(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        living_room = setup_area_registry["Living Room"]
+        kitchen = setup_area_registry["Kitchen"]
+        config = {
+            CONF_AREA_ID: living_room,
+            CONF_PURPOSE: "social",
+            CONF_ADJACENT_AREAS: [kitchen],
+            CONF_MOTION_SENSORS: ["binary_sensor.a", "binary_sensor.b"],
+            CONF_ILLUMINANCE_SENSORS: ["sensor.lux"],
+            CONF_TEMPERATURE_SENSORS: ["sensor.t1", "sensor.t2"],
+            CONF_THRESHOLD: 55.0,
+            CONF_DECAY_ENABLED: True,
+            CONF_DECAY_HALF_LIFE: 600,
+            CONF_WASP_ENABLED: True,
+        }
+
+        placeholders = _build_area_description_placeholders(config, living_room, hass)
+
+        assert placeholders["area_name"] == "Living Room"
+        assert placeholders["adjacent"] == "Kitchen"
+        assert placeholders["motion_count"] == "2"
+        assert placeholders["environmental_count"] == "3"
+        assert placeholders["threshold"] == "55"
+        assert placeholders["decay"] == "on (10m)"
+        assert placeholders["wasp"] == "on"
+        assert all(isinstance(v, str) for v in placeholders.values())
+
+    def test_placeholders_decay_off(self) -> None:
+        config = {CONF_AREA_ID: "x", CONF_DECAY_ENABLED: False}
+        assert _build_area_description_placeholders(config, "x")["decay"] == "off"
+
+
+class TestFlowPreview:
+    """The options flow offers a live preview; the config flow does not."""
+
+    async def test_options_spoke_offers_preview_and_publishes_context(
+        self, config_flow_options_flow, hass: HomeAssistant
+    ) -> None:
+        flow = config_flow_options_flow
+        flow.flow_id = "preview-flow"
+        areas = flow._get_areas_from_config()
+        flow._area_being_edited = areas[0][CONF_AREA_ID]
+
+        result = await flow.async_step_edit_behavior()
+
+        assert result["preview"] == PREVIEW_COMPONENT
+        context = hass.data[PREVIEW_DATA_KEY]["preview-flow"]
+        assert context["entry_id"] == flow.config_entry.entry_id
+        assert context["area_id"] == areas[0][CONF_AREA_ID]
+        assert context["draft"][CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+        flow.async_remove()
+        assert "preview-flow" not in hass.data[PREVIEW_DATA_KEY]
+
+    async def test_options_flow_without_flow_id_skips_context(
+        self, config_flow_options_flow, hass: HomeAssistant
+    ) -> None:
+        flow = config_flow_options_flow
+        areas = flow._get_areas_from_config()
+        flow._area_being_edited = areas[0][CONF_AREA_ID]
+
+        result = await flow.async_step_edit_motion()
+
+        assert result["preview"] == PREVIEW_COMPONENT
+        assert not hass.data.get(PREVIEW_DATA_KEY)
+        flow.async_remove()  # must not raise either
+
+    async def test_config_flow_has_no_preview(
+        self, config_flow_flow, config_flow_sample_area
+    ) -> None:
+        config_flow_flow._areas = [config_flow_sample_area]
+        config_flow_flow._area_being_edited = config_flow_sample_area[CONF_AREA_ID]
+        config_flow_flow._init_area_wizard()
+
+        result = await config_flow_flow.async_step_area_behavior()
+
+        assert result.get("preview") is None
+
+
+class TestCustomSensorsSpoke:
+    """The custom-sensors group is its own spoke with its own validation."""
+
+    def _area_id(self, flow) -> str:
+        areas = flow._get_areas_from_config()
+        assert areas
+        return areas[0][CONF_AREA_ID]
+
+    async def test_group_menu_lists_the_custom_spoke(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors()
+
+        assert "edit_sensors_custom" in result["menu_options"]
+        assert result["description_placeholders"]["custom_count"] == "0"
+
+    async def test_spoke_renders_only_the_custom_section(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+
+        result = await flow.async_step_edit_sensors_custom()
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "area_sensors"
+        assert [marker.schema for marker in result["data_schema"].schema] == ["custom"]
+
+    async def test_saving_entities_persists_them(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_BINARY_SENSORS: ["sensor.pc"],
+                    CONF_CUSTOM_BINARY_ACTIVE_STATES: ["in_use"],
+                }
+            }
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        saved = _saved_area(flow)
+        assert saved[CONF_CUSTOM_BINARY_SENSORS] == ["sensor.pc"]
+        assert saved[CONF_CUSTOM_BINARY_ACTIVE_STATES] == ["in_use"]
+        # An unrelated page is untouched by a single-group save.
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+    async def test_binary_entities_without_states_are_rejected(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_BINARY_SENSORS: ["sensor.pc"],
+                    CONF_CUSTOM_BINARY_ACTIVE_STATES: [],
+                }
+            }
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {
+            CONF_CUSTOM_BINARY_SENSORS: "custom_binary_states_required"
+        }
+
+    async def test_inverted_numeric_range_is_rejected(
+        self, config_flow_options_flow
+    ) -> None:
+        flow = config_flow_options_flow
+        flow._area_being_edited = self._area_id(flow)
+        await flow.async_step_edit_sensors_custom()
+
+        result = await flow.async_step_area_sensors(
+            {
+                "custom": {
+                    CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.counter"],
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MIN: 10.0,
+                    CONF_CUSTOM_NUMERIC_ACTIVE_MAX: 2.0,
+                }
+            }
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {
+            CONF_CUSTOM_NUMERIC_SENSORS: "custom_numeric_range_invalid"
+        }
+
+    async def test_saved_entities_repopulate_the_form(self) -> None:
+        nested = _nest_config_for_sections(
+            {
+                CONF_CUSTOM_BINARY_SENSORS: ["sensor.pc"],
+                CONF_CUSTOM_NUMERIC_SENSORS: ["sensor.counter"],
+            }
+        )
+
+        assert nested["custom"][CONF_CUSTOM_BINARY_SENSORS] == ["sensor.pc"]
+        assert nested["custom"][CONF_CUSTOM_NUMERIC_SENSORS] == ["sensor.counter"]
+
+
+class TestAreaSubentryFlow:
+    """Areas are added and reconfigured as native config subentries.
+
+    The handler is driven directly, like the other flows in this file; the
+    round trip through Home Assistant's own subentry flow manager is covered
+    by the live-instance checks rather than here.
+    """
+
+    def _handler(
+        self, hass: HomeAssistant, entry, subentry_id: str | None = None
+    ) -> AreaSubentryFlowHandler:
+        flow = AreaSubentryFlowHandler()
+        flow.hass = hass
+        flow.handler = (entry.entry_id, SUBENTRY_TYPE_AREA)
+        flow.context = {
+            "source": "reconfigure" if subentry_id else "user",
+            "entry_id": entry.entry_id,
+        }
+        if subentry_id:
+            flow.context["subentry_id"] = subentry_id
+        return flow
+
+    def _subentry_id(self, entry) -> str:
+        return next(
+            subentry_id
+            for subentry_id, subentry in entry.subentries.items()
+            if subentry.subentry_type == SUBENTRY_TYPE_AREA
+        )
+
+    def _areas(self, entry) -> dict[str, dict]:
+        return {
+            subentry.title: dict(subentry.data)
+            for subentry in entry.subentries.values()
+            if subentry.subentry_type == SUBENTRY_TYPE_AREA
+        }
+
+    def test_the_config_flow_advertises_the_area_subentry_type(self) -> None:
+        supported = AreaOccupancyConfigFlow.async_get_supported_subentry_types(Mock())
+        assert supported == {SUBENTRY_TYPE_AREA: AreaSubentryFlowHandler}
+
+    async def test_reconfigure_shows_the_hub_menu(
+        self, hass: HomeAssistant, config_flow_mock_config_entry_with_areas
+    ) -> None:
+        entry = config_flow_mock_config_entry_with_areas
+        flow = self._handler(hass, entry, self._subentry_id(entry))
+
+        result = await flow.async_step_reconfigure()
+
+        assert result["type"] == FlowResultType.MENU
+        assert result["step_id"] == "area_action"
+        assert (
+            tuple(result["menu_options"][: len(AREA_EDIT_SPOKES)]) == AREA_EDIT_SPOKES
+        )
+        assert result["description_placeholders"]["area_name"] == "Living Room"
+
+    async def test_reconfigure_spoke_saves_and_finishes(
+        self, hass: HomeAssistant, config_flow_mock_config_entry_with_areas
+    ) -> None:
+        entry = config_flow_mock_config_entry_with_areas
+        flow = self._handler(hass, entry, self._subentry_id(entry))
+        await flow.async_step_reconfigure()
+
+        result = await flow.async_step_edit_behavior()
+        assert result["step_id"] == "area_behavior"
+        assert result["preview"] == PREVIEW_COMPONENT
+
+        result = await flow.async_step_area_behavior(
+            {
+                CONF_THRESHOLD: 75,
+                CONF_DECAY_ENABLED: True,
+                CONF_EXCLUDE_FROM_ALL_AREAS: False,
+                CONF_DECAY_HALF_LIFE: {"hours": 0, "minutes": 10, "seconds": 0},
+                CONF_MIN_PRIOR_OVERRIDE: 0.0,
+                "wasp_in_box": {CONF_WASP_ENABLED: False},
+            }
+        )
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        saved = self._areas(entry)["Living Room"]
+        assert saved[CONF_THRESHOLD] == 75
+        assert saved[CONF_DECAY_HALF_LIFE] == 600
+        # Pages the spoke did not touch are preserved.
+        assert saved[CONF_MOTION_SENSORS] == ["binary_sensor.motion1"]
+
+    async def test_adding_an_area_creates_a_subentry_and_mirrors_adjacency(
+        self,
+        hass: HomeAssistant,
+        config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
+    ) -> None:
+        entry = config_flow_mock_config_entry_with_areas
+        living_room = setup_area_registry["Living Room"]
+        kitchen = setup_area_registry["Kitchen"]
+        flow = self._handler(hass, entry)
+
+        result = await flow.async_step_user()
+        assert result["step_id"] == "area_basics"
+
+        await flow.async_step_area_basics(
+            {
+                CONF_AREA_ID: kitchen,
+                CONF_PURPOSE: "food_prep",
+                CONF_ADJACENT_AREAS: [living_room],
+            }
+        )
+        await flow.async_step_area_motion(
+            {
+                CONF_MOTION_SENSORS: ["binary_sensor.kitchen_motion"],
+                CONF_WEIGHT_MOTION: 1.0,
+                CONF_MOTION_TIMEOUT: {"hours": 0, "minutes": 5, "seconds": 0},
+                CONF_MOTION_PROB_GIVEN_TRUE: 0.95,
+                CONF_MOTION_PROB_GIVEN_FALSE: 0.005,
+            }
+        )
+        await flow.async_step_area_sensors({group: {} for group in SENSOR_GROUPS})
+        result = await flow.async_step_area_behavior(
+            {
+                CONF_THRESHOLD: 50,
+                CONF_DECAY_ENABLED: True,
+                CONF_EXCLUDE_FROM_ALL_AREAS: False,
+                CONF_DECAY_HALF_LIFE: {"hours": 0, "minutes": 0, "seconds": 0},
+                CONF_MIN_PRIOR_OVERRIDE: 0.0,
+                "wasp_in_box": {CONF_WASP_ENABLED: False},
+            }
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["title"] == "Kitchen"
+        assert result["unique_id"] == kitchen
+
+        # The flow result is the new row; the neighbour was rewritten in place.
+        assert dict(result["data"])[CONF_ADJACENT_AREAS] == [living_room]
+        assert self._areas(entry)["Living Room"][CONF_ADJACENT_AREAS] == [kitchen]
+
+    async def test_adding_an_already_configured_area_is_rejected(
+        self,
+        hass: HomeAssistant,
+        config_flow_mock_config_entry_with_areas,
+        setup_area_registry: dict[str, str],
+    ) -> None:
+        entry = config_flow_mock_config_entry_with_areas
+        flow = self._handler(hass, entry)
+        await flow.async_step_user()
+
+        result = await flow.async_step_area_basics(
+            {
+                CONF_AREA_ID: setup_area_registry["Living Room"],
+                CONF_PURPOSE: "social",
+            }
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {CONF_AREA_ID: "area_already_configured"}
+
+    async def test_reconfigure_without_an_area_id_aborts(
+        self, hass: HomeAssistant, config_flow_mock_config_entry_with_areas
+    ) -> None:
+        entry = config_flow_mock_config_entry_with_areas
+        subentry_id = self._subentry_id(entry)
+        hass.config_entries.async_update_subentry(
+            entry, entry.subentries[subentry_id], data={}
+        )
+        flow = self._handler(hass, entry, subentry_id)
+
+        result = await flow.async_step_reconfigure()
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "area_required"

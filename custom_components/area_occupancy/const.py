@@ -31,19 +31,38 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.8.1"
-# v18->v19: widened the aggregation/interval/numeric-sample unique constraints
-# and grouping keys to include entry_id (#533) — two config entries sharing a
-# physical entity_id no longer collide. This is a genuine constraint change,
-# not additive, so it intentionally triggers the destructive
-# _ensure_schema_up_to_date path (delete + recreate the DB) — unlike the
-# adjacent_areas case documented in migrations.py, an in-place ALTER isn't
-# possible here since the old constraint is narrower than the new one.
+# Config entry format. v19 moves each area out of the legacy CONF_AREAS list
+# into its own config subentry (see migrations.py). Bumping this no longer
+# costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
+# is for.
 CONF_VERSION: Final = 19
 CONF_VERSION_MINOR: Final = 0
+# Version stamp of the SQLite schema, stored in the ``metadata`` table as
+# ``db_version``. Deliberately independent of ``CONF_VERSION`` (the config
+# entry format version): a config-entry migration must never cost users their
+# learned history. Bump this ONLY for an incompatible SQLite schema change --
+# ``db/maintenance.py::_ensure_schema_up_to_date`` deletes and recreates the
+# whole database on mismatch.
+#
+# 18 -> 19: widened the aggregation/interval/numeric-sample unique constraints
+# and grouping keys to include entry_id (#533) -- two config entries sharing a
+# physical entity_id no longer collide. A genuine constraint change, not
+# additive, so it does need the destructive recreate; an in-place ALTER isn't
+# possible since the old constraint is narrower than the new one. This bump
+# used to ride on CONF_VERSION, which is why decoupling the two mattered:
+# without it this schema change would have silently not applied.
+DB_SCHEMA_VERSION: Final = 19
 HA_RECORDER_DAYS: Final = 10  # days
 
 # Multi-area architecture constants
-CONF_AREAS: Final = "areas"  # Key for storing list of area configurations
+# Subentry type for a configured area. Since CONF_VERSION 19 each area is a
+# config subentry of the single entry rather than an item in the CONF_AREAS
+# list, which gives the integration page a native per-area list with its own
+# reconfigure and delete. CONF_AREAS remains defined only so the v18 migration
+# can read the old shape.
+SUBENTRY_TYPE_AREA: Final = "area"
+
+CONF_AREAS: Final = "areas"  # Legacy (<= v18) key holding the list of areas
 ALL_AREAS_IDENTIFIER: Final = (
     "all_areas"  # Identifier for "All Areas" aggregation device
 )
