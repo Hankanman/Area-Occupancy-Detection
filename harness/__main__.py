@@ -14,7 +14,7 @@ import time
 
 from custom_components.area_occupancy.const import CONF_VERSION
 
-from . import screenshots, verify
+from . import screenshots, upgrade, verify
 from .instance import DEFAULT_PASSWORD, DEFAULT_USERNAME, Instance, InstanceError
 from .profiles import DEFAULT_PROFILE, PROFILES
 from .storage import LEGACY_ENTRY_VERSION, SUPPORTED_ENTRY_VERSIONS
@@ -396,6 +396,93 @@ def cmd_shots(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_upgrade_base(args: argparse.Namespace) -> int:
+    """Build a lived-in instance on a released version and snapshot it.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        Process exit code.
+    """
+    instance = upgrade.build_base(
+        _instance_path(args),
+        ref=args.from_ref,
+        profile_name=args.profile,
+        days=args.days,
+        seed=args.seed,
+        time_zone=args.time_zone,
+        port=args.port,
+        laps=args.laps,
+        force=args.force,
+        log=lambda line: print(f"  {line}"),
+    )
+    print(f"\n{_colour('baseline ready', GREEN)} {instance.base_url}")
+    print(f"  login         {DEFAULT_USERNAME} / {DEFAULT_PASSWORD}")
+    print(f"  snapshot      {upgrade.snapshot_path(instance, upgrade.BASELINE)}")
+    print(f"  upgrade with  scripts/harness upgrade --dir {instance.path} --to next")
+    return 0
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    """Upgrade a base instance to another ref and report what changed.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        0 if there were no red flags and every check passed, 1 otherwise.
+    """
+    instance, report = upgrade.run_upgrade(
+        _instance_path(args),
+        ref=args.to,
+        settle=args.settle,
+        restore_first=not args.no_restore,
+        log=lambda line: print(f"  {line}"),
+    )
+    print()
+    print(report.markdown)
+
+    # The standard checks encode the working tree's expectations (subentries,
+    # the current flows), so they only mean something when the target writes
+    # the same entry version the working tree does.
+    target_version = upgrade.conf_version(args.to)
+    run_checks = not args.no_checks and target_version == CONF_VERSION
+    if not args.no_checks and not run_checks:
+        print(
+            f"standard checks skipped: {args.to} writes v{target_version} "
+            f"entries, the checks expect v{CONF_VERSION}"
+        )
+    results = verify.run_all(instance, instance.client()) if run_checks else []
+    failures = [result for result in results if not result.passed]
+    for result in results:
+        mark = _colour("PASS", GREEN) if result.passed else _colour("FAIL", RED)
+        print(f"{mark}  {result.name}: {result.detail}")
+        if not result.passed:
+            for note in result.notes:
+                if note:
+                    print(f"      {_colour(note, DIM)}")
+
+    # The on-disk checks stop the instance; bring it back up to poke at.
+    if not instance.is_running():
+        instance.start()
+        instance.wait_for_running()
+
+    ok = not report.flags and not failures
+    print()
+    print(
+        _colour(
+            f"{len(report.flags)} red flag(s), {len(failures)} failed check(s)",
+            GREEN if ok else RED,
+        )
+    )
+    print(f"  report        {instance.path / 'captures'}")
+    print(
+        f"  running at    {instance.base_url} ({DEFAULT_USERNAME} / {DEFAULT_PASSWORD})"
+    )
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser.
 
@@ -476,6 +563,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="capture only these shots by name",
     )
     shots.set_defaults(func=cmd_shots)
+
+    base = subparsers.add_parser(
+        "upgrade-base",
+        help="build a lived-in instance on a released version, for upgrade testing",
+    )
+    _add_target_arguments(base)
+    base.set_defaults(name="upgrade")
+    base.add_argument(
+        "--from",
+        dest="from_ref",
+        required=True,
+        help="git ref whose integration code to run, e.g. a release tag",
+    )
+    base.add_argument(
+        "--profile",
+        default=DEFAULT_PROFILE,
+        choices=sorted(PROFILES),
+        help=f"which profile to build (default: {DEFAULT_PROFILE})",
+    )
+    base.add_argument(
+        "--days", type=int, default=14, help="days of recorder history (default: 14)"
+    )
+    base.add_argument(
+        "--seed", type=int, default=1234, help="history seed (default: 1234)"
+    )
+    base.add_argument("--time-zone", default="Europe/London", help="instance time zone")
+    base.add_argument("--port", type=int, default=0, help="port, 0 picks a free one")
+    base.add_argument(
+        "--laps", type=int, default=2, help="live walks through the house (default: 2)"
+    )
+    base.add_argument(
+        "--force", action="store_true", help="replace an existing instance"
+    )
+    base.set_defaults(func=cmd_upgrade_base)
+
+    up = subparsers.add_parser(
+        "upgrade",
+        help="upgrade an upgrade-base instance to another ref and diff it",
+    )
+    _add_target_arguments(up)
+    up.set_defaults(name="upgrade")
+    up.add_argument(
+        "--to",
+        required=True,
+        help="git ref to upgrade to, or 'working' for the working tree",
+    )
+    up.add_argument(
+        "--settle",
+        type=float,
+        default=60.0,
+        help="seconds to run before capturing (default: 60)",
+    )
+    up.add_argument(
+        "--no-restore",
+        action="store_true",
+        help="upgrade the instance as it is instead of restoring the baseline first",
+    )
+    up.add_argument(
+        "--no-checks", action="store_true", help="skip the standard verify checks"
+    )
+    up.set_defaults(func=cmd_upgrade)
 
     return parser
 
