@@ -206,7 +206,7 @@ scripts/harness upgrade --to working       # the working tree, symlinked
    are listed and skipped.
 4. Adds a person with sleep detection through the options flow.
 5. Makes the changes a user would: enables two areas' diagnostic entities,
-   renames and re-ids an occupancy sensor, and moves a threshold slider.
+   renames and re-ids the "All Areas" occupancy sensor, and moves a threshold slider.
 6. Walks the house live (motion on, area by area) so the trajectory tracker,
    online prior and shadow learners have real ticks, then runs the analysis.
 7. Captures everything below as `captures/baseline.json` and snapshots the
@@ -229,10 +229,14 @@ the analysis, captures again, and writes
 | Log | Any `ERROR`, or any `WARNING` from the integration, since the upgraded boot. |
 
 Additions are reported but never flagged: new entities, stores and config
-keys are what an upgrade is for. The standard [checks](#verification) run
-afterwards too (`--no-checks` skips them), so the `migration` and
-`subentry_linkage` checks hold a real old entry to the same bar as a
-fabricated one. The exit code is non-zero on any red flag or failed check,
+keys are what an upgrade is for. When the target writes the working tree's
+`CONF_VERSION`, the standard [checks](#verification) run afterwards too
+(`--no-checks` skips them), so the `migration` and `subentry_linkage` checks
+hold a real old entry to the same bar as a fabricated one. They encode the
+working tree's expectations, so they are skipped for any other target.
+
+`scripts/harness upgrade --to <the base's own tag>` is the null test: it
+should report no red flags, which is what shows the diff does not cry wolf. The exit code is non-zero on any red flag or failed check,
 and the upgraded instance is left running to poke at.
 
 The config-flow driver speaks the 2026.7-2026.8 single-entry wizard (an

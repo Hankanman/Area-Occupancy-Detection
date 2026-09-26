@@ -443,7 +443,17 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     print()
     print(report.markdown)
 
-    results = verify.run_all(instance, instance.client()) if not args.no_checks else []
+    # The standard checks encode the working tree's expectations (subentries,
+    # the current flows), so they only mean something when the target writes
+    # the same entry version the working tree does.
+    target_version = upgrade.conf_version(args.to)
+    run_checks = not args.no_checks and target_version == CONF_VERSION
+    if not args.no_checks and not run_checks:
+        print(
+            f"standard checks skipped: {args.to} writes v{target_version} "
+            f"entries, the checks expect v{CONF_VERSION}"
+        )
+    results = verify.run_all(instance, instance.client()) if run_checks else []
     failures = [result for result in results if not result.passed]
     for result in results:
         mark = _colour("PASS", GREEN) if result.passed else _colour("FAIL", RED)

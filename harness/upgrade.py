@@ -56,7 +56,9 @@ BASELINE = "baseline"
 UPSTAIRS_PURPOSES = frozenset({"sleeping", "bathroom"})
 
 #: The customisations ``upgrade-base`` applies, which the upgrade must keep.
-RENAMED_NAME = "Lounge Presence"
+#: The aggregate occupancy sensor is renamed rather than an area one, so the
+#: standard ``entities`` check (which finds area entities by name) still holds.
+RENAMED_NAME = "Anyone Home"
 THRESHOLD_OVERRIDE = 45.0
 
 #: Wizard steps of the 2026.7-2026.8 single-entry config flow that need the
@@ -65,7 +67,11 @@ MENU_ADD_AREA = "add_area"
 MENU_FINISH = "finish_setup"
 
 #: Log noise that is not the integration's fault.
-_IGNORED_LOG = ("has not been tested by Home Assistant",)
+_IGNORED_LOG = (
+    "has not been tested by Home Assistant",
+    # The harness client refreshing an expired token; the URL names us.
+    "invalid authentication",
+)
 
 
 class UpgradeError(InstanceError):
@@ -561,7 +567,7 @@ def customise(instance: Instance, client: Client) -> list[str]:
     """Make the changes a user would, which the upgrade must preserve.
 
     Enables the (default-disabled) diagnostic entities of two areas, renames
-    and re-ids one occupancy sensor, and moves a threshold slider.
+    and re-ids the "All Areas" occupancy sensor, and moves a threshold slider.
 
     Args:
         instance: The running instance.
@@ -585,7 +591,7 @@ def customise(instance: Instance, client: Client) -> list[str]:
     occupancy = next(
         entry["entity_id"]
         for entry in registry
-        if entry["entity_id"].startswith(f"binary_sensor.{slugs[0]}")
+        if entry["entity_id"].startswith("binary_sensor.all_areas")
         and entry["entity_id"].endswith("occupancy_status")
     )
     renamed = "binary_sensor." + RENAMED_NAME.lower().replace(" ", "_")
