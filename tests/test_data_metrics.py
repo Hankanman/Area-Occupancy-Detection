@@ -9,10 +9,13 @@ import pytest
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
 from custom_components.area_occupancy.data.metrics import (
+    SUGGEST_THRESHOLD_MIN_SAMPLES,
     AccuracyMetrics,
+    CalibrationBin,
     TickSample,
     compute_accuracy_metrics,
     metrics_to_diagnostics,
+    suggest_threshold,
 )
 from custom_components.area_occupancy.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -284,3 +287,97 @@ class TestShadowWiring:
         coordinator.set_accuracy_metrics(area_name, AccuracyMetrics(sample_count=999))
 
         assert area.probability() == before
+
+
+def _ten_bins(populated: dict[int, tuple[float, float]]) -> list[CalibrationBin]:
+    """Build 10 standard bins; ``populated`` maps bin index -> (weight, rate)."""
+    bins = []
+    for i in range(10):
+        weight, rate = populated.get(i, (0.0, 0.0))
+        bins.append(
+            CalibrationBin(
+                lower=i / 10,
+                upper=(i + 1) / 10,
+                count=int(weight) if weight else 0,
+                mean_probability=(i + 0.5) / 10 if weight else 0.0,
+                observed_rate=rate,
+                weight=weight,
+            )
+        )
+    return bins
+
+
+class TestSuggestThreshold:
+    """suggest_threshold: hand-computed expectations, per Law 1 discipline."""
+
+    def test_picks_edge_minimizing_combined_error(self) -> None:
+        """Hand-computed optimum at t=0.2.
+
+        Bins: [0.0-0.1] weight=600 rate=0.0, [0.1-0.2] weight=200 rate=0.2,
+        [0.8-0.9] weight=300 rate=1.0.
+        truth_on = 600*0 + 200*0.2 + 300*1 = 340; truth_off = 600 + 160 = 760.
+        t=0.1: on-side = bins 1,8 -> false_on = 160, false_off = 0
+               -> cost = 160/760          = 0.2105
+        t=0.2: on-side = bin 8   -> false_on = 0,  false_off = 40
+               -> cost = 40/340           = 0.1176  <- minimum (first)
+        t=0.3..0.8: identical decision boundary (no populated bin between)
+               -> same cost; tie resolves to the lowest edge, 0.2
+        t=0.9: everything off    -> false_off = 340 -> cost = 1.0
+        """
+        metrics = AccuracyMetrics(
+            sample_count=SUGGEST_THRESHOLD_MIN_SAMPLES,
+            bins=_ten_bins({0: (600.0, 0.0), 1: (200.0, 0.2), 8: (300.0, 1.0)}),
+        )
+        assert suggest_threshold(metrics) == pytest.approx(0.2)
+
+    def test_none_below_minimum_samples(self) -> None:
+        """A near-empty window yields no suggestion."""
+        metrics = AccuracyMetrics(
+            sample_count=SUGGEST_THRESHOLD_MIN_SAMPLES - 1,
+            bins=_ten_bins({0: (600.0, 0.0), 8: (300.0, 1.0)}),
+        )
+        assert suggest_threshold(metrics) is None
+
+    def test_none_with_empty_bins(self) -> None:
+        """No populated bins yields no suggestion."""
+        metrics = AccuracyMetrics(sample_count=1000, bins=_ten_bins({}))
+        assert suggest_threshold(metrics) is None
+
+    def test_none_when_single_truth_class(self) -> None:
+        """A window that never saw one truth class has no tradeoff to tune."""
+        never_occupied = AccuracyMetrics(
+            sample_count=1000,
+            bins=_ten_bins({0: (600.0, 0.0), 8: (300.0, 0.0)}),
+        )
+        always_occupied = AccuracyMetrics(
+            sample_count=1000,
+            bins=_ten_bins({0: (600.0, 1.0), 8: (300.0, 1.0)}),
+        )
+        assert suggest_threshold(never_occupied) is None
+        assert suggest_threshold(always_occupied) is None
+
+    def test_end_to_end_from_computed_metrics(self) -> None:
+        """suggest_threshold works on compute_accuracy_metrics output.
+
+        120 well-separated ticks (60 at p=0.05 truly empty, 60 at p=0.85
+        truly occupied): any interior edge between the two populated bins
+        gives zero combined error; the tie resolves to the lowest, 0.1.
+        """
+        n = 60
+        samples = _samples([(0.05, False)] * n + [(0.85, True)] * n)
+        occupied = [
+            (T0 + timedelta(seconds=10 * n), T0 + timedelta(seconds=10 * 2 * n))
+        ]
+        metrics = compute_accuracy_metrics(samples, occupied)
+        assert metrics.sample_count >= SUGGEST_THRESHOLD_MIN_SAMPLES
+        assert suggest_threshold(metrics) == pytest.approx(0.1)
+
+    def test_diagnostics_include_suggested_threshold(self) -> None:
+        """metrics_to_diagnostics carries the suggestion (or None)."""
+        metrics = AccuracyMetrics(
+            sample_count=SUGGEST_THRESHOLD_MIN_SAMPLES,
+            bins=_ten_bins({0: (600.0, 0.0), 1: (200.0, 0.2), 8: (300.0, 1.0)}),
+        )
+        diag = metrics_to_diagnostics(metrics)
+        assert diag["suggested_threshold"] == pytest.approx(0.2)
+        json.dumps(diag)

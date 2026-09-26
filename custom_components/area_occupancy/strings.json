@@ -1152,6 +1152,9 @@
             },
             "sensor_health": {
                 "name": "Sensor Health"
+            },
+            "accuracy": {
+                "name": "Accuracy"
             }
         },
         "number": {
