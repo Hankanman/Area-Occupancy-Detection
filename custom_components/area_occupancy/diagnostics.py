@@ -20,7 +20,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_VERSION, CONF_VERSION_MINOR, DEVICE_SW_VERSION
+from .const import (
+    CONF_VERSION,
+    CONF_VERSION_MINOR,
+    DEVICE_SW_VERSION,
+    ONLINE_PRIOR_DIFF_TOLERANCE,
+)
 from .data.metrics import metrics_to_diagnostics
 from .db import queries
 
@@ -279,6 +284,15 @@ def _area_snapshot(
                     if db_prior is not None
                     else None,
                     "observed_days": round(estimator.observed_days(now), 2),
+                    # Weekly-bucket extension (#500 phase 2)
+                    "observed_slots": estimator.observed_slot_count(),
+                    "days_within_tolerance": estimator.days_within_tolerance(
+                        ONLINE_PRIOR_DIFF_TOLERANCE
+                    ),
+                    "diff_tolerance": ONLINE_PRIOR_DIFF_TOLERANCE,
+                    # Recent daily worst-case divergence summaries; the
+                    # full 90-day history lives in the Store.
+                    "diff_history": estimator.state.diff_history[-14:],
                 }
         snapshot["current"] = current
     except Exception as err:  # noqa: BLE001 — see docstring
