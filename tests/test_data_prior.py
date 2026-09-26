@@ -472,7 +472,7 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
             "get_all_time_priors",
             return_value=test_cache.copy(),
         ) as mock_get_all:
-            # First access should trigger _load_time_priors
+            # First access should trigger load_time_priors
             result = prior.time_prior
             mock_get_all.assert_called_once_with(
                 area_name=area_name, default_prior=DEFAULT_TIME_PRIOR
@@ -515,7 +515,7 @@ def test_time_prior_property(coordinator: AreaOccupancyCoordinator):
 
 
 def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator):
-    """Test _load_time_priors applies bounds checking correctly."""
+    """Test load_time_priors applies bounds checking correctly."""
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
 
@@ -533,8 +533,8 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
         "get_all_time_priors",
         return_value=test_data.copy(),
     ):
-        # Trigger _load_time_priors by accessing time_prior
-        prior._load_time_priors()
+        # Trigger load_time_priors directly
+        prior.load_time_priors()
 
         # Verify bounds are applied
         assert prior._cached_time_priors[(0, 0)] == TIME_PRIOR_MIN_BOUND
@@ -549,7 +549,7 @@ def test_load_time_priors_bounds_checking(coordinator: AreaOccupancyCoordinator)
         "get_all_time_priors",
         return_value={},  # Empty dict - no data in database
     ):
-        prior._load_time_priors()
+        prior.load_time_priors()
         # Cache should be empty dict
         assert prior._cached_time_priors == {}
         # Accessing time_prior should return DEFAULT_TIME_PRIOR

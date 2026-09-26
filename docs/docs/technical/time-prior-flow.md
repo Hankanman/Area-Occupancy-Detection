@@ -228,10 +228,11 @@ The time prior retrieval follows this path:
    - Property getter that triggers retrieval if needed
 
 2. **Cache Check**: Checks if `_cached_time_priors` dictionary is populated (line 118)
-   - If `None`, triggers `_load_time_priors()` to load all 168 slots from database
+   - If `None`, triggers `load_time_priors()` to load all 168 slots from database
    - Cache stores all time priors as a dictionary: `(day_of_week, time_slot) -> prior_value`
+   - In normal operation the cache is already warm: `load_data()` and `start_prior_analysis()` call `load_time_priors()` in the executor right after `set_global_prior()` invalidates it, so probability calculations on the event loop don't query SQLite inline
 
-3. **Load All Time Priors**: `prior.py:_load_time_priors()` (line 161)
+3. **Load All Time Priors**: `prior.py:load_time_priors()`
    - Calls `db.get_all_time_priors()` to retrieve all time priors for the area
    - Loads all 168 slots in a single database query for efficiency
    - Applies safety bounds [0.1, 0.9] to all values during loading
@@ -253,7 +254,7 @@ The time prior retrieval follows this path:
    - Looks up value in cached dictionary
    - Returns `DEFAULT_TIME_PRIOR` (0.5) if slot not found (shouldn't happen after `get_all_time_priors()`)
 
-7. **Safety Bounds**: Applied during `_load_time_priors()` (line 173-177)
+7. **Safety Bounds**: Applied during `load_time_priors()`
    - Clamps all values to [TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND] = [0.1, 0.9]
    - Prevents extreme values from affecting calculations
 
@@ -413,7 +414,7 @@ sequenceDiagram
         Prior->>Cache: Lookup (day, slot)
         Cache-->>Prior: prior_value for current slot
     else Cache Empty (First Access)
-        Prior->>Prior: _load_time_priors()
+        Prior->>Prior: load_time_priors()
         Prior->>DB: get_all_time_priors(area_name)
         DB->>Query: get_all_time_priors(entry_id, area_name)
         Query->>Query: Query all Priors for area

@@ -1235,6 +1235,64 @@ class TestAreaOccupancyCoordinator:
         ):
             await coordinator.setup()
 
+    async def test_setup_loads_adjacency_snapshot_after_save(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test setup loads the adjacency snapshot after save_data syncs it."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        calls: list[str] = []
+
+        with (
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(
+                coordinator.db,
+                "save_data",
+                side_effect=lambda: calls.append("save_data"),
+            ),
+            patch.object(
+                coordinator,
+                "async_load_adjacency_snapshot",
+                new=AsyncMock(side_effect=lambda: calls.append("load_snapshot")),
+            ),
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator, "_start_decay_timer"),
+            patch.object(coordinator, "_start_save_timer"),
+            patch.object(coordinator, "_start_analysis_timer", new=AsyncMock()),
+        ):
+            await coordinator.setup()
+
+        assert calls == ["save_data", "load_snapshot"]
+
+    async def test_async_update_options_reloads_adjacency_snapshot(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test an options update reloads adjacency after re-syncing it."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._load_areas_from_config()
+        calls: list[str] = []
+
+        with (
+            patch.object(coordinator, "track_entity_state_changes", new=AsyncMock()),
+            patch.object(coordinator.db, "load_data", new=AsyncMock()),
+            patch.object(
+                coordinator.db,
+                "save_data",
+                side_effect=lambda: calls.append("save_data"),
+            ),
+            patch.object(
+                coordinator,
+                "async_load_adjacency_snapshot",
+                new=AsyncMock(side_effect=lambda: calls.append("load_snapshot")),
+            ),
+            patch(
+                "custom_components.area_occupancy.data.entity.EntityManager.cleanup",
+                new=AsyncMock(),
+            ),
+        ):
+            await coordinator.async_update_options({})
+
+        assert calls == ["save_data", "load_snapshot"]
+
     async def test_async_update_options(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
     ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
@@ -29,6 +30,7 @@ from custom_components.area_occupancy.db.utils import (
     merge_overlapping_intervals,
     segment_interval_with_motion,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 
@@ -1050,6 +1052,112 @@ class TestOrchestrationFunctions:
             # Should not raise
             await start_prior_analysis(coordinator, area_name, area.prior)
             mock_logger.error.assert_called()
+
+    async def test_start_prior_analysis_reloads_time_priors_after_save(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test the time-prior cache holds this run's saved values afterwards.
+
+        The analyzer invalidates the cache (via ``set_global_prior``) before
+        it saves the new time priors, so a refresh landing in between used
+        to cache the previous run's values until the next hourly analysis,
+        and the first refresh after analysis queried SQLite on the event
+        loop. Reloading in the executor once the save is done fixes both.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        coordinator.db.save_area_data(area_name)
+        now = dt_util.utcnow()
+        slot = (2, 9)
+
+        def _analyze(_days: int) -> None:
+            area.prior.set_global_prior(0.3)
+            # A refresh racing the analysis caches the old time priors.
+            _ = area.prior.time_prior
+            assert coordinator.db.save_time_priors(
+                area_name=area_name,
+                time_priors={slot: 0.42},
+                data_period_start=now - timedelta(days=7),
+                data_period_end=now,
+                data_points_per_slot={slot: 5},
+            )
+
+        with patch(
+            "custom_components.area_occupancy.data.analysis.PriorAnalyzer"
+        ) as mock_analyzer_class:
+            mock_analyzer_class.return_value.calculate_and_update_prior = Mock(
+                side_effect=_analyze
+            )
+            await start_prior_analysis(coordinator, area_name, area.prior)
+
+        assert area.prior._cached_time_priors is not None
+        assert area.prior._cached_time_priors[slot] == pytest.approx(0.42)
+
+    async def test_start_prior_analysis_reloads_time_priors_on_error(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test a failed analysis still leaves the time-prior cache warm."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+
+        def _fail(_days: int) -> None:
+            area.prior.set_global_prior(0.3)
+            raise RuntimeError("analysis failed after invalidating the cache")
+
+        with patch(
+            "custom_components.area_occupancy.data.analysis.PriorAnalyzer"
+        ) as mock_analyzer_class:
+            mock_analyzer_class.return_value.calculate_and_update_prior = Mock(
+                side_effect=_fail
+            )
+            await start_prior_analysis(coordinator, area_name, area.prior)
+
+        assert area.prior._cached_time_priors is not None
+
+    async def test_refresh_step_reloads_adjacency_snapshot_first(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test the pipeline's refresh sees adjacency data this cycle wrote."""
+        calls: list[str] = []
+
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator.hass, "async_add_executor_job", new=AsyncMock()),
+            patch.object(
+                coordinator,
+                "async_load_adjacency_snapshot",
+                new=AsyncMock(side_effect=lambda: calls.append("load_snapshot")),
+            ),
+            patch.object(
+                coordinator,
+                "async_refresh",
+                new=AsyncMock(side_effect=lambda: calls.append("refresh")),
+            ),
+            # Other steps fail against the stubbed executor; not under test.
+            contextlib.suppress(HomeAssistantError),
+        ):
+            await run_full_analysis(coordinator)
+
+        assert calls == ["load_snapshot", "refresh"]
+
+    async def test_refresh_step_refreshes_when_snapshot_reload_fails(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test a failed reload still publishes the refresh, then fails the step."""
+        with (
+            patch.object(coordinator.db, "sync_states", new=AsyncMock()),
+            patch.object(coordinator.hass, "async_add_executor_job", new=AsyncMock()),
+            patch.object(
+                coordinator,
+                "async_load_adjacency_snapshot",
+                new=AsyncMock(side_effect=RuntimeError("reload failed")),
+            ),
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            pytest.raises(HomeAssistantError, match="refresh_coordinator"),
+        ):
+            await run_full_analysis(coordinator)
+
+        mock_refresh.assert_awaited_once()
 
 
 class TestRunFullAnalysisCancellation:

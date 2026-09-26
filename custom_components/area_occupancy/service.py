@@ -298,6 +298,16 @@ async def async_purge_area_data(
     except Exception:  # noqa: BLE001
         _LOGGER.warning("db.load_data() after purge raised; continuing", exc_info=True)
 
+    # The purge deleted this area's AreaRelationships rows (and the shell
+    # re-persist above re-synced them), so refresh the in-memory copy.
+    try:
+        await coordinator.async_load_adjacency_snapshot()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "async_load_adjacency_snapshot() after purge raised; continuing",
+            exc_info=True,
+        )
+
     try:
         await coordinator.async_refresh_correlations()
     except Exception:  # noqa: BLE001

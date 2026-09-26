@@ -44,7 +44,7 @@ With the default half-life of **30 days**, a count roughly halves every month it
 
 ## Lookup: six-level smoothing fallback
 
-`lookup_transition_probability()` in `db/transitions.py` answers `P(to_area | from_area, mid_area, hour_of_week)`. Sparse data is the norm — most chain/hour combinations won't have enough observations to trust — so the lookup progressively widens its scope until a level has enough total observations, walking through:
+`AdjacencySnapshot.lookup()` in `db/transitions.py` answers `P(to_area | from_area, mid_area, hour_of_week)`. Sparse data is the norm — most chain/hour combinations won't have enough observations to trust — so the lookup progressively widens its scope until a level has enough total observations, walking through:
 
 | Level | Scope | Threshold constant | Value |
 |---|---|---|---|
@@ -59,9 +59,11 @@ The threshold is checked against the **total** observations at that level (all d
 
 Each `TransitionLookupResult` carries the `probability`, the `level` that supplied it, and the `observed`/`total` counts — surfaced directly in diagnostics so you can see which fallback fired for any given prediction.
 
+The lookup reads an in-memory copy of the entry's `AreaRelationships` and `AreaTransitions` rows (`load_adjacency_snapshot()`), not SQLite. The coordinator reloads that snapshot in the executor at setup, after an options change or area purge, and during each hourly analysis just before its refresh step. The per-tick lookups below therefore never touch the database, which keeps a sensor state change from waiting on SQLite before occupancy updates.
+
 ## Runtime wiring: boost and decay modifier
 
-Two consumers read `lookup_transition_probability()` every coordinator tick, via a shared `TrajectoryTracker` (`data/trajectory.py`) that maintains a rolling deque of recent area-end events household-wide and hands back a `Trajectory(prev_area, prev_prev_area, hour_of_week)` for any target area.
+Two consumers call that lookup every coordinator tick, via a shared `TrajectoryTracker` (`data/trajectory.py`) that maintains a rolling deque of recent area-end events household-wide and hands back a `Trajectory(prev_area, prev_prev_area, hour_of_week)` for any target area.
 
 ### Boost — `compute_adjacency_boost()` (`data/adjacency.py`)
 

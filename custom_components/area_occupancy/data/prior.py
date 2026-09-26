@@ -177,16 +177,17 @@ class Prior:
     @property
     def time_prior(self) -> float:
         """Return the current time prior value or minimum if not calculated."""
-        # Load all time priors if cache is empty
-        if self._cached_time_priors is None:
-            self._load_time_priors()
+        # Load all time priors if cache is empty. Read the cache once into a
+        # local: the analysis executor can invalidate it concurrently.
+        time_priors = self._cached_time_priors
+        if time_priors is None:
+            time_priors = self.load_time_priors()
 
         current_day = self.day_of_week
         current_slot = self.time_slot
         slot_key = (current_day, current_slot)
 
-        # Get from cache (guaranteed to exist after _load_time_priors)
-        return self._cached_time_priors.get(slot_key, DEFAULT_TIME_PRIOR)
+        return time_priors.get(slot_key, DEFAULT_TIME_PRIOR)
 
     @property
     def day_of_week(self) -> int:
@@ -251,19 +252,30 @@ class Prior:
         """Invalidate the time_prior cache."""
         self._cached_time_priors = None
 
-    def _load_time_priors(self) -> None:
+    def load_time_priors(self) -> dict[tuple[int, int], float]:
         """Load all 168 time priors from database into cache.
 
         This method loads time priors for the area in a single database query,
         eliminating the need for individual queries when accessing time priors.
+
+        Blocking I/O: ``load_data`` and the prior analysis run it in the
+        executor right after ``set_global_prior`` invalidates the cache, so
+        ``time_prior`` (read by every probability calculation on the event
+        loop) normally finds the cache already warm.
+
+        Returns:
+            The newly cached mapping of (day_of_week, time_slot) to prior.
         """
-        self._cached_time_priors = self.db.get_all_time_priors(
+        time_priors = self.db.get_all_time_priors(
             area_name=self.area_name,
             default_prior=DEFAULT_TIME_PRIOR,
         )
-        # Apply safety bounds to all cached values
-        for slot_key, prior_value in self._cached_time_priors.items():
-            self._cached_time_priors[slot_key] = max(
-                TIME_PRIOR_MIN_BOUND,
-                min(TIME_PRIOR_MAX_BOUND, prior_value),
-            )
+        # Apply safety bounds before publishing: this can run in the executor
+        # while the event loop reads the cache, so it must never see
+        # unclamped values.
+        clamped = {
+            slot_key: max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, prior_value))
+            for slot_key, prior_value in time_priors.items()
+        }
+        self._cached_time_priors = clamped
+        return clamped
