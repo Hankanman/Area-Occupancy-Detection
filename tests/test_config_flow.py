@@ -16,6 +16,7 @@ from custom_components.area_occupancy.config_flow import (
     BaseOccupancyFlow,
     _build_area_description_placeholders,
     _create_area_selector_schema,
+    _create_basics_step_schema,
     _create_behavior_step_schema,
     _create_motion_step_schema,
     _create_sensors_step_schema,
@@ -76,6 +77,7 @@ from custom_components.area_occupancy.const import (
     CONF_WIFI_CLIENTS_SENSORS,
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
+    DEFAULT_PURPOSE,
     DOMAIN,
     SUBENTRY_TYPE_AREA,
 )
@@ -2327,6 +2329,33 @@ class TestSectionEditing:
         # Flow state is cleared for the next edit
         assert flow._area_being_edited is None
         assert flow._area_edit_section is None
+
+    def test_basics_defaults_are_the_areas_current_values_when_editing(
+        self,
+    ) -> None:
+        """A submission that omits purpose or adjacency keeps the saved values.
+
+        The flow manager fills a field's default into any submission that
+        leaves the field out, so a fixed default of "social" (and ``[]``)
+        silently reset an area's purpose and cleared its adjacency.
+        """
+        schema = vol.Schema(
+            _create_basics_step_schema(
+                is_editing=True,
+                adjacent_options=[{"value": "kitchen", "label": "Kitchen"}],
+                current={CONF_PURPOSE: "sleeping", CONF_ADJACENT_AREAS: ["kitchen"]},
+            )
+        )
+
+        assert schema({}) == {
+            CONF_PURPOSE: "sleeping",
+            CONF_ADJACENT_AREAS: ["kitchen"],
+        }
+
+    def test_basics_defaults_stay_generic_when_adding(self) -> None:
+        schema = vol.Schema(_create_basics_step_schema(is_editing=True))
+
+        assert schema({}) == {CONF_PURPOSE: DEFAULT_PURPOSE}
 
     async def test_edit_basics_spoke_changes_purpose_and_keeps_rest(
         self, config_flow_options_flow

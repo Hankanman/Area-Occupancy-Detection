@@ -1133,6 +1133,7 @@ def _create_basics_step_schema(
     *,
     is_editing: bool = False,
     adjacent_options: list[SelectOptionDict] | None = None,
+    current: dict[str, Any] | None = None,
 ) -> dict[vol.Marker, Any]:
     """Create schema for wizard step 1: area selection and purpose.
 
@@ -1142,22 +1143,32 @@ def _create_basics_step_schema(
             choices. Each option is `{"value": area_id, "label": area_name}`.
             When None or empty, the adjacency field is omitted (e.g. the
             first area being added has no neighbours to pick from).
+        current: The area's saved config when editing. Its purpose and
+            adjacency become the fields' defaults: the flow manager fills a
+            default into any submission that omits the field, so a fixed
+            default silently reset an existing area's purpose to "social"
+            and cleared its adjacency.
     """
+    current = current or {}
     fields: dict[vol.Marker, Any] = {}
     if not is_editing:
         fields[vol.Required(CONF_AREA_ID)] = AreaSelector()
-    fields[vol.Optional(CONF_PURPOSE, default=DEFAULT_PURPOSE)] = SelectSelector(
+    purpose_default = current.get(CONF_PURPOSE) or DEFAULT_PURPOSE
+    fields[vol.Optional(CONF_PURPOSE, default=purpose_default)] = SelectSelector(
         SelectSelectorConfig(
             options=cast("list[SelectOptionDict]", get_purpose_options()),
             mode=SelectSelectorMode.DROPDOWN,
         )
     )
     if adjacent_options:
-        fields[vol.Optional(CONF_ADJACENT_AREAS, default=[])] = SelectSelector(
-            SelectSelectorConfig(
-                options=adjacent_options,
-                multiple=True,
-                mode=SelectSelectorMode.DROPDOWN,
+        adjacent_default = list(current.get(CONF_ADJACENT_AREAS) or [])
+        fields[vol.Optional(CONF_ADJACENT_AREAS, default=adjacent_default)] = (
+            SelectSelector(
+                SelectSelectorConfig(
+                    options=adjacent_options,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
             )
         )
     return fields
@@ -2213,6 +2224,7 @@ class BaseOccupancyFlow:
         schema_dict = _create_basics_step_schema(
             is_editing=self._area_being_edited is not None,
             adjacent_options=adjacent_options,
+            current=self._area_config_draft if self._area_being_edited else None,
         )
         base_schema = vol.Schema(schema_dict)
 
