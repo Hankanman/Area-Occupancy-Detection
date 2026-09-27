@@ -1596,3 +1596,88 @@ class TestMediaPlayerUnavailableExempt:
 
         assert len(issues) == 1
         assert issues[0].issue_type == HealthIssueType.UNAVAILABLE
+
+
+class TestAwayFromHome:
+    """Inactivity alerts pause while nobody is home and restart on return (#485)."""
+
+    @staticmethod
+    def _home(mock_hass: Mock, count: str | None) -> None:
+        mock_hass.states.get.side_effect = lambda eid: (
+            Mock(state=count) if eid == "zone.home" and count is not None else None
+        )
+
+    @staticmethod
+    def _idle_motion(days: float) -> Entity:
+        return _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="off",
+            last_updated=dt_util.utcnow() - timedelta(days=days),
+            evidence=False,
+        )
+
+    def _check(self, monitor: HealthMonitor, entity: Entity) -> list:
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            return monitor.check_health({"motion_1": entity})
+
+    def test_no_inactivity_alerts_while_nobody_is_home(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Ten idle days (threshold 7) raise nothing while zone.home is 0."""
+        self._home(mock_hass, "0")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+    def test_stuck_active_is_still_reported_while_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """A sensor stuck on in an empty house is more suspicious, not less."""
+        self._home(mock_hass, "0")
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
+            evidence=True,
+        )
+
+        issues = self._check(monitor, entity)
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_ACTIVE]
+
+    def test_idleness_counts_from_the_return(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Back from a trip, the clock restarts rather than alerting at once."""
+        self._home(mock_hass, "0")
+        self._check(monitor, self._idle_motion(10))
+        self._home(mock_hass, "2")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+        # Seven days after the return, the threshold is genuinely crossed.
+        monitor._home_returned_at = dt_util.utcnow() - timedelta(days=8)
+        issues = self._check(monitor, self._idle_motion(10))
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_someone_home_throughout_behaves_as_before(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """zone.home changing between non-zero counts does not reset the clock."""
+        self._home(mock_hass, "1")
+        self._check(monitor, self._idle_motion(8))
+        self._home(mock_hass, "2")
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_without_zone_home_behaves_as_before(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        self._home(mock_hass, None)
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
