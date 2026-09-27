@@ -16,6 +16,7 @@ from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
     from ..area.area import Area
+    from .types import ZonePriors
 
 # Decimal places used when rounding forecast priors in service responses.
 FORECAST_RESPONSE_PRECISION = 4
@@ -229,15 +230,25 @@ def build_area_time_priors(area: Area, slot_minutes: int) -> dict[str, Any]:
 
 
 def build_aggregate_time_priors(
-    members: list[Area], slot_minutes: int, area_id: str, name: str
+    members: list[Area],
+    slot_minutes: int,
+    area_id: str,
+    name: str,
+    *,
+    prior_factor: float,
+    empirical: ZonePriors | None = None,
 ) -> dict[str, Any] | None:
     """Build the learned weekly forecast for an aggregate zone.
 
-    Aggregate zones (the "All Areas" device and per-floor devices) have no
-    stored priors of their own; their occupancy is derived from member areas.
-    This mirrors ``AllAreas.area_prior()`` — a clamped average across members —
-    but per weekly slot, producing a whole-floor / whole-home occupancy forecast
-    useful for air-based devices that condition several rooms at once.
+    Aggregate zones (the "All Areas" device and per-floor devices) answer
+    "will anyone be in this zone", which no average of the rooms can: a room
+    busy at 07:00 and another at 19:00 average to a zone that is never busy.
+    So each slot's habit (``slots_baseline``) and raw prior come from the
+    zone's empirical priors, measured on the union of its rooms' occupied
+    history (#557). Until the first analysis has computed those, the highest
+    member stands in, a lower bound on "anyone". The live series is at least
+    the habit and at least any member's own live-conditioned forecast, so a
+    zone reads busy whenever one of its rooms does.
 
     Returns ``None`` when there are no members (nothing to aggregate). Assumes
     each member's time-prior cache is already warm.
@@ -269,11 +280,17 @@ def build_aggregate_time_priors(
     data_points: dict[str, int] = {}
     for day, slot in sorted(keys):
         key = f"{day},{slot}"
-        base_values = [m.prior.prior_for(day, slot) for m in members]
-        slots_baseline[key] = round(
-            max(MIN_PRIOR, min(MAX_PRIOR, sum(base_values) / len(base_values))),
-            FORECAST_RESPONSE_PRECISION,
+        zone_slot = (
+            empirical.time_priors.get((day, slot)) if empirical is not None else None
         )
+        if zone_slot is not None:
+            baseline = forecast_prior(
+                empirical.global_prior, zone_slot, prior_factor=prior_factor
+            )
+        else:
+            baseline = max(m.prior.prior_for(day, slot) for m in members)
+        baseline = max(MIN_PRIOR, min(MAX_PRIOR, baseline))
+        slots_baseline[key] = round(baseline, FORECAST_RESPONSE_PRECISION)
         values = [
             conditioned_forecast(
                 posterior,
@@ -283,18 +300,22 @@ def build_aggregate_time_priors(
             )
             for member, posterior, tau, n_day, n_slot in member_ctx
         ]
-        avg = sum(values) / len(values)
+        live = max(baseline, *values)
         slots[key] = round(
-            max(MIN_PRIOR, min(MAX_PRIOR, avg)), FORECAST_RESPONSE_PRECISION
+            max(MIN_PRIOR, min(MAX_PRIOR, live)), FORECAST_RESPONSE_PRECISION
         )
-        raw = [m[(day, slot)] for m in member_matrices if (day, slot) in m]
-        slots_raw[key] = round(
-            sum(raw) / len(raw) if raw else 0.0, FORECAST_RESPONSE_PRECISION
-        )
-        # Weakest member wins: the zone is only as well-learned as its least
-        # observed room, so a consumer never over-trusts a mixed aggregate.
-        per_member = [p.get((day, slot), 0) for p in member_points]
-        data_points[key] = min(per_member) if per_member else 0
+        if zone_slot is not None:
+            slots_raw[key] = round(zone_slot, FORECAST_RESPONSE_PRECISION)
+            data_points[key] = empirical.data_points.get((day, slot), 0)
+        else:
+            raw = [m[(day, slot)] for m in member_matrices if (day, slot) in m]
+            slots_raw[key] = round(
+                max(raw) if raw else 0.0, FORECAST_RESPONSE_PRECISION
+            )
+            # Weakest member wins: the zone is only as well-learned as its
+            # least observed room, so a consumer never over-trusts it.
+            per_member = [p.get((day, slot), 0) for p in member_points]
+            data_points[key] = min(per_member) if per_member else 0
     first = members[0].prior
     return {
         "area_id": area_id,
