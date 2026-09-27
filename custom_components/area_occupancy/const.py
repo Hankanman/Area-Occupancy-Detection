@@ -27,6 +27,14 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN: Final = "area_occupancy"
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 
+# Bundled Lovelace card, served by the integration itself (see async_setup).
+# The URL carries the integration version as a cache-busting query string, so
+# every release is a new cache key despite the long-lived cache headers.
+FRONTEND_DIR: Final = "frontend"
+FRONTEND_URL_BASE: Final = f"/{DOMAIN}/frontend"
+TIME_PRIORS_CARD_FILENAME: Final = "area-occupancy-time-priors-card.js"
+FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
+
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"

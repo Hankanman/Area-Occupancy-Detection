@@ -9,7 +9,9 @@
     "recorder",
     "sensor",
     "binary_sensor",
-    "number"
+    "number",
+    "frontend",
+    "http"
   ],
   "documentation": "https://hankanman.github.io/Area-Occupancy-Detection",
   "integration_type": "device",

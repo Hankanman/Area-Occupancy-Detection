@@ -1,4 +1,4 @@
-# Lovelace card — Time Priors Heatmap
+# Time Priors Card
 
 A small, dependency-free custom Lovelace card that visualises the learned weekly
 occupancy forecast (7×24 = 168 slots per area) returned by the
@@ -11,8 +11,8 @@ automation (e.g. climate pre-heating) would act.
 
 ## Requirements
 
-The Area Occupancy build that exposes the `get_time_priors` service
-(`SupportsResponse.ONLY`). The priors need recorder history to be meaningful — a
+Area Occupancy 2026.9.1 or later, which exposes the
+[`get_time_priors`](services.md) service. The priors need recorder history to be meaningful — a
 fresh install shows every slot hatched as *no data* until the hourly analysis has
 learned something.
 
@@ -22,12 +22,29 @@ the no-data hatching. Against an older build the card falls back to the combined
 
 ## Install
 
-1. Copy `area-occupancy-time-priors-card.js` to `/config/www/`.
-2. **Settings → Dashboards → ⋮ → Resources → Add Resource**
-   - URL: `/local/area-occupancy-time-priors-card.js`
-   - Type: **JavaScript Module**
-3. Hard-refresh the browser (Ctrl/Cmd + Shift + R).
-4. Add the card to a dashboard.
+Nothing to do: the card ships with the integration. On start-up Area Occupancy
+serves it and loads it on every dashboard, so it appears in the card picker as
+**Area Occupancy — Time Priors Heatmap** (or add it in YAML, below) without
+copying a file or registering a resource.
+
+It is served from
+`/area_occupancy/frontend/area-occupancy-time-priors-card.js?v=<version>`. The
+version in the query string changes with every release, so each update is a new
+cache key and the browser always loads the card that shipped with the installed
+integration — no hard refresh, and no stale card in the companion app.
+
+### Upgrading from the manual install
+
+If you installed the card by hand from an earlier release:
+
+1. **Settings → Dashboards → ⋮ → Resources** — delete the
+   `/local/area-occupancy-time-priors-card.js` resource.
+2. Delete `/config/www/area-occupancy-time-priors-card.js`.
+3. Reload the dashboard.
+
+The old copy is never updated, so leaving it registered means two versions load.
+If the old copy loads first it wins, and it's the one that never updates, so
+remove it rather than rely on load order.
 
 ## Card options
 
@@ -57,7 +74,7 @@ The tooltip shows both — the live value and the habit for that slot. `scale: a
 is the default because on an absolute scale every low-prior room looks uniformly
 cold: the blend keeps 60% of its weight on the global prior, so an area below
 ~0.19 can never reach 50% at any hour. See
-[Occupancy Forecast](../docs/docs/technical/occupancy-forecast.md) for the maths.
+[Occupancy Forecast](../technical/occupancy-forecast.md) for the maths.
 
 The range and the comfort cutoff are always measured on the **stable** series
 (`slots_baseline`), never on the series being drawn. Measuring them on the live
