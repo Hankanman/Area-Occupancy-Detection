@@ -36,7 +36,7 @@ exposes that profile for arbitrary — including future — slots.
 | `data/analysis.py` | `calculate_time_priors()` — builds the weekly matrix from occupied intervals |
 | `db/queries.py` | `get_stored_time_priors()` (learned slots only), `get_all_time_priors()` (grid, defaults filled) |
 | `service.py` | `area_occupancy.get_time_priors` — the read-only service entry point |
-| `lovelace/area-occupancy-time-priors-card.js` | Heatmap card rendering the weekly matrix |
+| `frontend/area-occupancy-time-priors-card.js` | Heatmap card rendering the weekly matrix, served by the integration |
 
 `forecast.py` is kept separate from `prior.py` on purpose: exposing the learned
 priors to other integrations should touch the core probability model as little
@@ -267,7 +267,7 @@ only raw intervals — so 28 days is the real ceiling.
 
 ## Lovelace card
 
-`lovelace/area-occupancy-time-priors-card.js` renders the weekly matrix as a 7×24
+`frontend/area-occupancy-time-priors-card.js` renders the weekly matrix as a 7×24
 heatmap. It defaults to `metric: "live"` and `scale: "area"`, so the current slot —
 outlined as *now* — and the next one light up while the area is actually occupied,
 then relax back to habit. The tooltip shows the baseline next to the live value,
@@ -280,7 +280,12 @@ low-prior room look uniformly cold. Slots with `data_points = 0` are hatched as
 Because the live metric moves with the evidence, the card polls every 3 minutes by
 default rather than the 10 a static matrix would need.
 
-See `lovelace/README.md` for installation and the full option list.
+The card ships inside the integration: `async_setup` serves it from
+`/area_occupancy/frontend/area-occupancy-time-priors-card.js?v=<version>` with long
+cache headers and registers it as an extra frontend module, so it loads on every
+dashboard and every release is a new cache key. See
+[Time Priors Card](../features/time-priors-card.md) for the full option list and
+how to remove an old manual install.
 
 ## Related documentation
 
