@@ -161,7 +161,7 @@ The "All Areas" device creates the following entities (using `all_areas` instead
 *   **`sensor.area_occupancy_probability_all_areas` (All Areas Occupancy Probability)**
     *   **State:** Numeric value (0.0 to 100.0)
     *   **Unit:** `%`
-    *   **Description:** Average occupancy probability across all configured areas. Calculated as the mean of all individual area probabilities.
+    *   **Description:** The probability that anyone is in any of the included areas: the highest individual area probability, so it never reads lower than a room that is occupied.
     *   **Device Class:** `power_factor` (used for % display)
     *   **State Class:** `measurement`
     *   **Use Case:** Provides a single metric representing overall occupancy likelihood across your home.
@@ -169,7 +169,7 @@ The "All Areas" device creates the following entities (using `all_areas` instead
 *   **`sensor.area_prior_probability_all_areas` (All Areas Prior Probability)**
     *   **State:** Numeric value (0.0 to 100.0)
     *   **Unit:** `%`
-    *   **Description:** Average prior probability across all areas. This represents the baseline occupancy likelihood before considering current sensor evidence.
+    *   **Description:** How often anyone is in any included area at this time of the week, before considering current sensor evidence. Learned from the combined occupancy history of all included areas (each hourly analysis). Until the first analysis after startup, the highest area prior stands in.
     *   **Device Class:** `power_factor`
     *   **State Class:** `measurement`
     *   **Entity Category:** `diagnostic`
@@ -208,8 +208,8 @@ The "All Areas" device creates the following entities (using `all_areas` instead
 The "All Areas" device uses different aggregation strategies depending on the metric:
 
 *   **Occupancy Status (Binary Sensor):** Uses **OR logic** - if any area is occupied, the aggregated status is `on`. Only when all areas are unoccupied does it show `off`.
-*   **Probability:** Uses **average** - calculates the mean probability across all areas.
-*   **Prior Probability:** Uses **average** - calculates the mean prior probability across all areas.
+*   **Probability:** Uses the **highest** area probability. The question is "is anyone in any area", which can't be less likely than for the busiest single area; an average could read lower than an occupied room.
+*   **Prior Probability:** Learned from the **combined history**: the fraction of time *any* included area was occupied, overall and per hour of the week. Averaging the areas' own priors understates it: rooms busy at different times of day average to a home that looks rarely occupied.
 *   **Decay Status:** Uses **average** - calculates the mean decay status across all areas.
 *   **Presence Confidence:** Uses **average** - calculates the mean presence confidence across all areas.
 *   **Environmental Confidence:** Uses **average** - calculates the mean environmental confidence across all areas.
@@ -273,10 +273,10 @@ Each floor device creates the same set of entities as the All Areas device, scop
     *   Uses **OR logic**: `on` if any area on the floor is occupied.
 
 *   **`sensor.area_occupancy_probability_<floor_name>` (Floor Occupancy Probability)**
-    *   Average probability across areas on this floor.
+    *   The highest area probability on this floor (anyone on the floor).
 
 *   **`sensor.area_prior_probability_<floor_name>` (Floor Prior Probability)**
-    *   Average prior probability across areas on this floor.
+    *   How often anyone is on this floor at this time of the week, learned from the floor's combined occupancy history.
     *   **Entity Category:** `diagnostic`
 
 *   **`sensor.area_decay_status_<floor_name>` (Floor Decay Status)**

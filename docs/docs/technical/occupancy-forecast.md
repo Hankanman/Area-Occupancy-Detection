@@ -77,14 +77,27 @@ far enough ahead that the evidence weight vanishes.
 One real area's weekly forecast, as four parallel per-slot maps keyed
 `"day,slot"` (`day` 0=Monday…6=Sunday, `slot` = `hour * 60 // slot_minutes`).
 
-#### `build_aggregate_time_priors(members, slot_minutes, area_id, name) -> dict | None`
+#### `build_aggregate_time_priors(members, slot_minutes, area_id, name, *, prior_factor, empirical=None) -> dict | None`
 
-The same shape for an aggregate zone (the *All Areas* device, per-floor devices),
-whose occupancy is derived from member areas rather than stored. Values are the
-clamped mean across members, mirroring `AllAreas.area_prior()` but per slot.
-`data_points` takes the **minimum** across members: a zone is only as
-well-learned as its least-observed room, so a consumer never over-trusts a mixed
-aggregate. Returns `None` when there are no members.
+The same shape for an aggregate zone (the *All Areas* device, per-floor devices).
+A zone answers "will **anyone** be in here", which no average of its rooms can:
+a room busy at 07:00 and another busy at 19:00 average to a zone that is never
+busy. So the zone has priors of its own (#557). At the end of each analysis's
+prior step, `compute_zone_priors` takes the **union** of the member rooms'
+occupied intervals, which is the zone's own occupied history, and runs exactly
+the room arithmetic on it (`compute_slot_priors`): a global prior over the
+observation window, and a prior plus week count per slot.
+
+- **Habit (`slots_baseline`):** `forecast_prior(zone global, zone slot)`,
+  combined like a room's.
+- **Raw (`slots_raw`) and `data_points`:** the zone's own values.
+- **Live (`slots`):** the higher of the habit and every member's own
+  live-conditioned forecast, so a zone reads busy whenever one of its rooms does.
+- **Before the first analysis after startup:** each slot falls back to its
+  busiest member (and the weakest member's `data_points`), a lower bound on
+  "anyone".
+
+Returns `None` when there are no members.
 
 ## The maths, end to end
 

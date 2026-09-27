@@ -25,6 +25,7 @@ from ..const import (
 if TYPE_CHECKING:
     from ..area.area import Area
     from ..coordinator import AreaOccupancyCoordinator
+    from ..data.types import ZonePriors
 
 
 def _avg(
@@ -52,13 +53,62 @@ def _avg(
     return max(lo, min(hi, sum(values) / len(values)))
 
 
+def _max(areas: list[Area], method: Callable[[Area], float], default: float) -> float:
+    """The highest *method* value over *areas*, clamped to [MIN_PROBABILITY, 1].
+
+    A zone's occupancy probability is "is anyone in here", which can never be
+    lower than the chance for any one of its rooms. An average could be, and
+    read lower than an occupied room (#557).
+
+    Args:
+        areas: The zone's member areas.
+        method: Callable that extracts a probability from an Area.
+        default: Value when there are no members.
+
+    Returns:
+        The clamped maximum, or *default* without members.
+    """
+    if not areas:
+        return default
+    return max(MIN_PROBABILITY, min(1.0, max(method(area) for area in areas)))
+
+
+def _zone_prior(areas: list[Area], empirical: ZonePriors | None) -> float:
+    """A zone's prior: how often anyone is in it at this time of the week.
+
+    From the empirical zone priors (the union of the rooms' occupied
+    history, #557) combined exactly as a room's live prior is. Until the
+    first analysis has computed them, the highest room prior stands in: a
+    lower bound on "anyone", where an average is not.
+
+    Args:
+        areas: The zone's member areas.
+        empirical: The zone priors from the last analysis, if any.
+
+    Returns:
+        The zone prior.
+    """
+    # Imported here: data.forecast and data.prior reach back into the area
+    # package at import time.
+    from ..data.forecast import forecast_prior  # noqa: PLC0415
+    from ..data.prior import PRIOR_FACTOR  # noqa: PLC0415
+
+    if empirical is None or not areas:
+        return _max(areas, lambda a: a.area_prior(), MIN_PROBABILITY)
+    clock = areas[0].prior
+    slot = empirical.time_priors.get((clock.day_of_week, clock.time_slot))
+    if slot is None:
+        return max(MIN_PROBABILITY, min(1.0, empirical.global_prior))
+    return forecast_prior(empirical.global_prior, slot, prior_factor=PRIOR_FACTOR)
+
+
 class AllAreas:
     """Aggregates occupancy data from all areas.
 
     Provides simple aggregation methods for the "All Areas" device:
-    - Average probability across all areas
+    - Highest probability across all areas (anyone in any area, #557)
     - OR logic for occupied status (any area occupied = occupied)
-    - Average prior across all areas
+    - Prior of anyone being in any area, from their combined history
     - Average decay across all areas
 
     Areas with ``config.exclude_from_all_areas`` set to ``True`` are excluded.
@@ -71,6 +121,9 @@ class AllAreas:
             coordinator: The coordinator instance managing all areas
         """
         self.coordinator = coordinator
+        # Set by the analysis (step 7) from the union of the members'
+        # occupied history (#557); None until the first run.
+        self.empirical: ZonePriors | None = None
 
     def _included_areas(self) -> list[Area]:
         """Return areas that are not excluded from All Areas aggregation."""
@@ -99,28 +152,16 @@ class AllAreas:
         )
 
     def probability(self) -> float:
-        """Calculate average probability across included areas."""
-        return _avg(
-            self._included_areas(),
-            lambda a: a.probability(),
-            MIN_PROBABILITY,
-            MIN_PROBABILITY,
-            1.0,
-        )
+        """Probability anyone is in an included area: the highest one (#557)."""
+        return _max(self._included_areas(), lambda a: a.probability(), MIN_PROBABILITY)
 
     def occupied(self) -> bool:
         """Check if ANY included area is occupied."""
         return any(area.occupied() for area in self._included_areas())
 
     def area_prior(self) -> float:
-        """Calculate average prior across included areas."""
-        return _avg(
-            self._included_areas(),
-            lambda a: a.area_prior(),
-            MIN_PROBABILITY,
-            MIN_PROBABILITY,
-            1.0,
-        )
+        """Prior that anyone is in an included area (#557)."""
+        return _zone_prior(self._included_areas(), self.empirical)
 
     def decay(self) -> float:
         """Calculate average decay across included areas."""
@@ -173,6 +214,9 @@ class FloorAreas:
         self.coordinator = coordinator
         self.floor_id = floor_id
         self.floor_name = floor_name
+        # Set by the analysis (step 7) from the union of the floor's rooms'
+        # occupied history (#557); None until the first run.
+        self.empirical: ZonePriors | None = None
 
     def _floor_areas(self) -> list[Area]:
         """Return areas that belong to this floor."""
@@ -202,28 +246,16 @@ class FloorAreas:
         )
 
     def probability(self) -> float:
-        """Calculate average probability across floor areas."""
-        return _avg(
-            self._floor_areas(),
-            lambda a: a.probability(),
-            MIN_PROBABILITY,
-            MIN_PROBABILITY,
-            1.0,
-        )
+        """Probability anyone is on this floor: its highest room (#557)."""
+        return _max(self._floor_areas(), lambda a: a.probability(), MIN_PROBABILITY)
 
     def occupied(self) -> bool:
         """Check if ANY area on this floor is occupied."""
         return any(area.occupied() for area in self._floor_areas())
 
     def area_prior(self) -> float:
-        """Calculate average prior across floor areas."""
-        return _avg(
-            self._floor_areas(),
-            lambda a: a.area_prior(),
-            MIN_PROBABILITY,
-            MIN_PROBABILITY,
-            1.0,
-        )
+        """Prior that anyone is on this floor (#557)."""
+        return _zone_prior(self._floor_areas(), self.empirical)
 
     def decay(self) -> float:
         """Calculate average decay across floor areas."""
