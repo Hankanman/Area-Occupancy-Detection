@@ -27,7 +27,6 @@ from custom_components.area_occupancy.const import (
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
     WASP_IN_BOX_DEPRECATION_ISSUE,
-    WASP_IN_BOX_REMOVAL_VERSION,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import Base
@@ -969,10 +968,7 @@ class TestWaspDeprecationIssue:
         )
         assert issue is not None
         assert issue.severity == ir.IssueSeverity.WARNING
-        assert issue.translation_placeholders == {
-            "areas": "Attic, Bathroom",
-            "removal_version": WASP_IN_BOX_REMOVAL_VERSION,
-        }
+        assert issue.translation_placeholders == {"areas": "Attic, Bathroom"}
 
     async def test_issue_clears_when_no_area_uses_it(self, hass: HomeAssistant) -> None:
         _async_sync_wasp_deprecation_issue(hass, self._coordinator({"Bathroom": True}))

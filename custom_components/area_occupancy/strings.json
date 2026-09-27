@@ -126,7 +126,7 @@
                             "wasp_verification_delay": "Verification Delay"
                         },
                         "data_description": {
-                            "wasp_enabled": "Deprecated: Wasp in Box and its sensor are removed in 2027.1.1. Enable wasp-in-box behavior and entity for this area.",
+                            "wasp_enabled": "Deprecated: being replaced by a built-in closed-door hold that takes over this setting automatically. Enable wasp-in-box behavior and entity for this area.",
                             "wasp_motion_timeout": "How long motion remains valid after detection.",
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
                             "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion, even if no door opens. This is to end a false positive.",
@@ -473,7 +473,7 @@
                             "wasp_verification_delay": "Verification Delay"
                         },
                         "data_description": {
-                            "wasp_enabled": "Deprecated: Wasp in Box and its sensor are removed in 2027.1.1. Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
+                            "wasp_enabled": "Deprecated: being replaced by a built-in closed-door hold that takes over this setting automatically. Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
                             "wasp_motion_timeout": "How long motion remains valid after detection.",
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
                             "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
@@ -643,7 +643,7 @@
                             "wasp_verification_delay": "Verification Delay"
                         },
                         "data_description": {
-                            "wasp_enabled": "Deprecated: Wasp in Box and its sensor are removed in 2027.1.1. Enable wasp-in-box behavior and entity for this area.",
+                            "wasp_enabled": "Deprecated: being replaced by a built-in closed-door hold that takes over this setting automatically. Enable wasp-in-box behavior and entity for this area.",
                             "wasp_motion_timeout": "How long motion remains valid after detection.",
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
                             "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion, even if no door opens. This is to end a false positive.",
@@ -990,7 +990,7 @@
                             "wasp_verification_delay": "Verification Delay"
                         },
                         "data_description": {
-                            "wasp_enabled": "Deprecated: Wasp in Box and its sensor are removed in 2027.1.1. Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
+                            "wasp_enabled": "Deprecated: being replaced by a built-in closed-door hold that takes over this setting automatically. Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
                             "wasp_motion_timeout": "How long motion remains valid after detection.",
                             "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
                             "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
@@ -1197,8 +1197,8 @@
             "description": "Half or more of the correlatable sensors in **{area}** failed correlation analysis on the last cycle. Without correlations, sensors fall back to default likelihoods and the integration can't learn how reliable each one is for *your* installation.\n\n{details}\n\n**What to do:**\n- Open the integration's downloaded diagnostics and check each entity's `analysis_error` field\n- Common causes: insufficient historical data (`too_few_samples`), no occupied periods to compare against (`no_occupied_intervals`), or sensors that never change state\n- Confirm motion sensors are configured and triggering — they're the ground truth used to score every other sensor\n\nThis issue will resolve automatically once enough sensors complete correlation analysis successfully."
         },
         "wasp_in_box_deprecated": {
-            "title": "Wasp in Box is deprecated and will be removed in {removal_version}",
-            "description": "Wasp in Box is enabled for: **{areas}**.\n\nThe feature will be removed in Area Occupancy {removal_version}, along with its binary sensor. Area occupancy itself keeps working, but an area will no longer be held occupied indefinitely while its door stays closed after motion: once motion stops, the area clears on its decay half-life.\n\n**What to do:**\n- Update any automations or dashboards that use a Wasp in Box sensor.\n- If you rely on the closed-door hold (for example in a bathroom), rebuild it with a template binary sensor or a community \"wasp in a box\" blueprint and add it to the area, or lengthen the area's decay half-life.\n- Turn off Wasp in Box in the area's settings to dismiss this notice.\n\nThis issue clears itself once no area has Wasp in Box enabled."
+            "title": "Wasp in Box is being replaced by a built-in closed-door hold",
+            "description": "Wasp in Box is enabled for: **{areas}**.\n\nIt is being replaced by occupancy that is built into the areas themselves: an area stays occupied while its door stays closed after motion, and while nobody is seen leaving. When that ships, these areas switch over automatically with the same behaviour, and the Wasp in Box setting and sensor are removed in the release after.\n\n**What to do:**\n- Keep Wasp in Box on until then: turning it off now only loses the hold early.\n- If an automation or dashboard uses a Wasp in Box sensor, point it at the area's Occupancy Status sensor instead, which will carry the hold.\n- Once nothing uses the Wasp in Box sensor, you can ignore this notice."
         }
     },
     "config_subentries": {
@@ -1448,7 +1448,7 @@
                                 "wasp_verification_delay": "Verification Delay"
                             },
                             "data_description": {
-                                "wasp_enabled": "Deprecated: Wasp in Box and its sensor are removed in 2027.1.1. Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
+                                "wasp_enabled": "Deprecated: being replaced by a built-in closed-door hold that takes over this setting automatically. Enable wasp-in-box behavior and entity for this area. Useful for single-entry rooms like bathrooms.",
                                 "wasp_motion_timeout": "How long motion remains valid after detection.",
                                 "wasp_weight": "The weight given to this sensor in the occupancy calculation.",
                                 "wasp_max_duration": "Maximum duration that the wasp-in-box stays active after the last detected motion.",
