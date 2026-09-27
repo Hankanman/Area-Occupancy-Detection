@@ -66,6 +66,12 @@ virtual Sleep presence sensor is excluded from all health checks.
 | Unavailable | 1 hour | Sensor has been offline (dead battery, connectivity loss) |
 | Never triggered | 7 days | Sensor has never been active since it was added to the integration |
 
+### Away from home
+
+A sensor that sits idle while everyone is away isn't stuck or misconfigured. When Home Assistant's **Home** zone counts nobody home (`zone.home` is `0`), the **stuck inactive** and **never triggered** checks pause, and any open alerts of those two kinds clear. When someone comes back, idleness counts from the return rather than from before the trip, so a holiday doesn't raise every alert the moment you walk in. **Stuck active** keeps being checked while you're away, since a sensor that's on in an empty house is more suspicious, not less.
+
+This needs [person entities](https://www.home-assistant.io/integrations/person/) with device trackers, which is what drives `zone.home`. Without them, the checks behave as they always have.
+
 ## Excluded Sensors
 
 The following sensors are excluded from health checks:

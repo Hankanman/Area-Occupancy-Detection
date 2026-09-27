@@ -269,6 +269,12 @@ class HealthMonitor:
         self._issues: list[HealthIssue] = []
         self._checked_count: int = 0
         self._last_check: datetime | None = None
+        # Home presence as last sampled from ``zone.home``, and when the home
+        # last went from empty to occupied (#485). Sampled on each check run,
+        # so the return time is accurate to the check interval (hourly), which
+        # is plenty against thresholds measured in days.
+        self._home_was_empty: bool | None = None
+        self._home_returned_at: datetime | None = None
         # In-memory record of when each entity *first* appeared unavailable
         # in the current HA session. Used instead of ``entity.last_updated``
         # (which is persisted and reflects the last evidence transition,
@@ -392,6 +398,7 @@ class HealthMonitor:
         """
         now = dt_util.utcnow()
         self._last_check = now
+        nobody_home = self._sample_home_presence(now)
         excluded = excluded_entity_ids or set()
         issues: list[HealthIssue] = []
         checked = 0
@@ -426,15 +433,19 @@ class HealthMonitor:
                 issues.append(issue)
                 continue  # Skip other checks if unavailable
 
-            issue = self._check_stuck_sensor(entity, now)
+            issue = self._check_stuck_sensor(
+                entity, now, check_inactive=not nobody_home
+            )
             if issue:
                 issues.append(issue)
                 continue
 
-            # Never-triggered uses persisted last_updated, so it survives restarts
-            issue = self._check_never_triggered(entity, now)
-            if issue:
-                issues.append(issue)
+            # Never-triggered uses persisted last_updated, so it survives
+            # restarts. Nobody home means nobody to trigger it (#485).
+            if not nobody_home:
+                issue = self._check_never_triggered(entity, now)
+                if issue:
+                    issues.append(issue)
 
         self._checked_count = checked
         self._issues = issues
@@ -548,8 +559,66 @@ class HealthMonitor:
         self._update_repair_issues()
         return new_issues
 
-    def _check_stuck_sensor(self, entity: Entity, now: datetime) -> HealthIssue | None:
-        """Check if a binary sensor is stuck in one state too long."""
+    def _sample_home_presence(self, now: datetime) -> bool:
+        """Sample ``zone.home`` and report whether nobody is home (#485).
+
+        A sensor that is idle while everyone is away is not stuck or
+        misconfigured, so the inactivity checks pause while ``zone.home``
+        counts nobody home, and afterwards measure idleness from the return
+        rather than from before the trip; otherwise a ten-day holiday would
+        raise every "not triggered" alert the moment you walked back in.
+        ``zone.home``'s own ``last_changed`` can't stand in for the return:
+        it moves whenever anyone arrives or leaves, which would keep
+        resetting the clock and hide real alerts.
+
+        Without a usable ``zone.home`` (no person entities) this returns
+        ``False`` and the checks behave exactly as before.
+
+        Args:
+            now: The current check time.
+
+        Returns:
+            True if ``zone.home`` reports nobody home.
+        """
+        state = self._hass.states.get("zone.home")
+        try:
+            count = int(state.state) if state is not None else None
+        except (TypeError, ValueError):
+            count = None
+        if count is None:
+            return False
+        empty = count == 0
+        if not empty and self._home_was_empty:
+            self._home_returned_at = now
+        self._home_was_empty = empty
+        return empty
+
+    def _inactive_since(self, entity: Entity) -> datetime | None:
+        """When an inactive entity's idleness counts from.
+
+        Its last change, or the last return home if that is later.
+        """
+        since = entity.last_updated
+        if since is not None and self._home_returned_at is not None:
+            since = max(since, self._home_returned_at)
+        return since
+
+    def _check_stuck_sensor(
+        self, entity: Entity, now: datetime, *, check_inactive: bool = True
+    ) -> HealthIssue | None:
+        """Check if a binary sensor is stuck in one state too long.
+
+        Args:
+            entity: The entity to check.
+            now: The current check time.
+            check_inactive: False while nobody is home, so an idle sensor
+                is not reported as stuck inactive (#485). Stuck-active is
+                still checked: a sensor on while the house is empty is more
+                suspicious, not less.
+
+        Returns:
+            The issue, or None.
+        """
         if entity.type.input_type not in _STUCK_CHECK_TYPES:
             return None
 
@@ -578,8 +647,10 @@ class HealthMonitor:
                 )
 
         # Check stuck inactive
-        if evidence is False:
+        if evidence is False and check_inactive:
             threshold = STUCK_INACTIVE_THRESHOLDS.get(entity.type.input_type)
+            since = self._inactive_since(entity)
+            duration = now - since if since is not None else duration
             if threshold and duration >= threshold:
                 hours = duration.total_seconds() / 3600
                 return HealthIssue(
@@ -683,7 +754,8 @@ class HealthMonitor:
         # Entity.last_updated is persisted in the DB and only advances on
         # evidence transitions, so a sensor that has never triggered will
         # have last_updated close to its creation time.
-        time_since_update = now - entity.last_updated
+        since = self._inactive_since(entity) or entity.last_updated
+        time_since_update = now - since
         if time_since_update < NEVER_TRIGGERED_THRESHOLD:
             return None
 
