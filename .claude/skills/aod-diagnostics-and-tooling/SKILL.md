@@ -91,21 +91,25 @@ neighbours):
 
 | Field | Meaning |
 |---|---|
-| `boost.fired` | Whether a Bayesian logit-space boost was applied this tick |
-| `boost.trajectory_prev` / `trajectory_prev_prev` | The 2-hop trajectory (last two recently-occupied neighbour areas) used to look up the transition probability |
+| `boost.fired` | Whether the transition lookup ran for this area this tick. The `boost` block is only present when the area's own presence sensor turned on within 60 s after the most recent departure from another area and is still on; `fired` with a `logit_contribution` of 0 means the lookup ran but found no reason to raise the area |
+| `boost.trajectory_prev` / `trajectory_prev_prev` | The 2-hop trajectory used to look up the transition probability: the two areas, other than this one, most recently left within the 300 s window. An area is left when its motion, media and sleep sensors go quiet, not when its probability drops below the threshold |
 | `boost.hour_of_week` | 0-167 bucket (day-of-week × 24 + hour) used for the lookup |
 | `boost.raw_probability` | The learned/fallback transition probability before gain is applied |
-| `boost.fallback_level` | Which of the 6 smoothing levels answered the lookup — `2hop_hour_of_week`, `2hop_hour_of_day`, `2hop_unbucketed`, `1hop_hour_of_week`, `1hop_unbucketed`, or `static_default` (falls back to the hand-configured `influence_weight`, observed/total forced to 0 to signal "no learned data") |
+| `boost.fallback_level` | Which of the 6 smoothing levels answered the lookup — `2hop_hour_of_week`, `2hop_hour_of_day`, `2hop_unbucketed`, `1hop_hour_of_week`, `1hop_unbucketed`, or `static_default` (the constant `DEFAULT_INFLUENCE_WEIGHTS["adjacent"] = 0.3`, observed/total forced to 0 to signal "no learned data") |
 | `boost.observed_count` / `total_count` | How many observations backed the chosen level |
-| `boost.logit_contribution` | `ADJACENCY_BOOST_GAIN (0.5) * (logit(raw_probability) - logit(0.5))` — the actual amount added to the area's logit-space probability this tick |
+| `boost.logit_contribution` | `ADJACENCY_BOOST_GAIN (0.5) * max(0, logit(raw_probability) - logit(0.5))`, and 0 at `static_default` — the actual amount added to the area's logit-space probability this tick. Never negative |
 | `decay_modifier.fired` | Whether a decay half-life stretch was applied |
 | `decay_modifier.silence_score` | Σ over silent neighbours of `(1 - P_neighbour_lagged) * P(target→neighbour \| trajectory)`, clamped to [0,1] |
 | `decay_modifier.decay_modifier` | `min(1 + 0.75*silence_score, 1.75)` — the multiplier stretching this area's decay half-life (max +75%) |
-| `decay_modifier.silent_neighbours[]` | Per-neighbour `(neighbour, lagged_probability, transition_probability)` breakdown — read this to see *which* neighbour is holding this area's decay open |
+| `decay_modifier.silent_neighbours[]` | Per-neighbour `(neighbour, lagged_probability, transition_probability)` breakdown — read this to see *which* neighbour is holding this area's decay open. `transition_probability` is 0 for an exit with nothing learned (`static_default`) |
 
 A `boost.fallback_level` of `static_default` with `observed_count`/`total_count`
-both 0 means the adjacency feature has no learned data for that pair yet —
-it's using the flat config-time `influence_weight`, not learned behavior.
+both 0 means the adjacency feature has no learned data for that pair yet.
+Since #565 that has no effect: `logit_contribution` is 0, and such an exit
+counts as 0 in `silence_score`. On 2026.9.2 and earlier the 0.3 default was
+used as a real probability (a −0.42 logit boost, and a 0.3 exit weight in
+`silence_score`), so a `static_default` row with a non-zero
+`logit_contribution` comes from an old version.
 
 #### `prior`
 
