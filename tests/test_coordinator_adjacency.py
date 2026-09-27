@@ -7,23 +7,17 @@ snapshots, per-tick boost/modifier caches, application of the boost in
 trajectory bookkeeping.
 """
 
-from contextlib import suppress
 from datetime import timedelta
 from itertools import pairwise
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.orm import sessionmaker
 
 from custom_components.area_occupancy.const import (
     ADJACENCY_BOOST_GAIN,
     ADJACENCY_DECAY_MODIFIER_GAIN,
-    CONF_AREA_ID,
-    CONF_MOTION_SENSORS,
-    CONF_PURPOSE,
-    CONF_THRESHOLD,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.adjacency import (
@@ -36,10 +30,8 @@ from custom_components.area_occupancy.db.transitions import (
 )
 from custom_components.area_occupancy.time_utils import to_local
 from custom_components.area_occupancy.utils import logit
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar
 from homeassistant.util import dt as dt_util
-from tests.conftest import make_area_subentries
+from tests.conftest import create_test_area
 
 # ruff: noqa: SLF001
 
@@ -501,9 +493,10 @@ class TestAdjacencySnapshot:
 class TestHouse:
     """A small house driven through the real tick, as the decay timer does.
 
-    Bedroom – Hallway – Kitchen in a line, one motion sensor each, a
-    learned prior of 0.1, and learned 1-hop transitions between
-    neighbours (the learner only records adjacent pairs).
+    Bedroom – Hallway – Kitchen in a line, one motion sensor each, the
+    default purpose (social), a 50 % threshold, a learned prior of 0.1,
+    and learned 1-hop transitions between neighbours (the learner only
+    records adjacent pairs).
     """
 
     AREAS = ("Bedroom", "Hallway", "Kitchen")
@@ -523,38 +516,25 @@ class TestHouse:
         return f"binary_sensor.{name.lower()}_motion"
 
     async def _house(
-        self, hass: HomeAssistant, entry: Mock, db_engine: Any
+        self, coordinator: AreaOccupancyCoordinator
     ) -> AreaOccupancyCoordinator:
-        area_reg = ar.async_get(hass)
-        areas = []
+        """Turn the shared fixture coordinator into the three-area house."""
+        # Drop the fixture's own area: its dozen unset sensors aren't part
+        # of the house.
+        coordinator.areas.clear()
         for name in self.AREAS:
-            area = area_reg.async_get_area_by_name(name) or area_reg.async_create(name)
-            areas.append(
-                {
-                    CONF_AREA_ID: area.id,
-                    CONF_MOTION_SENSORS: [self._motion(name)],
-                    CONF_PURPOSE: "social",
-                    CONF_THRESHOLD: 50.0,
-                }
+            area = create_test_area(
+                coordinator,
+                area_name=name,
+                entity_ids=[self._motion(name)],
+                threshold=0.5,
             )
-        entry.subentries = make_area_subentries(areas, hass)
-        house = AreaOccupancyCoordinator(hass, entry)
-        if house.db.engine:
-            with suppress(Exception):
-                house.db.engine.dispose()
-        house.db.engine = db_engine
-        house.db._session_maker = sessionmaker(
-            bind=db_engine, expire_on_commit=False, autoflush=False, autocommit=False
-        )
-        house._load_areas_from_config()
-        _seed_adjacency(house, self.ADJACENCY, self.COUNTS)
-        await house.async_load_adjacency_snapshot()
-        for area in house.areas.values():
             area.prior.set_global_prior(0.1)
             area.prior._cached_time_priors = {}
-        for name in self.AREAS:
-            hass.states.async_set(self._motion(name), "off")
-        return house
+            coordinator.hass.states.async_set(self._motion(name), "off")
+        _seed_adjacency(coordinator, self.ADJACENCY, self.COUNTS)
+        await coordinator.async_load_adjacency_snapshot()
+        return coordinator
 
     async def _run(
         self,
@@ -601,7 +581,7 @@ class TestHouse:
     }
 
     async def test_entering_the_likely_next_area_boosts_it(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock, db_engine: Any
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test that leaving the Hallway and entering the Kitchen boosts it.
 
@@ -610,7 +590,7 @@ class TestHouse:
         once an area's probability fell below the threshold, the Hallway
         hadn't "ended" yet at that point, so the Kitchen got nothing.
         """
-        house = await self._house(hass, mock_realistic_config_entry, db_engine)
+        house = await self._house(coordinator)
         boosts: dict[int, BoostContribution | None] = {}
 
         def _record_kitchen_boost(t: int, coordinator: AreaOccupancyCoordinator):
@@ -628,7 +608,7 @@ class TestHouse:
         assert boosts[600] is None
 
     async def test_empty_house_only_decays(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock, db_engine: Any
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test that after everyone leaves, no probability rises or switches on.
 
@@ -637,7 +617,7 @@ class TestHouse:
         0.5 × logit(0.99) = +2.3 logits here), pushing areas that were
         still decaying back over the threshold.
         """
-        house = await self._house(hass, mock_realistic_config_entry, db_engine)
+        house = await self._house(coordinator)
 
         history = await self._run(house, self.WALK, until=600 + 2400)
 
@@ -659,7 +639,7 @@ class TestHouse:
             assert occupied[-1] is False
 
     async def test_departure_elsewhere_leaves_an_occupied_area_alone(
-        self, hass: HomeAssistant, mock_realistic_config_entry: Mock, db_engine: Any
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """Test that the Bedroom emptying doesn't switch the Kitchen off.
 
@@ -670,7 +650,7 @@ class TestHouse:
         once the Bedroom decayed below the threshold: its active motion
         sensor then read about 0.23.
         """
-        house = await self._house(hass, mock_realistic_config_entry, db_engine)
+        house = await self._house(coordinator)
 
         history = await self._run(
             house,
