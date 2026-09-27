@@ -637,6 +637,46 @@ class TestDecayModifierFactor:
         assert decay.modifier_factor == 1.0
         assert decay.half_life == 100.0
 
+    @pytest.mark.parametrize(("old_factor", "new_factor"), [(1.0, 2.0), (1.75, 1.0)])
+    def test_factor_change_mid_decay_is_not_retroactive(
+        self, old_factor: float, new_factor: float
+    ) -> None:
+        """A new factor changes the rate from now on, not the decay so far.
+
+        With a 60 s base, 60 s into decay under factor 1.0 the decay factor
+        is 0.5. Switching to 2.0 used to divide the whole 60 s by the new
+        120 s half-life, jumping the factor up to 0.5 ** 0.5 = 0.707 (and
+        down again on the next change). Now it stays where it was and the
+        next 30 s run at the new rate.
+        """
+        start = dt_util.utcnow()
+        with patch("homeassistant.util.dt.utcnow") as mock_utcnow:
+            mock_utcnow.return_value = start
+            decay = Decay(half_life=60.0)
+            decay.set_modifier_factor(old_factor)
+            decay.start_decay()
+
+            mock_utcnow.return_value = start + timedelta(seconds=60)
+            before = decay.decay_factor
+            assert before == pytest.approx(0.5 ** (60 / (60 * old_factor)))
+
+            decay.set_modifier_factor(new_factor)
+            assert decay.half_life == 60.0 * new_factor
+            assert decay.decay_factor == pytest.approx(before)
+
+            mock_utcnow.return_value = start + timedelta(seconds=90)
+            assert decay.decay_factor == pytest.approx(
+                before * 0.5 ** (30 / (60 * new_factor))
+            )
+
+    def test_factor_change_while_not_decaying_keeps_decay_start(self) -> None:
+        """With no decay running there is nothing to rescale."""
+        start = dt_util.utcnow() - timedelta(seconds=30)
+        decay = Decay(half_life=60.0, is_decaying=False, decay_start=start)
+        decay.set_modifier_factor(1.5)
+        assert decay.decay_start == start
+        assert decay.half_life == 90.0
+
     def test_factor_compounds_with_purpose_half_life(self) -> None:
         """Modifier multiplies the purpose-resolved half-life, not the raw base."""
         # With no purpose, half_life resolves to base 100, then × modifier.

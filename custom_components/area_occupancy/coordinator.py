@@ -34,6 +34,7 @@ from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .config_helpers import iter_area_subentries
 from .const import (
     ACCURACY_TICK_BUFFER_MAXLEN,
+    ADJACENCY_TRANSITION_WINDOW_S,
     CONF_AREA_ID,
     DEFAULT_NAME,
     DOMAIN,
@@ -52,7 +53,7 @@ from .data.adjacency import (
 )
 from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
-from .data.entity_type import InputType
+from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
 from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.metrics import AccuracyMetrics, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
@@ -63,6 +64,38 @@ from .time_utils import to_local
 from .utils import evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _ground_truth_present(area: Area) -> bool:
+    """Return whether any of the area's ground-truth sensors is active.
+
+    Motion, media and sleep: the evidence ``db.queries.get_occupied_intervals``
+    builds the learned priors and area transitions from.
+    """
+    return any(
+        entity.evidence is True and entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
+        for entity in area.entities.entities.values()
+    )
+
+
+def _arrived_after(area: Area, departed_at: datetime | None) -> bool:
+    """Return whether one of the area's presence sensors fired after a departure.
+
+    The sensor must have become active within ``ADJACENCY_TRANSITION_WINDOW_S``
+    of ``departed_at`` and still be active. That is how the transition
+    learner recognises a move: the next area's evidence starts within the
+    window after the previous area's evidence ends.
+    """
+    if departed_at is None:
+        return False
+    window_end = departed_at + timedelta(seconds=ADJACENCY_TRANSITION_WINDOW_S)
+    return any(
+        entity.evidence is True
+        and entity.type.input_type in PRESENCE_INPUT_TYPES
+        and entity.last_updated is not None
+        and departed_at <= entity.last_updated <= window_end
+        for entity in area.entities.entities.values()
+    )
 
 
 class OnlinePriorStore(Store[dict[str, dict]]):
@@ -135,13 +168,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._stop_listener_remove: CALLBACK_TYPE | None = None
 
         # Adjacent-areas Phase 4 runtime state. The trajectory tracker
-        # records area-end edges across the household so the per-area
+        # records departures across the household so the per-area
         # boost / decay-modifier paths can read a consistent snapshot.
+        # ``_ground_truth_presence`` holds whether each area's ground-truth
+        # sensors were active on the previous tick, which is how ``update``
+        # spots a departure.
         # ``_lagged_probabilities`` holds the *previous* tick's
         # probability per area — captured at the start of ``update``
         # so the decay modifier and any future per-tick reader can't
         # feed back on this tick's own outputs.
         self._trajectory_tracker = TrajectoryTracker()
+        self._ground_truth_presence: dict[str, bool] = {}
         self._lagged_probabilities: dict[str, float] = {}
         # In-memory adjacency index + transition counts. ``update`` runs on
         # every sensor state change, so it must not query SQLite; this is
@@ -618,11 +655,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name: float(entry.get("probability") or 0.0)
             for name, entry in previous.items()
         }
-        was_occupied = {
-            name: bool(entry.get("occupied")) for name, entry in previous.items()
-        }
 
         now = dt_util.utcnow()
+        # Record departures before this tick's boosts are computed. An area
+        # is left when its ground-truth sensors go quiet, which is the event
+        # the transition learner records. Its probability dropping below the
+        # threshold is not a departure: that happens minutes later as the
+        # decay tail runs out, and in an empty house it would make every
+        # fading area look like someone moving on to its neighbours.
+        for area_name, area in self.areas.items():
+            present = _ground_truth_present(area)
+            self._trajectory_tracker.observe(
+                area_name,
+                was_present=self._ground_truth_presence.get(area_name, False),
+                is_present=present,
+                now=now,
+            )
+            self._ground_truth_presence[area_name] = present
         # Compute adjacency boosts and decay modifiers from the in-memory
         # snapshot. Nothing in this method awaits, so a state-change
         # refresh completes without yielding to the event loop and
@@ -644,12 +693,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for area_name, area in self.areas.items():
             probability = area.probability()
             is_occupied = probability >= area.threshold()
-            self._trajectory_tracker.observe(
-                area_name,
-                was_occupied=was_occupied.get(area_name, False),
-                is_occupied=is_occupied,
-                now=now,
-            )
             self._record_shadow_tick(area_name, area, now, probability, is_occupied)
             result[area_name] = {
                 "probability": probability,
@@ -686,12 +729,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # numerator and the DB-computed prior it's being diffed against
         # measure the same thing. Motion's timeout extension isn't
         # replicated here — see module docstring's known approximations.
-        presence_active = any(
-            entity.evidence
-            and entity.type.input_type
-            in (InputType.MOTION, InputType.MEDIA, InputType.SLEEP)
-            for entity in area.entities.entities.values()
-        )
+        presence_active = _ground_truth_present(area)
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=presence_active, now=now
         )
@@ -814,9 +852,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         adjacency_index = snapshot.adjacency_index
         lagged = self._lagged_probabilities
 
-        for area_name in self.areas:
+        for area_name, area in self.areas.items():
             trajectory = self.trajectory_for(area_name, now=now)
-            if trajectory.prev_area is not None:
+            # Boost only an area whose own sensors confirm the move: one of
+            # them fired after the departure, within the window the learner
+            # uses for a transition. Without that check the boost acts on
+            # areas nobody walked into, including ones still decaying from
+            # earlier, and lifting those back over the threshold is what
+            # made probabilities spike in an empty house.
+            if trajectory.prev_area is not None and _arrived_after(
+                area, trajectory.prev_end_time
+            ):
                 boosts[area_name] = compute_adjacency_boost(
                     target_area=area_name,
                     trajectory=trajectory,

@@ -63,18 +63,28 @@ The lookup reads an in-memory copy of the entry's `AreaRelationships` and `AreaT
 
 ## Runtime wiring: boost and decay modifier
 
-Two consumers call that lookup every coordinator tick, via a shared `TrajectoryTracker` (`data/trajectory.py`) that maintains a rolling deque of recent area-end events household-wide and hands back a `Trajectory(prev_area, prev_prev_area, hour_of_week)` for any target area.
+Two consumers call that lookup every coordinator tick, via a shared `TrajectoryTracker` (`data/trajectory.py`) that maintains a rolling deque of recent departures household-wide and hands back a `Trajectory(prev_area, prev_prev_area, hour_of_week, prev_end_time)` for any target area.
+
+A departure is an area's ground-truth sensors (motion, media, sleep) going quiet: the same event `_detect_transitions` learns from, since the occupied intervals it walks end when those sensors do. The coordinator records departures at the start of each `update()`, before computing boosts. An area's probability dropping below its threshold is **not** a departure. That happens minutes after the sensors go quiet, as the decay tail runs out, and treating it as one made every fading area in an empty house look like someone moving on to its neighbours. An area that ends again while it is already the newest entry refreshes that entry's time, as `_detect_transitions` does.
 
 ### Boost — `compute_adjacency_boost()` (`data/adjacency.py`)
 
 Applied in `Area.probability()`, **after** the sensor-only Bayesian probability and any activity boost, via `apply_logit_boost()` (`clamp → logit → add → sigmoid → clamp`, in logit space):
 
 ```
-logit_contribution = gain × logit(P(target_area | trajectory, hour))
+logit_contribution = gain × max(0, logit(P(target_area | trajectory, hour)))
 new_probability = sigmoid(logit(current_probability) + logit_contribution)
 ```
 
-`gain` is **`ADJACENCY_BOOST_GAIN` = 0.5**. `P(target_area | trajectory, hour)` comes from the lookup above, using the household's most recent 1 or 2 hops as `from_area`/`mid_area`. `logit(0.5) = 0`, so a static-default lookup (~0.3) still contributes a small non-zero nudge rather than a large one — the boost is naturally weak until real data has been learned. No trajectory (`prev_area is None`) means no boost at all.
+`gain` is **`ADJACENCY_BOOST_GAIN` = 0.5**. `P(target_area | trajectory, hour)` comes from the lookup above, using the household's most recent 1 or 2 hops as `from_area`/`mid_area`. The boost is only computed for an area whose own presence sensor became active within `ADJACENCY_TRANSITION_WINDOW_S` (60 s) after `prev_area` was left and is still active, the same condition the learner uses to record a transition. It contributes nothing when:
+
+- there is no trajectory (`prev_area is None`), or the area wasn't entered after the departure;
+- the lookup fell through to the static default, because nothing has been learned for the chain yet;
+- `P ≤ 0.5`, because the area isn't the usual next one. That includes every area not adjacent to `prev_area`: transitions are only recorded between adjacent areas, so their learned probability is exactly 0.
+
+A low transition probability says where the person who just left probably didn't go, not that the area is empty; someone else may be there. So the boost never pushes an area down.
+
+These conditions matter for more than tidiness. Without them, every departure (and every decaying area crossing its threshold, when that counted as one) added `0.5 × logit(0.01) = −2.3` logits to every non-adjacent area and up to `+2.3` to likely neighbours for five minutes. Areas still decaying from earlier were pushed back over the threshold, and occupied areas with active motion elsewhere in the house were pushed below it.
 
 ### Decay modifier — `compute_decay_modifier()` (`data/adjacency.py`)
 
@@ -86,7 +96,9 @@ decay_modifier = min(1 + gain × silence_score, cap)
 effective_half_life = base_half_life × decay_modifier
 ```
 
-`gain` is **`ADJACENCY_DECAY_MODIFIER_GAIN` = 0.75**, `cap` is **`ADJACENCY_DECAY_MODIFIER_MAX` = 1.75**. Intuitively: each neighbour `X` contributes to the silence score in proportion to how likely the household is to leave `target` via `X` **and** how confidently `X` is currently unoccupied. A bedroom whose only learned exit (a hall) has stayed silent gets close to the full 1.75× slowdown; a hub room whose exits spread across several neighbours gets a smaller modifier because no single exit dominates the sum. `silence_score` is clamped to `[0, 1]` before the modifier is computed, regardless of how many neighbours an area has. The modifier only ever stretches decay (`Decay.set_modifier_factor` clamps to `≥ 1.0`) — it never speeds it up.
+`gain` is **`ADJACENCY_DECAY_MODIFIER_GAIN` = 0.75**, `cap` is **`ADJACENCY_DECAY_MODIFIER_MAX` = 1.75**. Intuitively: each neighbour `X` contributes to the silence score in proportion to how likely the household is to leave `target` via `X` **and** how confidently `X` is currently unoccupied. A bedroom whose only learned exit (a hall) has stayed silent gets close to the full 1.75× slowdown; a hub room whose exits spread across several neighbours gets a smaller modifier because no single exit dominates the sum. `silence_score` is clamped to `[0, 1]` before the modifier is computed, regardless of how many neighbours an area has. An exit with nothing learned yet (a static-default lookup) counts as `P = 0`, so a newly configured pair doesn't slow decay. The modifier only ever stretches decay (`Decay.set_modifier_factor` clamps to `≥ 1.0`) — it never speeds it up.
+
+A change of modifier applies from then on. `decay_factor` is `0.5 ^ (elapsed / half_life)`, so while an entity is decaying, `set_modifier_factor` moves `decay_start` to keep the decay made so far (in half-lives) unchanged. Otherwise each change would re-scale the whole elapsed decay, and the factor would jump up or down on every tick the neighbours' probabilities moved.
 
 ### Lagged-probability feedback avoidance
 
@@ -96,10 +108,11 @@ Both the boost and the decay modifier read *last tick's* per-area probabilities 
 
 ```mermaid
 flowchart TD
-    Tick["Coordinator.update() tick starts"] --> Snapshot["Snapshot previous tick's\nprobabilities + occupancy\n(lagged_probabilities)"]
-    Snapshot --> Compute["_compute_adjacency_state()\n(event loop — reads the\nin-memory AdjacencySnapshot)"]
+    Tick["Coordinator.update() tick starts"] --> Snapshot["Snapshot previous tick's\nprobabilities\n(lagged_probabilities)"]
+    Snapshot --> Observe["TrajectoryTracker.observe()\nrecords departures: areas whose\nmotion/media/sleep went quiet"]
+    Observe --> Compute["_compute_adjacency_state()\n(event loop — reads the\nin-memory AdjacencySnapshot)"]
     Compute --> Trajectory["TrajectoryTracker.trajectory_for(area)\nfor every area"]
-    Trajectory --> Boost["compute_adjacency_boost()\nper area with a trajectory"]
+    Trajectory --> Boost["compute_adjacency_boost()\nper area entered after\nthe latest departure"]
     Trajectory --> Modifier["compute_decay_modifier()\nper area with neighbours"]
     Boost --> Cache["Cached: _adjacency_boosts,\n_adjacency_decay_modifiers"]
     Modifier --> Cache
@@ -107,8 +120,7 @@ flowchart TD
     Cache --> AreaProb["Area.probability()\nreads cached boost, applies\napply_logit_boost()"]
     SetModifier --> Recompute["Each area recomputes\nprobability + occupancy"]
     AreaProb --> Recompute
-    Recompute --> Observe["TrajectoryTracker.observe()\nrecords this tick's end edges"]
-    Observe --> Done["Tick complete"]
+    Recompute --> Done["Tick complete"]
 ```
 
 `_compute_adjacency_state` runs synchronously on the event loop once per tick, reading the in-memory `AdjacencySnapshot` described above for both the adjacency index and the transition lookups. A tick issues no SQL and never waits on the executor pool.
@@ -119,7 +131,7 @@ All constants live in `const.py` and are not currently exposed in the UI — see
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `ADJACENCY_TRANSITION_WINDOW_S` | 60 | Max gap between one area ending and the next starting to count as a transition |
+| `ADJACENCY_TRANSITION_WINDOW_S` | 60 | Max gap between one area ending and the next starting to count as a transition, when learning and when deciding whether to boost the area entered |
 | `ADJACENCY_TRAJECTORY_WINDOW_S` | 300 | How far back the rolling trajectory window looks for recent-history slots |
 | `ADJACENCY_RECENCY_HALF_LIFE_DAYS` | 30 | Half-life for exponential decay of transition counts each learning cycle |
 | `ADJACENCY_BOOST_GAIN` | 0.5 | `k` — multiplier on the logit-space boost |
