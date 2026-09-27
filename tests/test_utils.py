@@ -1,6 +1,7 @@
 """Tests for utils module."""
 
 import math
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -841,3 +842,73 @@ class TestApplyActivityBoost:
         """Result should always be within MIN_PROBABILITY to MAX_PROBABILITY."""
         result = apply_activity_boost(0.99, activity_boost=5.0, activity_confidence=1.0)
         assert MIN_PROBABILITY <= result <= MAX_PROBABILITY
+
+
+class TestGroundTruthActiveFloor:
+    """One active motion sensor clears the threshold whatever the prior.
+
+    Hand-computed with ``prior = 0.0206`` (a kitchen occupied ~2% of the day,
+    from a live report): ``bias = logit(0.0206) = -3.8618`` and the floored
+    signal is ``logit(0.75) - bias = 1.0986 + 3.8618 = 4.9604``. Motion's
+    fixed signal is ``0.95 * 3.0 = 2.85``, which gave
+    ``sigmoid(-3.8618 + 2.85) = 26.7%`` before the floor: never occupied.
+    """
+
+    PRIOR = 0.0206
+
+    @staticmethod
+    def _motion(**overrides: Any) -> Mock:
+        params: dict[str, Any] = {
+            "evidence": True,
+            "prob_given_true": 0.95,
+            "prob_given_false": 0.005,
+            "weight": 1.0,
+            "input_type": InputType.MOTION,
+        }
+        return _create_mock_entity(**(params | overrides))
+
+    def test_single_active_motion_reaches_the_floor_on_a_low_prior(self) -> None:
+        result = sigmoid_probability({"m": self._motion()}, prior=self.PRIOR)
+
+        assert result == pytest.approx(0.75, abs=1e-4)
+
+    def test_sleep_is_floored_too(self) -> None:
+        sleep = self._motion(input_type=InputType.SLEEP)
+
+        assert sigmoid_probability({"s": sleep}, prior=self.PRIOR) == pytest.approx(
+            0.75, abs=1e-4
+        )
+
+    def test_the_floor_still_decays(self) -> None:
+        """Half decayed: z = -3.8618 + 0.5 * 4.9604 = -1.3816 -> 20.07%."""
+        decaying = self._motion(evidence=False, is_decaying=True, decay_factor=0.5)
+
+        result = sigmoid_probability({"m": decaying}, prior=self.PRIOR)
+
+        assert result == pytest.approx(0.2007, abs=1e-4)
+
+    def test_weight_still_scales_the_floor(self) -> None:
+        """Weight 0.5 halves the floored signal: the same -1.3816 -> 20.07%."""
+        result = sigmoid_probability({"m": self._motion(weight=0.5)}, prior=self.PRIOR)
+
+        assert result == pytest.approx(0.2007, abs=1e-4)
+
+    def test_areas_whose_prior_already_clears_it_are_unchanged(self) -> None:
+        """A prior that motion alone already lifts past 75% is untouched.
+
+        Prior 0.15: floor signal 1.0986 + 1.7346 = 2.8332 < 2.85, so the
+        fixed signal still applies: sigmoid(-1.7346 + 2.85) = 75.31%.
+        """
+        result = sigmoid_probability({"m": self._motion()}, prior=0.15)
+
+        assert result == pytest.approx(0.7531, abs=1e-4)
+
+    def test_secondary_sensors_are_not_floored(self) -> None:
+        """A door keeps its fixed 0.2 * 2.0 = 0.4: sigmoid(-3.8618 + 0.4) = 3.04%."""
+        door = self._motion(
+            prob_given_true=0.2, prob_given_false=0.02, input_type=InputType.DOOR
+        )
+
+        result = sigmoid_probability({"d": door}, prior=self.PRIOR)
+
+        assert result == pytest.approx(0.0304, abs=1e-4)
