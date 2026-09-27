@@ -241,9 +241,9 @@ MAX_PROBABILITY: Final = 0.99
 # fades it smoothly; areas whose prior already clears it are unchanged.
 GROUND_TRUTH_ACTIVE_FLOOR: Final[float] = 0.75
 
-# Wasp in Box is deprecated and removed in this release. Until then, a repair
-# issue lists the areas that still have it enabled.
-WASP_IN_BOX_REMOVAL_VERSION: Final = "2027.1.1"
+# Wasp in Box is deprecated in favour of the built-in presence-continuity
+# model (#558), which takes over wasp_enabled automatically; it is removed one
+# release after that ships. Until then a repair lists the areas using it.
 WASP_IN_BOX_DEPRECATION_ISSUE: Final = "wasp_in_box_deprecated"
 WASP_IN_BOX_DOCS_URL: Final = (
     "https://hankanman.github.io/Area-Occupancy-Detection/features/wasp-in-box/"

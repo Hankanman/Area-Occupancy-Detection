@@ -4,28 +4,30 @@ description: Detect occupancy in rooms with a single entry/exit point
 
 # Wasp in Box
 
-!!! warning "Deprecated: removed in 2027.1.1"
-    Wasp in Box is deprecated and will be removed in **Area Occupancy 2027.1.1**,
-    together with its binary sensor. While any area still has it enabled, a repair
-    in **Settings → Repairs** lists those areas.
+!!! warning "Deprecated: being replaced by built-in presence continuity"
+    Wasp in Box is being replaced by occupancy that is built into the areas
+    themselves ([#558](https://github.com/Hankanman/Area-Occupancy-Detection/issues/558)).
+    An area will stay occupied while its door stays closed after motion (the Wasp
+    in Box behaviour), and also while nobody is seen leaving it through a
+    neighbouring area, which covers open-plan rooms and gaps in motion coverage
+    that Wasp in Box never could.
 
-    **What changes when it goes:** area occupancy itself keeps working, but an area
-    is no longer held occupied indefinitely while its door stays closed after
-    motion. Once motion stops, the area clears on its
-    [decay half-life](decay.md).
+    **You don't lose anything.** When the replacement ships, areas with Wasp in
+    Box enabled switch over automatically with the same behaviour. The Wasp in Box
+    setting and its sensor are removed in the release after that.
 
-    **Before 2027.1.1:**
+    **What to do now:**
 
-    - Update automations and dashboards that use a Wasp in Box sensor.
-    - If you rely on the closed-door hold (a bathroom is the usual case), rebuild
-      it with a template binary sensor or a community "wasp in a box" blueprint and
-      add that to the area, or lengthen the area's decay half-life.
-    - Turn Wasp in Box off in the area's settings; the repair clears on its own.
+    - Keep Wasp in Box on until then: turning it off only loses the hold early.
+    - If an automation or dashboard uses a Wasp in Box sensor, point it at the
+      area's **Occupancy Status** sensor instead, which will carry the hold.
+    - While any area has it enabled, a notice in **Settings → Repairs** lists
+      them. Once nothing uses the Wasp in Box sensor, you can ignore it.
 
-    **Why:** it was always a separate state machine bolted onto the probability
-    model, rather than part of it. Door-aware behaviour is planned in the model
-    itself instead: see
-    [#558](https://github.com/Hankanman/Area-Occupancy-Detection/issues/558).
+    **Why:** Wasp in Box is a separate state machine bolted onto the
+    probability model, and it feeds its hold back into learning as if it were
+    motion, which inflates those areas' learned priors. The replacement lives in
+    the model and never counts as ground truth.
 
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 

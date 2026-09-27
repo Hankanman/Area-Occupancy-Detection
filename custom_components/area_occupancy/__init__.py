@@ -43,7 +43,6 @@ from .const import (
     TIME_PRIORS_CARD_FILENAME,
     WASP_IN_BOX_DEPRECATION_ISSUE,
     WASP_IN_BOX_DOCS_URL,
-    WASP_IN_BOX_REMOVAL_VERSION,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .db.operations import delete_area_data as _delete_area_data
@@ -576,7 +575,8 @@ def _async_sync_wasp_deprecation_issue(hass: HomeAssistant, coordinator: Any) ->
     """Raise, update or clear the Wasp in Box deprecation repair issue.
 
     One issue lists every area that still has Wasp in Box enabled, so users
-    see the removal coming. It clears itself once no area uses it.
+    can repoint automations that use its sensor before the built-in
+    replacement takes over. It clears itself once no area uses it.
 
     Args:
         hass: Home Assistant instance.
@@ -597,10 +597,7 @@ def _async_sync_wasp_deprecation_issue(hass: HomeAssistant, coordinator: Any) ->
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=WASP_IN_BOX_DEPRECATION_ISSUE,
-        translation_placeholders={
-            "areas": ", ".join(areas),
-            "removal_version": WASP_IN_BOX_REMOVAL_VERSION,
-        },
+        translation_placeholders={"areas": ", ".join(areas)},
         learn_more_url=WASP_IN_BOX_DOCS_URL,
     )
 
