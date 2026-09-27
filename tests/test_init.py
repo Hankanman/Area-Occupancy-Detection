@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -176,6 +177,68 @@ class TestAsyncSetupEntry:
         # Verify coordinator is stored in hass.data[DOMAIN]
         assert hass.data[DOMAIN_CONST] == coordinator
 
+    async def _setup_with_forward(
+        self, hass: HomeAssistant, entry: Mock, forward_side_effect: Any = None
+    ) -> Mock:
+        """Run async_setup_entry and return the patched schedule_reload."""
+        self._ensure_domain_not_in_hass_data(hass)
+        coordinator = AreaOccupancyCoordinator(hass, entry)
+        with (
+            patch.object(
+                coordinator, "async_config_entry_first_refresh", new=AsyncMock()
+            ),
+            patch.object(coordinator, "async_init_database", new=AsyncMock()),
+            patch(
+                "custom_components.area_occupancy.AreaOccupancyCoordinator",
+                return_value=coordinator,
+            ),
+            patch("custom_components.area_occupancy.async_setup_services", AsyncMock()),
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                new=AsyncMock(side_effect=forward_side_effect),
+            ),
+            patch.object(entry, "async_on_unload", new=Mock()),
+            patch.object(
+                hass.config_entries, "async_schedule_reload", new=Mock()
+            ) as schedule_reload,
+        ):
+            assert await async_setup_entry(hass, entry) is True
+        return schedule_reload
+
+    async def test_area_added_during_setup_schedules_a_reload(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        """An area subentry added mid-setup is picked up, not dropped.
+
+        The areas are read when the coordinator is created and the update
+        listener only exists at the end of setup, so an area added in between
+        was neither loaded nor seen, and stayed without entities.
+        """
+
+        async def add_area_mid_setup(*_args: Any) -> None:
+            object.__setattr__(
+                mock_config_entry,
+                "subentries",
+                {
+                    **mock_config_entry.subentries,
+                    **make_area_subentries([{CONF_AREA_ID: "late_area"}]),
+                },
+            )
+
+        schedule_reload = await self._setup_with_forward(
+            hass, mock_config_entry, add_area_mid_setup
+        )
+
+        schedule_reload.assert_called_once_with(mock_config_entry.entry_id)
+
+    async def test_no_reload_when_areas_are_unchanged(
+        self, hass: HomeAssistant, mock_config_entry: Mock
+    ) -> None:
+        schedule_reload = await self._setup_with_forward(hass, mock_config_entry)
+
+        schedule_reload.assert_not_called()
+
     async def test_async_setup_entry_migration_updates_version(
         self, hass: HomeAssistant, mock_config_entry: Mock
     ) -> None:
@@ -282,6 +345,8 @@ class TestAsyncSetupEntry:
         new_entry.version = CONF_VERSION
         new_entry.data = {}
         new_entry.options = {}
+        # The reused coordinator's areas come from the same configuration.
+        new_entry.subentries = mock_config_entry.subentries
         new_entry.runtime_data = None
 
         with (
