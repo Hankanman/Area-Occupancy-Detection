@@ -20,6 +20,7 @@ from homeassistant.helpers import (
     area_registry as ar,
     config_validation as cv,
     device_registry as dr,
+    issue_registry as ir,
 )
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
@@ -40,6 +41,9 @@ from .const import (
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
     TIME_PRIORS_CARD_FILENAME,
+    WASP_IN_BOX_DEPRECATION_ISSUE,
+    WASP_IN_BOX_DOCS_URL,
+    WASP_IN_BOX_REMOVAL_VERSION,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .db.operations import delete_area_data as _delete_area_data
@@ -210,6 +214,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             loaded,
         )
         hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    _async_sync_wasp_deprecation_issue(hass, coordinator)
 
     # Log setup completion
     area_count = len(coordinator.get_area_names())
@@ -403,6 +409,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     Idempotent and never raises: failures are logged but must not prevent
     Home Assistant from completing the entry removal.
     """
+    ir.async_delete_issue(hass, DOMAIN, WASP_IN_BOX_DEPRECATION_ISSUE)
     _LOGGER.info(
         "Removing Area Occupancy config entry %s (cleaning up learned history)",
         entry.entry_id,
@@ -565,6 +572,39 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+def _async_sync_wasp_deprecation_issue(hass: HomeAssistant, coordinator: Any) -> None:
+    """Raise, update or clear the Wasp in Box deprecation repair issue.
+
+    One issue lists every area that still has Wasp in Box enabled, so users
+    see the removal coming. It clears itself once no area uses it.
+
+    Args:
+        hass: Home Assistant instance.
+        coordinator: The running coordinator.
+    """
+    areas = sorted(
+        name
+        for name, area in coordinator.areas.items()
+        if area.config.wasp_in_box.enabled
+    )
+    if not areas:
+        ir.async_delete_issue(hass, DOMAIN, WASP_IN_BOX_DEPRECATION_ISSUE)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        WASP_IN_BOX_DEPRECATION_ISSUE,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=WASP_IN_BOX_DEPRECATION_ISSUE,
+        translation_placeholders={
+            "areas": ", ".join(areas),
+            "removal_version": WASP_IN_BOX_REMOVAL_VERSION,
+        },
+        learn_more_url=WASP_IN_BOX_DOCS_URL,
+    )
+
+
 def _configured_and_loaded_area_ids(
     entry: ConfigEntry, coordinator: Any
 ) -> tuple[set[str], set[str]]:
@@ -638,3 +678,4 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
             except Exception:
                 _LOGGER.exception("Failed to update config for area %s", area_name)
         await coordinator.async_request_refresh()
+        _async_sync_wasp_deprecation_issue(hass, coordinator)
