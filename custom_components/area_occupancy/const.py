@@ -30,7 +30,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.9.1"
+DEVICE_SW_VERSION: Final = "2026.9.2"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
@@ -223,6 +223,15 @@ ACTIVITY_BOOST_MILD: Final[float] = 0.8  # Listening to music, eating
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01
 MAX_PROBABILITY: Final = 0.99
+
+# Lowest probability a single fully active ground-truth sensor (motion, sleep)
+# at full weight implies, whatever the area's prior. The fixed logit
+# contribution (prob_given_true x strength_multiplier = 2.85 for default
+# motion) cannot overcome a prior below ~5.5%, so realistic learned priors
+# (a kitchen occupied 2% of the day) left motion unable to reach the
+# threshold at all. The floor is applied in logit space, so decay still
+# fades it smoothly; areas whose prior already clears it are unchanged.
+GROUND_TRUTH_ACTIVE_FLOOR: Final[float] = 0.75
 MIN_PRIOR: Final[float] = 0.01
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01

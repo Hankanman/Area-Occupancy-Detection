@@ -189,6 +189,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Add update listener
     entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
 
+    # The areas were read when the coordinator was created, several awaits
+    # ago, and the listener only exists from here on. An area subentry added
+    # in between (e.g. areas created back to back, each add reloading the
+    # entry) was neither loaded nor seen by a listener, so it stayed without
+    # entities until a manual reload. Catch up now.
+    configured, loaded = _configured_and_loaded_area_ids(entry, coordinator)
+    if configured != loaded:
+        _LOGGER.info(
+            "Area subentries changed during setup (configured=%s, loaded=%s), "
+            "scheduling a reload",
+            configured,
+            loaded,
+        )
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
     # Log setup completion
     area_count = len(coordinator.get_area_names())
     _LOGGER.info(
@@ -508,6 +523,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+def _configured_and_loaded_area_ids(
+    entry: ConfigEntry, coordinator: Any
+) -> tuple[set[str], set[str]]:
+    """Area ids the entry's subentries configure, and the ones actually loaded.
+
+    Args:
+        entry: The config entry.
+        coordinator: The running coordinator.
+
+    Returns:
+        ``(configured, loaded)``; they differ when the area structure changed.
+    """
+    configured = {
+        str(data[CONF_AREA_ID])
+        for _, data in iter_area_subentries(entry)
+        if data.get(CONF_AREA_ID)
+    }
+    loaded = {
+        str(area.config.area_id)
+        for area in coordinator.areas.values()
+        if area.config.area_id
+    }
+    return configured, loaded
+
+
 async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle config entry update.
 
@@ -521,21 +561,9 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.warning("Coordinator not found when updating entry %s", entry.entry_id)
         return
 
-    # Determine configured area IDs from merged data+options.
-    merged = dict(entry.data)
-    merged.update(entry.options)
-    config_area_ids = {
-        data.get(CONF_AREA_ID)
-        for _, data in iter_area_subentries(entry)
-        if data.get(CONF_AREA_ID)
-    }
-
-    # Determine currently loaded area IDs.
-    current_area_ids = {
-        area.config.area_id
-        for area in coordinator.areas.values()
-        if area.config.area_id
-    }
+    config_area_ids, current_area_ids = _configured_and_loaded_area_ids(
+        entry, coordinator
+    )
 
     if config_area_ids != current_area_ids:
         # Area structure changed — full reload needed for entity platform setup

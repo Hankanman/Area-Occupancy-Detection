@@ -11,7 +11,13 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import DOMAIN, MAX_PROBABILITY, MIN_PROBABILITY, ROUNDING_PRECISION
+from .const import (
+    DOMAIN,
+    GROUND_TRUTH_ACTIVE_FLOOR,
+    MAX_PROBABILITY,
+    MIN_PROBABILITY,
+    ROUNDING_PRECISION,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -188,6 +194,10 @@ def sigmoid_probability(
     z = bias + Σ(weight_i × evidence_i × correlation_i × strength_factor)
     P = sigmoid(z)
 
+    For the ground-truth types (motion, sleep) ``strength_factor`` is at least
+    ``logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias``, so one such sensor, fully
+    active at full weight, lifts any prior to at least that probability.
+
     Args:
         entities: Dict of Entity objects
         prior: Learned prior probability for this area (0.0-1.0)
@@ -197,12 +207,19 @@ def sigmoid_probability(
     Returns:
         Probability in range MIN_PROBABILITY to MAX_PROBABILITY
     """
+    from .data.entity_type import InputType  # noqa: PLC0415
+
     if not entities:
         return clamp_probability(prior)
 
     # Start with bias from prior (logit transforms prior to log-odds space)
     # logit(0.5) = 0, logit(0.7) = 0.85, logit(0.3) = -0.85
     bias = logit(prior)
+
+    # A ground-truth sensor's strength is floored at what it takes to lift
+    # this prior to GROUND_TRUTH_ACTIVE_FLOOR on its own. Without it, motion's
+    # fixed 2.85 cannot overcome a learned prior below ~5.5%.
+    ground_truth_floor = logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias
 
     # Sum weighted contributions from all entities
     z = bias
@@ -232,7 +249,10 @@ def sigmoid_probability(
         # strength_multiplier is per-type (e.g., 3.0 for motion, 2.0 for others)
         # to give ground-truth sensors a stronger logit-space contribution.
         strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
-        contribution = ew * evidence * correlation * (strength * strength_multiplier)
+        signal = strength * strength_multiplier
+        if entity.type.input_type in (InputType.MOTION, InputType.SLEEP):
+            signal = max(signal, ground_truth_floor)
+        contribution = ew * evidence * correlation * signal
         z += contribution
 
     return clamp_probability(sigmoid(z))
