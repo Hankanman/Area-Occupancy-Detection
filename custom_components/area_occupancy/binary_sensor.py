@@ -234,9 +234,7 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
 
         # Check if we have required entities configured
         if not self._door_entities or not self._motion_entities:
-            _LOGGER.warning(
-                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly"
-            )
+            self._warn_missing_entities()
 
         _LOGGER.debug(
             "WaspInBoxSensor initialized with unique_id: %s", self._attr_unique_id
@@ -350,12 +348,31 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
             ATTR_VERIFICATION_PENDING: self._verification_pending,
         }
 
+    def _warn_missing_entities(self) -> None:
+        """Say which area's Wasp in Box is missing which sensors (#484).
+
+        Without the area name, finding the culprit meant opening every area
+        with wasp-in-box enabled.
+        """
+        missing = [
+            kind
+            for kind, entities in (
+                ("door", self._door_entities),
+                ("motion", self._motion_entities),
+            )
+            if not entities
+        ]
+        _LOGGER.warning(
+            "Wasp in Box for area '%s' has no %s sensors configured and will not "
+            "work until the area has at least one door and one motion sensor",
+            self._area_name,
+            " or ".join(missing),
+        )
+
     def _setup_entity_tracking(self) -> None:
         """Set up state tracking for door and motion entities."""
         if not self._door_entities and not self._motion_entities:
-            _LOGGER.warning(
-                "No door or motion entities configured for Wasp in Box sensor. Sensor will not function properly"
-            )
+            self._warn_missing_entities()
             return
 
         # Clean up existing listener
