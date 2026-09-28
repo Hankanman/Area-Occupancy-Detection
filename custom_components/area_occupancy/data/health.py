@@ -22,10 +22,11 @@ from enum import StrEnum
 import logging
 from typing import TYPE_CHECKING
 
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
-from ..const import DOMAIN
+from ..const import DOMAIN, HOME_ZONE_ENTITY_ID
 from .entity_type import BINARY_INPUT_TYPES, InputType
 from .purpose import AreaPurpose
 
@@ -571,8 +572,10 @@ class HealthMonitor:
         it moves whenever anyone arrives or leaves, which would keep
         resetting the clock and hide real alerts.
 
-        Without a usable ``zone.home`` (no person entities) this returns
-        ``False`` and the checks behave exactly as before.
+        Without usable person tracking this returns ``False`` and the checks
+        behave exactly as before. ``zone.home`` still reads ``0`` on an
+        install with no person entities, or when every person is
+        ``unknown``/``unavailable``, and that is not "nobody home".
 
         Args:
             now: The current check time.
@@ -580,7 +583,13 @@ class HealthMonitor:
         Returns:
             True if ``zone.home`` reports nobody home.
         """
-        state = self._hass.states.get("zone.home")
+        tracked = any(
+            person.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE)
+            for person in self._hass.states.async_all("person")
+        )
+        if not tracked:
+            return False
+        state = self._hass.states.get(HOME_ZONE_ENTITY_ID)
         try:
             count = int(state.state) if state is not None else None
         except (TypeError, ValueError):
@@ -657,7 +666,7 @@ class HealthMonitor:
                     entity_id=entity.entity_id,
                     issue_type=HealthIssueType.STUCK_INACTIVE,
                     input_type=entity.type.input_type,
-                    since=entity.last_updated,
+                    since=since or entity.last_updated,
                     duration_hours=round(hours, 1),
                     details=(
                         f"{entity.type.input_type.value} sensor hasn't changed "
@@ -764,7 +773,7 @@ class HealthMonitor:
             entity_id=entity.entity_id,
             issue_type=HealthIssueType.NEVER_TRIGGERED,
             input_type=entity.type.input_type,
-            since=entity.last_updated,
+            since=since,
             duration_hours=round(days * 24, 1),
             details=(
                 f"{entity.type.input_type.value} sensor has never been "

@@ -63,8 +63,10 @@ def _make_entity(
 
 @pytest.fixture
 def mock_hass() -> Mock:
-    """Create a mock Home Assistant instance."""
-    return Mock()
+    """Create a mock Home Assistant instance with no person entities."""
+    hass = Mock()
+    hass.states.async_all.return_value = []
+    return hass
 
 
 @pytest.fixture
@@ -1602,9 +1604,14 @@ class TestAwayFromHome:
     """Inactivity alerts pause while nobody is home and restart on return (#485)."""
 
     @staticmethod
-    def _home(mock_hass: Mock, count: str | None) -> None:
+    def _home(
+        mock_hass: Mock, count: str | None, persons: tuple[str, ...] = ("home",)
+    ) -> None:
         mock_hass.states.get.side_effect = lambda eid: (
             Mock(state=count) if eid == "zone.home" and count is not None else None
+        )
+        mock_hass.states.async_all.side_effect = lambda domain: (
+            [Mock(state=s) for s in persons] if domain == "person" else []
         )
 
     @staticmethod
@@ -1681,3 +1688,37 @@ class TestAwayFromHome:
         issues = self._check(monitor, self._idle_motion(8))
 
         assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_zone_home_zero_without_persons_is_not_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """No person entities: zone.home reads 0, and alerts still fire."""
+        self._home(mock_hass, "0", persons=())
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_zone_home_zero_with_untracked_persons_is_not_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Every person unknown or unavailable is no tracking, not an empty house."""
+        self._home(mock_hass, "0", persons=("unknown", "unavailable"))
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_reported_since_is_the_return(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """The issue's start matches its duration: the return, not pre-trip."""
+        self._home(mock_hass, "2")
+        returned = dt_util.utcnow() - timedelta(days=8)
+        monitor._home_returned_at = returned
+
+        issues = self._check(monitor, self._idle_motion(10))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+        assert issues[0].since == returned
+        assert issues[0].duration_hours == pytest.approx(8 * 24, abs=0.1)
