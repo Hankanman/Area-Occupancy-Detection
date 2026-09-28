@@ -39,22 +39,25 @@ class TestAllAreas:
         assert device_info["sw_version"] == DEVICE_SW_VERSION
 
     @pytest.mark.parametrize(
-        ("method_name", "value1", "value2", "expected_average"),
+        ("method_name", "value1", "value2", "expected"),
         [
-            ("probability", 0.3, 0.7, 0.5),
-            ("area_prior", 0.2, 0.8, 0.5),
+            # "Anyone in any area": the highest room, never an average that
+            # could read below an occupied room (#557).
+            ("probability", 0.3, 0.7, 0.7),
+            # No empirical zone priors yet, so the highest room prior.
+            ("area_prior", 0.2, 0.8, 0.8),
             ("decay", 0.4, 0.6, 0.5),
         ],
     )
-    def test_average_calculation(
+    def test_aggregation(
         self,
         coordinator,
         method_name: str,
         value1: float,
         value2: float,
-        expected_average: float,
+        expected: float,
     ) -> None:
-        """Test aggregation methods average values across all areas."""
+        """Probability and prior take the highest room; decay averages."""
         all_areas = AllAreas(coordinator)
 
         area1 = _mock_area()
@@ -67,7 +70,7 @@ class TestAllAreas:
             clear=True,
         ):
             result = getattr(all_areas, method_name)()
-            assert result == expected_average
+            assert result == expected
 
     def test_occupied_any_area(self, coordinator) -> None:
         """Test occupied returns True if ANY area is occupied."""
@@ -128,7 +131,7 @@ class TestAllAreas:
             clear=True,
         ):
             result = getattr(all_areas, method_name)()
-            # Average of -0.5 and -0.3 = -0.4, should clamp to min_bound
+            # Max of -0.5 and -0.3 (or the decay average) is below the bound
             assert result == min_bound
 
         # Test clamping to max_bound (average above maximum)
@@ -142,7 +145,7 @@ class TestAllAreas:
             clear=True,
         ):
             result = getattr(all_areas, method_name)()
-            # Average of 1.5 and 1.2 = 1.35, should clamp to max_bound
+            # Max of 1.5 and 1.2 (or the decay average) is above the bound
             assert result == max_bound
 
     @pytest.mark.parametrize(
@@ -235,10 +238,10 @@ class TestAllAreas:
             assert result == expected_result
 
     @pytest.mark.parametrize(
-        ("method_name", "value1", "value2", "expected_average"),
+        ("method_name", "value1", "value2", "expected"),
         [
-            ("probability", MIN_PROBABILITY, 1.0, (MIN_PROBABILITY + 1.0) / 2.0),
-            ("area_prior", MIN_PROBABILITY, 1.0, (MIN_PROBABILITY + 1.0) / 2.0),
+            ("probability", MIN_PROBABILITY, 1.0, 1.0),
+            ("area_prior", MIN_PROBABILITY, 1.0, 1.0),
             ("decay", 0.0, 1.0, 0.5),
         ],
     )
@@ -248,9 +251,9 @@ class TestAllAreas:
         method_name: str,
         value1: float,
         value2: float,
-        expected_average: float,
+        expected: float,
     ) -> None:
-        """Test methods with mixed boundary values return average."""
+        """Mixed bounds: probability and prior take the highest, decay averages."""
         all_areas = AllAreas(coordinator)
 
         area1 = _mock_area()
@@ -263,4 +266,4 @@ class TestAllAreas:
             clear=True,
         ):
             result = getattr(all_areas, method_name)()
-            assert result == expected_average
+            assert result == expected

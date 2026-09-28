@@ -28,9 +28,12 @@ from ..const import (
     ADJACENCY_DECAY_MODIFIER_GAIN,
     ADJACENCY_DECAY_MODIFIER_MAX,
 )
+from ..db.transitions import LEVEL_STATIC_DEFAULT
 from ..utils import clamp_probability, logit
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ..db.transitions import TransitionLookupResult
 
 
@@ -55,24 +58,26 @@ class TransitionLookupFn(Protocol):
 
 @dataclass(frozen=True)
 class Trajectory:
-    """The recently-occupied adjacent context used for the boost lookup.
+    """The household's recent departures, used for the boost lookup.
 
     Attributes:
-        prev_area: The most recently active adjacent area (one hop back).
-            ``None`` when no adjacent has been active within the trajectory
-            window — in which case neither boost nor modifier fires.
-        prev_prev_area: The adjacent area active before ``prev_area``
-            (two hops back). ``None`` until a 2-hop trajectory exists.
-            When set, the lookup uses the 2-hop levels; when ``None``,
-            it falls through to 1-hop levels (caller passes
-            ``mid_area=""``).
+        prev_area: The area most recently left (one hop back). ``None``
+            when no other area was left within the trajectory window — in
+            which case the boost doesn't fire.
+        prev_prev_area: The area left before ``prev_area`` (two hops
+            back). ``None`` until a 2-hop trajectory exists. When set,
+            the lookup uses the 2-hop levels; when ``None``, it falls
+            through to 1-hop levels (caller passes ``mid_area=""``).
         hour_of_week: 0..167 bucket for time-of-day learning. Caller
             computes this from the current local time.
+        prev_end_time: When ``prev_area`` was left. The coordinator only
+            boosts an area whose own sensors fired after it.
     """
 
     prev_area: str | None
     prev_prev_area: str | None
     hour_of_week: int
+    prev_end_time: datetime | None = None
 
 
 @dataclass
@@ -128,11 +133,19 @@ def compute_adjacency_boost(
 ) -> BoostContribution:
     """Compute the logit-space boost for the target area.
 
-    The boost is ``gain × logit(P(target | trajectory, hour))``. When
-    the lookup falls all the way through to the static default (no
-    learned data) the boost is still applied, but its impact is small
-    because ``logit(static_default ≈ 0.3)`` is close to zero in
-    magnitude and the gain is < 1.
+    The boost nudges up an area the household usually moves to next:
+    it is ``gain × logit(P(target | trajectory, hour))`` when that is
+    positive, i.e. when ``P > 0.5``. It is zero when:
+
+    * the lookup fell through to the static default. Nothing has been
+      learned for this chain yet, and the feature is documented to have
+      no effect until it has.
+    * ``P <= 0.5``, because the target isn't the usual next area. That
+      includes every area not adjacent to ``prev_area``: transitions are
+      only recorded between adjacent areas, so their learned probability
+      is exactly 0. A low transition probability says where the person
+      who just left probably didn't go, not that the target is empty
+      (someone else may be there), so it never pushes a target down.
 
     Args:
         target_area: The area whose probability we're updating.
@@ -178,11 +191,12 @@ def compute_adjacency_boost(
     out.fallback_level = result.level
     out.observed_count = result.observed_count
     out.total_count = result.total_count
-    # Centre around logit(0.5) so the static default (~0.3) doesn't
-    # systematically bias every area downward when there's no learned
-    # data. logit(0.5) = 0 makes the term mathematically a no-op but we
+    if result.level == LEVEL_STATIC_DEFAULT:
+        return out  # Nothing learned for this chain yet: no effect.
+    # Centre around logit(0.5) and keep only the upward part (see the
+    # docstring). logit(0.5) = 0 makes the centring term a no-op, but we
     # keep the formula explicit for clarity.
-    out.logit_contribution = gain * (logit(result.probability) - _LOGIT_HALF)
+    out.logit_contribution = gain * max(0.0, logit(result.probability) - _LOGIT_HALF)
     return out
 
 
@@ -232,7 +246,9 @@ def compute_decay_modifier(
     leaves target via X. So a bedroom whose only learned exit (the
     hall) has been silent since the last evidence event gets the full
     ~``cap`` slowdown, while a hub area whose exits diverge in many
-    directions gets a smaller modifier.
+    directions gets a smaller modifier. An exit that has nothing learned
+    yet (the lookup fell through to the static default) counts as
+    ``P = 0``, so a newly configured pair has no effect on decay.
 
     Args:
         target_area: The area whose decay we're modifying.
@@ -294,9 +310,13 @@ def compute_decay_modifier(
             to_area=neighbour,
             hour_of_week=trajectory.hour_of_week,
         )
-        contribution = (1.0 - neighbour_prob) * result.probability
+        # Nothing learned for this exit yet: it isn't a known way out.
+        exit_probability = (
+            0.0 if result.level == LEVEL_STATIC_DEFAULT else result.probability
+        )
+        contribution = (1.0 - neighbour_prob) * exit_probability
         silence_score += contribution
-        silent_breakdown.append((neighbour, neighbour_prob, result.probability))
+        silent_breakdown.append((neighbour, neighbour_prob, exit_probability))
 
     # silence_score is now in [0, len(neighbours)]; clamp to [0, 1] so
     # the modifier scales sanely regardless of household density.

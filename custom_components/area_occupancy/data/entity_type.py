@@ -215,6 +215,13 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.CUSTOM_NUMERIC,
 }
 
+# Types whose active time counts as occupancy ground truth: the occupied
+# intervals that priors, likelihoods and area transitions are learned from
+# are built from these (``db.queries.get_occupied_intervals``).
+GROUND_TRUTH_INPUT_TYPES: frozenset[InputType] = frozenset(
+    {InputType.MOTION, InputType.MEDIA, InputType.SLEEP}
+)
+
 BINARY_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
     InputType.APPLIANCE,

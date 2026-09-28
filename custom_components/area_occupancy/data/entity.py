@@ -75,6 +75,10 @@ class Entity:
     learned_gaussian_params: GaussianParams | None = None
     analysis_error: str | None = None
     correlation_type: str | None = None
+    # Set by the health check when this sensor is flagged stuck active and
+    # the user hasn't ignored the repair: the start of the stuck stretch.
+    # While set, the sensor contributes no evidence (see ``is_stuck``).
+    stuck_since: datetime | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -108,6 +112,20 @@ class Entity:
         # These are used as fallbacks when Gaussian calculation is not available
         self._prob_given_true = self.prob_given_true
         self._prob_given_false = self.prob_given_false
+
+    @property
+    def is_stuck(self) -> bool:
+        """Whether this sensor is flagged stuck and still in that same state.
+
+        Only the stretch the health check flagged counts: the moment the
+        sensor changes state ``last_updated`` moves past ``stuck_since`` and
+        it counts again, without waiting for the next hourly check.
+        """
+        return (
+            self.stuck_since is not None
+            and self.last_updated is not None
+            and self.last_updated <= self.stuck_since
+        )
 
     def _calculate_gaussian_density(
         self, value: float, mean: float, std: float
@@ -607,8 +625,11 @@ class Entity:
         if current_evidence is None:
             if previous_evidence is True:
                 # Entity had evidence and became unavailable - treat as evidence lost
-                # Start decay since we lost positive evidence
-                self.decay.start_decay()
+                # Start decay since we lost positive evidence, unless that
+                # evidence was a stuck stretch that never counted.
+                if not self.is_stuck:
+                    self.decay.start_decay()
+                self.stuck_since = None
                 self.last_updated = dt_util.utcnow()
             # Update previous evidence to track the unavailable state
             self.previous_evidence = current_evidence
@@ -636,10 +657,14 @@ class Entity:
 
         # Handle evidence transitions
         if transition_occurred:
+            # A stuck stretch contributed nothing, so its end must not start
+            # a decay that would count it after all.
+            was_stuck = self.is_stuck
+            self.stuck_since = None
             self.last_updated = dt_util.utcnow()
             if current_evidence:  # FALSE→TRUE transition
                 self.decay.stop_decay()
-            else:  # TRUE→FALSE transition
+            elif not was_stuck:  # TRUE→FALSE transition
                 # Evidence lost - start decay
                 self.decay.start_decay()
 
@@ -1060,7 +1085,8 @@ class EntityManager:
         return [
             entity
             for entity in self._entities.values()
-            if entity.evidence or entity.decay.is_decaying
+            if (entity.evidence or entity.decay.is_decaying)
+            and getattr(entity, "is_stuck", False) is not True
         ]
 
     @property

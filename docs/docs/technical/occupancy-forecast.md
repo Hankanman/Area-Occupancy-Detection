@@ -36,7 +36,7 @@ exposes that profile for arbitrary — including future — slots.
 | `data/analysis.py` | `calculate_time_priors()` — builds the weekly matrix from occupied intervals |
 | `db/queries.py` | `get_stored_time_priors()` (learned slots only), `get_all_time_priors()` (grid, defaults filled) |
 | `service.py` | `area_occupancy.get_time_priors` — the read-only service entry point |
-| `lovelace/area-occupancy-time-priors-card.js` | Heatmap card rendering the weekly matrix |
+| `frontend/area-occupancy-time-priors-card.js` | Heatmap card rendering the weekly matrix, served by the integration |
 
 `forecast.py` is kept separate from `prior.py` on purpose: exposing the learned
 priors to other integrations should touch the core probability model as little
@@ -77,14 +77,27 @@ far enough ahead that the evidence weight vanishes.
 One real area's weekly forecast, as four parallel per-slot maps keyed
 `"day,slot"` (`day` 0=Monday…6=Sunday, `slot` = `hour * 60 // slot_minutes`).
 
-#### `build_aggregate_time_priors(members, slot_minutes, area_id, name) -> dict | None`
+#### `build_aggregate_time_priors(members, slot_minutes, area_id, name, *, prior_factor, empirical=None) -> dict | None`
 
-The same shape for an aggregate zone (the *All Areas* device, per-floor devices),
-whose occupancy is derived from member areas rather than stored. Values are the
-clamped mean across members, mirroring `AllAreas.area_prior()` but per slot.
-`data_points` takes the **minimum** across members: a zone is only as
-well-learned as its least-observed room, so a consumer never over-trusts a mixed
-aggregate. Returns `None` when there are no members.
+The same shape for an aggregate zone (the *All Areas* device, per-floor devices).
+A zone answers "will **anyone** be in here", which no average of its rooms can:
+a room busy at 07:00 and another busy at 19:00 average to a zone that is never
+busy. So the zone has priors of its own (#557). At the end of each analysis's
+prior step, `compute_zone_priors` takes the **union** of the member rooms'
+occupied intervals, which is the zone's own occupied history, and runs exactly
+the room arithmetic on it (`compute_slot_priors`): a global prior over the
+observation window, and a prior plus week count per slot.
+
+- **Habit (`slots_baseline`):** `forecast_prior(zone global, zone slot)`,
+  combined like a room's.
+- **Raw (`slots_raw`) and `data_points`:** the zone's own values.
+- **Live (`slots`):** the higher of the habit and every member's own
+  live-conditioned forecast, so a zone reads busy whenever one of its rooms does.
+- **Before the first analysis after startup:** each slot falls back to its
+  busiest member (and the weakest member's `data_points`), a lower bound on
+  "anyone".
+
+Returns `None` when there are no members.
 
 ## The maths, end to end
 
@@ -267,7 +280,7 @@ only raw intervals — so 28 days is the real ceiling.
 
 ## Lovelace card
 
-`lovelace/area-occupancy-time-priors-card.js` renders the weekly matrix as a 7×24
+`frontend/area-occupancy-time-priors-card.js` renders the weekly matrix as a 7×24
 heatmap. It defaults to `metric: "live"` and `scale: "area"`, so the current slot —
 outlined as *now* — and the next one light up while the area is actually occupied,
 then relax back to habit. The tooltip shows the baseline next to the live value,
@@ -280,7 +293,12 @@ low-prior room look uniformly cold. Slots with `data_points = 0` are hatched as
 Because the live metric moves with the evidence, the card polls every 3 minutes by
 default rather than the 10 a static matrix would need.
 
-See `lovelace/README.md` for installation and the full option list.
+The card ships inside the integration: `async_setup` serves it from
+`/area_occupancy/frontend/area-occupancy-time-priors-card.js?v=<version>` with long
+cache headers and registers it as an extra frontend module, so it loads on every
+dashboard and every release is a new cache key. See
+[Time Priors Card](../features/time-priors-card.md) for the full option list and
+how to remove an old manual install.
 
 ## Related documentation
 

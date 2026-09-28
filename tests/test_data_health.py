@@ -8,6 +8,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,
+    _ground_truth_present,
+)
+from custom_components.area_occupancy.data.analysis import _peak_learned_prior
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
@@ -16,9 +21,11 @@ from custom_components.area_occupancy.data.health import (
     HealthIssueType,
     HealthMonitor,
     _format_duration_human,
-    _stuck_active_threshold,
+    stuck_active_threshold,
+    suggested_threshold,
 )
 from custom_components.area_occupancy.data.purpose import AreaPurpose
+from custom_components.area_occupancy.utils import evidence_value, sigmoid_probability
 from homeassistant.const import STATE_ON
 from homeassistant.util import dt as dt_util
 
@@ -63,8 +70,10 @@ def _make_entity(
 
 @pytest.fixture
 def mock_hass() -> Mock:
-    """Create a mock Home Assistant instance."""
-    return Mock()
+    """Create a mock Home Assistant instance with no person entities."""
+    hass = Mock()
+    hass.states.async_all.return_value = []
+    return hass
 
 
 @pytest.fixture
@@ -1464,15 +1473,15 @@ class TestSanerDefaults:
         """Motion stuck-active default must stay at 8h to silence #465/#468."""
         assert STUCK_ACTIVE_THRESHOLDS[InputType.MOTION] == timedelta(hours=8)
 
-    def test_stuck_active_threshold_unmultiplied_for_social(self) -> None:
+    def teststuck_active_threshold_unmultiplied_for_social(self) -> None:
         """SOCIAL areas use the base threshold (multiplier 1.0)."""
-        assert _stuck_active_threshold(InputType.MOTION, AreaPurpose.SOCIAL) == (
+        assert stuck_active_threshold(InputType.MOTION, AreaPurpose.SOCIAL) == (
             timedelta(hours=8)
         )
 
-    def test_stuck_active_threshold_unmultiplied_for_none(self) -> None:
+    def teststuck_active_threshold_unmultiplied_for_none(self) -> None:
         """An unset purpose also yields the base threshold."""
-        assert _stuck_active_threshold(InputType.MOTION, None) == timedelta(hours=8)
+        assert stuck_active_threshold(InputType.MOTION, None) == timedelta(hours=8)
 
     @pytest.mark.parametrize(
         ("purpose", "expected_hours"),
@@ -1486,7 +1495,7 @@ class TestSanerDefaults:
         self, purpose: AreaPurpose, expected_hours: int
     ) -> None:
         """Purposes where long active periods are normal get longer thresholds."""
-        assert _stuck_active_threshold(InputType.MOTION, purpose) == timedelta(
+        assert stuck_active_threshold(InputType.MOTION, purpose) == timedelta(
             hours=expected_hours
         )
 
@@ -1596,3 +1605,289 @@ class TestMediaPlayerUnavailableExempt:
 
         assert len(issues) == 1
         assert issues[0].issue_type == HealthIssueType.UNAVAILABLE
+
+
+class TestAwayFromHome:
+    """Inactivity alerts pause while nobody is home and restart on return (#485)."""
+
+    @staticmethod
+    def _home(
+        mock_hass: Mock, count: str | None, persons: tuple[str, ...] = ("home",)
+    ) -> None:
+        mock_hass.states.get.side_effect = lambda eid: (
+            Mock(state=count) if eid == "zone.home" and count is not None else None
+        )
+        mock_hass.states.async_all.side_effect = lambda domain: (
+            [Mock(state=s) for s in persons] if domain == "person" else []
+        )
+
+    @staticmethod
+    def _idle_motion(days: float) -> Entity:
+        return _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="off",
+            last_updated=dt_util.utcnow() - timedelta(days=days),
+            evidence=False,
+        )
+
+    def _check(self, monitor: HealthMonitor, entity: Entity) -> list:
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            return monitor.check_health({"motion_1": entity})
+
+    def test_no_inactivity_alerts_while_nobody_is_home(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Ten idle days (threshold 7) raise nothing while zone.home is 0."""
+        self._home(mock_hass, "0")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+    def test_stuck_active_is_still_reported_while_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """A sensor stuck on in an empty house is more suspicious, not less."""
+        self._home(mock_hass, "0")
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
+            evidence=True,
+        )
+
+        issues = self._check(monitor, entity)
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_ACTIVE]
+
+    def test_idleness_counts_from_the_return(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Back from a trip, the clock restarts rather than alerting at once."""
+        self._home(mock_hass, "0")
+        self._check(monitor, self._idle_motion(10))
+        self._home(mock_hass, "2")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+        # Seven days after the return, the threshold is genuinely crossed.
+        monitor._home_returned_at = dt_util.utcnow() - timedelta(days=8)
+        issues = self._check(monitor, self._idle_motion(10))
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_someone_home_throughout_behaves_as_before(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """zone.home changing between non-zero counts does not reset the clock."""
+        self._home(mock_hass, "1")
+        self._check(monitor, self._idle_motion(8))
+        self._home(mock_hass, "2")
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_without_zone_home_behaves_as_before(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        self._home(mock_hass, None)
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_zone_home_zero_without_persons_is_not_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """No person entities: zone.home reads 0, and alerts still fire."""
+        self._home(mock_hass, "0", persons=())
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_zone_home_zero_with_untracked_persons_is_not_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Every person unknown or unavailable is no tracking, not an empty house."""
+        self._home(mock_hass, "0", persons=("unknown", "unavailable"))
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_reported_since_is_the_return(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """The issue's start matches its duration: the return, not pre-trip."""
+        self._home(mock_hass, "2")
+        returned = dt_util.utcnow() - timedelta(days=8)
+        monitor._home_returned_at = returned
+
+        issues = self._check(monitor, self._idle_motion(10))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+        assert issues[0].since == returned
+        assert issues[0].duration_hours == pytest.approx(8 * 24, abs=0.1)
+
+
+class TestStuckSensorsStopCounting:
+    """A sensor flagged stuck active is a repair, not evidence.
+
+    Live report: ``media_player.kitchen`` sat paused for 25h, was flagged
+    stuck_active, and still held the Kitchen at 50-60% in an empty house.
+    """
+
+    @staticmethod
+    def _stuck_media(state: dict[str, str]) -> Entity:
+        entity = _make_entity(
+            "media_player.kitchen",
+            InputType.MEDIA,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=25),
+            evidence=True,
+        )
+        entity.state_provider = lambda eid: Mock(state=state["value"])
+        return entity
+
+    @staticmethod
+    def _check(monitor: HealthMonitor, entity: Entity, *, ignored: bool) -> None:
+        with patch(
+            "custom_components.area_occupancy.data.health.ir",
+            TestStickyIgnore._patch_ir(ignored),
+        ):
+            monitor.check_health({"kitchen": entity})
+
+    def test_flagged_sensor_contributes_nothing(self, monitor: HealthMonitor) -> None:
+        """With its only active sensor stuck, the area sits at its prior."""
+        entity = self._stuck_media({"value": "on"})
+
+        self._check(monitor, entity, ignored=False)
+
+        assert entity.stuck_since == entity.last_updated
+        assert entity.is_stuck
+        assert evidence_value(entity) == 0.0
+        assert sigmoid_probability({entity.entity_id: entity}, prior=0.228) == (
+            pytest.approx(0.228)
+        )
+
+    def test_ignored_repair_keeps_it_counting(self, monitor: HealthMonitor) -> None:
+        """Ignoring the repair says the long activity is real."""
+        entity = self._stuck_media({"value": "on"})
+
+        self._check(monitor, entity, ignored=True)
+
+        assert entity.stuck_since is None
+        assert evidence_value(entity) == 1.0
+
+    def test_release_counts_again_without_a_decay(self, monitor: HealthMonitor) -> None:
+        """The stuck stretch never counted, so its end starts no decay."""
+        state = {"value": "on"}
+        entity = self._stuck_media(state)
+        self._check(monitor, entity, ignored=False)
+
+        state["value"] = "off"
+        entity.has_new_evidence()
+
+        assert not entity.is_stuck
+        assert entity.stuck_since is None
+        assert not entity.decay.is_decaying
+        assert evidence_value(entity) == 0.0
+
+        state["value"] = "on"
+        entity.has_new_evidence()
+        assert evidence_value(entity) == 1.0
+
+
+class TestPriorAboveThreshold:
+    """A learned prior that reaches the threshold stands, with a repair."""
+
+    @staticmethod
+    def _pipeline(monitor: HealthMonitor, peak, threshold):
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            return monitor.check_pipeline_health(
+                area_age_hours=None,
+                has_global_prior=True,
+                cache_age_hours=None,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+                peak_prior=peak,
+                threshold=threshold,
+            )
+
+    @pytest.mark.parametrize(
+        ("peak", "expected"),
+        [
+            (0.5634, 0.62),
+            (0.56, 0.61),
+            (0.9, 0.95),
+            (0.94, 0.99),
+            (0.95, None),
+            (0.99, None),
+        ],
+    )
+    def test_suggested_threshold(self, peak: float, expected: float | None) -> None:
+        """Five points above the peak, rounded up; none past 99%.
+
+        Probability tops out at 99%, so a higher threshold would stop the
+        area ever reading occupied.
+        """
+        if expected is None:
+            assert suggested_threshold(peak) is None
+            return
+        assert suggested_threshold(peak) == pytest.approx(expected)
+
+    def test_peak_at_threshold_raises_a_repair(self, monitor: HealthMonitor) -> None:
+        issues = self._pipeline(monitor, (0.5634, "Monday 18:00"), 0.5)
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.PRIOR_ABOVE_THRESHOLD]
+        assert issues[0].details == (
+            "At Monday 18:00 the learned prior is 56%, at or above the 50% "
+            "threshold. A threshold of 62% keeps it below."
+        )
+
+    def test_no_workable_threshold_says_so(self, monitor: HealthMonitor) -> None:
+        """A 97% peak can't be cleared by any usable threshold."""
+        issues = self._pipeline(monitor, (0.97, "Sunday 03:00"), 0.5)
+
+        assert issues[0].details == (
+            "At Sunday 03:00 the learned prior is 97%, at or above the 50% "
+            "threshold. No threshold leaves five points of headroom within "
+            "the 99% limit on occupancy probability: the area is almost "
+            "always occupied then."
+        )
+
+    def test_flagging_a_stuck_sensor_is_not_a_departure(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Trajectory presence still counts a stuck sensor; live labels don't."""
+        entity = TestStuckSensorsStopCounting._stuck_media({"value": "on"})
+        area = Mock()
+        area.entities.entities = {"kitchen": entity}
+        TestStuckSensorsStopCounting._check(monitor, entity, ignored=False)
+
+        assert _ground_truth_present(area, include_stuck=True)
+        assert not _ground_truth_present(area)
+
+    def test_peak_below_threshold_is_fine(self, monitor: HealthMonitor) -> None:
+        assert self._pipeline(monitor, (0.49, "Monday 18:00"), 0.5) == []
+
+    def test_peak_learned_prior_finds_the_slot(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Eight weeks at 0.9 on Sunday 18:00 against a 0.3 global.
+
+        Shrunk: (8 * 0.9 + 2 * 0.3) / 10 = 0.78; combined:
+        sigmoid(0.6 * logit(0.3) + 0.4 * logit(0.78)) = 0.49948. Every other
+        slot is unlearned and sits at the global 0.3.
+        """
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        area.prior.global_prior = 0.3
+        area.prior._cached_time_priors = {(6, 18): 0.9}
+        area.prior._cached_time_prior_points = {(6, 18): 8}
+
+        peak, slot = _peak_learned_prior(area)
+
+        assert peak == pytest.approx(0.49948, abs=1e-5)
+        assert slot == "Sunday 18:00"

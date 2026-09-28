@@ -6,11 +6,10 @@
  * slider highlights the slots each area is habitually occupied — useful to see,
  * at a glance, when a predictive automation (e.g. climate pre-heating) would act.
  *
- * Install:
- *   1. Copy this file to  /config/www/area-occupancy-time-priors-card.js
- *   2. Settings → Dashboards → ⋮ → Resources → Add:
- *        URL  /local/area-occupancy-time-priors-card.js   Type: JavaScript Module
- *   3. Add a card:  type: custom:area-occupancy-time-priors-card
+ * Install: nothing to do. The integration serves this file itself at
+ *   /area_occupancy/frontend/area-occupancy-time-priors-card.js?v=<version>
+ *   and loads it on every dashboard (#559). Add a card with
+ *   type: custom:area-occupancy-time-priors-card
  *
  * Options (all optional):
  *   title:           string  (default "Occupancy forecast")
@@ -92,7 +91,10 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
       scale: "area",
       ...config,
     };
-    this._threshold = (Number(this._config.threshold) || 50) / 100;
+    // `|| 50` would turn a configured 0 into 50; only a non-number falls back.
+    const threshold = Number(this._config.threshold);
+    this._threshold =
+      (Number.isFinite(threshold) ? Math.max(0, Math.min(100, threshold)) : 50) / 100;
     this._retryCount = 0;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     // A config change while the card is attached must re-arm the timer,
@@ -180,7 +182,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
     } catch (e) {
       this._degrade((e && (e.message || e.error)) || String(e));
     }
-    this._render();
+    this._update();
   }
 
   /** Record a failed poll *without* discarding the last good forecast.
@@ -276,6 +278,41 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
         @container (max-width: 380px) { .hh:not(.m6) { visibility: hidden; } }
       </style>`;
 
+    this.shadowRoot.innerHTML = `${style}
+      <ha-card>
+        <div class="head">
+          <span class="title">${esc(cfg.title || "Occupancy forecast")}</span>
+          <span id="stale"></span>
+          <span class="ctl">
+            <label>Comfort threshold</label>
+            <input id="thr" type="range" min="0" max="100" value="${pct}">
+            <span class="pctv">${pct}%</span>
+          </span>
+        </div>
+        <div id="body"></div>
+      </ha-card>`;
+
+    const slider = this.shadowRoot.getElementById("thr");
+    slider.addEventListener("input", (e) => {
+      this._threshold = Number(e.target.value) / 100;
+      this.shadowRoot.querySelector(".pctv").textContent = `${e.target.value}%`;
+      this._update(); // redraw the grids only, never the slider being dragged
+    });
+    this._update();
+  }
+
+  /** Redraw everything below the header, and the stale badge.
+   *  The header, and with it the threshold slider, is built once per config:
+   *  replacing the slider mid-drag (on every input event, or when a poll
+   *  lands) removes the element under the pointer and ends the drag. */
+  _update() {
+    const bodyEl = this.shadowRoot && this.shadowRoot.getElementById("body");
+    if (!bodyEl) return;
+    this.shadowRoot.getElementById("stale").innerHTML = this._staleBadge();
+    bodyEl.innerHTML = this._body();
+  }
+
+  _body() {
     let body = "";
     if (!this._data || !this._data.areas) {
       // An error only takes over the card when there is no forecast to draw.
@@ -302,28 +339,7 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
           .join("") +
         `</div>`;
     }
-
-    this.shadowRoot.innerHTML = `${style}
-      <ha-card>
-        <div class="head">
-          <span class="title">${esc(cfg.title || "Occupancy forecast")}</span>
-          ${this._staleBadge()}
-          <span class="ctl">
-            <label>Comfort threshold</label>
-            <input id="thr" type="range" min="0" max="100" value="${pct}">
-            <span class="pctv">${pct}%</span>
-          </span>
-        </div>
-        ${body}
-      </ha-card>`;
-
-    const slider = this.shadowRoot.getElementById("thr");
-    if (slider) {
-      slider.addEventListener("input", (e) => {
-        this._threshold = Number(e.target.value) / 100;
-        this._render(); // re-render only, no re-fetch
-      });
-    }
+    return body;
   }
 
   /** What the ramp is stretched over, spelled out. With the live metric the
@@ -466,17 +482,37 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
   }
 }
 
-customElements.define("area-occupancy-time-priors-card", AreaOccupancyTimePriorsCard);
+const CARD_TAG = "area-occupancy-time-priors-card";
 
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "area-occupancy-time-priors-card",
-  name: "Area Occupancy — Time Priors Heatmap",
-  description: "Weekly learned-occupancy forecast (168 slots) from get_time_priors.",
-});
+/** Define the card and list it in the card picker, once per registry view.
+ *
+ *  Guarded because installs that still have the old manual `/local/...`
+ *  resource load this file twice, and a second define() of the same tag
+ *  throws and takes the dashboard with it. */
+function registerCard() {
+  if (customElements.get(CARD_TAG)) return;
+  customElements.define(CARD_TAG, AreaOccupancyTimePriorsCard);
+  window.customCards = window.customCards || [];
+  if (!window.customCards.some((c) => c.type === CARD_TAG)) {
+    window.customCards.push({
+      type: CARD_TAG,
+      name: "Area Occupancy — Time Priors Heatmap",
+      description: "Weekly learned-occupancy forecast (168 slots) from get_time_priors.",
+    });
+  }
+  console.info(
+    "%c AREA-OCCUPANCY-TIME-PRIORS-CARD %c loaded",
+    "background:#d9662c;color:#fff;padding:2px 4px;border-radius:3px",
+    ""
+  );
+}
 
-console.info(
-  "%c AREA-OCCUPANCY-TIME-PRIORS-CARD %c loaded",
-  "background:#d9662c;color:#fff;padding:2px 4px;border-radius:3px",
-  ""
-);
+registerCard();
+// The integration serves this file as an extra frontend module (#559), and
+// Home Assistant starts loading those alongside its own app bundle. When this
+// small file wins that race it defines the card before the frontend patches
+// CustomElementRegistry (its scoped-registry polyfill), and a definition made
+// before the patch is invisible to Lovelace: the card shows "Configuration
+// error". Register again once Home Assistant's root element exists, which is
+// always after the patch; if the first definition took, this is a no-op.
+customElements.whenDefined("home-assistant").then(registerCard);

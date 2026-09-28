@@ -35,7 +35,7 @@ from .const import (
     DOMAIN,
 )
 from .data.forecast import build_aggregate_time_priors, build_area_time_priors
-from .data.prior import DEFAULT_SLOT_MINUTES
+from .data.prior import DEFAULT_SLOT_MINUTES, PRIOR_FACTOR
 from .data.purpose import get_default_decay_half_life
 from .utils import get_coordinator
 
@@ -470,13 +470,16 @@ async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
         for area_name, area in coordinator.areas.items():
             data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
 
-        # Aggregate zones: "All Areas" + one per floor (averaged member
-        # forecasts). These reuse the per-area caches warmed just above.
+        # Aggregate zones: "All Areas" + one per floor, from the union of
+        # their rooms' history (#557). These reuse the per-area caches warmed just above.
+        all_areas_zone = coordinator.get_all_areas()
         all_areas = build_aggregate_time_priors(
-            coordinator.get_all_areas().areas(),
+            all_areas_zone.areas(),
             DEFAULT_SLOT_MINUTES,
             ALL_AREAS_IDENTIFIER,
             "All Areas",
+            prior_factor=PRIOR_FACTOR,
+            empirical=all_areas_zone.empirical,
         )
         if all_areas is not None:
             data["All Areas"] = all_areas
@@ -486,6 +489,8 @@ async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
                 DEFAULT_SLOT_MINUTES,
                 f"floor_{floor_id}",
                 floor_agg.floor_name,
+                prior_factor=PRIOR_FACTOR,
+                empirical=floor_agg.empirical,
             )
             if floor_data is not None:
                 data[floor_agg.floor_name] = floor_data

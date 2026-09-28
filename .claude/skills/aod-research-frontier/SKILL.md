@@ -163,11 +163,17 @@ trajectory suggests the person is still nearby.
 
 **The built-in A/B toggle:** adjacency influence is **zero unless the user
 has configured adjacent-area pairs for that area** (`CONF_ADJACENT_AREAS`
-empty → no transitions recorded → `AdjacencySnapshot.lookup` falls
-through to the static default with `observed/total` forced to 0, which is
-the documented "no data" signal). That means every home with *some* areas
-configured with neighbors and some without already has a natural,
-per-area, config-driven control group — no separate feature flag needed.
+empty → no transitions recorded into it → `AdjacencySnapshot.lookup`
+returns a learned 0 for it, or the static default with `observed/total`
+forced to 0 when nothing is learned, and the boost treats both as no
+effect; no neighbours → no decay modifier). That means every home with
+*some* areas configured with neighbors and some without already has a
+natural, per-area, config-driven control group — no separate feature flag
+needed. **This only holds since #565.** On 2026.9.2 and earlier the boost
+was two-sided and household-wide, so unconfigured areas were pushed down
+(−0.42 logits from the static default, −2.3 from a learned 0) for five
+minutes after any area's occupancy ended; don't use data from those
+versions as a control group.
 
 **First three concrete steps in this repo (#454 merged 2026-07-06, code is
 live on `main`):**

@@ -4,6 +4,31 @@ description: Detect occupancy in rooms with a single entry/exit point
 
 # Wasp in Box
 
+!!! warning "Deprecated: being replaced by built-in presence continuity"
+    Wasp in Box is being replaced by occupancy that is built into the areas
+    themselves ([#558](https://github.com/Hankanman/Area-Occupancy-Detection/issues/558)).
+    An area will stay occupied while its door stays closed after motion (the Wasp
+    in Box behaviour), and also while nobody is seen leaving it through a
+    neighbouring area, which covers open-plan rooms and gaps in motion coverage
+    that Wasp in Box never could.
+
+    **You don't lose anything.** When the replacement ships, areas with Wasp in
+    Box enabled switch over automatically with the same behaviour. The Wasp in Box
+    setting and its sensor are removed in the release after that.
+
+    **What to do now:**
+
+    - Keep Wasp in Box on until then: turning it off only loses the hold early.
+    - If an automation or dashboard uses a Wasp in Box sensor, point it at the
+      area's **Occupancy Status** sensor instead, which will carry the hold.
+    - While any area has it enabled, a notice in **Settings → Repairs** lists
+      them. Once nothing uses the Wasp in Box sensor, you can ignore it.
+
+    **Why:** Wasp in Box is a separate state machine bolted onto the
+    probability model, and it feeds its hold back into learning as if it were
+    motion, which inflates those areas' learned priors. The replacement lives in
+    the model and never counts as ground truth.
+
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 
 ## Concept

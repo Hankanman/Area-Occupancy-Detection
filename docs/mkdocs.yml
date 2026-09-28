@@ -120,6 +120,7 @@ nav:
       - Entities: features/entities.md
       - Sensor Health: features/sensor-health.md
       - Services: features/services.md
+      - Time Priors Card: features/time-priors-card.md
   - Technical:
       - Deep Dive: technical/deep-dive.md
       - Analysis Chain: technical/analysis-chain.md

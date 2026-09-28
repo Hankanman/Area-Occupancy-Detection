@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from custom_components.area_occupancy import (
     _async_entry_updated,
+    _async_sync_wasp_deprecation_issue,
     _purge_entry_database_data,
     async_remove_entry,
     async_setup_entry,
@@ -25,6 +26,7 @@ from custom_components.area_occupancy.const import (
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
+    WASP_IN_BOX_DEPRECATION_ISSUE,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.db import Base
@@ -32,6 +34,7 @@ from custom_components.area_occupancy.db.schema import Areas, Entities
 from custom_components.area_occupancy.service import async_setup_services
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
 from tests.conftest import make_area_subentries
 
@@ -938,3 +941,42 @@ class TestAsyncRemoveEntry:
                 session.close()
         finally:
             engine.dispose()
+
+
+class TestWaspDeprecationIssue:
+    """The Wasp in Box deprecation repair tracks which areas still use it."""
+
+    @staticmethod
+    def _coordinator(enabled: dict[str, bool]) -> Mock:
+        coordinator = Mock()
+        coordinator.areas = {}
+        for name, on in enabled.items():
+            area = Mock()
+            area.config.wasp_in_box.enabled = on
+            coordinator.areas[name] = area
+        return coordinator
+
+    async def test_issue_lists_areas_with_wasp_enabled(
+        self, hass: HomeAssistant
+    ) -> None:
+        _async_sync_wasp_deprecation_issue(
+            hass, self._coordinator({"Kitchen": False, "Bathroom": True, "Attic": True})
+        )
+
+        issue = ir.async_get(hass).async_get_issue(
+            DOMAIN_CONST, WASP_IN_BOX_DEPRECATION_ISSUE
+        )
+        assert issue is not None
+        assert issue.severity == ir.IssueSeverity.WARNING
+        assert issue.translation_placeholders == {"areas": "Attic, Bathroom"}
+
+    async def test_issue_clears_when_no_area_uses_it(self, hass: HomeAssistant) -> None:
+        _async_sync_wasp_deprecation_issue(hass, self._coordinator({"Bathroom": True}))
+        _async_sync_wasp_deprecation_issue(hass, self._coordinator({"Bathroom": False}))
+
+        assert (
+            ir.async_get(hass).async_get_issue(
+                DOMAIN_CONST, WASP_IN_BOX_DEPRECATION_ISSUE
+            )
+            is None
+        )

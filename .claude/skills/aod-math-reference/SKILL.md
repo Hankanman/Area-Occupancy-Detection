@@ -369,16 +369,33 @@ labeled a **candidate**, not validated against real households, pending real-dat
 gain/threshold constants below. Design rationale: discussion #431 (PR #456 was closed as merged
 into #454).
 
-#### Boost — `compute_adjacency_boost()` (`data/adjacency.py:122-186`)
+#### Boost — `compute_adjacency_boost()` (`data/adjacency.py:127-200`)
 
 ```
-boost = gain × logit(P(target_area | trajectory, hour_of_week))     # gain = ADJACENCY_BOOST_GAIN = 0.5
+boost = gain × max(0, logit(P(target_area | trajectory, hour_of_week)))     # gain = ADJACENCY_BOOST_GAIN = 0.5
 ```
-Applied post-Bayesian, pre-decay, via `apply_logit_boost()` (`data/adjacency.py:189-204`):
+Applied post-Bayesian, pre-decay, via `apply_logit_boost()` (`data/adjacency.py:203-218`):
 `new_probability = sigmoid(logit(base_probability) + boost)`. `trajectory` is the household's
-2-hop recent-area-exit history (`data/trajectory.py::TrajectoryTracker`); `P(target|trajectory,hour)`
-comes from the six-level lookup in §7. No boost fires if there's no recent trajectory
-(`trajectory.prev_area is None`).
+2-hop recent-departure history (`data/trajectory.py::TrajectoryTracker`); `P(target|trajectory,hour)`
+comes from the six-level lookup in §7. The boost is zero, or not computed at all, when:
+
+- there's no recent departure (`trajectory.prev_area is None`);
+- the target's own presence sensors didn't turn on within `ADJACENCY_TRANSITION_WINDOW_S` (60 s)
+  after that departure, or have turned off again (`coordinator.py::_arrived_after`). That is the
+  learner's definition of a transition, so only the area actually entered is boosted;
+- the lookup fell through to `LEVEL_STATIC_DEFAULT`, i.e. nothing is learned for the chain yet;
+- `P ≤ 0.5`. This includes every area not adjacent to `prev_area`: transitions are only recorded
+  between adjacent areas, so their learned `P` is exactly 0.
+
+A departure is an area's motion, media and sleep evidence going from active to inactive
+(`coordinator.py::_ground_truth_present`), the same area end `_detect_transitions` learns from.
+It is not the area's probability falling below its threshold, which happens minutes later.
+**Before #565 (2026.9.2 and earlier)** departures were threshold crossings and the boost was
+two-sided and applied to every area in the house. In an empty house each fading area then pushed
+its likely next areas up and every other area down, by `0.5 × logit(0.01) = −2.3` logits for a
+learned zero or `0.5 × logit(0.3) = −0.42` with nothing learned, for the 300 s trajectory window.
+If a report from those versions shows probabilities rising back over the threshold after everyone
+left, this is the likely cause.
 
 **Worked example**: `gain=0.5`, learned `P(target|trajectory,hour) = 0.7` (specific chain, well
 observed), base sensor-only probability `= 0.50`:
@@ -388,19 +405,28 @@ new_logit = logit(0.50) + 0.4237 = 0 + 0.4237
 new_probability = sigmoid(0.4237) ≈ 0.6042
 ```
 The area's probability is nudged from 0.50 to **≈ 0.604** purely from "the household usually comes
-here next."
+here next." With `P = 0.3` the contribution is `0.5 × max(0, −0.8473) = 0` and the area keeps its
+0.50; before #565 it was −0.4237, pulling it down to ≈ 0.396.
 
-#### Decay modifier — `compute_decay_modifier()` (`data/adjacency.py:210-311`)
+#### Decay modifier — `compute_decay_modifier()` (`data/adjacency.py:224-331`)
 
 ```
 silence_score = Σ_{X ∈ adjacent(target)} (1 − P_X_lagged) × P(target → X | trajectory, hour)
 decay_modifier = min(1 + gain × silence_score, cap)     # gain = 0.75, cap = 1.75
 effective_half_life = base_half_life × decay_modifier
 ```
-`P_X_lagged` is neighbour X's probability from the *previous* tick (`coordinator.py:526-537`,
-`lagged_probabilities`). `silence_score` clamps to `[0,1]` after summing (`data/adjacency.py:301-303`).
+`P_X_lagged` is neighbour X's probability from the *previous* tick (`coordinator.py::update()`,
+`lagged_probabilities`). `silence_score` clamps to `[0,1]` after summing (`data/adjacency.py:323`).
+An exit answered by `LEVEL_STATIC_DEFAULT` counts as `P = 0`, so with nothing learned the modifier
+is 1.0 (before #565 the 0.3 default stretched decay up to 1.45× with two quiet neighbours).
 Intuition: an area whose only learned exit has gone quiet gets decay stretched toward the `1.75×`
 cap (they probably didn't leave, just went still); many divergent exits → smaller stretch.
+
+The modifier is recomputed every tick and applied through `Decay.set_modifier_factor()`, which,
+while the entity is decaying, moves `decay_start` so that `age / half_life` is unchanged: a new
+modifier changes the decay *rate* from then on, not the factor already reached. So `decay_start`
+is not necessarily when the evidence went off. Before #565 a change re-scaled the whole elapsed
+decay, and the factor jumped whenever a neighbour's lagged probability moved.
 
 **Worked example**: target area has two adjacent neighbours: hallway (`P_lagged=0.1`,
 `P(target→hallway)=0.6`) and kitchen (`P_lagged=0.05`, `P(target→kitchen)=0.2`):
@@ -587,14 +613,16 @@ near `p=0.5` than near `p=0.9`.
 5. Compare against the code's own diagnostic field (e.g. `logit_contribution` in the
    `BoostContribution` dataclass) if you have a live diagnostics dump.
 
-**Worked example — adjacent-areas Bayesian boost** (`custom_components/area_occupancy/data/adjacency.py:122-204`,
+**Worked example — adjacent-areas Bayesian boost** (`custom_components/area_occupancy/data/adjacency.py:127-218`,
 constant `ADJACENCY_BOOST_GAIN = 0.5` at `const.py:206`). **This feature (PR #454, merged to `main`
 2026-07-06) is now on `main` — the adjacency feature remains unvalidated on real homes, so treat
 its constants as candidates, not settled tuning.**
 
-The formula is `logit_contribution = gain × (logit(P) − logit(0.5))`. Since `logit(0.5) = 0`,
-this reduces to `gain × logit(P)` (the centring term is documented as a deliberate no-op, kept
-for clarity — see the comment at `adjacency.py:115-118`).
+The formula is `logit_contribution = gain × max(0, logit(P) − logit(0.5))`. Since
+`logit(0.5) = 0`, this reduces to `gain × max(0, logit(P))` (the centring term is documented as a
+deliberate no-op, kept for clarity — see the comment at `adjacency.py:120-122`). The contribution
+is 0 for `P ≤ 0.5` and for a `static_default` lookup; since #565 the adjacency boost only raises
+a probability (see § 6 for when it is computed at all).
 
 Say the learned transition probability `P` (that the household moves into this area from its
 neighbour) is `0.9`, and the area's own base probability before the boost is `0.5`:
@@ -907,15 +935,23 @@ construction: if area A's boost depends on area B's *current* probability, and a
 depends on area A's *current* probability, a single tick could see both areas inflate each other
 before either settles — worse, over multiple ticks this could compound instead of converge.
 
-**How this codebase avoids it — the lagged-snapshot pattern** (`coordinator.py:526-574`
-`update()`, `:603-652` `_compute_adjacency_state`): every coordinator tick first snapshots the
-**previous** tick's per-area probability/occupied state into `self._lagged_probabilities` /
-`was_occupied` *before* computing anything new for the current tick. `compute_decay_modifier()`'s
-`silence_score` and `TrajectoryTracker.observe()`'s end-edge detection both read exclusively from
-this lagged snapshot — never from an in-flight, still-being-recomputed value. All areas'
-adjacency boosts and decay modifiers are precomputed together in one pass
-(`_compute_adjacency_state`) before any area's `probability()`/`half_life` is recomputed for the
-tick, so no area's own recompute can feed back into its neighbours' inputs within that same tick.
+**How this codebase avoids it — the lagged-snapshot pattern** (`coordinator.py:643-705`
+`update()`, `:841-887` `_compute_adjacency_state`): every coordinator tick first snapshots the
+**previous** tick's per-area probability into `self._lagged_probabilities` *before* computing
+anything new for the current tick, and `compute_decay_modifier()`'s `silence_score` reads only
+that snapshot — never an in-flight, still-being-recomputed value. All areas' adjacency boosts and
+decay modifiers are precomputed together in one pass (`_compute_adjacency_state`) before any
+area's `probability()`/`half_life` is recomputed for the tick, so no area's own recompute can feed
+back into its neighbours' inputs within that same tick.
+
+Lagging only stops *same-tick* feedback. Up to 2026.9.2, `TrajectoryTracker.observe()` recorded a
+departure whenever an area's `occupied` flag went from true on the previous tick to false on this
+one, so a boost that lifted a fading area back over its threshold produced a fresh departure when
+the area fell below it again, which boosted its neighbours in turn: a loop across ticks, seen as
+spiking decay in empty houses (#565). The tracker now reads motion/media/sleep sensor evidence
+(`_ground_truth_present`, compared with the previous tick's value in `_ground_truth_presence`),
+which nothing in the adjacency path can change, so the boost's output no longer reaches its own
+trigger.
 
 **Checklist for auditing any new coupling (between areas, or between an entity and its own
 derived state) for self-reinforcement**:

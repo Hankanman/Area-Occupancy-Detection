@@ -11,6 +11,8 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker as create_sessionmaker
 
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -18,9 +20,11 @@ from homeassistant.helpers import (
     area_registry as ar,
     config_validation as cv,
     device_registry as dr,
+    issue_registry as ir,
 )
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
 from .config_helpers import iter_area_subentries
 from .const import (
@@ -28,11 +32,17 @@ from .const import (
     CONF_VERSION,
     DB_NAME,
     DOMAIN,
+    FRONTEND_DIR,
+    FRONTEND_REGISTERED_KEY,
+    FRONTEND_URL_BASE,
     FUSION_STORE_KEY_PREFIX,
     FUSION_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
+    TIME_PRIORS_CARD_FILENAME,
+    WASP_IN_BOX_DEPRECATION_ISSUE,
+    WASP_IN_BOX_DOCS_URL,
 )
 from .coordinator import AreaOccupancyCoordinator
 from .db.operations import delete_area_data as _delete_area_data
@@ -204,6 +214,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         hass.config_entries.async_schedule_reload(entry.entry_id)
 
+    _async_sync_wasp_deprecation_issue(hass, coordinator)
+
     # Log setup completion
     area_count = len(coordinator.get_area_names())
     _LOGGER.info(
@@ -217,7 +229,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Area Occupancy Detection integration."""
     _LOGGER.debug("Starting async_setup for %s", DOMAIN)
+    await _async_register_frontend(hass)
     return True
+
+
+async def _async_register_frontend(hass: HomeAssistant) -> None:
+    """Serve the bundled time-priors card and load it on every dashboard.
+
+    Runs from the component-level ``async_setup`` so it happens once per Home
+    Assistant start, not once per config entry. The card is served with long
+    cache headers under a URL that carries the integration version, so each
+    release is a new cache key and browsers always load the card that shipped
+    with the installed integration. A missing card file is logged and skipped:
+    the card is a companion, it must never stop the integration from loading.
+    """
+    if hass.data.get(FRONTEND_REGISTERED_KEY):
+        return
+
+    card_path = Path(__file__).parent / FRONTEND_DIR / TIME_PRIORS_CARD_FILENAME
+    if not await hass.async_add_executor_job(card_path.is_file):
+        _LOGGER.warning(
+            "Time-priors card not found at %s; the dashboard card will not be "
+            "available",
+            card_path,
+        )
+        return
+
+    url_path = f"{FRONTEND_URL_BASE}/{TIME_PRIORS_CARD_FILENAME}"
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(url_path, str(card_path), cache_headers=True)]
+    )
+    integration = await async_get_integration(hass, DOMAIN)
+    add_extra_js_url(hass, f"{url_path}?v={integration.version}")
+    hass.data[FRONTEND_REGISTERED_KEY] = True
+    _LOGGER.debug(
+        "Registered time-priors card at %s (v%s)", url_path, integration.version
+    )
 
 
 def _resolve_db_path(hass: HomeAssistant) -> Path | None:
@@ -361,6 +408,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     Idempotent and never raises: failures are logged but must not prevent
     Home Assistant from completing the entry removal.
     """
+    ir.async_delete_issue(hass, DOMAIN, WASP_IN_BOX_DEPRECATION_ISSUE)
     _LOGGER.info(
         "Removing Area Occupancy config entry %s (cleaning up learned history)",
         entry.entry_id,
@@ -523,6 +571,37 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+def _async_sync_wasp_deprecation_issue(hass: HomeAssistant, coordinator: Any) -> None:
+    """Raise, update or clear the Wasp in Box deprecation repair issue.
+
+    One issue lists every area that still has Wasp in Box enabled, so users
+    can repoint automations that use its sensor before the built-in
+    replacement takes over. It clears itself once no area uses it.
+
+    Args:
+        hass: Home Assistant instance.
+        coordinator: The running coordinator.
+    """
+    areas = sorted(
+        name
+        for name, area in coordinator.areas.items()
+        if area.config.wasp_in_box.enabled
+    )
+    if not areas:
+        ir.async_delete_issue(hass, DOMAIN, WASP_IN_BOX_DEPRECATION_ISSUE)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        WASP_IN_BOX_DEPRECATION_ISSUE,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=WASP_IN_BOX_DEPRECATION_ISSUE,
+        translation_placeholders={"areas": ", ".join(areas)},
+        learn_more_url=WASP_IN_BOX_DOCS_URL,
+    )
+
+
 def _configured_and_loaded_area_ids(
     entry: ConfigEntry, coordinator: Any
 ) -> tuple[set[str], set[str]]:
@@ -596,3 +675,4 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
             except Exception:
                 _LOGGER.exception("Failed to update config for area %s", area_name)
         await coordinator.async_request_refresh()
+        _async_sync_wasp_deprecation_issue(hass, coordinator)

@@ -27,10 +27,18 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN: Final = "area_occupancy"
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
 
+# Bundled Lovelace card, served by the integration itself (see async_setup).
+# The URL carries the integration version as a cache-busting query string, so
+# every release is a new cache key despite the long-lived cache headers.
+FRONTEND_DIR: Final = "frontend"
+FRONTEND_URL_BASE: Final = f"/{DOMAIN}/frontend"
+TIME_PRIORS_CARD_FILENAME: Final = "area-occupancy-time-priors-card.js"
+FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
+
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.9.2"
+DEVICE_SW_VERSION: Final = "2026.9.3"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
@@ -232,6 +240,18 @@ MAX_PROBABILITY: Final = 0.99
 # threshold at all. The floor is applied in logit space, so decay still
 # fades it smoothly; areas whose prior already clears it are unchanged.
 GROUND_TRUTH_ACTIVE_FLOOR: Final[float] = 0.75
+
+# Wasp in Box is deprecated in favour of the built-in presence-continuity
+# model (#558), which takes over wasp_enabled automatically; it is removed one
+# release after that ships. Until then a repair lists the areas using it.
+WASP_IN_BOX_DEPRECATION_ISSUE: Final = "wasp_in_box_deprecated"
+# Home Assistant's Home zone: its state counts the person entities at home
+# (#485, inactivity alerts pause while it is 0).
+HOME_ZONE_ENTITY_ID: Final = "zone.home"
+
+WASP_IN_BOX_DOCS_URL: Final = (
+    "https://hankanman.github.io/Area-Occupancy-Detection/features/wasp-in-box/"
+)
 MIN_PRIOR: Final[float] = 0.01
 MAX_PRIOR: Final[float] = 0.99
 MIN_WEIGHT: Final[float] = 0.01
@@ -245,6 +265,13 @@ PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 # Time Prior Bounds
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
+
+# Weeks of the area's global prior mixed into every weekly slot before it is
+# used. A slot with one week of history is one afternoon, and on its own it
+# lands on a bound (0.9 or 0.03) and swings the live prior across the
+# threshold; with two pseudo-weeks it moves a third of the way, and after
+# eight weeks the slot's own data carries 80% of the weight.
+TIME_PRIOR_PSEUDO_WEEKS: Final[float] = 2.0
 
 # Minimum observation span (wall-clock time since the earliest ground-truth
 # data point for an area's *current* motion/sleep/media sensors — occupied

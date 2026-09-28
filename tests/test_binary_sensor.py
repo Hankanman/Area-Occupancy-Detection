@@ -213,6 +213,20 @@ class TestWaspInBoxSensor:
         assert entity.translation_key == "wasp_in_box"
         assert entity.should_poll is False
 
+    def test_missing_sensors_warning_names_the_area(
+        self,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The warning says which area, and which sensors it lacks (#484)."""
+        area_name = wasp_coordinator.get_area_names()[0]
+        wasp_coordinator.get_area(area_name).config.sensors.door = []
+
+        WaspInBoxSensor(wasp_coordinator.get_area_handle(area_name), wasp_config_entry)
+
+        assert f"Wasp in Box for area '{area_name}' has no door sensors" in caplog.text
+
     async def test_async_added_to_hass(
         self,
         hass: HomeAssistant,

@@ -150,7 +150,8 @@ actions:
 - `slots_baseline`, `slots_raw` and `data_points` are refreshed by the hourly
   analysis; calling more often than that returns the same values for them.
   `slots` changes continuously, because it tracks the live estimate.
-- A companion Lovelace card visualises the matrix — see `lovelace/README.md`.
+- A companion Lovelace card visualises the matrix. It ships with the integration and loads on
+  every dashboard automatically — see [Time Priors Card](time-priors-card.md).
 
 ## `area_occupancy.export_config`
 

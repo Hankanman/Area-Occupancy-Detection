@@ -8,6 +8,8 @@ trajectory bookkeeping.
 """
 
 from datetime import timedelta
+from itertools import pairwise
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -29,8 +31,20 @@ from custom_components.area_occupancy.db.transitions import (
 from custom_components.area_occupancy.time_utils import to_local
 from custom_components.area_occupancy.utils import logit
 from homeassistant.util import dt as dt_util
+from tests.conftest import create_test_area
 
 # ruff: noqa: SLF001
+
+# A motion sensor configured on the ``coordinator`` fixture's area.
+FIXTURE_MOTION = "binary_sensor.motion_sensor_1"
+
+
+def _motion_on(coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+    """Turn a motion sensor on and run the evidence gate, as the listener does."""
+    coordinator.hass.states.async_set(FIXTURE_MOTION, "on")
+    coordinator.get_area(area_name).entities.get_entity(
+        FIXTURE_MOTION
+    ).has_new_evidence()
 
 
 def _seed_adjacency(
@@ -107,17 +121,9 @@ class TestLaggedProbabilities:
 class TestAdjacencyBoostWiring:
     """Boost computation and application in the tick."""
 
-    async def test_boost_computed_when_trajectory_exists(
-        self, coordinator: AreaOccupancyCoordinator
+    async def _seed_hallway_exits(
+        self, coordinator: AreaOccupancyCoordinator, area_name: str
     ) -> None:
-        """Test that a recent adjacent end event produces a fired boost."""
-        area_name = coordinator.get_area_names()[0]
-        now = dt_util.utcnow()
-        # Another area just became unoccupied → 1-hop trajectory
-        coordinator._trajectory_tracker.observe(
-            "hallway", was_occupied=True, is_occupied=False, now=now
-        )
-
         # 9 of 10 exits from the hallway went to this area → P = 0.9 at
         # the 1-hop exact-hour level.
         _seed_adjacency(
@@ -126,6 +132,19 @@ class TestAdjacencyBoostWiring:
             {("hallway", ""): {area_name: 9.0, "kitchen": 1.0}},
         )
         await coordinator.async_load_adjacency_snapshot()
+
+    async def test_boost_computed_when_area_entered_after_departure(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that leaving the hallway, then this area's motion, boosts it."""
+        area_name = coordinator.get_area_names()[0]
+        await self._seed_hallway_exits(coordinator, area_name)
+        now = dt_util.utcnow()
+        # The hallway's sensors just went quiet → 1-hop trajectory
+        coordinator._trajectory_tracker.observe(
+            "hallway", was_present=True, is_present=False, now=now
+        )
+        _motion_on(coordinator, area_name)
 
         await coordinator.update()
 
@@ -140,6 +159,67 @@ class TestAdjacencyBoostWiring:
         assert boost.logit_contribution == pytest.approx(
             ADJACENCY_BOOST_GAIN * logit(0.9)
         )
+
+    async def test_no_boost_until_the_area_is_entered(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that a departure alone doesn't boost the likely next area.
+
+        Nothing has confirmed anyone went there, and boosting an area
+        that is still decaying from earlier is what lifted it back over
+        the threshold in an empty house.
+        """
+        area_name = coordinator.get_area_names()[0]
+        await self._seed_hallway_exits(coordinator, area_name)
+        coordinator._trajectory_tracker.observe(
+            "hallway", was_present=True, is_present=False, now=dt_util.utcnow()
+        )
+
+        await coordinator.update()
+
+        assert coordinator.adjacency_boost_for(area_name) is None
+
+    async def test_no_boost_when_sensor_was_already_active(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that evidence from before the departure isn't an arrival."""
+        area_name = coordinator.get_area_names()[0]
+        await self._seed_hallway_exits(coordinator, area_name)
+        _motion_on(coordinator, area_name)
+        coordinator._trajectory_tracker.observe(
+            "hallway",
+            was_present=True,
+            is_present=False,
+            now=dt_util.utcnow() + timedelta(seconds=1),
+        )
+
+        await coordinator.update()
+
+        assert coordinator.adjacency_boost_for(area_name) is None
+
+    async def test_no_boost_when_arrival_is_outside_transition_window(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that motion 2 minutes after the departure isn't that move.
+
+        The learner only records a transition when the next area starts
+        within ``ADJACENCY_TRANSITION_WINDOW_S`` (60 s) of the previous
+        one ending; the departure is still inside the 300 s trajectory
+        window.
+        """
+        area_name = coordinator.get_area_names()[0]
+        await self._seed_hallway_exits(coordinator, area_name)
+        coordinator._trajectory_tracker.observe(
+            "hallway",
+            was_present=True,
+            is_present=False,
+            now=dt_util.utcnow() - timedelta(seconds=120),
+        )
+        _motion_on(coordinator, area_name)
+
+        await coordinator.update()
+
+        assert coordinator.adjacency_boost_for(area_name) is None
 
     async def test_no_trajectory_no_boost(
         self, coordinator: AreaOccupancyCoordinator
@@ -245,22 +325,41 @@ class TestDecayModifierWiring:
 class TestTrajectoryBookkeeping:
     """Trajectory observation and hour-of-week bucketing."""
 
-    async def test_end_edge_recorded_during_update(
+    async def test_departure_recorded_when_sensors_go_quiet(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """Test that an occupied→clear edge lands in the tracker."""
+        """Test that the area's motion going off lands in the tracker."""
         area_name = coordinator.get_area_names()[0]
-        # Previous tick: occupied. Current tick will compute a low
-        # probability (no active evidence in the bare fixture), so the
-        # area produces an end edge.
-        coordinator.data = {area_name: {"probability": 0.99, "occupied": True}}
+        _motion_on(coordinator, area_name)
+        await coordinator.update()
+        assert coordinator._trajectory_tracker.snapshot() == []
 
+        coordinator.hass.states.async_set(FIXTURE_MOTION, "off")
+        coordinator.get_area(area_name).entities.get_entity(
+            FIXTURE_MOTION
+        ).has_new_evidence()
         await coordinator.update()
 
-        recorded_areas = [
-            name for name, _ in coordinator._trajectory_tracker.snapshot()
+        assert [name for name, _ in coordinator._trajectory_tracker.snapshot()] == [
+            area_name
         ]
-        assert area_name in recorded_areas
+
+    async def test_probability_drop_is_not_a_departure(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that falling below the threshold doesn't record a departure.
+
+        The previous tick was occupied and this one computes a low
+        probability, but no sensor changed. A decay tail running out is
+        not someone leaving; the learner records ends of sensor activity.
+        """
+        area_name = coordinator.get_area_names()[0]
+        coordinator.data = {area_name: {"probability": 0.99, "occupied": True}}
+
+        result = await coordinator.update()
+
+        assert result[area_name]["occupied"] is False
+        assert coordinator._trajectory_tracker.snapshot() == []
 
     def test_trajectory_hour_of_week_uses_local_time(
         self, coordinator: AreaOccupancyCoordinator
@@ -279,11 +378,11 @@ class TestTrajectoryBookkeeping:
         """Test that the target's own end events don't feed its trajectory."""
         now = dt_util.utcnow()
         tracker = coordinator._trajectory_tracker
-        tracker.observe("bedroom", was_occupied=True, is_occupied=False, now=now)
+        tracker.observe("bedroom", was_present=True, is_present=False, now=now)
         tracker.observe(
             "hallway",
-            was_occupied=True,
-            is_occupied=False,
+            was_present=True,
+            is_present=False,
             now=now + timedelta(seconds=1),
         )
 
@@ -326,16 +425,19 @@ class TestAdjacencySnapshot:
         tracker = coordinator._trajectory_tracker
         tracker.observe(
             "kitchen",
-            was_occupied=True,
-            is_occupied=False,
+            was_present=True,
+            is_present=False,
             now=now - timedelta(seconds=2),
         )
         tracker.observe(
             "hallway",
-            was_occupied=True,
-            is_occupied=False,
+            was_present=True,
+            is_present=False,
             now=now - timedelta(seconds=1),
         )
+        # This area's motion fires after the hallway departure, so the
+        # boost (and every lookup level behind it) is computed.
+        _motion_on(coordinator, area_name)
 
         statements: list[str] = []
 
@@ -386,3 +488,177 @@ class TestAdjacencySnapshot:
             await coordinator.async_load_adjacency_snapshot()
 
         assert coordinator._adjacency_snapshot is loaded
+
+
+class TestHouse:
+    """A small house driven through the real tick, as the decay timer does.
+
+    Bedroom – Hallway – Kitchen in a line, one motion sensor each, the
+    default purpose (social), a 50 % threshold, a learned prior of 0.1,
+    and learned 1-hop transitions between neighbours (the learner only
+    records adjacent pairs).
+    """
+
+    AREAS = ("Bedroom", "Hallway", "Kitchen")
+    ADJACENCY = {
+        "Bedroom": {"Hallway"},
+        "Hallway": {"Bedroom", "Kitchen"},
+        "Kitchen": {"Hallway"},
+    }
+    COUNTS = {
+        ("Bedroom", ""): {"Hallway": 10.0},
+        ("Hallway", ""): {"Kitchen": 8.0, "Bedroom": 2.0},
+        ("Kitchen", ""): {"Hallway": 10.0},
+    }
+
+    @staticmethod
+    def _motion(name: str) -> str:
+        return f"binary_sensor.{name.lower()}_motion"
+
+    async def _house(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> AreaOccupancyCoordinator:
+        """Turn the shared fixture coordinator into the three-area house."""
+        # Drop the fixture's own area: its dozen unset sensors aren't part
+        # of the house.
+        coordinator.areas.clear()
+        for name in self.AREAS:
+            area = create_test_area(
+                coordinator,
+                area_name=name,
+                entity_ids=[self._motion(name)],
+                threshold=0.5,
+            )
+            area.prior.set_global_prior(0.1)
+            area.prior._cached_time_priors = {}
+            coordinator.hass.states.async_set(self._motion(name), "off")
+        _seed_adjacency(coordinator, self.ADJACENCY, self.COUNTS)
+        await coordinator.async_load_adjacency_snapshot()
+        return coordinator
+
+    async def _run(
+        self,
+        house: AreaOccupancyCoordinator,
+        events: dict[int, list[tuple[str, str]]],
+        until: int,
+        on_tick: Any = None,
+    ) -> list[tuple[int, dict[str, tuple[float, bool]]]]:
+        """Apply sensor events and tick every 10 s; return each tick's state."""
+        clock = {"now": dt_util.utcnow().replace(microsecond=0)}
+        history = []
+        with patch("homeassistant.util.dt.utcnow", side_effect=lambda: clock["now"]):
+            house.data = await house.update()
+            for t in range(0, until + 1, 10):
+                for name, state in events.get(t, []):
+                    house.hass.states.async_set(self._motion(name), state)
+                    house.get_area(name).entities.get_entity(
+                        self._motion(name)
+                    ).has_new_evidence()
+                for area in house.areas.values():
+                    area.tick_decay()
+                house.data = await house.update()
+                if on_tick is not None:
+                    on_tick(t, house)
+                history.append(
+                    (
+                        t,
+                        {
+                            name: (entry["probability"], entry["occupied"])
+                            for name, entry in house.data.items()
+                        },
+                    )
+                )
+                clock["now"] += timedelta(seconds=10)
+        return history
+
+    # Someone walks Bedroom → Hallway → Kitchen and leaves the house from
+    # the Kitchen at t = 600 s.
+    WALK = {
+        0: [("Bedroom", "on")],
+        120: [("Bedroom", "off"), ("Hallway", "on")],
+        150: [("Hallway", "off"), ("Kitchen", "on")],
+        600: [("Kitchen", "off")],
+    }
+
+    async def test_entering_the_likely_next_area_boosts_it(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that leaving the Hallway and entering the Kitchen boosts it.
+
+        The boost is 0.5 × logit(P(Kitchen | Hallway) = 0.8), applied on the
+        tick the Kitchen's motion fires. When departures were only recorded
+        once an area's probability fell below the threshold, the Hallway
+        hadn't "ended" yet at that point, so the Kitchen got nothing.
+        """
+        house = await self._house(coordinator)
+        boosts: dict[int, BoostContribution | None] = {}
+
+        def _record_kitchen_boost(t: int, coordinator: AreaOccupancyCoordinator):
+            boosts[t] = coordinator.adjacency_boost_for("Kitchen")
+
+        await self._run(house, self.WALK, until=600, on_tick=_record_kitchen_boost)
+
+        assert boosts[140] is None
+        assert boosts[150] is not None
+        assert boosts[150].trajectory_prev == "Hallway"
+        assert boosts[150].logit_contribution == pytest.approx(
+            ADJACENCY_BOOST_GAIN * logit(0.8)
+        )
+        # Once the Kitchen's motion stops, the boost stops with it.
+        assert boosts[600] is None
+
+    async def test_empty_house_only_decays(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that after everyone leaves, no probability rises or switches on.
+
+        Each area's probability dropping below the threshold used to count
+        as a departure and boost its neighbours for five minutes (up to
+        0.5 × logit(0.99) = +2.3 logits here), pushing areas that were
+        still decaying back over the threshold.
+        """
+        house = await self._house(coordinator)
+
+        history = await self._run(house, self.WALK, until=600 + 2400)
+
+        for name in self.AREAS:
+            assert any(state[name][1] for t, state in history if t < 600)
+        after = [state for t, state in history if t >= 600]
+        for name in self.AREAS:
+            probabilities = [state[name][0] for state in after]
+            occupied = [state[name][1] for state in after]
+            rises = [
+                (before, now)
+                for before, now in pairwise(probabilities)
+                if now > before + 1e-9
+            ]
+            assert rises == [], f"{name} rose after the house emptied: {rises[:3]}"
+            assert not any(now and not before for before, now in pairwise(occupied)), (
+                f"{name} switched back on after the house emptied"
+            )
+            assert occupied[-1] is False
+
+    async def test_departure_elsewhere_leaves_an_occupied_area_alone(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Test that the Bedroom emptying doesn't switch the Kitchen off.
+
+        One person stays in the Kitchen while the Bedroom's motion stops at
+        t = 60 s. P(Kitchen | Bedroom) is a learned 0, since the Bedroom's
+        only neighbour is the Hallway, and that used to add
+        0.5 × logit(0.01) = -2.3 logits to the Kitchen for five minutes
+        once the Bedroom decayed below the threshold: its active motion
+        sensor then read about 0.23.
+        """
+        house = await self._house(coordinator)
+
+        history = await self._run(
+            house,
+            {0: [("Kitchen", "on"), ("Bedroom", "on")], 60: [("Bedroom", "off")]},
+            until=1200,
+        )
+
+        kitchen = [state["Kitchen"] for t, state in history]
+        assert all(occupied for _, occupied in kitchen)
+        probabilities = [probability for probability, _ in kitchen]
+        assert max(probabilities) - min(probabilities) < 1e-9

@@ -2,22 +2,26 @@
 
 The boost (``compute_adjacency_boost``) and decay modifier
 (``compute_decay_modifier``) need a ``Trajectory`` describing the two
-most recently-occupied OTHER areas in the household. This module owns
-that rolling state and exposes:
+areas the household most recently left, other than the target. This
+module owns that rolling state and exposes:
 
 * :meth:`TrajectoryTracker.observe` — call once per area per coordinator
-  refresh with the area's previous-tick and current-tick occupancy. End
-  edges (``was_occupied`` → ``is_occupied=False``) push onto an internal
-  deque keyed by ``end_time``.
+  refresh with whether the area's ground-truth presence evidence (motion,
+  media, sleep) was active on the previous tick and is active now. End
+  edges (``was_present`` → ``is_present=False``) are departures and push
+  onto an internal deque keyed by ``end_time``.
 * :meth:`TrajectoryTracker.trajectory_for` — given a target area and the
   current time, returns a :class:`~.adjacency.Trajectory` whose
-  ``prev_area`` / ``prev_prev_area`` are the two most recent end events
+  ``prev_area`` / ``prev_prev_area`` are the two most recent departures
   in the deque, excluding the target itself, and within the configured
   trajectory window.
 
 The deque shape mirrors what ``db.transitions._detect_transitions``
-walks at write time, so the runtime trajectory and the learned
-transition rows describe the same kind of event.
+walks at write time, and the coordinator feeds it the same kind of
+event: the learner's area ends are the ends of ground-truth occupied
+intervals, i.e. the moment an area's motion, media and sleep sensors go
+quiet. An area's probability crossing below its threshold is not a
+departure; it happens minutes later, while the decay tail runs out.
 """
 
 from __future__ import annotations
@@ -46,10 +50,10 @@ _DEQUE_MAX = 8
 
 
 class TrajectoryTracker:
-    """Per-coordinator rolling window of recent area-end events.
+    """Per-coordinator rolling window of recent departures.
 
     The single instance lives on :class:`AreaOccupancyCoordinator`. The
-    refresh path observes each area's occupancy edge each tick; the
+    refresh path observes each area's presence edge each tick; the
     boost/decay paths read the trajectory snapshot back out.
     """
 
@@ -62,26 +66,28 @@ class TrajectoryTracker:
         self,
         area_name: str,
         *,
-        was_occupied: bool,
-        is_occupied: bool,
+        was_present: bool,
+        is_present: bool,
         now: datetime,
     ) -> None:
-        """Record this tick's occupancy edge for ``area_name``.
+        """Record this tick's presence edge for ``area_name``.
 
-        Only end edges (``was_occupied=True, is_occupied=False``) push
+        Only end edges (``was_present=True, is_present=False``) push
         onto the deque; other transitions only trigger a window prune
         so stale entries are evicted in step with wall-clock time.
 
-        ``area_name`` is suppressed if it would create a consecutive
-        same-area entry — keeps the deque from collapsing when a flaky
-        sensor flips occupancy on/off rapidly.
+        An end for the area that is already newest in the deque refreshes
+        that entry's ``end_time`` instead of adding another, as
+        ``_detect_transitions`` does: a sensor cycling on and off as
+        someone moves around a room doesn't bloat the deque, and the
+        entry keeps the latest time the area was left.
         """
-        if (
-            was_occupied
-            and not is_occupied
-            and (not self._recent or self._recent[-1].area_name != area_name)
-        ):
-            self._recent.append(_RecentEnd(area_name=area_name, end_time=now))
+        if was_present and not is_present:
+            entry = _RecentEnd(area_name=area_name, end_time=now)
+            if self._recent and self._recent[-1].area_name == area_name:
+                self._recent[-1] = entry
+            else:
+                self._recent.append(entry)
         self._prune(now)
 
     def _prune(self, now: datetime) -> None:
@@ -99,7 +105,7 @@ class TrajectoryTracker:
         recent distinct-area entries. Returns ``Trajectory(None, None)``
         when no relevant ends exist.
         """
-        prev: str | None = None
+        prev: _RecentEnd | None = None
         prev_prev: str | None = None
         for entry in reversed(self._recent):
             if now - entry.end_time > self._window:
@@ -107,16 +113,17 @@ class TrajectoryTracker:
             if entry.area_name == target_area:
                 continue
             if prev is None:
-                prev = entry.area_name
+                prev = entry
                 continue
-            if entry.area_name == prev:
+            if entry.area_name == prev.area_name:
                 continue
             prev_prev = entry.area_name
             break
         return Trajectory(
-            prev_area=prev,
+            prev_area=prev.area_name if prev is not None else None,
             prev_prev_area=prev_prev,
             hour_of_week=hour_of_week,
+            prev_end_time=prev.end_time if prev is not None else None,
         )
 
     def snapshot(self) -> list[tuple[str, datetime]]:
