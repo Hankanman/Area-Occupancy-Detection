@@ -10,15 +10,20 @@ from custom_components.area_occupancy.const import (
     MIN_PRIOR,
     PRIOR_WARMUP_MIN_SPAN_HOURS,
     TIME_PRIOR_MAX_BOUND,
+    TIME_PRIOR_MIN_BOUND,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
-from custom_components.area_occupancy.data.analysis import compute_zone_priors
+from custom_components.area_occupancy.data.analysis import (
+    compute_slot_priors,
+    compute_zone_priors,
+)
 from custom_components.area_occupancy.data.forecast import (
     build_aggregate_time_priors,
     build_area_time_priors,
     conditioned_forecast,
     forecast_prior,
     persistence_tau_slots,
+    shrink_slot_prior,
     slots_ahead_of,
 )
 from custom_components.area_occupancy.data.prior import (
@@ -26,6 +31,7 @@ from custom_components.area_occupancy.data.prior import (
     PRIOR_FACTOR,
 )
 from custom_components.area_occupancy.data.types import ZonePriors
+from custom_components.area_occupancy.time_utils import to_local
 from custom_components.area_occupancy.utils import combine_priors
 
 # ruff: noqa: SLF001
@@ -78,7 +84,7 @@ def test_build_area_time_priors_structure(coordinator: AreaOccupancyCoordinator)
     # forecast whatever the clock says (``slots`` blends in live evidence for
     # the slots just ahead of now).
     assert data["slots_baseline"]["2,10"] == round(
-        forecast_prior(0.5, 0.6, prior_factor=PRIOR_FACTOR), 4
+        forecast_prior(0.5, 0.6, prior_factor=PRIOR_FACTOR, weeks=1), 4
     )
 
 
@@ -174,8 +180,9 @@ def test_build_aggregate_data_points_take_member_minimum():
 def test_build_aggregate_uses_the_zone_priors():
     """With empirical zone priors the habit is the zone's own (#557).
 
-    forecast_prior(0.4, 0.6) = sigmoid(0.6 * logit(0.4) + 0.4 * logit(0.6))
-    = sigmoid(-0.0811) = 0.47974; raw and data points are the zone's.
+    Three weeks at 0.6 shrink to (3 * 0.6 + 2 * 0.4) / 5 = 0.52, and
+    sigmoid(0.6 * logit(0.4) + 0.4 * logit(0.52)) = sigmoid(-0.2113) = 0.44738;
+    raw and data points are the zone's.
     """
     empirical = ZonePriors(
         global_prior=0.4,
@@ -187,11 +194,11 @@ def test_build_aggregate_uses_the_zone_priors():
 
     res = _aggregate(members, empirical=empirical)
 
-    assert res["slots_baseline"]["0,8"] == pytest.approx(0.4797, abs=1e-4)
+    assert res["slots_baseline"]["0,8"] == pytest.approx(0.4474, abs=1e-4)
     assert res["slots_raw"]["0,8"] == pytest.approx(0.6)
     assert res["data_points"]["0,8"] == 3
     # Quiet members cannot pull the live series below the zone habit.
-    assert res["slots"]["0,8"] == pytest.approx(0.4797, abs=1e-4)
+    assert res["slots"]["0,8"] == pytest.approx(0.4474, abs=1e-4)
 
 
 def test_build_aggregate_live_follows_an_occupied_member():
@@ -249,7 +256,10 @@ class TestComputeZonePriors:
 
 
 def test_zone_prior_reads_the_empirical_priors(coordinator: AreaOccupancyCoordinator):
-    """The All Areas prior uses the zone priors for the current slot."""
+    """The All Areas prior uses the zone priors for the current slot.
+
+    Three weeks at 0.6 shrink to 0.52 against the 0.4 global: 0.44738.
+    """
     area_name = coordinator.get_area_names()[0]
     area = coordinator.get_area(area_name)
     all_areas = coordinator.get_all_areas()
@@ -261,7 +271,7 @@ def test_zone_prior_reads_the_empirical_priors(coordinator: AreaOccupancyCoordin
         computed_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
-    assert all_areas.area_prior() == pytest.approx(0.4797, abs=1e-4)
+    assert all_areas.area_prior() == pytest.approx(0.4474, abs=1e-4)
 
 
 def test_persistence_tau_follows_purpose_ordering():
@@ -310,3 +320,71 @@ def test_slots_ahead_wraps_the_week():
     assert slots_ahead_of(3, 13, 3, 12, 24) == 1
     assert slots_ahead_of(3, 11, 3, 12, 24) == 167
     assert slots_ahead_of(0, 0, 6, 23, 24) == 1
+
+
+class TestSparseSlotPriors:
+    """Thin slots and the hour in progress cannot flip the live prior.
+
+    Live report on 2026.9.2: one week of history per slot (the 2026.9.1
+    database reset) put slots on the 0.9 / 0.03 bounds, and the :57
+    analysis counted the hour still in progress. The Kitchen prior went
+    0.228 -> 0.537 at 17:57 and back at 18:00; the Lounge went occupied
+    at 18:00 on its prior alone, with its only sensor unavailable.
+    """
+
+    def test_shrink_pulls_one_week_a_third_of_the_way(self) -> None:
+        """(1 * 0.9 + 2 * 0.22801) / 3 = 0.45201."""
+        assert shrink_slot_prior(0.9, 1, 0.22801) == pytest.approx(0.452007, abs=1e-6)
+
+    def test_shrink_fades_with_data(self) -> None:
+        """Eight weeks keep 80% of the slot: (8 * 0.9 + 2 * 0.3) / 10 = 0.78."""
+        assert shrink_slot_prior(0.9, 8, 0.3) == pytest.approx(0.78)
+
+    def test_shrink_leaves_unlearned_and_unknown_alone(self) -> None:
+        """No weeks, or no global prior yet: the slot is used as it is."""
+        assert shrink_slot_prior(0.9, 0, 0.3) == 0.9
+        assert shrink_slot_prior(0.9, 3, None) == 0.9
+
+    @pytest.mark.parametrize(
+        ("global_prior", "old", "new"),
+        [
+            # Kitchen and Lounge values from the live report. ``old`` is what
+            # 2026.9.2 showed; ``new`` is combine(g, (0.9 + 2g) / 3).
+            (0.22801, 0.53672, 0.30815),
+            (0.26118, 0.56340, 0.33954),
+        ],
+    )
+    def test_live_prior_stays_below_threshold_on_one_saturated_week(
+        self, coordinator: AreaOccupancyCoordinator, global_prior, old, new
+    ) -> None:
+        """A single week at the 0.9 bound no longer carries the room over 0.5."""
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        prior = area.prior
+        slot = (prior.day_of_week, prior.time_slot)
+        prior.global_prior = global_prior
+        prior._cached_time_priors = {slot: TIME_PRIOR_MAX_BOUND}
+        prior._cached_time_prior_points = {slot: 1}
+
+        assert combine_priors(global_prior, TIME_PRIOR_MAX_BOUND) == pytest.approx(
+            old, abs=1e-5
+        )
+        assert prior.value == pytest.approx(new, abs=1e-5)
+        assert prior.value < area.config.threshold
+
+    def test_the_hour_in_progress_is_not_learned(self) -> None:
+        """Analysis at 12:57 with the room occupied 12:00-12:57 leaves slot 12 alone.
+
+        Before, slot 12 got 57/57 occupied and sat on the 0.9 bound.
+        """
+        start = datetime(2026, 1, 5, tzinfo=UTC)
+        now = start + timedelta(hours=36, minutes=57)
+        busy = (start + timedelta(hours=36), now)
+        slot_12 = (to_local(busy[0]).weekday(), to_local(busy[0]).hour)
+
+        priors, points = compute_slot_priors([busy], start, now)
+
+        assert slot_12 not in priors
+        assert slot_12 not in points
+        # The completed hour before it is still learned (and empty).
+        prev = to_local(busy[0] - timedelta(hours=1))
+        assert priors[(prev.weekday(), prev.hour)] == TIME_PRIOR_MIN_BOUND

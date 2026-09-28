@@ -35,6 +35,8 @@ The Time-Based Prior provides granularity by breaking the week into 1-hour slots
 - **History Analysis**: For each slot, it analyzes historical motion sensor data to determine how often the room was occupied during that specific hour on that day of the week.
 - **Data Source**: Only motion sensors are used for time prior calculation (no media/appliance fallback).
 - **Calculation Method**: The system processes occupied intervals from the lookback period (default: 60 days), groups them by day of week and time slot, and calculates the occupancy percentage for each slot.
+- **Completed Hours Only**: The hour in progress isn't learned until it ends, so being in a room right now can't raise that hour's own prior.
+- **Thin Slots Lean on the Global Prior**: A slot with only a week or two of history is blended with the room's overall prior (two weeks' worth), so a single busy afternoon, or a sensor stuck on, can't make an hour look habitually occupied. As weeks of data accumulate, the slot's own history takes over.
 - **Safety Bounds**: The system bounds these time-specific probabilities between 3% and 90%. This prevents extreme values from dominating the calculation, ensuring that the system remains responsive to new sensor evidence even if the schedule suggests the room "should" be empty.
 - **Result**: This produces a unique probability for every hour of the week, allowing the system to "expect" occupancy at usual times (like evening TV time) and "expect" vacancy at others (like work hours).
 - **Storage**: Time priors are calculated during the analysis cycle and stored in the database. They are automatically recalculated as new historical data becomes available.

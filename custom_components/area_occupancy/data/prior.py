@@ -23,7 +23,7 @@ from ..const import (
 )
 from ..time_utils import to_local
 from ..utils import clamp_probability, combine_priors
-from .forecast import forecast_prior
+from .forecast import forecast_prior, shrink_slot_prior
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -217,6 +217,7 @@ class Prior:
         # Read the cache once into a local: the executor can replace it
         # concurrently.
         time_priors = self._cached_time_priors
+        points = self._cached_time_prior_points
         if time_priors is None:
             return self.unlearned_slot_prior
 
@@ -224,7 +225,14 @@ class Prior:
         current_slot = self.time_slot
         slot_key = (current_day, current_slot)
 
-        return time_priors.get(slot_key, self.unlearned_slot_prior)
+        # A slot with a week or two behind it is pulled toward the global
+        # prior, so one busy (or stuck-on) afternoon cannot push the live
+        # prior across the threshold on its own.
+        return shrink_slot_prior(
+            time_priors.get(slot_key, self.unlearned_slot_prior),
+            points.get(slot_key, 0) if points is not None else 0,
+            self.global_prior,
+        )
 
     @property
     def day_of_week(self) -> int:
@@ -307,14 +315,17 @@ class Prior:
         """
         if self._cached_time_priors is None:
             self.load_time_priors()
+        weeks = 0
         if self._cached_time_priors is None:
             slot_time_prior = self.unlearned_slot_prior
         else:
             slot_time_prior = self._cached_time_priors.get(
                 (day_of_week, time_slot), self.unlearned_slot_prior
             )
+            if self._cached_time_prior_points is not None:
+                weeks = self._cached_time_prior_points.get((day_of_week, time_slot), 0)
         return forecast_prior(
-            self.global_prior, slot_time_prior, prior_factor=PRIOR_FACTOR
+            self.global_prior, slot_time_prior, prior_factor=PRIOR_FACTOR, weeks=weeks
         )
 
     def set_global_prior(
