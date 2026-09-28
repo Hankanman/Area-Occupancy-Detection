@@ -6,17 +6,25 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import (
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
+    CONF_SLEEP_STATE_ENTITY,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
+    SleepOverrideProvider,
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 from custom_components.area_occupancy.data.types import GaussianParams
 from homeassistant.components.lock import LockState
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
@@ -2471,6 +2479,332 @@ def mock_binary_entity():
         state_provider=lambda x: STATE_ON,
         last_updated=dt_util.utcnow(),
     )
+
+
+class TestEntityFactorySleepOverride:
+    """Tests for the optional entity-linked sleep-state override.
+
+    ``EntityFactory._create_sleep_override_provider`` builds a
+    ``SleepOverrideProvider`` bound to the global ``sleep_state_entity``
+    option, or returns None when the option is unset. The provider itself
+    resolves to a three-valued result on each call: confirmed on (True),
+    confirmed off (False), or None for anything unconfigured, missing,
+    unavailable, or unknown. None must always fall back to the clock-based
+    Decay behavior rather than forcing "awake".
+
+    Unlike the pre-fix ``_resolve_sleep_override`` (a one-shot method
+    called once at Entity-creation time), the provider is called fresh on
+    every ``Decay`` half-life calculation -- see
+    ``test_provider_tracks_live_state_with_no_entity_recreation`` below,
+    the direct regression test for the PR #566 frozen-override finding.
+    """
+
+    def test_create_sleep_override_provider_unset(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """No sleep_state_entity configured -> None, no provider built."""
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        assert factory._create_sleep_override_provider() is None
+
+    def test_provider_resolves_on(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """Confirmed 'on' state resolves to True."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        provider = factory._create_sleep_override_provider()
+        assert isinstance(provider, SleepOverrideProvider)
+        assert provider() is True
+
+    def test_provider_resolves_off(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """Confirmed 'off' state resolves to False."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        provider = factory._create_sleep_override_provider()
+        assert provider() is False
+
+    @pytest.mark.parametrize("degraded_state", [STATE_UNAVAILABLE, STATE_UNKNOWN])
+    def test_provider_degraded_states_fall_back_to_none(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+        degraded_state: str,
+    ) -> None:
+        """Unavailable/unknown must resolve to None, never a silent False.
+
+        This is the exact failure class the feature exists to prevent: a
+        broken sleep sensor must never be able to force the short "awake"
+        half-life during real sleep.
+        """
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", degraded_state)
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        provider = factory._create_sleep_override_provider()
+        assert provider() is None
+
+    def test_provider_missing_entity_is_none(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A configured entity_id with no state registered at all -> None."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.does_not_exist"
+        }
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        provider = factory._create_sleep_override_provider()
+        assert provider() is None
+
+    def test_provider_tracks_live_state_with_no_entity_recreation(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A single provider (and the Decay it feeds) follows LIVE flips.
+
+        Direct regression test for the PR #566 finding: the pre-fix code
+        resolved the sleep entity once in the factory and froze the
+        boolean inside ``Decay``, so this scenario -- one entity created
+        once, then the sleep entity flipping off -> on -> unavailable ->
+        off with NO reload -- would have left the half-life stuck at
+        whatever it was on creation. Here the SAME ``Entity``/``Decay``
+        (no recreation, no reload) is checked after each flip.
+        """
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping",
+            # Empty strings, not omitted keys: IntegrationConfig.sleep_start/
+            # sleep_end fall back to DEFAULT_SLEEP_START/END ("23:00:00"/
+            # "07:00:00") when the option key is absent, which would make
+            # the "unavailable -> clock fallback" assertion below depend on
+            # the wall-clock time CI happens to run at. An empty string is
+            # falsy, so Decay._resolve_purpose_half_life() takes its
+            # "sleep times not configured" branch deterministically.
+            CONF_SLEEP_START: "",
+            CONF_SLEEP_END: "",
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+        # 0 resolves to the purpose's own default half-life (see
+        # create_from_config_spec) -- needed so the sleep/awake switch
+        # actually engages. A fixture-default custom half-life would
+        # otherwise trip the #481 custom-half-life bypass (base_half_life
+        # != purpose.half_life), which intentionally ignores the sleep
+        # override entirely and would make this live-flip assertion
+        # meaningless.
+        area.config.decay.half_life = 0
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+        decay = entity.decay
+
+        awake_half_life = decay.purpose.awake_half_life
+        asleep_half_life = decay._base_half_life
+        assert decay._base_half_life == decay.purpose.half_life, (
+            "test setup invariant: the custom-half-life bypass (#481) must "
+            "not be engaged here, or this test would pass vacuously"
+        )
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+        assert decay.half_life == awake_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+        assert decay.half_life == asleep_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
+        # sleep_start/sleep_end forced empty above -> clock fallback is
+        # base_half_life (asleep), deterministically regardless of the
+        # real wall-clock time.
+        assert decay.half_life == asleep_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+        assert decay.half_life == awake_half_life
+
+    def test_create_from_config_spec_threads_override_for_sleeping_purpose(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A Sleeping-purpose area's entity picks up the resolved override."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+
+        assert entity.decay.sleep_override_provider is not None
+        assert entity.decay.sleep_override_provider() is True
+
+    def test_create_from_config_spec_skips_override_for_non_sleeping_purpose(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A non-Sleeping-purpose area never consults the sleep entity at all.
+
+        Decay short-circuits before looking at sleep_override_provider for
+        any purpose other than SLEEPING, so EntityFactory must skip
+        building the provider entirely rather than build it and throw the
+        result away.
+        """
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SOCIAL
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        with patch.object(
+            factory,
+            "_create_sleep_override_provider",
+            wraps=factory._create_sleep_override_provider,
+        ) as mock_create:
+            entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+
+        assert entity.decay.sleep_override_provider is None
+        mock_create.assert_not_called()
+
+    def test_create_from_config_spec_override_none_unset_is_unchanged(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A Sleeping-purpose area with no sleep_state_entity is unchanged.
+
+        Must be byte-for-byte identical to stock behavior:
+        sleep_override_provider stays None and Decay falls through to the
+        sleep_start/sleep_end clock window.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+
+        assert entity.decay.sleep_override_provider is None
+
+
+class TestSleepOverrideProviderWarningRateLimit:
+    """Tests for the unhealthy-state warning rate limit on SleepOverrideProvider.
+
+    Requirement: the warning must NOT fire on every decay tick (every
+    ~10s). It should log a WARNING once on the tick that transitions INTO
+    the unhealthy state, then only DEBUG on every subsequent tick while
+    still unhealthy, and be ready to WARNING again after a recovery
+    followed by a second transition into unhealthy.
+    """
+
+    def test_warns_once_then_debug_then_warns_again_after_recovery(
+        self,
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
+        provider = SleepOverrideProvider(
+            hass, "binary_sensor.house_sleeping", "master_bedroom"
+        )
+
+        with caplog.at_level(
+            "DEBUG", logger="custom_components.area_occupancy.data.entity"
+        ):
+            caplog.clear()
+            assert provider() is None
+            assert sum(1 for r in caplog.records if r.levelname == "WARNING") == 1
+            assert not any(r.levelname == "DEBUG" for r in caplog.records)
+
+            caplog.clear()
+            assert provider() is None
+            assert not any(r.levelname == "WARNING" for r in caplog.records)
+            assert any(r.levelname == "DEBUG" for r in caplog.records)
+
+            caplog.clear()
+            assert provider() is None
+            assert not any(r.levelname == "WARNING" for r in caplog.records)
+            assert any(r.levelname == "DEBUG" for r in caplog.records)
+
+            # Recovers.
+            hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+            caplog.clear()
+            assert provider() is True
+            assert not caplog.records
+
+            # Goes unhealthy again -> WARNING fires again.
+            hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
+            caplog.clear()
+            assert provider() is None
+            assert sum(1 for r in caplog.records if r.levelname == "WARNING") == 1
+
+    def test_single_states_get_per_call(self, hass: HomeAssistant) -> None:
+        """No per-tick DB work: exactly one hass.states.get per call.
+
+        Real HA's ``StateMachine`` doesn't allow patching its bound ``get``
+        method directly (it's read-only on the instance), so this wraps the
+        real ``hass.states`` behind a small counting proxy instead of
+        patching HA internals -- ``SleepOverrideProvider`` only ever needs
+        ``hass.states.get(entity_id)``, so any object with that shape works.
+        """
+
+        class _CountingStates:
+            def __init__(self, real_states) -> None:
+                self._real = real_states
+                self.calls: list[str] = []
+
+            def get(self, entity_id: str):
+                self.calls.append(entity_id)
+                return self._real.get(entity_id)
+
+        class _CountingHass:
+            def __init__(self, real_hass: HomeAssistant) -> None:
+                self.states = _CountingStates(real_hass.states)
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+        counting_hass = _CountingHass(hass)
+        provider = SleepOverrideProvider(
+            counting_hass, "binary_sensor.house_sleeping", "master_bedroom"
+        )
+
+        assert provider() is True
+        assert counting_hass.states.calls == ["binary_sensor.house_sleeping"]
 
 
 class TestGaussianLikelihood:

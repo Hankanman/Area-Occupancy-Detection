@@ -37,6 +37,7 @@ from custom_components.area_occupancy.const import (
     CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
+    CONF_SLEEP_STATE_ENTITY,
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -1227,6 +1228,45 @@ class TestIntegrationConfig:
         mock_realistic_config_entry.options = {config_key: custom_value}
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
         assert getattr(integration_config, property_name) == custom_value
+
+    def test_sleep_state_entity_unset_is_none(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test sleep_state_entity defaults to None when never configured."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.sleep_state_entity is None
+
+    def test_sleep_state_entity_empty_string_is_none(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test sleep_state_entity normalises an empty string (unset via UI) to None."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        mock_realistic_config_entry.options = {CONF_SLEEP_STATE_ENTITY: ""}
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.sleep_state_entity is None
+
+    def test_sleep_state_entity_reads_configured_value(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """Test sleep_state_entity returns the configured entity_id."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.sleep_state_entity == "binary_sensor.house_sleeping"
+
+    def test_sleep_state_entity_storage_key_is_sleep_entity(self) -> None:
+        """Lock the persisted option key to the literal string "sleep_entity".
+
+        CONF_SLEEP_STATE_ENTITY is the readable Python name, but the string
+        it's assigned to is intentionally "sleep_entity" (not
+        "sleep_state_entity") to match this feature's existing naming on a
+        downstream fork. Changing this string silently orphans any already-
+        persisted value without a companion options migration.
+        """
+        assert CONF_SLEEP_STATE_ENTITY == "sleep_entity"
 
     @pytest.mark.parametrize(
         "invalid_value",

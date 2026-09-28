@@ -614,6 +614,190 @@ class TestDecayHalfLife:
         assert decay.half_life == 520.0
 
 
+class TestDecaySleepOverride:
+    """Tests for the optional entity-linked sleep_override_provider parameter.
+
+    ``sleep_override_provider`` lets a caller inject a zero-arg callable
+    that resolves an external sleep-state entity (schedule/input_boolean/
+    binary_sensor) live, in place of the sleep_start/sleep_end clock check.
+    ``Decay`` calls it fresh on every half-life calculation rather than
+    resolving it once -- see the PR #566 review finding: the previous
+    design took a plain resolved ``sleep_override: bool | None`` and baked
+    it into ``Decay`` at construction time, so a later on/off transition of
+    the entity was never picked up without recreating the entity. A
+    provider call returning ``None`` means "no sleep state entity
+    configured (or it's unhealthy)" and must fall back to the pre-existing
+    clock-based behavior byte-for-byte.
+    """
+
+    def test_override_none_is_unchanged_behavior(self) -> None:
+        """A provider returning None must not alter any prior case.
+
+        Mirrors test_sleeping_relaxing_fallback but explicitly passes a
+        provider that always returns None, to lock in that it is
+        equivalent to omitting the parameter entirely.
+        """
+        decay = Decay(
+            half_life=SLEEPING_HALF_LIFE,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_start="23:00:00",
+            sleep_end="07:00:00",
+            sleep_override_provider=lambda: None,
+        )
+        with (
+            patch("homeassistant.util.dt.utcnow") as mock_utcnow,
+            patch("homeassistant.util.dt.as_local") as mock_as_local,
+        ):
+            noon = datetime(2023, 1, 15, 12, 0, 0, tzinfo=dt_util.UTC)
+            mock_utcnow.return_value = noon
+            mock_as_local.return_value = noon
+            assert decay.half_life == RELAXING_HALF_LIFE
+
+    def test_override_true_forces_asleep_half_life(self) -> None:
+        """A provider returning True must select the asleep half-life.
+
+        Uses noon -- outside the configured clock window -- to prove the
+        entity override, not the clock, is what decided the outcome.
+        """
+        decay = Decay(
+            half_life=SLEEPING_HALF_LIFE,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_start="23:00:00",
+            sleep_end="07:00:00",
+            sleep_override_provider=lambda: True,
+        )
+        with (
+            patch("homeassistant.util.dt.utcnow") as mock_utcnow,
+            patch("homeassistant.util.dt.as_local") as mock_as_local,
+        ):
+            noon = datetime(2023, 1, 15, 12, 0, 0, tzinfo=dt_util.UTC)
+            mock_utcnow.return_value = noon
+            mock_as_local.return_value = noon
+            assert decay.half_life == SLEEPING_HALF_LIFE
+
+    def test_override_false_forces_awake_half_life(self) -> None:
+        """A provider returning False must select the awake half-life.
+
+        Uses 2am -- inside the configured clock window -- to prove the
+        entity override, not the clock, is what decided the outcome.
+        """
+        decay = Decay(
+            half_life=SLEEPING_HALF_LIFE,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_start="23:00:00",
+            sleep_end="07:00:00",
+            sleep_override_provider=lambda: False,
+        )
+        with (
+            patch("homeassistant.util.dt.utcnow") as mock_utcnow,
+            patch("homeassistant.util.dt.as_local") as mock_as_local,
+        ):
+            two_am = datetime(2023, 1, 15, 2, 0, 0, tzinfo=dt_util.UTC)
+            mock_utcnow.return_value = two_am
+            mock_as_local.return_value = two_am
+            assert decay.half_life == RELAXING_HALF_LIFE
+
+    def test_override_true_without_clock_config(self) -> None:
+        """The provider still works with no sleep_start/sleep_end set at all."""
+        decay = Decay(
+            half_life=SLEEPING_HALF_LIFE,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_override_provider=lambda: True,
+        )
+        assert decay.half_life == SLEEPING_HALF_LIFE
+
+    def test_override_false_without_clock_config(self) -> None:
+        """The provider still works with no sleep_start/sleep_end set at all."""
+        decay = Decay(
+            half_life=SLEEPING_HALF_LIFE,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_override_provider=lambda: False,
+        )
+        assert decay.half_life == RELAXING_HALF_LIFE
+
+    def test_custom_half_life_bypasses_override(self) -> None:
+        """A user-configured half-life still overrides the provider too (#481).
+
+        Same rule as the clock case: the awake/asleep alternative only ever
+        applies when half_life is the purpose's own default.
+        """
+        custom_half_life = 10.0
+        decay = Decay(
+            half_life=custom_half_life,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_override_provider=lambda: False,
+        )
+        assert decay.half_life == custom_half_life
+
+        decay_asleep = Decay(
+            half_life=custom_half_life,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_override_provider=lambda: True,
+        )
+        assert decay_asleep.half_life == custom_half_life
+
+    def test_override_ignored_for_purpose_without_awake_half_life(self) -> None:
+        """A purpose with no awake_half_life ignores the provider entirely."""
+        decay = Decay(
+            half_life=520.0,
+            purpose=AreaPurpose.SOCIAL.value,
+            sleep_override_provider=lambda: False,
+        )
+        assert decay.purpose.awake_half_life is None
+        assert decay.half_life == 520.0
+
+    def test_override_default_is_none(self) -> None:
+        """The sleep_override_provider constructor default is None."""
+        decay = Decay(half_life=30.0)
+        assert decay.sleep_override_provider is None
+
+    def test_provider_called_fresh_on_every_half_life_access(self) -> None:
+        """Decay must call the provider live, not cache its first result.
+
+        Regression test for the frozen-override bug (PR #566): a single
+        ``Decay`` instance is constructed ONCE, then the mutable provider
+        backing it is flipped off -> on -> unavailable (None, clock
+        fallback) -> off, with NO ``Decay``/entity recreation between
+        calls -- mirroring ``binary_sensor.house_sleeping`` flipping
+        overnight with no HA reload. Against the pre-fix ``Decay`` (a
+        plain resolved ``sleep_override: bool | None`` baked in at
+        ``__init__``), this either raises ``TypeError`` (the constructor
+        kwarg was renamed) or the returned half-life would stay frozen at
+        whatever the provider returned when ``Decay`` was constructed,
+        never following these later flips.
+        """
+
+        class _MutableProvider:
+            def __init__(self, value: bool | None) -> None:
+                self.value = value
+
+            def __call__(self) -> bool | None:
+                return self.value
+
+        provider = _MutableProvider(False)
+        decay = Decay(
+            half_life=SLEEPING_HALF_LIFE,
+            purpose=AreaPurpose.SLEEPING.value,
+            sleep_start=None,
+            sleep_end=None,
+            sleep_override_provider=provider,
+        )
+
+        provider.value = False
+        assert decay.half_life == RELAXING_HALF_LIFE
+
+        provider.value = True
+        assert decay.half_life == SLEEPING_HALF_LIFE
+
+        # Unhealthy -> None -> clock fallback. No sleep_start/sleep_end
+        # configured, so the clock fallback is base_half_life (asleep).
+        provider.value = None
+        assert decay.half_life == SLEEPING_HALF_LIFE
+
+        provider.value = False
+        assert decay.half_life == RELAXING_HALF_LIFE
+
+
 class TestDecayModifierFactor:
     """Tests for the adjacent-areas Phase 4 decay-modifier hook."""
 

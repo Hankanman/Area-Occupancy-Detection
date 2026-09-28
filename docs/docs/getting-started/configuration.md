@@ -42,7 +42,7 @@ The following purposes are available (in order of decay time, shortest to longes
 You can override the resulting half-life in the Detection Behavior step if needed.
 
 **Global Sleep Schedule:**
-For areas with the `Bedroom` purpose, the half-life dynamically adjusts based on your configured sleep schedule. You can set your household’s `Sleep Start` and `Sleep End` times in the **Global Settings** menu (accessible via the main integration options). Outside of sleep hours, `Bedroom` areas behave like `Living Room` areas.
+For areas with the `Bedroom` purpose, the half-life dynamically adjusts based on your configured sleep schedule. You can set your household’s `Sleep Start` and `Sleep End` times in the **Global Settings** menu (accessible via the main integration options). Outside of sleep hours, `Bedroom` areas behave like `Living Room` areas. If your sleep schedule doesn't follow a fixed clock, you can instead point the optional `Sleep State Entity` setting at a `schedule`, `input_boolean`, or `binary_sensor` that reflects whether the house is asleep — its on/off state then overrides `Sleep Start`/`Sleep End` entirely. See [Dynamic Sleeping Decay](../features/purpose.md#dynamic-sleeping-decay) for details, including the fallback behavior if that entity becomes unavailable.
 
 **Sensor State Precision:**
 To reduce database writes and storage consumption in the Home Assistant recorder, you can configure the global `Sensor state precision (decimals)` setting (0-2 decimals, default: 2) in the **Global Settings** menu. Lowering this value rounds the state of numeric diagnostic sensors (like probability, prior, decay, and confidence sensors), significantly reducing the volume of database updates.
