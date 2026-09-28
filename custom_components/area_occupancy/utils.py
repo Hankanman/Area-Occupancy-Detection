@@ -176,6 +176,8 @@ def evidence_value(entity: Entity) -> float:
     two places is how the two would silently drift. Pure refactor: the
     live pipeline's behavior is unchanged.
     """
+    if getattr(entity, "is_stuck", False) is True:
+        return 0.0  # Flagged stuck active: a repair, not evidence
     if entity.evidence is True:
         return 1.0
     if entity.decay.is_decaying:

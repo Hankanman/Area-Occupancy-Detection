@@ -12,11 +12,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from custom_components.area_occupancy.const import DEFAULT_MEDIA_ACTIVE_STATES
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 from custom_components.area_occupancy.db.operations import (
     save_global_prior,
     save_occupied_intervals_cache,
 )
 from custom_components.area_occupancy.db.queries import (
+    _stuck_limits,
     build_base_filters,
     build_motion_query,
     build_presence_query,
@@ -31,6 +33,7 @@ from custom_components.area_occupancy.db.queries import (
     get_stored_time_priors,
     get_time_prior,
     is_occupied_intervals_cache_valid,
+    process_query_results,
 )
 from homeassistant.util import dt as dt_util
 
@@ -1402,3 +1405,36 @@ class TestGetStoredTimePriors:
 
         monkeypatch.setattr(db, "get_session", _boom)
         assert get_stored_time_priors(db, db.coordinator.entry_id, area_name) is None
+
+
+class TestStuckStretchesAreNotGroundTruth:
+    """Presence longer than the stuck-active threshold is cut to it."""
+
+    def test_long_media_interval_is_clipped(self) -> None:
+        """25h paused media teaches 12h of occupancy, not 25h.
+
+        Motion under its own limit is untouched.
+        """
+        start = datetime(2026, 9, 27, 11, 7)
+        results = [
+            (start, start + timedelta(hours=25), "media"),
+            (start, start + timedelta(hours=2), "motion"),
+        ]
+
+        all_intervals, motion_raw = process_query_results(
+            results, {"media": timedelta(hours=12), "motion": timedelta(hours=8)}
+        )
+
+        durations = sorted((end - begin) for begin, end in all_intervals)
+        assert durations == [timedelta(hours=2), timedelta(hours=12)]
+        assert [end - begin for begin, end in motion_raw] == [timedelta(hours=2)]
+
+    def test_limits_follow_the_area_purpose(self) -> None:
+        """A media room gets 4x: motion 32h, media 48h; sleep is never cut."""
+        area = SimpleNamespace(purpose=SimpleNamespace(purpose=AreaPurpose.RELAXING))
+        db = SimpleNamespace(coordinator=SimpleNamespace(get_area=lambda name: area))
+
+        assert _stuck_limits(db, "Lounge") == {
+            "motion": timedelta(hours=32),
+            "media": timedelta(hours=48),
+        }

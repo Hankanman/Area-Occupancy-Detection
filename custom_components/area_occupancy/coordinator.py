@@ -73,7 +73,9 @@ def _ground_truth_present(area: Area) -> bool:
     builds the learned priors and area transitions from.
     """
     return any(
-        entity.evidence is True and entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
+        entity.evidence is True
+        and entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
+        and getattr(entity, "is_stuck", False) is not True
         for entity in area.entities.entities.values()
     )
 

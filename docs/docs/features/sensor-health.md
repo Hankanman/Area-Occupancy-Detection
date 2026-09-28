@@ -42,6 +42,23 @@ Two exemptions apply: `media_player.*` entities are never flagged for being
 `unavailable` (a TV powering off is normal operation, not a fault), and the
 virtual Sleep presence sensor is excluded from all health checks.
 
+#### A stuck sensor stops counting
+
+Once a sensor is flagged stuck active, it **no longer counts as evidence**.
+Otherwise a TV left paused for a day would hold the room occupied with nobody
+there. The sensor counts again the moment it changes state. When a stuck
+stretch finally ends, it doesn't start a decay either, because it never
+counted in the first place.
+
+The repair stays open for you to fix. If the long activity is real (a TV
+that genuinely plays all day), **Ignore** the repair and the sensor keeps
+counting.
+
+Stuck stretches don't train the model either. When the area learns from
+history, any motion or media stretch longer than its stuck-active threshold
+is cut to the threshold, so a sensor stuck on can't teach the room a habit.
+Sleep sensors are never cut.
+
 !!! tip "Turning it all off"
     Repair monitoring can be disabled entirely under **Configure → Global
     Settings → Enable sensor health monitoring**. Ignored repair issues also
@@ -138,6 +155,7 @@ In addition to per-sensor checks, the same health monitor flags **calculation pi
 | **Insufficient priors** | Area has been running for more than 7 days but no global occupancy prior has been learned. The integration is silently falling back to a minimum baseline for every Bayesian update. | Warning |
 | **Stale intervals cache** | The occupied-intervals cache (rebuilt hourly) is older than 25h, or has never been populated for an area more than 7 days old. Indicates the analysis pipeline has stopped refreshing for this area. | Error |
 | **Slow analysis** | The most recent full analysis cycle took longer than 30 seconds. Usually points to database pressure, very large sensor / area count, or a long-running correlation run. | Warning |
+| **Prior above threshold** | At some hour of the week, the area's learned prior reaches its occupancy threshold, so it reads occupied then with no sensor active. The prior is learned from your own history, so it may be right. The repair names the hour and suggests a threshold 5 points above the peak; ignore it if the behavior is what you want. | Warning |
 | **Correlation failures** | Half or more of the area's correlatable sensors failed correlation analysis on the last cycle (e.g. `too_few_samples`, `no_occupied_intervals`). Without correlations, sensors can't be tuned to your installation's behavior. | Warning |
 
 ### How to read pipeline issues
@@ -145,7 +163,7 @@ In addition to per-sensor checks, the same health monitor flags **calculation pi
 Each repair entry includes a short numeric summary in the title (hours since the issue started, hours of cache age, etc.) and a longer description with **What to do** steps tailored to the failure.
 
 - For the deepest detail, download diagnostics from the integration card — pipeline issues are surfaced under each area's `health` section, and the inputs that drove them (priors, cache age, correlation `analysis_error` fields) are visible in the same dump. See [Diagnostics](../technical/diagnostics.md).
-- All four issues auto-resolve when the next analysis cycle finds the underlying state has recovered (e.g. the prior is learned, the cache rebuilds, analysis completes faster, correlations succeed).
+- All of these issues auto-resolve when the next analysis cycle finds the underlying state has recovered (e.g. the prior is learned, the cache rebuilds, analysis completes faster, correlations succeed).
 
 ## Common Scenarios
 

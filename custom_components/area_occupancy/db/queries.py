@@ -254,7 +254,9 @@ def get_occupied_intervals(
             all_results = execute_union_queries(
                 session, db, [motion_query, presence_query]
             )
-            all_intervals, motion_raw = process_query_results(all_results)
+            all_intervals, motion_raw = process_query_results(
+                all_results, _stuck_limits(db, area_name)
+            )
 
         query_time = (dt_util.utcnow() - start_time).total_seconds()
         _LOGGER.debug(
@@ -467,7 +469,7 @@ def build_presence_query(
         session.query(
             db.Intervals.start_time,
             db.Intervals.end_time,
-            literal("presence").label("sensor_type"),
+            db.Entities.entity_type.label("sensor_type"),
         )
         .join(
             db.Entities,
@@ -499,20 +501,51 @@ def execute_union_queries(
     return combined.order_by(db.Intervals.start_time).all()
 
 
+def _stuck_limits(db: AreaOccupancyDB, area_name: str) -> dict[str, timedelta]:
+    """The longest believable active stretch per ground-truth sensor type.
+
+    The health check's stuck-active thresholds for this area's purpose: a
+    stretch longer than that gets flagged as a stuck sensor, so it can't be
+    trusted as occupancy history either. Sleep has no threshold and is never
+    clipped.
+    """
+    from ..data.health import stuck_active_threshold  # noqa: PLC0415
+
+    area = db.coordinator.get_area(area_name)
+    purpose = area.purpose.purpose if area is not None else None
+    limits: dict[str, timedelta] = {}
+    for input_type in (InputType.MOTION, InputType.MEDIA, InputType.SLEEP):
+        limit = stuck_active_threshold(input_type, purpose)
+        if limit is not None:
+            limits[input_type.value] = limit
+    return limits
+
+
 def process_query_results(
     results: list[tuple[datetime, datetime, str]],
+    max_durations: dict[str, timedelta] | None = None,
 ) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
     """Process query results into all intervals and motion-only intervals.
 
     Motion intervals are tracked separately because apply_motion_timeout()
     only extends motion segments (not sleep/media presence).
+
+    An interval longer than its sensor type's ``max_durations`` entry is cut
+    to that length: past it the sensor would be flagged stuck active, so the
+    rest is a stuck sensor, not someone present. Without the cut, one
+    player left paused for a day taught the area a prior and likelihoods
+    as if it had been occupied all day.
     """
     motion_raw: list[tuple[datetime, datetime]] = []
     all_intervals: list[tuple[datetime, datetime]] = []
+    limits = max_durations or {}
 
     for start, end, sensor_type in results:
         # DB stores naive UTC; convert to aware UTC for runtime computations
         interval = (from_db_utc(start), from_db_utc(end))
+        limit = limits.get(sensor_type)
+        if limit is not None and interval[1] - interval[0] > limit:
+            interval = (interval[0], interval[0] + limit)
         all_intervals.append(interval)
         if sensor_type == "motion":
             motion_raw.append(interval)

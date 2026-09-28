@@ -361,6 +361,8 @@ def _score_binary_indicator(
         ):
             continue
 
+        if getattr(entity, "is_stuck", False) is True:
+            continue  # Flagged stuck active: not evidence of an activity
         if indicator.require_active:
             if entity.evidence is True:
                 strength = 1.0

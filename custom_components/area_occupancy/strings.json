@@ -1199,6 +1199,10 @@
         "wasp_in_box_deprecated": {
             "title": "Wasp in Box is being replaced by a built-in closed-door hold",
             "description": "Wasp in Box is enabled for: **{areas}**.\n\nIt is being replaced by occupancy that is built into the areas themselves: an area stays occupied while its door stays closed after motion, and while nobody is seen leaving. When that ships, these areas switch over automatically with the same behaviour, and the Wasp in Box setting and sensor are removed in the release after.\n\n**What to do:**\n- Keep Wasp in Box on until then: turning it off now only loses the hold early.\n- If an automation or dashboard uses a Wasp in Box sensor, point it at the area's Occupancy Status sensor instead, which will carry the hold.\n- Once nothing uses the Wasp in Box sensor, you can ignore this notice."
+        },
+        "pipeline_health_prior_above_threshold": {
+            "title": "{area} can read occupied from habit alone",
+            "description": "**{area}** has learned that it is usually occupied at some times of the week, strongly enough to reach its occupancy threshold with no sensor active.\n\n{details}\n\nThis is learned from your own history, so it may be exactly right: the room really is occupied then. If you'd rather it only reads occupied when a sensor sees someone, raise the area's **Occupancy threshold** to the suggested value (the area's **Reconfigure** → **Detection behaviour**).\n\nThis issue resolves automatically once the threshold is above the learned prior, or you can ignore it if the behaviour is what you want."
         }
     },
     "config_subentries": {
