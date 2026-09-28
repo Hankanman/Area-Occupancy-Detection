@@ -8,7 +8,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,
+    _ground_truth_present,
+)
 from custom_components.area_occupancy.data.analysis import _peak_learned_prior
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
@@ -1815,10 +1818,17 @@ class TestPriorAboveThreshold:
 
     @pytest.mark.parametrize(
         ("peak", "expected"),
-        [(0.5634, 0.62), (0.9, 0.95), (0.97, 0.99)],
+        [(0.5634, 0.62), (0.9, 0.95), (0.94, 0.99), (0.95, None), (0.99, None)],
     )
-    def test_suggested_threshold(self, peak: float, expected: float) -> None:
-        """Five points above the peak, rounded up, capped at 99%."""
+    def test_suggested_threshold(self, peak: float, expected: float | None) -> None:
+        """Five points above the peak, rounded up; none past 99%.
+
+        Probability tops out at 99%, so a higher threshold would stop the
+        area ever reading occupied.
+        """
+        if expected is None:
+            assert suggested_threshold(peak) is None
+            return
         assert suggested_threshold(peak) == pytest.approx(expected)
 
     def test_peak_at_threshold_raises_a_repair(self, monitor: HealthMonitor) -> None:
@@ -1829,6 +1839,29 @@ class TestPriorAboveThreshold:
             "At Monday 18:00 the learned prior is 56%, at or above the 50% "
             "threshold. A threshold of 62% keeps it below."
         )
+
+    def test_no_workable_threshold_says_so(self, monitor: HealthMonitor) -> None:
+        """A 97% peak can't be cleared by any usable threshold."""
+        issues = self._pipeline(monitor, (0.97, "Sunday 03:00"), 0.5)
+
+        assert issues[0].details == (
+            "At Sunday 03:00 the learned prior is 97%, at or above the 50% "
+            "threshold. No threshold can keep it below and still let sensors "
+            "mark the area occupied (probability tops out at 99%): the area "
+            "is almost always occupied then."
+        )
+
+    def test_flagging_a_stuck_sensor_is_not_a_departure(
+        self, monitor: HealthMonitor
+    ) -> None:
+        """Trajectory presence still counts a stuck sensor; live labels don't."""
+        entity = TestStuckSensorsStopCounting._stuck_media({"value": "on"})
+        area = Mock()
+        area.entities.entities = {"kitchen": entity}
+        TestStuckSensorsStopCounting._check(monitor, entity, ignored=False)
+
+        assert _ground_truth_present(area, include_stuck=True)
+        assert not _ground_truth_present(area)
 
     def test_peak_below_threshold_is_fine(self, monitor: HealthMonitor) -> None:
         assert self._pipeline(monitor, (0.49, "Monday 18:00"), 0.5) == []

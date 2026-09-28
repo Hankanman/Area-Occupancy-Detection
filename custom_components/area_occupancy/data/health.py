@@ -27,7 +27,7 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
-from ..const import DOMAIN, HOME_ZONE_ENTITY_ID
+from ..const import DOMAIN, HOME_ZONE_ENTITY_ID, MAX_PROBABILITY
 from .entity_type import BINARY_INPUT_TYPES, InputType
 from .purpose import AreaPurpose
 
@@ -211,13 +211,16 @@ def _format_duration_human(hours: float) -> str:
     return f"{total_seconds // 86400}d"
 
 
-def suggested_threshold(peak_prior: float) -> float:
+def suggested_threshold(peak_prior: float) -> float | None:
     """A threshold safely above an area's highest learned prior.
 
-    Five points of headroom, rounded up to a whole percent and capped at
-    99%, so the prior alone stays below it.
+    Five points of headroom, rounded up to a whole percent. ``None`` when
+    that would exceed ``MAX_PROBABILITY``: occupancy probability never goes
+    above it, so such a threshold would stop the area ever reading
+    occupied, and no threshold can clear the repair.
     """
-    return min(0.99, math.ceil((peak_prior + PRIOR_THRESHOLD_HEADROOM) * 100) / 100)
+    suggested = math.ceil((peak_prior + PRIOR_THRESHOLD_HEADROOM) * 100) / 100
+    return suggested if suggested <= MAX_PROBABILITY else None
 
 
 def stuck_active_threshold(
@@ -992,6 +995,16 @@ class HealthMonitor:
         if peak < threshold:
             return None
         suggested = suggested_threshold(peak)
+        advice = (
+            f"A threshold of {suggested * 100:.0f}% keeps it below."
+            if suggested is not None
+            else (
+                "No threshold can keep it below and still let sensors mark "
+                f"the area occupied (probability tops out at "
+                f"{MAX_PROBABILITY * 100:.0f}%): the area is almost always "
+                "occupied then."
+            )
+        )
         return HealthIssue(
             entity_id=None,
             issue_type=HealthIssueType.PRIOR_ABOVE_THRESHOLD,
@@ -1000,8 +1013,7 @@ class HealthMonitor:
             duration_hours=0.0,
             details=(
                 f"At {slot} the learned prior is {peak * 100:.0f}%, at or "
-                f"above the {threshold * 100:.0f}% threshold. A threshold of "
-                f"{suggested * 100:.0f}% keeps it below."
+                f"above the {threshold * 100:.0f}% threshold. {advice}"
             ),
         )
 

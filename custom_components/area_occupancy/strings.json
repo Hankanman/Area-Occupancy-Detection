@@ -1202,7 +1202,7 @@
         },
         "pipeline_health_prior_above_threshold": {
             "title": "{area} can read occupied from habit alone",
-            "description": "**{area}** has learned that it is usually occupied at some times of the week, strongly enough to reach its occupancy threshold with no sensor active.\n\n{details}\n\nThis is learned from your own history, so it may be exactly right: the room really is occupied then. If you'd rather it only reads occupied when a sensor sees someone, raise the area's **Occupancy threshold** to the suggested value (the area's **Reconfigure** → **Detection behaviour**).\n\nThis issue resolves automatically once the threshold is above the learned prior, or you can ignore it if the behaviour is what you want."
+            "description": "**{area}** has learned that it is usually occupied at some times of the week, strongly enough to reach its occupancy threshold with no sensor active.\n\n{details}\n\nThis is learned from your own history, so it may be exactly right: the room really is occupied then. If you'd rather it only reads occupied when a sensor sees someone and a threshold is suggested above, raise the area's **Occupancy threshold** to it (the area's **Reconfigure** → **Detection behaviour**).\n\nThis issue resolves automatically once the threshold is above the learned prior, or you can ignore it if the behaviour is what you want."
         }
     },
     "config_subentries": {
