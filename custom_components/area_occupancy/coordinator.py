@@ -66,16 +66,22 @@ from .utils import evidence_value, format_area_names, logit
 _LOGGER = logging.getLogger(__name__)
 
 
-def _ground_truth_present(area: Area) -> bool:
+def _ground_truth_present(area: Area, *, include_stuck: bool = False) -> bool:
     """Return whether any of the area's ground-truth sensors is active.
 
     Motion, media and sleep: the evidence ``db.queries.get_occupied_intervals``
     builds the learned priors and area transitions from.
+
+    Args:
+        area: The area.
+        include_stuck: Count sensors flagged stuck active. The trajectory
+            tracker needs this: flagging a sensor that is still on is not
+            anyone leaving, and dropping it would record a departure.
     """
     return any(
         entity.evidence is True
         and entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
-        and getattr(entity, "is_stuck", False) is not True
+        and (include_stuck or getattr(entity, "is_stuck", False) is not True)
         for entity in area.entities.entities.values()
     )
 
@@ -666,7 +672,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # decay tail runs out, and in an empty house it would make every
         # fading area look like someone moving on to its neighbours.
         for area_name, area in self.areas.items():
-            present = _ground_truth_present(area)
+            present = _ground_truth_present(area, include_stuck=True)
             self._trajectory_tracker.observe(
                 area_name,
                 was_present=self._ground_truth_presence.get(area_name, False),
