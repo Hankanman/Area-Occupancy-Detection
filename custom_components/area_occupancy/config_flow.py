@@ -1803,11 +1803,15 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): TimeSelector(),
             vol.Optional(
                 CONF_SLEEP_STATE_ENTITY,
-                default=defaults.get(CONF_SLEEP_STATE_ENTITY, ""),
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    domain=["schedule", "input_boolean", "binary_sensor"]
-                )
+                default=defaults.get(CONF_SLEEP_STATE_ENTITY) or None,
+            ): vol.Any(
+                None,
+                "",
+                EntitySelector(
+                    EntitySelectorConfig(
+                        domain=["schedule", "input_boolean", "binary_sensor"]
+                    )
+                ),
             ),
             vol.Required(
                 CONF_HEALTH_ENABLED,
