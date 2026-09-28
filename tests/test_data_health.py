@@ -1818,7 +1818,14 @@ class TestPriorAboveThreshold:
 
     @pytest.mark.parametrize(
         ("peak", "expected"),
-        [(0.5634, 0.62), (0.9, 0.95), (0.94, 0.99), (0.95, None), (0.99, None)],
+        [
+            (0.5634, 0.62),
+            (0.56, 0.61),
+            (0.9, 0.95),
+            (0.94, 0.99),
+            (0.95, None),
+            (0.99, None),
+        ],
     )
     def test_suggested_threshold(self, peak: float, expected: float | None) -> None:
         """Five points above the peak, rounded up; none past 99%.
@@ -1846,9 +1853,9 @@ class TestPriorAboveThreshold:
 
         assert issues[0].details == (
             "At Sunday 03:00 the learned prior is 97%, at or above the 50% "
-            "threshold. No threshold can keep it below and still let sensors "
-            "mark the area occupied (probability tops out at 99%): the area "
-            "is almost always occupied then."
+            "threshold. No threshold leaves five points of headroom within "
+            "the 99% limit on occupancy probability: the area is almost "
+            "always occupied then."
         )
 
     def test_flagging_a_stuck_sensor_is_not_a_departure(
