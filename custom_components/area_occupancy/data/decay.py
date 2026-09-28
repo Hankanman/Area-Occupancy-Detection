@@ -24,6 +24,7 @@ class Decay:
         purpose: str | None = None,
         sleep_start: str | None = None,
         sleep_end: str | None = None,
+        sleep_override: bool | None = None,
     ) -> None:
         """Initialize the decay model.
 
@@ -34,6 +35,12 @@ class Decay:
             purpose: Area purpose string.
             sleep_start: Sleep start time string (HH:MM:SS).
             sleep_end: Sleep end time string (HH:MM:SS).
+            sleep_override: Resolved on/off state of the optional sleep
+                state entity (schedule/input_boolean/binary_sensor), pre-
+                resolved by the caller since Decay itself has no hass
+                access. When not None, this takes priority over the
+                sleep_start/sleep_end clock window. None means "no sleep
+                state entity configured" -- fall back to the clock check.
         """
         # Ensure decay_start is timezone-aware
         if decay_start is not None:
@@ -46,6 +53,7 @@ class Decay:
         self._purpose = Purpose(purpose) if purpose is not None else None
         self.sleep_start = sleep_start
         self.sleep_end = sleep_end
+        self.sleep_override = sleep_override
         # Adjacent-areas Phase 4 multiplier — coordinator sets it per
         # tick to stretch the effective half-life when this entity's
         # area has silent adjacent neighbours. Defaults to 1.0 (no
@@ -89,6 +97,15 @@ class Decay:
         # is the purpose's own default (#481).
         if self._base_half_life != self._purpose.half_life:
             return self._base_half_life
+
+        # An entity-linked sleep override (schedule/input_boolean/
+        # binary_sensor) takes priority over the clock window when
+        # configured -- it's resolved by the caller (Decay has no hass
+        # access) and passed in pre-computed.
+        if self.sleep_override is not None:
+            if self.sleep_override:
+                return self._base_half_life
+            return self._purpose.awake_half_life
 
         # If sleep times are not configured, use base half-life
         if not self.sleep_start or not self.sleep_end:

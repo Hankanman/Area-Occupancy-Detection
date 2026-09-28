@@ -62,6 +62,7 @@ from ..const import (
     CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
+    CONF_SLEEP_STATE_ENTITY,
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -205,6 +206,20 @@ class IntegrationConfig:
     def sleep_end(self) -> str:
         """Get sleep end time from config entry options."""
         return self.config_entry.options.get(CONF_SLEEP_END, DEFAULT_SLEEP_END)
+
+    @property
+    def sleep_state_entity(self) -> str | None:
+        """Get the optional sleep-state entity from config entry options.
+
+        When set, this entity's on/off state overrides the sleep_start/
+        sleep_end clock window for the Sleeping-purpose decay switch.
+        Returns None if not configured (empty string is normalised to None).
+
+        Not to be confused with the per-area ``sleep_entity_id`` attribute
+        on ``Area`` (its own SleepPresenceSensor entity_id) -- this is a
+        distinct, global, user-configured option.
+        """
+        return self.config_entry.options.get(CONF_SLEEP_STATE_ENTITY) or None
 
     @property
     def health_enabled(self) -> bool:

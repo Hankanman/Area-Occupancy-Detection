@@ -133,6 +133,7 @@ from .const import (
     CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
+    CONF_SLEEP_STATE_ENTITY,
     CONF_SOUND_PRESSURE_SENSORS,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
@@ -1800,6 +1801,14 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_SLEEP_END,
                 default=defaults.get(CONF_SLEEP_END, DEFAULT_SLEEP_END),
             ): TimeSelector(),
+            vol.Optional(
+                CONF_SLEEP_STATE_ENTITY,
+                default=defaults.get(CONF_SLEEP_STATE_ENTITY, ""),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=["schedule", "input_boolean", "binary_sensor"]
+                )
+            ),
             vol.Required(
                 CONF_HEALTH_ENABLED,
                 default=defaults.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED),
@@ -3191,6 +3200,9 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             ),
             CONF_SLEEP_END: self.config_entry.options.get(
                 CONF_SLEEP_END, DEFAULT_SLEEP_END
+            ),
+            CONF_SLEEP_STATE_ENTITY: self.config_entry.options.get(
+                CONF_SLEEP_STATE_ENTITY, ""
             ),
             CONF_HEALTH_ENABLED: self.config_entry.options.get(
                 CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import CONF_SLEEP_STATE_ENTITY
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
@@ -14,9 +15,11 @@ from custom_components.area_occupancy.data.entity import (
     EntityManager,
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 from custom_components.area_occupancy.data.types import GaussianParams
 from homeassistant.components.lock import LockState
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
@@ -2471,6 +2474,165 @@ def mock_binary_entity():
         state_provider=lambda x: STATE_ON,
         last_updated=dt_util.utcnow(),
     )
+
+
+class TestEntityFactorySleepOverride:
+    """Tests for the optional entity-linked sleep-state override.
+
+    ``EntityFactory._resolve_sleep_override`` resolves the global
+    ``sleep_state_entity`` option to a three-valued result: confirmed on
+    (True), confirmed off (False), or None for anything unconfigured,
+    missing, unavailable, or unknown. None must always fall back to the
+    clock-based Decay behavior rather than forcing "awake".
+    """
+
+    def test_resolve_sleep_override_unset(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """No sleep_state_entity configured -> None, no hass.states lookup needed."""
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        assert factory._resolve_sleep_override() is None
+
+    def test_resolve_sleep_override_on(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """Confirmed 'on' state resolves to True."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        assert factory._resolve_sleep_override() is True
+
+    def test_resolve_sleep_override_off(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """Confirmed 'off' state resolves to False."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        assert factory._resolve_sleep_override() is False
+
+    @pytest.mark.parametrize("degraded_state", [STATE_UNAVAILABLE, STATE_UNKNOWN])
+    def test_resolve_sleep_override_degraded_states_fall_back_to_none(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+        degraded_state: str,
+    ) -> None:
+        """Unavailable/unknown must resolve to None, never a silent False.
+
+        This is the exact failure class the feature exists to prevent: a
+        broken sleep sensor must never be able to force the short "awake"
+        half-life during real sleep.
+        """
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", degraded_state)
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        assert factory._resolve_sleep_override() is None
+
+    def test_resolve_sleep_override_missing_entity_is_none(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A configured entity_id with no state registered at all -> None."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.does_not_exist"
+        }
+
+        area_name = coordinator.get_area_names()[0]
+        factory = EntityFactory(coordinator, area_name=area_name)
+        assert factory._resolve_sleep_override() is None
+
+    def test_create_from_config_spec_threads_override_for_sleeping_purpose(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A Sleeping-purpose area's entity picks up the resolved override."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+
+        assert entity.decay.sleep_override is True
+
+    def test_create_from_config_spec_skips_override_for_non_sleeping_purpose(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A non-Sleeping-purpose area never consults the sleep entity at all.
+
+        Decay short-circuits before looking at sleep_override for any
+        purpose other than SLEEPING, so EntityFactory must skip the
+        hass.states.get() lookup entirely rather than resolve it and throw
+        the result away.
+        """
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SOCIAL
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        with patch.object(
+            factory, "_resolve_sleep_override", wraps=factory._resolve_sleep_override
+        ) as mock_resolve:
+            entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+
+        assert entity.decay.sleep_override is None
+        mock_resolve.assert_not_called()
+
+    def test_create_from_config_spec_override_none_unset_is_unchanged(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A Sleeping-purpose area with no sleep_state_entity is unchanged.
+
+        Must be byte-for-byte identical to stock behavior: sleep_override
+        stays None and Decay falls through to the sleep_start/sleep_end
+        clock window.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+
+        assert entity.decay.sleep_override is None
 
 
 class TestGaussianLikelihood:

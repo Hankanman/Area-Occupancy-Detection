@@ -57,3 +57,13 @@ Areas with the `Bedroom` purpose have a special dynamic behavior tied to your ho
 - **Outside Sleep Hours:** Automatically switches to behave like a `Living Room` area, recognizing that bedrooms are often used for reading or getting ready during the day where shorter memory is appropriate.
 
 You can configure your global `Sleep Start` and `Sleep End` times in the integration's global settings.
+
+### Using a Sleep State Entity Instead of a Fixed Clock
+
+A fixed `Sleep Start`/`Sleep End` window doesn't match a household whose bedtime moves night to night. If you already have a `schedule`, `input_boolean`, or `binary_sensor` that reflects whether the house is asleep, you can point the optional **Sleep State Entity** global setting at it instead:
+
+- **On** — treated as asleep, using the `Bedroom` half-life.
+- **Off** — treated as awake, using the `Living Room` half-life.
+- **Unavailable, unknown, or not configured** — falls back to the `Sleep Start`/`Sleep End` clock window above, with a log warning if the entity is configured but unhealthy. A broken or missing sleep entity never silently forces the shorter "awake" half-life during real sleep.
+
+Leaving this unset behaves identically to only having `Sleep Start`/`Sleep End` configured. This is unrelated to a per-area sleep-presence sensor, which evidences occupancy for a single area rather than driving the global decay switch.

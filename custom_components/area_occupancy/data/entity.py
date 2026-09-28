@@ -10,6 +10,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -30,7 +31,7 @@ from .entity_type import (
     EntityType,
     InputType,
 )
-from .purpose import get_default_decay_half_life
+from .purpose import AreaPurpose, get_default_decay_half_life
 from .types import GaussianParams
 
 if TYPE_CHECKING:
@@ -673,6 +674,41 @@ class EntityFactory:
             )
         self.config = coordinator.areas[area_name].config
 
+    def _resolve_sleep_override(self) -> bool | None:
+        """Resolve the optional global sleep-state entity to a bool, or None.
+
+        Returns None when no sleep state entity is configured, OR when the
+        configured entity is missing/unavailable/unknown. In both cases
+        ``Decay`` falls back to its clock-based sleep_start/sleep_end
+        window, rather than being forced into "awake" by a broken sensor.
+        Resolved here (not in ``Decay``) because ``Decay`` has no ``hass``
+        dependency.
+
+        Not to be confused with ``area.sleep_entity_id`` (the per-area
+        SleepPresenceSensor entity_id, checked separately via the
+        ``is_sleep`` local at each call site) -- this reads
+        ``integration_config.sleep_state_entity``, the distinct global
+        user-configured override entity.
+        """
+        sleep_state_entity = getattr(
+            self.coordinator.integration_config, "sleep_state_entity", None
+        )
+        if not sleep_state_entity:
+            return None
+
+        state = self.coordinator.hass.states.get(sleep_state_entity)
+        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
+            _LOGGER.warning(
+                "Sleep state entity %s is %s; falling back to the clock-based "
+                "sleep window for area %s",
+                sleep_state_entity,
+                "missing" if state is None else state.state,
+                self.area_name,
+            )
+            return None
+
+        return state.state == STATE_ON
+
     def create_from_db(self, entity_obj: DB.Entities) -> Entity:
         """Create entity from storage data.
 
@@ -812,12 +848,21 @@ class EntityFactory:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
+            sleep_override = None
         else:
             sleep_start = getattr(
                 self.coordinator.integration_config, "sleep_start", None
             )
             sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
             purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas ever consult sleep_override
+            # (Decay short-circuits before looking at it otherwise) -- skip
+            # the hass.states.get() lookup entirely for every other purpose.
+            sleep_override = (
+                self._resolve_sleep_override()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
 
         decay = Decay(
             half_life=half_life,
@@ -826,6 +871,7 @@ class EntityFactory:
             purpose=purpose_for_decay,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
+            sleep_override=sleep_override,
         )
 
         # Set default analysis_error based on entity type
@@ -908,12 +954,21 @@ class EntityFactory:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
+            sleep_override = None
         else:
             sleep_start = getattr(
                 self.coordinator.integration_config, "sleep_start", None
             )
             sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
             purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas ever consult sleep_override
+            # (Decay short-circuits before looking at it otherwise) -- skip
+            # the hass.states.get() lookup entirely for every other purpose.
+            sleep_override = (
+                self._resolve_sleep_override()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
 
         decay = Decay(
             half_life=half_life,
@@ -922,6 +977,7 @@ class EntityFactory:
             purpose=purpose_for_decay,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
+            sleep_override=sleep_override,
         )
 
         # Motion sensors use configured likelihoods (user-configurable per area)

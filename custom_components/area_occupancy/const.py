@@ -124,6 +124,22 @@ CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
+# Optional GLOBAL entity (schedule.*, input_boolean.*, binary_sensor.*) whose
+# on/off state overrides the sleep_start/sleep_end clock window for the
+# Sleeping-purpose decay half-life. Empty string / unset means "not
+# configured" (falls back to the clock window).
+#
+# Python name is CONF_SLEEP_STATE_ENTITY for readability. This is
+# deliberately distinct in name from the per-area `area.sleep_entity_id`
+# attribute (a plain attribute on the Area object for its
+# SleepPresenceSensor, a person/phone sleep-confidence evidence input --
+# see area/area.py + binary_sensor.py) so the two are never confused in
+# code, logs, or review -- they configure different things at different
+# scopes (this one is a single global config-entry option; that one is
+# per-area). The STRING VALUE is intentionally kept as "sleep_entity" to
+# match this feature's naming on an existing downstream fork; if you
+# rename it, do so with a companion options migration.
+CONF_SLEEP_STATE_ENTITY: Final = "sleep_entity"
 CONF_HEALTH_ENABLED: Final = "health_enabled"
 
 # People configuration constants
