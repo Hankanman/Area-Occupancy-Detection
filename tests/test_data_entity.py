@@ -2602,6 +2602,14 @@ class TestEntityFactorySleepOverride:
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
         area.config.purpose = AreaPurpose.SLEEPING
+        # 0 resolves to the purpose's own default half-life (see
+        # create_from_config_spec) -- needed so the sleep/awake switch
+        # actually engages. A fixture-default custom half-life would
+        # otherwise trip the #481 custom-half-life bypass (base_half_life
+        # != purpose.half_life), which intentionally ignores the sleep
+        # override entirely and would make this live-flip assertion
+        # meaningless.
+        area.config.decay.half_life = 0
 
         factory = EntityFactory(coordinator, area_name=area_name)
         entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
@@ -2609,6 +2617,10 @@ class TestEntityFactorySleepOverride:
 
         awake_half_life = decay.purpose.awake_half_life
         asleep_half_life = decay._base_half_life
+        assert decay._base_half_life == decay.purpose.half_life, (
+            "test setup invariant: the custom-half-life bypass (#481) must "
+            "not be engaged here, or this test would pass vacuously"
+        )
 
         hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
         assert decay.half_life == awake_half_life
@@ -2749,14 +2761,36 @@ class TestSleepOverrideProviderWarningRateLimit:
             assert sum(1 for r in caplog.records if r.levelname == "WARNING") == 1
 
     def test_single_states_get_per_call(self, hass: HomeAssistant) -> None:
-        """No per-tick DB work: exactly one hass.states.get per call."""
+        """No per-tick DB work: exactly one hass.states.get per call.
+
+        Real HA's ``StateMachine`` doesn't allow patching its bound ``get``
+        method directly (it's read-only on the instance), so this wraps the
+        real ``hass.states`` behind a small counting proxy instead of
+        patching HA internals -- ``SleepOverrideProvider`` only ever needs
+        ``hass.states.get(entity_id)``, so any object with that shape works.
+        """
+
+        class _CountingStates:
+            def __init__(self, real_states) -> None:
+                self._real = real_states
+                self.calls: list[str] = []
+
+            def get(self, entity_id: str):
+                self.calls.append(entity_id)
+                return self._real.get(entity_id)
+
+        class _CountingHass:
+            def __init__(self, real_hass: HomeAssistant) -> None:
+                self.states = _CountingStates(real_hass.states)
+
         hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+        counting_hass = _CountingHass(hass)
         provider = SleepOverrideProvider(
-            hass, "binary_sensor.house_sleeping", "master_bedroom"
+            counting_hass, "binary_sensor.house_sleeping", "master_bedroom"
         )
-        with patch.object(hass.states, "get", wraps=hass.states.get) as mock_get:
-            provider()
-        mock_get.assert_called_once_with("binary_sensor.house_sleeping")
+
+        assert provider() is True
+        assert counting_hass.states.calls == ["binary_sensor.house_sleeping"]
 
 
 class TestGaussianLikelihood:
