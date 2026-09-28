@@ -262,6 +262,13 @@ PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
 
+# Weeks of the area's global prior mixed into every weekly slot before it is
+# used. A slot with one week of history is one afternoon, and on its own it
+# lands on a bound (0.9 or 0.03) and swings the live prior across the
+# threshold; with two pseudo-weeks it moves a third of the way, and after
+# eight weeks the slot's own data carries 80% of the weight.
+TIME_PRIOR_PSEUDO_WEEKS: Final[float] = 2.0
+
 # Minimum observation span (wall-clock time since the earliest ground-truth
 # data point for an area's *current* motion/sleep/media sensors — occupied
 # or not) required before the global prior is trusted. Below this span the

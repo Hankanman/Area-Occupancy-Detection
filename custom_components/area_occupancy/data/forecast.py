@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
-from ..const import MAX_PRIOR, MIN_PRIOR
+from ..const import MAX_PRIOR, MIN_PRIOR, TIME_PRIOR_PSEUDO_WEEKS
 from ..utils import clamp_probability, combine_priors
 
 if TYPE_CHECKING:
@@ -116,11 +116,40 @@ def slots_ahead_of(
     ) % week
 
 
+def shrink_slot_prior(
+    slot_time_prior: float, weeks: int, global_prior: float | None
+) -> float:
+    """Pull a thinly observed slot toward the area's global prior.
+
+    A slot's stored value is its occupied fraction over the weeks observed,
+    and with one week behind it that is a single afternoon: the slot sits on
+    a bound and flips the live prior across the threshold on the hour. Mixing
+    in :data:`TIME_PRIOR_PSEUDO_WEEKS` weeks of the global prior is the
+    standard pseudo-count estimate, ``(n·slot + k·global) / (n + k)``, and it
+    fades as real weeks accumulate.
+
+    Args:
+        slot_time_prior: The slot's stored (bounds-clamped) time prior.
+        weeks: Weeks of observation behind the slot. ``0`` marks an unlearned
+            slot, which already holds the neutral fallback and is returned
+            unchanged.
+        global_prior: The area's learned global prior, or ``None``.
+
+    Returns:
+        The slot prior to combine with the global prior.
+    """
+    if global_prior is None or weeks <= 0:
+        return slot_time_prior
+    k = TIME_PRIOR_PSEUDO_WEEKS
+    return (weeks * slot_time_prior + k * global_prior) / (weeks + k)
+
+
 def forecast_prior(
     global_prior: float | None,
     slot_time_prior: float,
     *,
     prior_factor: float,
+    weeks: int = 0,
 ) -> float:
     """Return the occupancy-probability forecast for a single weekly slot.
 
@@ -137,12 +166,15 @@ def forecast_prior(
         prior_factor: Multiplicative boost applied before clamping (mirrors
             :data:`.prior.PRIOR_FACTOR`); passed in to keep this module free of
             any import from :mod:`.prior`.
+        weeks: Weeks of observation behind the slot, for
+            :func:`shrink_slot_prior`. The default ``0`` uses the slot as is.
 
     Returns:
         Forecast occupancy probability in ``[MIN_PRIOR, MAX_PRIOR]``.
     """
     if global_prior is None:
         return max(MIN_PRIOR, min(MAX_PRIOR, slot_time_prior))
+    slot_time_prior = shrink_slot_prior(slot_time_prior, weeks, global_prior)
     adjusted = combine_priors(global_prior, slot_time_prior) * prior_factor
     return max(MIN_PRIOR, min(MAX_PRIOR, adjusted))
 
@@ -285,7 +317,10 @@ def build_aggregate_time_priors(
         )
         if zone_slot is not None:
             baseline = forecast_prior(
-                empirical.global_prior, zone_slot, prior_factor=prior_factor
+                empirical.global_prior,
+                zone_slot,
+                prior_factor=prior_factor,
+                weeks=empirical.data_points.get((day, slot), 0),
             )
         else:
             baseline = max(m.prior.prior_for(day, slot) for m in members)

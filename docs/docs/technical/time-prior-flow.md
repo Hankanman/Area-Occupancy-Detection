@@ -130,6 +130,10 @@ The calculation follows these steps:
    - Iterates the **denominators** (`slot_total_seconds`), so a slot the analysis
      period covered but that saw no occupancy is stored at the lower bound. Only
      slots the period never covered are left unwritten.
+   - Counts **completed hours only**: the period ends at the start of the
+     current local hour. The hour in progress is the live present, not
+     history; counting it let an occupied hour rewrite its own slot at the
+     :57 analysis, and the prior dropped back on the hour.
 
 5. **Save to Database**: Calls `save_time_priors()` to store all calculated priors with metadata:
    - `prior_value`: The calculated probability
@@ -140,7 +144,7 @@ The calculation follows these steps:
 
 **Note**: Only motion sensors are used for time prior calculation (no media/appliance fallback).
 
-**Safety Bounds**: The system bounds time-specific probabilities between 10% and 90% to prevent extreme values from dominating the calculation.
+**Safety Bounds**: The system bounds time-specific probabilities between 3% and 90% to prevent extreme values from dominating the calculation.
 
 ### 2.3 Integration Point
 
@@ -330,7 +334,26 @@ time_slot = (14 * 60 + 30) // 60 = 14  # 14:00-15:00 slot
 
 ## Usage in Probability Calculation
 
-### 5.1 Prior Combination
+### 5.1 Thin slots are shrunk toward the global prior
+
+Before a slot is combined, it is mixed with `TIME_PRIOR_PSEUDO_WEEKS` (2)
+weeks of the area's global prior, weighted by the weeks of data behind it
+(`forecast.shrink_slot_prior`):
+
+```
+slot_used = (weeks × slot + 2 × global_prior) / (weeks + 2)
+```
+
+A slot with one week of history is one afternoon and lands on a bound; on
+its own it could carry the live prior across the threshold with no sensor
+active. One week at 0.9 against a 0.228 global becomes 0.452, and the
+combined prior 0.308 instead of 0.537. After eight weeks the slot's own
+data carries 80% of the weight. Unlearned slots (0 weeks) already hold the
+neutral fallback and are used unchanged. The same shrinkage applies to the
+live prior, `prior_for`, and the floor / All Areas zone priors;
+`slots_raw` in the forecast service still reports the stored value.
+
+### 5.2 Prior Combination
 
 **Location**: `utils.py:combine_priors()`
 
@@ -380,7 +403,7 @@ combined_logit = 0.6 * (-0.847) + 0.4 * 0.847 ≈ -0.169
 combined_prior = 1 / (1 + exp(0.169)) ≈ 0.458
 ```
 
-### 5.2 Integration Point
+### 5.3 Integration Point
 
 **Location**: `prior.py:Prior.value` property
 

@@ -543,6 +543,13 @@ def compute_slot_priors(
 
     period_start_utc = to_utc(period_start)
     period_end_utc = to_utc(period_end)
+    # Completed hours only. The hour in progress is the live present, not
+    # history: counting it let an hour of occupancy (real or a stuck
+    # sensor) rewrite its own slot's prior at the :57 analysis, and the
+    # prior dropped back when the slot rolled over on the hour.
+    end_local = to_local(period_end_utc)
+    hour_start_utc = to_utc(end_local.replace(minute=0, second=0, microsecond=0))
+    period_end_utc = min(period_end_utc, hour_start_utc)
 
     # Track total possible seconds per slot over the period to handle DST correctly.
     # Keyed by (day_of_week, hour) in local time.

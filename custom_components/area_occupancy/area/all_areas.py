@@ -99,7 +99,12 @@ def _zone_prior(areas: list[Area], empirical: ZonePriors | None) -> float:
     slot = empirical.time_priors.get((clock.day_of_week, clock.time_slot))
     if slot is None:
         return max(MIN_PROBABILITY, min(1.0, empirical.global_prior))
-    return forecast_prior(empirical.global_prior, slot, prior_factor=PRIOR_FACTOR)
+    return forecast_prior(
+        empirical.global_prior,
+        slot,
+        prior_factor=PRIOR_FACTOR,
+        weeks=empirical.data_points.get((clock.day_of_week, clock.time_slot), 0),
+    )
 
 
 class AllAreas:
