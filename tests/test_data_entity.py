@@ -13,6 +13,7 @@ from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
+    SleepOverrideProvider,
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
 from custom_components.area_occupancy.data.purpose import AreaPurpose
@@ -2479,22 +2480,30 @@ def mock_binary_entity():
 class TestEntityFactorySleepOverride:
     """Tests for the optional entity-linked sleep-state override.
 
-    ``EntityFactory._resolve_sleep_override`` resolves the global
-    ``sleep_state_entity`` option to a three-valued result: confirmed on
-    (True), confirmed off (False), or None for anything unconfigured,
-    missing, unavailable, or unknown. None must always fall back to the
-    clock-based Decay behavior rather than forcing "awake".
+    ``EntityFactory._create_sleep_override_provider`` builds a
+    ``SleepOverrideProvider`` bound to the global ``sleep_state_entity``
+    option, or returns None when the option is unset. The provider itself
+    resolves to a three-valued result on each call: confirmed on (True),
+    confirmed off (False), or None for anything unconfigured, missing,
+    unavailable, or unknown. None must always fall back to the clock-based
+    Decay behavior rather than forcing "awake".
+
+    Unlike the pre-fix ``_resolve_sleep_override`` (a one-shot method
+    called once at Entity-creation time), the provider is called fresh on
+    every ``Decay`` half-life calculation -- see
+    ``test_provider_tracks_live_state_with_no_entity_recreation`` below,
+    the direct regression test for the PR #566 frozen-override finding.
     """
 
-    def test_resolve_sleep_override_unset(
+    def test_create_sleep_override_provider_unset(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """No sleep_state_entity configured -> None, no hass.states lookup needed."""
+        """No sleep_state_entity configured -> None, no provider built."""
         area_name = coordinator.get_area_names()[0]
         factory = EntityFactory(coordinator, area_name=area_name)
-        assert factory._resolve_sleep_override() is None
+        assert factory._create_sleep_override_provider() is None
 
-    def test_resolve_sleep_override_on(
+    def test_provider_resolves_on(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
@@ -2508,9 +2517,11 @@ class TestEntityFactorySleepOverride:
 
         area_name = coordinator.get_area_names()[0]
         factory = EntityFactory(coordinator, area_name=area_name)
-        assert factory._resolve_sleep_override() is True
+        provider = factory._create_sleep_override_provider()
+        assert isinstance(provider, SleepOverrideProvider)
+        assert provider() is True
 
-    def test_resolve_sleep_override_off(
+    def test_provider_resolves_off(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
@@ -2524,10 +2535,11 @@ class TestEntityFactorySleepOverride:
 
         area_name = coordinator.get_area_names()[0]
         factory = EntityFactory(coordinator, area_name=area_name)
-        assert factory._resolve_sleep_override() is False
+        provider = factory._create_sleep_override_provider()
+        assert provider() is False
 
     @pytest.mark.parametrize("degraded_state", [STATE_UNAVAILABLE, STATE_UNKNOWN])
-    def test_resolve_sleep_override_degraded_states_fall_back_to_none(
+    def test_provider_degraded_states_fall_back_to_none(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
@@ -2547,9 +2559,10 @@ class TestEntityFactorySleepOverride:
 
         area_name = coordinator.get_area_names()[0]
         factory = EntityFactory(coordinator, area_name=area_name)
-        assert factory._resolve_sleep_override() is None
+        provider = factory._create_sleep_override_provider()
+        assert provider() is None
 
-    def test_resolve_sleep_override_missing_entity_is_none(
+    def test_provider_missing_entity_is_none(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
@@ -2562,7 +2575,54 @@ class TestEntityFactorySleepOverride:
 
         area_name = coordinator.get_area_names()[0]
         factory = EntityFactory(coordinator, area_name=area_name)
-        assert factory._resolve_sleep_override() is None
+        provider = factory._create_sleep_override_provider()
+        assert provider() is None
+
+    def test_provider_tracks_live_state_with_no_entity_recreation(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """A single provider (and the Decay it feeds) follows LIVE flips.
+
+        Direct regression test for the PR #566 finding: the pre-fix code
+        resolved the sleep entity once in the factory and froze the
+        boolean inside ``Decay``, so this scenario -- one entity created
+        once, then the sleep entity flipping off -> on -> unavailable ->
+        off with NO reload -- would have left the half-life stuck at
+        whatever it was on creation. Here the SAME ``Entity``/``Decay``
+        (no recreation, no reload) is checked after each flip.
+        """
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+        }
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+
+        factory = EntityFactory(coordinator, area_name=area_name)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+        decay = entity.decay
+
+        awake_half_life = decay.purpose.awake_half_life
+        asleep_half_life = decay._base_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+        assert decay.half_life == awake_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+        assert decay.half_life == asleep_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
+        # No sleep_start/sleep_end configured by default -> clock fallback
+        # is base_half_life (asleep).
+        assert decay.half_life == asleep_half_life
+
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
+        assert decay.half_life == awake_half_life
 
     def test_create_from_config_spec_threads_override_for_sleeping_purpose(
         self,
@@ -2583,7 +2643,8 @@ class TestEntityFactorySleepOverride:
         factory = EntityFactory(coordinator, area_name=area_name)
         entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
 
-        assert entity.decay.sleep_override is True
+        assert entity.decay.sleep_override_provider is not None
+        assert entity.decay.sleep_override_provider() is True
 
     def test_create_from_config_spec_skips_override_for_non_sleeping_purpose(
         self,
@@ -2593,10 +2654,10 @@ class TestEntityFactorySleepOverride:
     ) -> None:
         """A non-Sleeping-purpose area never consults the sleep entity at all.
 
-        Decay short-circuits before looking at sleep_override for any
-        purpose other than SLEEPING, so EntityFactory must skip the
-        hass.states.get() lookup entirely rather than resolve it and throw
-        the result away.
+        Decay short-circuits before looking at sleep_override_provider for
+        any purpose other than SLEEPING, so EntityFactory must skip
+        building the provider entirely rather than build it and throw the
+        result away.
         """
         mock_realistic_config_entry.options = {
             CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
@@ -2609,21 +2670,23 @@ class TestEntityFactorySleepOverride:
 
         factory = EntityFactory(coordinator, area_name=area_name)
         with patch.object(
-            factory, "_resolve_sleep_override", wraps=factory._resolve_sleep_override
-        ) as mock_resolve:
+            factory,
+            "_create_sleep_override_provider",
+            wraps=factory._create_sleep_override_provider,
+        ) as mock_create:
             entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
 
-        assert entity.decay.sleep_override is None
-        mock_resolve.assert_not_called()
+        assert entity.decay.sleep_override_provider is None
+        mock_create.assert_not_called()
 
     def test_create_from_config_spec_override_none_unset_is_unchanged(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         """A Sleeping-purpose area with no sleep_state_entity is unchanged.
 
-        Must be byte-for-byte identical to stock behavior: sleep_override
-        stays None and Decay falls through to the sleep_start/sleep_end
-        clock window.
+        Must be byte-for-byte identical to stock behavior:
+        sleep_override_provider stays None and Decay falls through to the
+        sleep_start/sleep_end clock window.
         """
         area_name = coordinator.get_area_names()[0]
         area = coordinator.get_area(area_name)
@@ -2632,7 +2695,68 @@ class TestEntityFactorySleepOverride:
         factory = EntityFactory(coordinator, area_name=area_name)
         entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
 
-        assert entity.decay.sleep_override is None
+        assert entity.decay.sleep_override_provider is None
+
+
+class TestSleepOverrideProviderWarningRateLimit:
+    """Tests for the unhealthy-state warning rate limit on SleepOverrideProvider.
+
+    Requirement: the warning must NOT fire on every decay tick (every
+    ~10s). It should log a WARNING once on the tick that transitions INTO
+    the unhealthy state, then only DEBUG on every subsequent tick while
+    still unhealthy, and be ready to WARNING again after a recovery
+    followed by a second transition into unhealthy.
+    """
+
+    def test_warns_once_then_debug_then_warns_again_after_recovery(
+        self,
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
+        provider = SleepOverrideProvider(
+            hass, "binary_sensor.house_sleeping", "master_bedroom"
+        )
+
+        with caplog.at_level(
+            "DEBUG", logger="custom_components.area_occupancy.data.entity"
+        ):
+            caplog.clear()
+            assert provider() is None
+            assert sum(1 for r in caplog.records if r.levelname == "WARNING") == 1
+            assert not any(r.levelname == "DEBUG" for r in caplog.records)
+
+            caplog.clear()
+            assert provider() is None
+            assert not any(r.levelname == "WARNING" for r in caplog.records)
+            assert any(r.levelname == "DEBUG" for r in caplog.records)
+
+            caplog.clear()
+            assert provider() is None
+            assert not any(r.levelname == "WARNING" for r in caplog.records)
+            assert any(r.levelname == "DEBUG" for r in caplog.records)
+
+            # Recovers.
+            hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+            caplog.clear()
+            assert provider() is True
+            assert not caplog.records
+
+            # Goes unhealthy again -> WARNING fires again.
+            hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
+            caplog.clear()
+            assert provider() is None
+            assert sum(1 for r in caplog.records if r.levelname == "WARNING") == 1
+
+    def test_single_states_get_per_call(self, hass: HomeAssistant) -> None:
+        """No per-tick DB work: exactly one hass.states.get per call."""
+        hass.states.async_set("binary_sensor.house_sleeping", STATE_ON)
+        provider = SleepOverrideProvider(
+            hass, "binary_sensor.house_sleeping", "master_bedroom"
+        )
+        with patch.object(hass.states, "get", wraps=hass.states.get) as mock_get:
+            provider()
+        mock_get.assert_called_once_with("binary_sensor.house_sleeping")
 
 
 class TestGaussianLikelihood:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 import logging
 
@@ -24,7 +25,7 @@ class Decay:
         purpose: str | None = None,
         sleep_start: str | None = None,
         sleep_end: str | None = None,
-        sleep_override: bool | None = None,
+        sleep_override_provider: Callable[[], bool | None] | None = None,
     ) -> None:
         """Initialize the decay model.
 
@@ -35,12 +36,21 @@ class Decay:
             purpose: Area purpose string.
             sleep_start: Sleep start time string (HH:MM:SS).
             sleep_end: Sleep end time string (HH:MM:SS).
-            sleep_override: Resolved on/off state of the optional sleep
-                state entity (schedule/input_boolean/binary_sensor), pre-
-                resolved by the caller since Decay itself has no hass
-                access. When not None, this takes priority over the
-                sleep_start/sleep_end clock window. None means "no sleep
-                state entity configured" -- fall back to the clock check.
+            sleep_override_provider: Zero-arg callable returning the
+                *current* on/off state of the optional sleep state entity
+                (schedule/input_boolean/binary_sensor), or None if it's
+                unconfigured/unhealthy. Injected by the caller since Decay
+                itself has no hass access -- but unlike a plain resolved
+                bool, it is called fresh on every half-life calculation, so
+                the result tracks the entity's live state instead of
+                whatever it was when this Decay was constructed. A
+                non-None result takes priority over the sleep_start/
+                sleep_end clock window. None (the provider itself, or a
+                call returning None) means "no sleep state entity
+                configured / entity unhealthy right now" -- fall back to
+                the clock check. Keeping this a callable rather than a
+                resolved bool is what keeps Decay testable without a real
+                hass instance -- tests just pass a small lambda/stub.
         """
         # Ensure decay_start is timezone-aware
         if decay_start is not None:
@@ -53,7 +63,7 @@ class Decay:
         self._purpose = Purpose(purpose) if purpose is not None else None
         self.sleep_start = sleep_start
         self.sleep_end = sleep_end
-        self.sleep_override = sleep_override
+        self.sleep_override_provider = sleep_override_provider
         # Adjacent-areas Phase 4 multiplier — coordinator sets it per
         # tick to stretch the effective half-life when this entity's
         # area has silent adjacent neighbours. Defaults to 1.0 (no
@@ -100,12 +110,22 @@ class Decay:
 
         # An entity-linked sleep override (schedule/input_boolean/
         # binary_sensor) takes priority over the clock window when
-        # configured -- it's resolved by the caller (Decay has no hass
-        # access) and passed in pre-computed.
-        if self.sleep_override is not None:
-            if self.sleep_override:
-                return self._base_half_life
-            return self._purpose.awake_half_life
+        # configured. Resolved via a live callable, not a value baked in
+        # at construction time, so a later on/off transition of the
+        # entity is picked up on the very next half-life calculation --
+        # see the PR #566 review finding: the override used to be
+        # resolved once at Entity-creation time and then frozen for the
+        # entity's lifetime, which could leave an area stuck on the wrong
+        # half-life all night with no reload.
+        if self.sleep_override_provider is not None:
+            override = self.sleep_override_provider()
+            if override is not None:
+                if override:
+                    return self._base_half_life
+                return self._purpose.awake_half_life
+            # override is None (entity unhealthy right now) -- fall
+            # through to the clock-based window below, exactly like
+            # "unconfigured".
 
         # If sleep times are not configured, use base half-life
         if not self.sleep_start or not self.sleep_end:
