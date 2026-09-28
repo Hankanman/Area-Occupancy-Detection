@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.area_occupancy.const import (
+    CONF_AWAY_MODE_ENTITY,
     TIME_PRIOR_MAX_BOUND,
     TIME_PRIOR_MIN_BOUND,
 )
@@ -17,12 +18,14 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.analysis import (
     PriorAnalyzer,
     _run_pipeline_health_check,
+    _run_sensor_health_check,
     ensure_occupied_intervals_cache,
     run_full_analysis,
     run_interval_aggregation,
     run_numeric_aggregation,
     start_prior_analysis,
 )
+from custom_components.area_occupancy.data.health import HealthIssueType
 from custom_components.area_occupancy.db.utils import (
     apply_motion_timeout,
     find_overlapping_motion_intervals,
@@ -30,6 +33,7 @@ from custom_components.area_occupancy.db.utils import (
     merge_overlapping_intervals,
     segment_interval_with_motion,
 )
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
@@ -1319,6 +1323,75 @@ class TestHealthEnabledToggle:
             for area in coordinator.areas.values():
                 area.health_monitor.check_pipeline_health.assert_called_once()
                 area.health_monitor.clear_all_issues.assert_not_called()
+
+
+class TestSensorHealthAwayMode:
+    """The sensor health step takes away mode from the configured entity.
+
+    Real options, real Home Assistant states and a real health monitor: an
+    idle motion sensor (ten days, against a seven day threshold) is the probe.
+    """
+
+    AWAY_ENTITY = "input_boolean.vacation_mode"
+    MOTION = "binary_sensor.motion"
+
+    def _idle_motion(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        *,
+        configured: bool,
+        away_state: str,
+    ) -> None:
+        """Leave the area's motion sensor idle for ten days, and set away mode."""
+        options = {CONF_AWAY_MODE_ENTITY: self.AWAY_ENTITY} if configured else {}
+        coordinator.config_entry.options = options
+        hass.states.async_set(self.AWAY_ENTITY, away_state)
+        hass.states.async_set(self.MOTION, "off", {"device_class": "motion"})
+        coordinator.get_area().entities.get_entity(self.MOTION).last_updated = (
+            dt_util.utcnow() - timedelta(days=10)
+        )
+
+    async def _issue_types(self, coordinator: AreaOccupancyCoordinator) -> list:
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            await _run_sensor_health_check(coordinator)
+        return [
+            issue.issue_type
+            for issue in coordinator.get_area().health_monitor.issues
+            if issue.entity_id == self.MOTION
+        ]
+
+    async def test_inactivity_alerts_pause_while_the_entity_is_on(
+        self, hass: HomeAssistant, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        self._idle_motion(
+            hass, coordinator_with_sensors, configured=True, away_state="on"
+        )
+
+        assert await self._issue_types(coordinator_with_sensors) == []
+
+    async def test_inactivity_alerts_run_while_the_entity_is_off(
+        self, hass: HomeAssistant, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        self._idle_motion(
+            hass, coordinator_with_sensors, configured=True, away_state="off"
+        )
+
+        assert await self._issue_types(coordinator_with_sensors) == [
+            HealthIssueType.STUCK_INACTIVE
+        ]
+
+    async def test_the_entity_is_ignored_until_it_is_configured(
+        self, hass: HomeAssistant, coordinator_with_sensors: AreaOccupancyCoordinator
+    ) -> None:
+        """An entity that reads on changes nothing when no option names it."""
+        self._idle_motion(
+            hass, coordinator_with_sensors, configured=False, away_state="on"
+        )
+
+        assert await self._issue_types(coordinator_with_sensors) == [
+            HealthIssueType.STUCK_INACTIVE
+        ]
 
 
 class TestMergeOverlappingIntervals:

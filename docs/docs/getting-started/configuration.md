@@ -47,6 +47,9 @@ For areas with the `Bedroom` purpose, the half-life dynamically adjusts based on
 **Sensor State Precision:**
 To reduce database writes and storage consumption in the Home Assistant recorder, you can configure the global `Sensor state precision (decimals)` setting (0-2 decimals, default: 2) in the **Global Settings** menu. Lowering this value rounds the state of numeric diagnostic sensors (like probability, prior, decay, and confidence sensors), significantly reducing the volume of database updates.
 
+**Away Mode Entity:**
+The stuck inactive and never triggered sensor health alerts pause while the household is away. By default the integration works out that you are away from your [person entities](https://www.home-assistant.io/integrations/person/). If you would rather say so yourself, pick an `input_boolean`, `binary_sensor` or `switch` under `Away mode entity` in the **Global Settings** menu. While it is on the household counts as away, and it is used instead of person tracking. Leave it empty to keep using person tracking. See [Away from home](../features/sensor-health.md#away-from-home) for what pauses and how the return is handled.
+
 ### Step 2: Motion Sensors
 
 Configure motion and presence sensors for the area. At least one motion sensor is required. You can also adjust:

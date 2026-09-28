@@ -83,6 +83,7 @@ from .config_helpers import (
     validate_sensor_states,
 )
 from .const import (
+    AWAY_MODE_ENTITY_DOMAINS,
     CONF_ACTION_ADD_AREA,
     CONF_ACTION_GLOBAL_SETTINGS,
     CONF_ACTION_MANAGE_PEOPLE,
@@ -91,6 +92,7 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AWAY_MODE_ENTITY,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -1818,6 +1820,14 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 ),
                 vol.Coerce(int),
             ),
+            # The current value is only suggested, not a default: a default
+            # would refill the field whenever the user clears it.
+            vol.Optional(
+                CONF_AWAY_MODE_ENTITY,
+                description={"suggested_value": defaults.get(CONF_AWAY_MODE_ENTITY)},
+            ): EntitySelector(
+                EntitySelectorConfig(domain=list(AWAY_MODE_ENTITY_DOMAINS))
+            ),
         }
     )
 
@@ -3181,6 +3191,10 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             # Update the config entry options directly
             new_options = dict(self.config_entry.options)
             new_options.update(user_input)
+            # A cleared optional field is left out of the input, and update()
+            # cannot remove a key, so the old value would come back.
+            if CONF_AWAY_MODE_ENTITY not in user_input:
+                new_options.pop(CONF_AWAY_MODE_ENTITY, None)
 
             return self.async_create_entry(title="", data=new_options)
 
@@ -3198,6 +3212,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             CONF_SENSOR_PRECISION: self.config_entry.options.get(
                 CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
             ),
+            CONF_AWAY_MODE_ENTITY: self.config_entry.options.get(CONF_AWAY_MODE_ENTITY),
         }
 
         return self.async_show_form(

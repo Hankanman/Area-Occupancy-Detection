@@ -85,9 +85,24 @@ Sleep sensors are never cut.
 
 ### Away from home
 
-A sensor that sits idle while everyone is away isn't stuck or misconfigured. When Home Assistant's **Home** zone counts nobody home (`zone.home` is `0`), the **stuck inactive** and **never triggered** checks pause, and any open alerts of those two kinds clear. When someone comes back, idleness counts from the return rather than from before the trip, so a holiday doesn't raise every alert the moment you walk in. **Stuck active** keeps being checked while you're away, since a sensor that's on in an empty house is more suspicious, not less.
+A sensor that sits idle while everyone is away isn't stuck or misconfigured. While the household is away, the **stuck inactive** and **never triggered** checks pause, and any open alerts of those two kinds clear. When someone comes back, idleness counts from the return rather than from before the trip, so a holiday doesn't raise every alert the moment you walk in. **Stuck active** keeps being checked while you're away, since a sensor that's on in an empty house is more suspicious, not less.
 
-This needs [person entities](https://www.home-assistant.io/integrations/person/) with device trackers, which is what drives `zone.home`. Without them, or while none of them has a known location, the checks behave as they always have.
+There are two ways to tell the integration the household is away. It uses one at a time, never both.
+
+**Person tracking** is the default. When Home Assistant's **Home** zone counts nobody home (`zone.home` is `0`), the household is away. This needs [person entities](https://www.home-assistant.io/integrations/person/) with device trackers, which is what drives `zone.home`. Without them, or while none of them has a known location, the checks behave as they always have.
+
+**An away mode entity** replaces person tracking. Under **Configure → Global Settings → Away mode entity**, pick an `input_boolean`, `binary_sensor` or `switch` that is **on** while you are away, such as a vacation-mode toggle. While it is on the household is away, and while it is off the household is home. Once one is set, `zone.home` and the person entities are not consulted at all. That suits a home with no person entities, and one where phone locations say something other than the truth, such as a house-sitter staying while you are away. Clear the field to go back to person tracking.
+
+The entity is read during the hourly health check, so a change is picked up at the next one, and the return is timed to that check. While the entity is `unavailable` or `unknown`, or no longer exists, the checks run as they always have. They do not fall back to person tracking, so what pauses them never depends on which of the two happens to be readable.
+
+If your entity is on while someone is *home*, such as an "anyone home" sensor, put a template binary sensor in front of it that reverses it, and pick that one:
+
+```yaml
+template:
+  - binary_sensor:
+      - name: "Household away"
+        state: "{{ is_state('binary_sensor.anyone_home', 'off') }}"
+```
 
 ## Excluded Sensors
 

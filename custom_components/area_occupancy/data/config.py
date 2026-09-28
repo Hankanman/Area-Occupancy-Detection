@@ -21,6 +21,7 @@ from ..const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AWAY_MODE_ENTITY,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -217,6 +218,20 @@ class IntegrationConfig:
         return bool(
             self.config_entry.options.get(CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED)
         )
+
+    @property
+    def away_mode_entity(self) -> str | None:
+        """Boolean entity that is on while the household is away, if one is set.
+
+        When set it is the source for away mode (#485): on means away, off
+        means home, and person tracking and ``zone.home`` are not consulted.
+        ``None`` leaves away mode to person tracking. A blank or non-string
+        value, as a hand-edited entry could hold, counts as unset.
+        """
+        entity_id = self.config_entry.options.get(CONF_AWAY_MODE_ENTITY)
+        if not isinstance(entity_id, str):
+            return None
+        return entity_id.strip() or None
 
     @property
     def sensor_precision(self) -> int:

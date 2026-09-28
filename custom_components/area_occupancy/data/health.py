@@ -23,7 +23,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
@@ -291,10 +291,10 @@ class HealthMonitor:
         self._issues: list[HealthIssue] = []
         self._checked_count: int = 0
         self._last_check: datetime | None = None
-        # Home presence as last sampled from ``zone.home``, and when the home
-        # last went from empty to occupied (#485). Sampled on each check run,
-        # so the return time is accurate to the check interval (hourly), which
-        # is plenty against thresholds measured in days.
+        # Whether the household was away at the last sample, and when it last
+        # went from away to home (#485). Sampled on each check run, so the
+        # return time is accurate to the check interval (hourly), which is
+        # plenty against thresholds measured in days.
         self._home_was_empty: bool | None = None
         self._home_returned_at: datetime | None = None
         # In-memory record of when each entity *first* appeared unavailable
@@ -408,19 +408,23 @@ class HealthMonitor:
         self,
         entities: dict[str, Entity],
         excluded_entity_ids: set[str] | None = None,
+        away_entity: str | None = None,
     ) -> list[HealthIssue]:
         """Run all health checks on entities and update repair issues.
 
         Args:
             entities: All entities in the area
             excluded_entity_ids: Entity IDs to skip (e.g., wasp/sleep virtual sensors)
+            away_entity: Boolean entity that is on while the household is away.
+                When set it replaces person tracking and ``zone.home`` as the
+                source for away mode (#485).
 
         Returns:
             List of detected health issues
         """
         now = dt_util.utcnow()
         self._last_check = now
-        nobody_home = self._sample_home_presence(now)
+        nobody_home = self._sample_home_presence(now, away_entity)
         excluded = excluded_entity_ids or set()
         issues: list[HealthIssue] = []
         checked = 0
@@ -610,47 +614,91 @@ class HealthMonitor:
         self._update_repair_issues()
         return new_issues
 
-    def _sample_home_presence(self, now: datetime) -> bool:
-        """Sample ``zone.home`` and report whether nobody is home (#485).
+    def _sample_home_presence(
+        self, now: datetime, away_entity: str | None = None
+    ) -> bool:
+        """Sample whether the household is away and report if nobody is home (#485).
 
         A sensor that is idle while everyone is away is not stuck or
-        misconfigured, so the inactivity checks pause while ``zone.home``
-        counts nobody home, and afterwards measure idleness from the return
-        rather than from before the trip; otherwise a ten-day holiday would
-        raise every "not triggered" alert the moment you walked back in.
-        ``zone.home``'s own ``last_changed`` can't stand in for the return:
-        it moves whenever anyone arrives or leaves, which would keep
-        resetting the clock and hide real alerts.
+        misconfigured, so the inactivity checks pause while nobody is home,
+        and afterwards measure idleness from the return rather than from
+        before the trip; otherwise a ten-day holiday would raise every "not
+        triggered" alert the moment you walked back in. ``zone.home``'s own
+        ``last_changed`` can't stand in for the return: it moves whenever
+        anyone arrives or leaves, which would keep resetting the clock and
+        hide real alerts.
 
-        Without usable person tracking this returns ``False`` and the checks
-        behave exactly as before. ``zone.home`` still reads ``0`` on an
-        install with no person entities, or when every person is
-        ``unknown``/``unavailable``, and that is not "nobody home".
+        ``away_entity`` and person tracking are alternative sources, never
+        combined. With ``away_entity`` set it decides alone: ``on`` is away,
+        ``off`` is home. That serves a household with no person entities, and
+        one whose phones say something other than the truth (a house-sitter in
+        while the owners are away). Without it, ``zone.home`` counting nobody
+        home decides.
+
+        Whichever source is in use, an unusable reading returns ``False`` and
+        the checks behave exactly as before, without falling back to the other
+        source. For the entity that is any state but ``on``/``off``, or the
+        entity being gone. For ``zone.home`` it is no person with a known
+        location: it still reads ``0`` on an install with no person entities,
+        or when every person is ``unknown``/``unavailable``, and that is not
+        "nobody home".
 
         Args:
             now: The current check time.
+            away_entity: Boolean entity that is on while the household is
+                away, or None to use ``zone.home``.
 
         Returns:
-            True if ``zone.home`` reports nobody home.
+            True if the household is away.
+        """
+        empty = (
+            self._away_entity_says_away(away_entity)
+            if away_entity
+            else self._zone_home_says_empty()
+        )
+        if empty is None:
+            return False
+        if not empty and self._home_was_empty:
+            self._home_returned_at = now
+        self._home_was_empty = empty
+        return empty
+
+    def _away_entity_says_away(self, entity_id: str) -> bool | None:
+        """Read the away-mode entity.
+
+        Args:
+            entity_id: The boolean entity that is on while the household is away.
+
+        Returns:
+            True while it is on, False while it is off, None in any other
+            state or when it does not exist.
+        """
+        state = self._hass.states.get(entity_id)
+        if state is None or state.state not in (STATE_ON, STATE_OFF):
+            return None
+        return state.state == STATE_ON
+
+    def _zone_home_says_empty(self) -> bool | None:
+        """Read ``zone.home``, provided some person has a known location.
+
+        Returns:
+            True if it counts nobody home, False if it counts someone, None
+            when person tracking gives no usable reading.
         """
         tracked = any(
             person.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE)
             for person in self._hass.states.async_all("person")
         )
         if not tracked:
-            return False
+            return None
         state = self._hass.states.get(HOME_ZONE_ENTITY_ID)
         try:
             count = int(state.state) if state is not None else None
         except (TypeError, ValueError):
             count = None
         if count is None:
-            return False
-        empty = count == 0
-        if not empty and self._home_was_empty:
-            self._home_returned_at = now
-        self._home_was_empty = empty
-        return empty
+            return None
+        return count == 0
 
     def _inactive_since(self, entity: Entity) -> datetime | None:
         """When an inactive entity's idleness counts from.
