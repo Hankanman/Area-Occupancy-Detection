@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Awaitable
 from datetime import datetime, timedelta
 import logging
@@ -34,10 +35,11 @@ from ..db.queries import (
 from ..db.utils import merge_overlapping_intervals
 from ..time_utils import ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
-from .prior import Prior
+from .prior import DEFAULT_SLOT_MINUTES, Prior
 from .types import ZonePriors
 
 if TYPE_CHECKING:
+    from ..area.area import Area
     from ..coordinator import AreaOccupancyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -238,6 +240,8 @@ async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> Non
     if not coordinator.integration_config.health_enabled:
         for area in coordinator.areas.values():
             area.health_monitor.clear_all_issues()
+            for entity in area.entities.entities.values():
+                entity.stuck_since = None
         return
     for area in coordinator.areas.values():
         excluded = set()
@@ -254,6 +258,23 @@ async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> Non
                 area.area_name,
                 len(issues),
             )
+
+
+def _peak_learned_prior(area: Area) -> tuple[float, str] | None:
+    """The highest learned prior over the week, and when it occurs.
+
+    Uses ``prior_for``, the same learned prior the live estimate takes for
+    each weekly slot. ``None`` until a global prior has been learned.
+    """
+    prior = area.prior
+    if prior.global_prior is None:
+        return None
+    slots_per_day = 1440 // DEFAULT_SLOT_MINUTES
+    peak, day, slot = max(
+        (prior.prior_for(d, t), d, t) for d in range(7) for t in range(slots_per_day)
+    )
+    minutes = slot * DEFAULT_SLOT_MINUTES
+    return peak, f"{calendar.day_name[day]} {minutes // 60:02d}:{minutes % 60:02d}"
 
 
 async def _run_transition_learning(coordinator: AreaOccupancyCoordinator) -> None:
@@ -492,6 +513,8 @@ async def _run_pipeline_health_check(
             last_analysis_duration_ms=coordinator.last_analysis_duration_ms,
             correlation_failure_count=failure_count,
             correlatable_entity_count=correlatable_count,
+            peak_prior=_peak_learned_prior(area),
+            threshold=area.config.threshold,
         )
 
 

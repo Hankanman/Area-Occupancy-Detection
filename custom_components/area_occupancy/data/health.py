@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 import logging
+import math
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -141,6 +142,10 @@ SLOW_ANALYSIS_THRESHOLD_MS: float = 180_000.0
 # — single source of truth alongside the code that emits them.
 CORRELATION_FAILURE_RATIO: float = 0.5
 
+# Headroom between an area's peak learned prior and the threshold the
+# prior_above_threshold repair suggests.
+PRIOR_THRESHOLD_HEADROOM: float = 0.05
+
 
 class HealthIssueType(StrEnum):
     """Types of health issues — sensor-scope and pipeline-scope."""
@@ -156,6 +161,7 @@ class HealthIssueType(StrEnum):
     STALE_INTERVALS_CACHE = "stale_intervals_cache"
     SLOW_ANALYSIS = "slow_analysis"
     CORRELATION_FAILURES = "correlation_failures"
+    PRIOR_ABOVE_THRESHOLD = "prior_above_threshold"
 
 
 _PIPELINE_ISSUE_TYPES: frozenset[HealthIssueType] = frozenset(
@@ -164,6 +170,7 @@ _PIPELINE_ISSUE_TYPES: frozenset[HealthIssueType] = frozenset(
         HealthIssueType.STALE_INTERVALS_CACHE,
         HealthIssueType.SLOW_ANALYSIS,
         HealthIssueType.CORRELATION_FAILURES,
+        HealthIssueType.PRIOR_ABOVE_THRESHOLD,
     }
 )
 
@@ -204,7 +211,16 @@ def _format_duration_human(hours: float) -> str:
     return f"{total_seconds // 86400}d"
 
 
-def _stuck_active_threshold(
+def suggested_threshold(peak_prior: float) -> float:
+    """A threshold safely above an area's highest learned prior.
+
+    Five points of headroom, rounded up to a whole percent and capped at
+    99%, so the prior alone stays below it.
+    """
+    return min(0.99, math.ceil((peak_prior + PRIOR_THRESHOLD_HEADROOM) * 100) / 100)
+
+
+def stuck_active_threshold(
     input_type: InputType, purpose: AreaPurpose | None
 ) -> timedelta | None:
     """Return the stuck-active threshold for ``input_type`` in this area.
@@ -451,7 +467,30 @@ class HealthMonitor:
         self._checked_count = checked
         self._issues = issues
         self._update_repair_issues()
+        self._flag_stuck_entities(entities, issues)
         return issues
+
+    def _flag_stuck_entities(
+        self, entities: dict[str, Entity], issues: list[HealthIssue]
+    ) -> None:
+        """Mark sensors flagged stuck active so they stop counting as evidence.
+
+        A sensor stuck on (a TV left paused for a day, a PIR that stopped
+        reporting while "on") would otherwise hold the area occupied. It
+        stays a repair for the user; ignoring that repair says the long
+        activity is real, so an ignored issue leaves the sensor counting.
+        """
+        stuck = {
+            issue.entity_id: issue.since
+            for issue in issues
+            if issue.issue_type == HealthIssueType.STUCK_ACTIVE
+            and issue.entity_id is not None
+            and not self._is_ignored(
+                _issue_id(self._area_id, issue.entity_id, issue.issue_type)
+            )
+        }
+        for entity in entities.values():
+            entity.stuck_since = stuck.get(entity.entity_id)
 
     def cleanup(self) -> None:
         """Remove all repair issues for this area.
@@ -506,6 +545,8 @@ class HealthMonitor:
         correlation_failure_count: int,
         correlatable_entity_count: int,
         last_prior_calculation_hours_ago: float | None = None,
+        peak_prior: tuple[float, str] | None = None,
+        threshold: float | None = None,
     ) -> list[HealthIssue]:
         """Run pipeline-scope checks and merge results with sensor issues.
 
@@ -553,6 +594,10 @@ class HealthMonitor:
             area_age_hours,
             now,
         )
+        if issue:
+            new_issues.append(issue)
+
+        issue = self._check_prior_above_threshold(peak_prior, threshold, now)
         if issue:
             new_issues.append(issue)
 
@@ -639,7 +684,7 @@ class HealthMonitor:
 
         # Check stuck active
         if evidence is True:
-            threshold = _stuck_active_threshold(entity.type.input_type, self._purpose)
+            threshold = stuck_active_threshold(entity.type.input_type, self._purpose)
             if threshold and duration >= threshold:
                 hours = duration.total_seconds() / 3600
                 return HealthIssue(
@@ -919,6 +964,47 @@ class HealthMonitor:
             ),
         )
 
+    def _check_prior_above_threshold(
+        self,
+        peak_prior: tuple[float, str] | None,
+        threshold: float | None,
+        now: datetime,
+    ) -> HealthIssue | None:
+        """Flag an area whose learned prior reaches its occupancy threshold.
+
+        A learned prior is measured occupancy, so it stands: an area that is
+        really occupied most Sunday evenings may read occupied then with no
+        sensor active. But the user may not expect that, and a threshold
+        just above the peak keeps the sensors in charge, so suggest it.
+
+        Args:
+            peak_prior: The highest learned prior over the week and the slot
+                it occurs in (e.g. ``"Sunday 18:00"``).
+            threshold: The area's occupancy threshold.
+            now: The current check time.
+
+        Returns:
+            The issue, or None.
+        """
+        if peak_prior is None or threshold is None:
+            return None
+        peak, slot = peak_prior
+        if peak < threshold:
+            return None
+        suggested = suggested_threshold(peak)
+        return HealthIssue(
+            entity_id=None,
+            issue_type=HealthIssueType.PRIOR_ABOVE_THRESHOLD,
+            input_type=None,
+            since=now,
+            duration_hours=0.0,
+            details=(
+                f"At {slot} the learned prior is {peak * 100:.0f}%, at or "
+                f"above the {threshold * 100:.0f}% threshold. A threshold of "
+                f"{suggested * 100:.0f}% keeps it below."
+            ),
+        )
+
     def _check_correlation_failures(
         self,
         failure_count: int,
@@ -970,6 +1056,7 @@ class HealthMonitor:
             HealthIssueType.STALE_INTERVALS_CACHE: ir.IssueSeverity.ERROR,
             HealthIssueType.SLOW_ANALYSIS: ir.IssueSeverity.WARNING,
             HealthIssueType.CORRELATION_FAILURES: ir.IssueSeverity.WARNING,
+            HealthIssueType.PRIOR_ABOVE_THRESHOLD: ir.IssueSeverity.WARNING,
         }
 
         for issue in self._issues:
