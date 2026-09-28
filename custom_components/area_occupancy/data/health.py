@@ -216,10 +216,12 @@ def suggested_threshold(peak_prior: float) -> float | None:
 
     Five points of headroom, rounded up to a whole percent. ``None`` when
     that would exceed ``MAX_PROBABILITY``: occupancy probability never goes
-    above it, so such a threshold would stop the area ever reading
-    occupied, and no threshold can clear the repair.
+    above it, so there is no threshold with that headroom to suggest.
     """
-    suggested = math.ceil((peak_prior + PRIOR_THRESHOLD_HEADROOM) * 100) / 100
+    # Round away float noise before the ceiling: 0.56 + 0.05 is
+    # 0.6100000000000001, which would otherwise round up to 62%.
+    percent = round((peak_prior + PRIOR_THRESHOLD_HEADROOM) * 100, 6)
+    suggested = math.ceil(percent) / 100
     return suggested if suggested <= MAX_PROBABILITY else None
 
 
@@ -999,10 +1001,9 @@ class HealthMonitor:
             f"A threshold of {suggested * 100:.0f}% keeps it below."
             if suggested is not None
             else (
-                "No threshold can keep it below and still let sensors mark "
-                f"the area occupied (probability tops out at "
-                f"{MAX_PROBABILITY * 100:.0f}%): the area is almost always "
-                "occupied then."
+                "No threshold leaves five points of headroom within the "
+                f"{MAX_PROBABILITY * 100:.0f}% limit on occupancy "
+                "probability: the area is almost always occupied then."
             )
         )
         return HealthIssue(
