@@ -34,9 +34,10 @@ homes as of 2026-07-06):
 Interpretation guide:
   - `total_count` for a chain below ADJACENCY_N_PAIR (20, for 1-hop) or
     ADJACENCY_N_CHAIN (50, for 2-hop unbucketed) means the adjacency lookup
-    for that chain is still falling back toward LEVEL_STATIC_DEFAULT (the
-    hand-configured influence_weight in area_relationships) -- learning
-    hasn't taken over yet for that pair.
+    for that chain is still falling back toward LEVEL_STATIC_DEFAULT
+    (DEFAULT_INFLUENCE_WEIGHTS["adjacent"] = 0.3) -- learning hasn't taken
+    over yet for that pair, so adjacency has no effect on it yet (since
+    #565; older versions used the 0.3 as a real probability).
   - `hour_buckets` close to 168 with reasonable `total_count` per bucket
     means the chain has enough data to use the finest-grained lookup level
     (LEVEL_2HOP_HOUR_OF_WEEK / LEVEL_1HOP_HOUR_OF_WEEK).

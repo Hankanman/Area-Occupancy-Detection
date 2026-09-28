@@ -694,15 +694,17 @@ class TestSyncAdjacentAreasFromConfig:
     ):
         """End to end: config ids -> rows -> snapshot -> decay modifier.
 
-        Neighbours Kitchen (lagged 0.9) and Main Bedroom (lagged 0.2), no
-        learned transitions yet, so each lookup is the static default 0.3:
+        Neighbours Kitchen (lagged 0.9) and Main Bedroom (lagged 0.2), each
+        taking 3 of the area's 6 learned exits in the hour looked up, so
+        each lookup reads 0.5:
 
-            silence  = (1 - 0.9) * 0.3 + (1 - 0.2) * 0.3 = 0.27
-            modifier = 1 + 0.75 * 0.27                    = 1.2025
+            silence  = (1 - 0.9) * 0.5 + (1 - 0.2) * 0.5 = 0.45
+            modifier = 1 + 0.75 * 0.45                    = 1.3375
 
         With rows keyed by id both lagged lookups missed and read as 0.0,
-        giving silence 0.6 and a modifier of 1.45 whatever the neighbours
-        were doing.
+        giving silence 1.0 and a modifier of 1.75 whatever the neighbours
+        were doing. (Exits with nothing learned count as 0, so the
+        transitions are seeded.)
         """
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
@@ -713,6 +715,17 @@ class TestSyncAdjacentAreasFromConfig:
         with db.get_session() as session:
             record = session.query(db.Areas).filter_by(area_name=area_name).first()
             record.adjacent_areas = ["kitchen", "bedroom_2"]
+            for neighbour in ("Kitchen", "Main Bedroom"):
+                session.add(
+                    db.AreaTransitions(
+                        entry_id=db.coordinator.entry_id,
+                        from_area=area_name,
+                        mid_area="",
+                        to_area=neighbour,
+                        hour_of_week=10,
+                        count=3.0,
+                    )
+                )
             session.commit()
         sync_adjacent_areas_from_config(db, area_name)
 
@@ -727,6 +740,6 @@ class TestSyncAdjacentAreasFromConfig:
             base_half_life_seconds=300.0,
         )
 
-        assert out.silence_score == pytest.approx(0.27)
-        assert out.decay_modifier == pytest.approx(1.2025)
-        assert out.effective_half_life_seconds == pytest.approx(360.75)
+        assert out.silence_score == pytest.approx(0.45)
+        assert out.decay_modifier == pytest.approx(1.3375)
+        assert out.effective_half_life_seconds == pytest.approx(401.25)

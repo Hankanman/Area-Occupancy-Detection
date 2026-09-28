@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 from homeassistant.util import dt as dt_util
@@ -64,8 +64,30 @@ class Decay:
         ``compute_decay_modifier``. Clamped to ``[1.0, +inf)`` since the
         modifier is only ever a slowdown — a factor < 1 would speed
         decay and is never the desired behaviour.
+
+        A change applies from now on. ``decay_factor`` divides the whole
+        elapsed time by the current half-life, so while decaying,
+        ``decay_start`` is moved to keep the decay made so far (in
+        half-lives) unchanged. Otherwise every change would re-scale the
+        entire decay retroactively, and the factor would jump up or down
+        on every tick the neighbours' probabilities moved.
         """
-        self._modifier_factor = max(1.0, float(factor))
+        new_factor = max(1.0, float(factor))
+        if new_factor == self._modifier_factor:
+            return
+        if not self.is_decaying:
+            self._modifier_factor = new_factor
+            return
+        now = dt_util.utcnow()
+        elapsed = (now - self.decay_start).total_seconds()
+        old_factor = self._modifier_factor
+        self._modifier_factor = new_factor
+        if elapsed > 0:
+            # half_life scales linearly with the modifier, so the elapsed
+            # time scales by the same ratio.
+            self.decay_start = now - timedelta(
+                seconds=elapsed * new_factor / old_factor
+            )
 
     @property
     def modifier_factor(self) -> float:

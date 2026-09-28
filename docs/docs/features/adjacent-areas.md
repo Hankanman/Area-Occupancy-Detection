@@ -6,7 +6,7 @@ description: Let occupancy in one room influence its physically-connected neighb
 
 Adjacent Areas lets rooms that are physically connected — a hallway and a bedroom, a kitchen and a dining room — influence each other's occupancy calculation. Once the integration has learned how your household actually moves between two adjacent rooms, it uses that pattern in two ways:
 
-1. **Boost**: if your history shows that leaving room A usually means arriving in room B a few minutes later, B's probability is nudged up when that pattern is under way.
+1. **Boost**: if your history shows that leaving room A usually means arriving in room B, B's probability is nudged up when that pattern is under way: A's sensors go quiet and B's pick someone up shortly after. The boost only ever nudges up, and only the room that was actually entered; it never lowers another room's probability.
 2. **Slower decay**: if room B's only usual exit has been quiet since B's last motion, B's probability decays more slowly — it's less likely the person actually left if there's nowhere for them to have gone.
 
 Both effects come from **learned transition history**, not from a fixed "influence" setting you configure. See [Transition Learning](../technical/transition-learning.md) for how that history is built and the underlying maths.
@@ -43,7 +43,7 @@ If Hall lights up with motion shortly after, that's read as evidence of an actua
 
 The [Diagnostics export](../technical/diagnostics.md) includes an `adjacency` block under each area's `current` section whenever the boost or decay modifier has fired for that area on the current tick. It shows:
 
-- The two-hop trajectory (the last two rooms someone was recently in) and the hour-of-week bucket used for the lookup
+- The two-hop trajectory (the last two rooms whose sensors went quiet) and the hour-of-week bucket used for the lookup
 - The learned probability that was looked up, and which smoothing fallback level supplied it
 - The logit-space contribution added to the area's probability (boost), or the silence score and resulting decay multiplier (decay modifier), including a breakdown per silent neighbour
 

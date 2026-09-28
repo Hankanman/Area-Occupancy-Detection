@@ -139,17 +139,53 @@ class TestComputeAdjacencyBoost:
         )
         assert out.logit_contribution == pytest.approx(0.0, abs=1e-9)
 
-    def test_logit_contribution_negative_when_prob_below_half(self):
-        """P < 0.5 produces a negative logit boost.
+    def test_no_push_down_when_prob_below_half(self):
+        """P < 0.5 contributes nothing rather than pulling the area down.
 
-        The area is *less* likely than chance to be next, so the
-        probability gets pulled down.
+        A low transition probability says where the person who just left
+        probably didn't go, not that the target is empty. This used to be
+        ``0.5 × logit(0.2) = -0.693``.
         """
         traj = Trajectory(prev_area="hall", prev_prev_area=None, hour_of_week=10)
         out = compute_adjacency_boost(
             target_area="bedroom", trajectory=traj, lookup=_stub_lookup(0.2)
         )
-        assert out.logit_contribution < 0.0
+        assert out.fired is True
+        assert out.raw_probability == pytest.approx(0.2)
+        assert out.logit_contribution == 0.0
+
+    def test_learned_zero_does_not_push_down(self):
+        """A learned P = 0 (e.g. an area not adjacent to prev) contributes nothing.
+
+        Transitions are only recorded between adjacent areas, so every
+        non-adjacent target reads a learned 0 once the source has enough
+        data. ``logit`` clamps that to 0.01, which used to give
+        ``0.5 × logit(0.01) = -2.298`` on every non-adjacent area.
+        """
+        traj = Trajectory(prev_area="hall", prev_prev_area=None, hour_of_week=10)
+        out = compute_adjacency_boost(
+            target_area="attic",
+            trajectory=traj,
+            lookup=_stub_lookup(0.0, level=LEVEL_1HOP_HOUR_OF_WEEK),
+        )
+        assert out.logit_contribution == 0.0
+
+    @pytest.mark.parametrize("probability", [0.3, 0.8])
+    def test_static_default_has_no_effect(self, probability: float):
+        """Nothing learned for the chain yet → no boost, whatever the default.
+
+        The static default (0.3) used to give ``0.5 × logit(0.3) = -0.424``
+        to every area whenever any other area ended.
+        """
+        traj = Trajectory(prev_area="hall", prev_prev_area=None, hour_of_week=10)
+        out = compute_adjacency_boost(
+            target_area="bedroom",
+            trajectory=traj,
+            lookup=_stub_lookup(probability, level=LEVEL_STATIC_DEFAULT),
+        )
+        assert out.fired is True
+        assert out.fallback_level == LEVEL_STATIC_DEFAULT
+        assert out.logit_contribution == 0.0
 
     def test_gain_override_scales_contribution(self):
         traj = Trajectory(prev_area="hall", prev_prev_area=None, hour_of_week=10)
@@ -238,6 +274,26 @@ class TestComputeDecayModifier:
         assert out.silence_score == 0.0
         assert out.decay_modifier == 1.0
         assert out.effective_half_life_seconds == 300.0
+
+    def test_unlearned_exits_do_not_slow_decay(self):
+        """Exits with nothing learned count as P = 0, so a new pair has no effect.
+
+        Two silent neighbours on the static default (0.3) used to give
+        ``silence = 2 × 1.0 × 0.3 = 0.6`` → modifier ``1 + 0.75 × 0.6 = 1.45``.
+        """
+        out = compute_decay_modifier(
+            target_area="bedroom",
+            adjacency_index={"bedroom": {"hall", "study"}},
+            lagged_probabilities={"hall": 0.0, "study": 0.0},
+            trajectory=Trajectory(prev_area=None, prev_prev_area=None, hour_of_week=10),
+            lookup=_stub_lookup(0.3, level=LEVEL_STATIC_DEFAULT),
+            base_half_life_seconds=300.0,
+        )
+        assert out.fired is True
+        assert out.silence_score == 0.0
+        assert out.decay_modifier == 1.0
+        assert out.effective_half_life_seconds == 300.0
+        assert out.silent_neighbours == [("hall", 0.0, 0.0), ("study", 0.0, 0.0)]
 
     def test_modifier_caps_at_max(self):
         """A pathological lookup that returns >1 still respects the cap."""
