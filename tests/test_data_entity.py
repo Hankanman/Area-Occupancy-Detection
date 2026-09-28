@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import CONF_SLEEP_STATE_ENTITY
+from custom_components.area_occupancy.const import (
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
+    CONF_SLEEP_STATE_ENTITY,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
@@ -2595,7 +2599,16 @@ class TestEntityFactorySleepOverride:
         (no recreation, no reload) is checked after each flip.
         """
         mock_realistic_config_entry.options = {
-            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping"
+            CONF_SLEEP_STATE_ENTITY: "binary_sensor.house_sleeping",
+            # Empty strings, not omitted keys: IntegrationConfig.sleep_start/
+            # sleep_end fall back to DEFAULT_SLEEP_START/END ("23:00:00"/
+            # "07:00:00") when the option key is absent, which would make
+            # the "unavailable -> clock fallback" assertion below depend on
+            # the wall-clock time CI happens to run at. An empty string is
+            # falsy, so Decay._resolve_purpose_half_life() takes its
+            # "sleep times not configured" branch deterministically.
+            CONF_SLEEP_START: "",
+            CONF_SLEEP_END: "",
         }
         hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
 
@@ -2629,8 +2642,9 @@ class TestEntityFactorySleepOverride:
         assert decay.half_life == asleep_half_life
 
         hass.states.async_set("binary_sensor.house_sleeping", STATE_UNAVAILABLE)
-        # No sleep_start/sleep_end configured by default -> clock fallback
-        # is base_half_life (asleep).
+        # sleep_start/sleep_end forced empty above -> clock fallback is
+        # base_half_life (asleep), deterministically regardless of the
+        # real wall-clock time.
         assert decay.half_life == asleep_half_life
 
         hass.states.async_set("binary_sensor.house_sleeping", STATE_OFF)
