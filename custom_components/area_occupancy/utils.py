@@ -269,7 +269,13 @@ def sigmoid_probability(
         strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
         signal = strength * strength_multiplier
         if entity.type.input_type in (InputType.MOTION, InputType.SLEEP):
-            signal = max(signal, ground_truth_floor)
+            # The floor and hold promise their effect at full *configured*
+            # weight. effective_weight also carries information_gain (below
+            # 1 for any p_given_false > 0: 0.79 for a 0.95/0.2 motion
+            # sensor), which would cut a 450 s hold to ~300 s, so divide it
+            # back out; a lower configured weight still scales it down.
+            gain = ew / entity.weight if ew > 0 else 1.0
+            signal = max(signal, ground_truth_floor / gain)
         contribution = ew * evidence * correlation * signal
         z += contribution
 

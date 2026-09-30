@@ -72,7 +72,7 @@ strength = max(prob_given_true * strength_multiplier,
 - **Floor:** while active, one such sensor at full weight reads at least 75%.
 - **Hold:** once it goes quiet, decay halves its contribution every half-life, so this strength keeps the area at or above its threshold for **one half-life** of the area's purpose. A 2.5%-prior bathroom with a 450 s half-life stays occupied for 450 s after the last motion, rather than the ~170 s the floor alone gave.
 
-Rooms whose prior is high enough already hold longer on motion's own strength, so they are unchanged. A 30%-prior room, for example, holds about 1.75 half-lives. A lower sensor weight still scales all of this down.
+Both limits apply at full *configured* weight: the sensor's information gain (how far its `prob_given_false` sits below `prob_given_true`), which otherwise also scales `effective_weight`, is divided back out, so a noisier motion sensor still holds for the full half-life. Rooms whose prior is high enough already hold longer on motion's own strength, so they are unchanged. A 30%-prior room, for example, holds about 1.75 half-lives. A lower configured weight still scales all of this down.
 
 ### 4. Final Probability
 
