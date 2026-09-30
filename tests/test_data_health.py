@@ -1716,11 +1716,197 @@ class TestAwayFromHome:
 
         assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
 
+    def test_zone_home_that_is_not_a_count_is_not_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """A zone.home state that is no count (unknown) is no reading, not an empty house."""
+        self._home(mock_hass, "unknown")
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
     def test_reported_since_is_the_return(
         self, monitor: HealthMonitor, mock_hass: Mock
     ) -> None:
         """The issue's start matches its duration: the return, not pre-trip."""
         self._home(mock_hass, "2")
+        returned = dt_util.utcnow() - timedelta(days=8)
+        monitor._home_returned_at = returned
+
+        issues = self._check(monitor, self._idle_motion(10))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+        assert issues[0].since == returned
+        assert issues[0].duration_hours == pytest.approx(8 * 24, abs=0.1)
+
+
+class TestAwayModeEntity:
+    """A boolean entity says when the household is away, instead of person tracking."""
+
+    ENTITY = "input_boolean.vacation_mode"
+
+    @staticmethod
+    def _states(
+        mock_hass: Mock,
+        *,
+        away: str | None = None,
+        zone_count: str | None = None,
+        persons: tuple[str, ...] = (),
+    ) -> None:
+        """Set what the away entity, ``zone.home`` and the person entities read."""
+        readings = {}
+        if away is not None:
+            readings[TestAwayModeEntity.ENTITY] = away
+        if zone_count is not None:
+            readings["zone.home"] = zone_count
+        mock_hass.states.get.side_effect = lambda eid: (
+            Mock(state=readings[eid]) if eid in readings else None
+        )
+        mock_hass.states.async_all.side_effect = lambda domain: (
+            [Mock(state=s) for s in persons] if domain == "person" else []
+        )
+
+    @staticmethod
+    def _idle_motion(days: float) -> Entity:
+        return _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="off",
+            last_updated=dt_util.utcnow() - timedelta(days=days),
+            evidence=False,
+        )
+
+    def _check(
+        self,
+        monitor: HealthMonitor,
+        entity: Entity,
+        away_entity: str | None = ENTITY,
+    ) -> list:
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            return monitor.check_health({"e": entity}, away_entity=away_entity)
+
+    def test_stuck_inactive_pauses_while_the_entity_is_on(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Ten idle days (threshold 7) raise nothing, with no person entities at all."""
+        self._states(mock_hass, away="on")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+    def test_never_triggered_pauses_while_the_entity_is_on(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """An oven idle for ten days (threshold 7, never active) raises nothing."""
+        self._states(mock_hass, away="on")
+        oven = _make_entity(
+            "binary_sensor.oven",
+            InputType.APPLIANCE,
+            state="off",
+            last_updated=dt_util.utcnow() - timedelta(days=10),
+            evidence=False,
+        )
+
+        assert self._check(monitor, oven) == []
+
+    def test_inactivity_alerts_run_while_the_entity_is_off(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        self._states(mock_hass, away="off")
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_stuck_active_is_still_reported_while_away(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """A sensor stuck on in an empty house is more suspicious, not less."""
+        self._states(mock_hass, away="on")
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=9),
+            evidence=True,
+        )
+
+        issues = self._check(monitor, entity)
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_ACTIVE]
+
+    def test_entity_off_overrides_zone_home_reading_nobody_home(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Phones say the house is empty, the entity says it isn't: the entity wins."""
+        self._states(mock_hass, away="off", zone_count="0", persons=("not_home",))
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_entity_on_overrides_zone_home_reading_someone_home(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """A house-sitter is in and the owners' phones are home-zone; entity says away."""
+        self._states(mock_hass, away="on", zone_count="2", persons=("home", "home"))
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+    def test_entity_is_ignored_when_it_is_not_configured(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Person tracking still decides when no away entity is passed in."""
+        self._states(mock_hass, away="on", zone_count="2", persons=("home",))
+
+        issues = self._check(monitor, self._idle_motion(8), away_entity=None)
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    @pytest.mark.parametrize("state", ["unavailable", "unknown", None])
+    def test_unusable_entity_does_not_fall_back_to_person_tracking(
+        self, monitor: HealthMonitor, mock_hass: Mock, state: str | None
+    ) -> None:
+        """Unavailable, unknown, or gone: alerts run as before, even with zone.home at 0."""
+        self._states(mock_hass, away=state, zone_count="0", persons=("not_home",))
+
+        issues = self._check(monitor, self._idle_motion(8))
+
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_idleness_counts_from_the_return(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Back from a trip, the clock restarts rather than alerting at once."""
+        self._states(mock_hass, away="on")
+        self._check(monitor, self._idle_motion(10))
+        self._states(mock_hass, away="off")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+
+        # Seven days after the return, the threshold is genuinely crossed.
+        monitor._home_returned_at = dt_util.utcnow() - timedelta(days=8)
+        issues = self._check(monitor, self._idle_motion(10))
+        assert [i.issue_type for i in issues] == [HealthIssueType.STUCK_INACTIVE]
+
+    def test_the_return_is_still_seen_after_an_outage_of_the_entity(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Away, the entity drops out for a check, then reads off: that is the return."""
+        self._states(mock_hass, away="on")
+        self._check(monitor, self._idle_motion(10))
+        self._states(mock_hass, away="unavailable")
+        self._check(monitor, self._idle_motion(10))
+        self._states(mock_hass, away="off")
+
+        assert self._check(monitor, self._idle_motion(10)) == []
+        assert monitor._home_returned_at is not None
+
+    def test_reported_since_is_the_return(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """The issue's start matches its duration: the return, not pre-trip."""
+        self._states(mock_hass, away="off")
         returned = dt_util.utcnow() - timedelta(days=8)
         monitor._home_returned_at = returned
 

@@ -15,6 +15,7 @@ from custom_components.area_occupancy.const import (
     CONF_ADJACENT_AREAS,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AWAY_MODE_ENTITY,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_DECAY_HALF_LIFE,
@@ -1265,6 +1266,41 @@ class TestIntegrationConfig:
         mock_realistic_config_entry.options = {CONF_SENSOR_PRECISION: value}
         integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
         assert integration_config.sensor_precision == expected
+
+    def test_away_mode_entity_is_unset_by_default(
+        self, hass: HomeAssistant, mock_realistic_config_entry: Mock
+    ) -> None:
+        """No option stored means person tracking decides, as before the option existed."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        mock_realistic_config_entry.options = {}
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.away_mode_entity is None
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ("input_boolean.vacation_mode", "input_boolean.vacation_mode"),
+            ("binary_sensor.house_empty", "binary_sensor.house_empty"),
+            ("  switch.away_mode ", "switch.away_mode"),
+            ("", None),
+            ("   ", None),
+            (None, None),
+            (5, None),
+            (["input_boolean.vacation_mode"], None),
+        ],
+    )
+    def test_away_mode_entity(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+        stored: Any,
+        expected: str | None,
+    ) -> None:
+        """A stored entity id is read back; blank or non-string values count as unset."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        mock_realistic_config_entry.options = {CONF_AWAY_MODE_ENTITY: stored}
+        integration_config = IntegrationConfig(coordinator, mock_realistic_config_entry)
+        assert integration_config.away_mode_entity == expected
 
     def test_integration_name_from_config_entry(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

@@ -583,6 +583,7 @@ class TestEntryUpdated:
         """Set up coordinator mock with areas matching the given area IDs."""
         mock_coordinator = Mock()
         mock_coordinator.async_request_refresh = AsyncMock()
+        mock_coordinator.track_entity_state_changes = AsyncMock()
         mock_config_entry.runtime_data = mock_coordinator
 
         # Build areas dict with mock Area objects
@@ -592,6 +593,8 @@ class TestEntryUpdated:
             mock_area.config.area_id = aid
             mock_area.config.update_from_entry = Mock()
             mock_area.entities.cleanup = AsyncMock()
+            mock_area.entities.refresh_from_config = Mock()
+            mock_area.entities.entity_ids = [f"binary_sensor.{aid}_motion"]
             areas[f"Area {aid}"] = mock_area
         mock_coordinator.areas = areas
 
@@ -631,10 +634,17 @@ class TestEntryUpdated:
 
         # Should NOT reload
         mock_reload.assert_not_called()
-        # Should call update_from_entry and cleanup on each area.
+        # Should update each area's config and refresh its entities in place,
+        # never discard them (that reset learned likelihoods and decay).
         for area in mock_coordinator.areas.values():
             area.config.update_from_entry.assert_called_once_with(mock_config_entry)
-            area.entities.cleanup.assert_awaited_once()
+            area.entities.refresh_from_config.assert_called_once_with()
+            area.entities.cleanup.assert_not_awaited()
+        # New sensors are reconciled with their live state, then heard.
+        mock_coordinator._reconcile_entity_state.assert_called_once_with()  # noqa: SLF001
+        mock_coordinator.track_entity_state_changes.assert_awaited_once_with(
+            ["binary_sensor.test_area_motion"]
+        )
         mock_coordinator.async_request_refresh.assert_called_once()
 
     async def test_area_added_triggers_reload(

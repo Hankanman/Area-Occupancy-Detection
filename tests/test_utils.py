@@ -912,3 +912,105 @@ class TestGroundTruthActiveFloor:
         result = sigmoid_probability({"d": door}, prior=self.PRIOR)
 
         assert result == pytest.approx(0.0304, abs=1e-4)
+
+
+class TestGroundTruthHold:
+    """One motion sensor holds its area above threshold for a half-life.
+
+    Live report (2026.9.3): a 2.53%-prior bathroom with a 450 s half-life
+    went vacant ~160 s after the last motion, mid-shower. Hand-computed:
+    ``bias = logit(0.0253) = -3.6513``. The 75% floor's signal was
+    ``1.0986 + 3.6513 = 4.7499``, so decay crossed 50% at
+    ``f = 3.6513 / 4.7499 = 0.769``, i.e. 450 * log2(1 / 0.769) = 170.8 s.
+    With a 50% threshold the hold signal is ``2 * (0 + 3.6513) = 7.3027``,
+    which crosses exactly at ``f = 0.5``: one half-life, 450 s.
+    """
+
+    PRIOR = 0.0253
+
+    @staticmethod
+    def _motion(**overrides: Any) -> Mock:
+        params: dict[str, Any] = {
+            "evidence": True,
+            "prob_given_true": 0.95,
+            "prob_given_false": 0.005,
+            "weight": 1.0,
+            "input_type": InputType.MOTION,
+        }
+        return _create_mock_entity(**(params | overrides))
+
+    def _decayed(self, factor: float) -> float:
+        motion = self._motion(evidence=False, is_decaying=True, decay_factor=factor)
+        return sigmoid_probability({"m": motion}, prior=self.PRIOR, threshold=0.5)
+
+    def test_active_motion_reads_near_certain(self) -> None:
+        """sigmoid(-3.6513 + 7.3027) = 97.47% (was the 75% floor)."""
+        result = sigmoid_probability(
+            {"m": self._motion()}, prior=self.PRIOR, threshold=0.5
+        )
+
+        assert result == pytest.approx(0.9747, abs=1e-4)
+
+    def test_still_occupied_where_it_used_to_drop(self) -> None:
+        """Still occupied where it used to drop.
+
+        160 s in (f = 0.782): 88.69% now, 51.58% before; at the old 171 s
+        crossing (f = 0.769): 87.70%, not 50.03%.
+        """
+        assert self._decayed(0.782) == pytest.approx(0.88689, abs=1e-4)
+        assert self._decayed(0.769) == pytest.approx(0.87701, abs=1e-4)
+
+    def test_crosses_the_threshold_at_one_half_life(self) -> None:
+        """At f = 0.5 it is exactly the threshold; f = 0.45 (~518 s) is below."""
+        assert self._decayed(0.5) == pytest.approx(0.5, abs=1e-6)
+        assert self._decayed(0.45) == pytest.approx(0.40972, abs=1e-4)
+
+    def test_rooms_that_already_hold_longer_are_unchanged(self) -> None:
+        """A 30% prior room is unchanged.
+
+        Motion's own 2.85 beats the floor (1.946) and the hold (1.695), so it
+        stays sigmoid(-0.8473 + 2.85) = 88.11%.
+        """
+        result = sigmoid_probability({"m": self._motion()}, prior=0.3, threshold=0.5)
+
+        assert result == pytest.approx(0.88108, abs=1e-4)
+
+    def test_without_a_threshold_only_the_floor_applies(self) -> None:
+        assert sigmoid_probability(
+            {"m": self._motion()}, prior=self.PRIOR
+        ) == pytest.approx(0.75, abs=1e-4)
+
+    def test_hold_is_at_full_configured_weight_for_a_noisy_sensor(self) -> None:
+        """p_t 0.95 / p_f 0.2 gives information gain 0.75 / 0.95 = 0.78947.
+
+        Before, effective_weight carried that gain into the floor too: at
+        f = 0.5, z = -3.6513 + 0.5 * 0.78947 * 7.3027 = -0.7687 -> 31.68%,
+        so the hold ended near 300 s. Divided back out, it is exactly the
+        threshold at one half-life, and 97.47% while active.
+        """
+        gain = 0.75 / 0.95
+        noisy = self._motion(prob_given_false=0.2, effective_weight=gain)
+        decaying = self._motion(
+            prob_given_false=0.2,
+            effective_weight=gain,
+            evidence=False,
+            is_decaying=True,
+            decay_factor=0.5,
+        )
+
+        assert sigmoid_probability(
+            {"m": noisy}, prior=self.PRIOR, threshold=0.5
+        ) == pytest.approx(0.9747, abs=1e-4)
+        assert sigmoid_probability(
+            {"m": decaying}, prior=self.PRIOR, threshold=0.5
+        ) == pytest.approx(0.5, abs=1e-6)
+
+    def test_a_lower_configured_weight_still_scales_the_hold(self) -> None:
+        """Weight 0.5: contribution 0.5 * 7.3027 = 3.6513 -> exactly 50%."""
+        half = self._motion(
+            weight=0.5, effective_weight=0.5 * 0.75 / 0.95, prob_given_false=0.2
+        )
+
+        assert sigmoid_probability(
+            {"m": half}, prior=self.PRIOR, threshold=0.5
+        ) == pytest.approx(0.5, abs=1e-6)

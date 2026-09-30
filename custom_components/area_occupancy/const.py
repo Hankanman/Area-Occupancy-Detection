@@ -38,7 +38,7 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.9.3"
+DEVICE_SW_VERSION: Final = "2026.9.4"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
@@ -133,6 +133,9 @@ CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 CONF_HEALTH_ENABLED: Final = "health_enabled"
+# Optional boolean entity that is on while the household is away (#485). Set,
+# it replaces person tracking and ``zone.home`` as the source for away mode.
+CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"
@@ -241,6 +244,15 @@ MAX_PROBABILITY: Final = 0.99
 # fades it smoothly; areas whose prior already clears it are unchanged.
 GROUND_TRUTH_ACTIVE_FLOOR: Final[float] = 0.75
 
+# How long, in half-lives of the sensor's decay, one ground-truth sensor at
+# full weight holds its area above the occupancy threshold after it goes
+# quiet, whatever the prior. The 75% floor alone crossed a 50% threshold after
+# a third of a half-life in a 2.5%-prior bathroom (~170 s of a 450 s half-life),
+# so the purpose half-life said nothing about how long a shower stays lit.
+# One half-life makes it the hold time: rooms that already hold longer, as a
+# 30%-prior room does (~1.75 half-lives), are unchanged.
+GROUND_TRUTH_HOLD_HALF_LIVES: Final[float] = 1.0
+
 # Wasp in Box is deprecated in favour of the built-in presence-continuity
 # model (#558), which takes over wasp_enabled automatically; it is removed one
 # release after that ships. Until then a repair lists the areas using it.
@@ -248,6 +260,13 @@ WASP_IN_BOX_DEPRECATION_ISSUE: Final = "wasp_in_box_deprecated"
 # Home Assistant's Home zone: its state counts the person entities at home
 # (#485, inactivity alerts pause while it is 0).
 HOME_ZONE_ENTITY_ID: Final = "zone.home"
+# Domains the away-mode entity can come from: anything with an on/off state
+# that a person flips (a vacation toggle) or a template derives.
+AWAY_MODE_ENTITY_DOMAINS: Final[tuple[str, ...]] = (
+    "input_boolean",
+    "binary_sensor",
+    "switch",
+)
 
 WASP_IN_BOX_DOCS_URL: Final = (
     "https://hankanman.github.io/Area-Occupancy-Detection/features/wasp-in-box/"

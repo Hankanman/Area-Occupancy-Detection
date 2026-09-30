@@ -224,6 +224,11 @@ async def run_full_analysis(
 
 async def _run_health_check_and_prune(coordinator: AreaOccupancyCoordinator) -> None:
     """Run the periodic DB health check and prune old intervals."""
+    # One-time heal of rows stored before #576 (a no-op once it has run),
+    # before anything downstream reads interval durations.
+    await coordinator.hass.async_add_executor_job(
+        coordinator.db.coalesce_stored_intervals
+    )
     health_ok = await coordinator.hass.async_add_executor_job(
         coordinator.db.periodic_health_check
     )
@@ -243,6 +248,7 @@ async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> Non
             for entity in area.entities.entities.values():
                 entity.stuck_since = None
         return
+    away_entity = coordinator.integration_config.away_mode_entity
     for area in coordinator.areas.values():
         excluded = set()
         if area.wasp_entity_id:
@@ -250,7 +256,9 @@ async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> Non
         if area.sleep_entity_id:
             excluded.add(area.sleep_entity_id)
         issues = area.health_monitor.check_health(
-            area.entities.entities, excluded_entity_ids=excluded or None
+            area.entities.entities,
+            excluded_entity_ids=excluded or None,
+            away_entity=away_entity,
         )
         if issues:
             _LOGGER.info(

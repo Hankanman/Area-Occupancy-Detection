@@ -14,6 +14,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from .const import (
     DOMAIN,
     GROUND_TRUTH_ACTIVE_FLOOR,
+    GROUND_TRUTH_HOLD_HALF_LIVES,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
     ROUNDING_PRECISION,
@@ -189,6 +190,7 @@ def sigmoid_probability(
     entities: dict[str, Entity],
     prior: float = 0.5,
     correlations: dict[str, float] | None = None,
+    threshold: float | None = None,
 ) -> float:
     """Calculate occupancy probability using weighted sigmoid model.
 
@@ -199,12 +201,18 @@ def sigmoid_probability(
     For the ground-truth types (motion, sleep) ``strength_factor`` is at least
     ``logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias``, so one such sensor, fully
     active at full weight, lifts any prior to at least that probability.
+    Given the area's ``threshold``, it is also at least
+    ``(logit(threshold) - bias) * 2 ** GROUND_TRUTH_HOLD_HALF_LIVES``, so the
+    same sensor keeps the area at or above the threshold for that many
+    half-lives of its decay after it goes quiet.
 
     Args:
         entities: Dict of Entity objects
         prior: Learned prior probability for this area (0.0-1.0)
         correlations: Optional dict of entity_id -> correlation strength (0-1)
                      If None or missing entries, defaults to 1.0
+        threshold: The area's occupancy threshold, for the hold floor.
+                   ``None`` applies only the probability floor.
 
     Returns:
         Probability in range MIN_PROBABILITY to MAX_PROBABILITY
@@ -222,6 +230,14 @@ def sigmoid_probability(
     # this prior to GROUND_TRUTH_ACTIVE_FLOOR on its own. Without it, motion's
     # fixed 2.85 cannot overcome a learned prior below ~5.5%.
     ground_truth_floor = logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias
+    if threshold is not None:
+        # Decay scales the contribution by 2^-t/half_life, so a signal of
+        # (logit(threshold) - bias) * 2^H is still at the threshold after H
+        # half-lives: the purpose half-life becomes the minimum hold time.
+        hold = (logit(clamp_probability(threshold)) - bias) * (
+            2**GROUND_TRUTH_HOLD_HALF_LIVES
+        )
+        ground_truth_floor = max(ground_truth_floor, hold)
 
     # Sum weighted contributions from all entities
     z = bias
@@ -253,7 +269,13 @@ def sigmoid_probability(
         strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
         signal = strength * strength_multiplier
         if entity.type.input_type in (InputType.MOTION, InputType.SLEEP):
-            signal = max(signal, ground_truth_floor)
+            # The floor and hold promise their effect at full *configured*
+            # weight. effective_weight also carries information_gain (below
+            # 1 for any p_given_false > 0: 0.79 for a 0.95/0.2 motion
+            # sensor), which would cut a 450 s hold to ~300 s, so divide it
+            # back out; a lower configured weight still scales it down.
+            gain = ew / entity.weight if ew > 0 else 1.0
+            signal = max(signal, ground_truth_floor / gain)
         contribution = ew * evidence * correlation * signal
         z += contribution
 
@@ -264,6 +286,7 @@ def presence_probability(
     entities: dict[str, Entity],
     prior: float = 0.5,
     correlations: dict[str, float] | None = None,
+    threshold: float | None = None,
 ) -> float:
     """Calculate presence probability from strong binary indicators.
 
@@ -275,6 +298,8 @@ def presence_probability(
         entities: Dict of Entity objects
         prior: Learned prior probability for this area
         correlations: Optional dict of entity_id -> correlation strength
+        threshold: The area's occupancy threshold, for the ground-truth hold
+            floor (see :func:`sigmoid_probability`)
 
     Returns:
         Probability in range MIN_PROBABILITY to MAX_PROBABILITY
@@ -291,7 +316,7 @@ def presence_probability(
         # No presence sensors - return reduced prior (uncertain state)
         return clamp_probability(prior * 0.5)
 
-    return sigmoid_probability(presence_entities, prior, correlations)
+    return sigmoid_probability(presence_entities, prior, correlations, threshold)
 
 
 def environmental_confidence(

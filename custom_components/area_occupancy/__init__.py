@@ -671,8 +671,23 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         for area_name, area in coordinator.areas.items():
             try:
                 area.config.update_from_entry(entry)
-                await area.entities.cleanup()
+                area.entities.refresh_from_config()
             except Exception:
                 _LOGGER.exception("Failed to update config for area %s", area_name)
+        # A newly added sensor starts with no recorded evidence: reconcile it
+        # with its live state so its first change is a real transition (an
+        # active sensor that goes quiet then decays instead of dropping).
+        coordinator._reconcile_entity_state()  # noqa: SLF001
+        # A sensor added to an existing area needs a state listener too;
+        # without one it only counted when something else refreshed.
+        await coordinator.track_entity_state_changes(
+            sorted(
+                {
+                    entity_id
+                    for area in coordinator.areas.values()
+                    for entity_id in area.entities.entity_ids
+                }
+            )
+        )
         await coordinator.async_request_refresh()
         _async_sync_wasp_deprecation_issue(hass, coordinator)

@@ -300,7 +300,10 @@ class Area:
         correlations = self._get_entity_correlations()
 
         return calc_presence(
-            entities, prior=self.prior.value, correlations=correlations
+            entities,
+            prior=self.prior.value,
+            correlations=correlations,
+            threshold=self.config.threshold,
         )
 
     def environmental_confidence(self) -> float:
