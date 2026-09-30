@@ -1125,6 +1125,47 @@ class EntityManager:
         """Remove an entity from the manager if it exists."""
         self._entities.pop(entity_id, None)
 
+    def refresh_from_config(self) -> None:
+        """Rebuild the entities from config, keeping what is still true.
+
+        A settings edit (a threshold, a weight, one sensor added or removed)
+        must not make the area forget. Rebuilding bare entities reset every
+        sensor's learned likelihoods to type defaults until the next hourly
+        analysis, and its decay and evidence state to "fresh", so an occupied
+        area could blink empty on an unrelated edit.
+
+        A sensor keeps its learned likelihoods and live state when it is the
+        same kind of sensor with the same meaning: same input type, active
+        states and active range. Anything else starts fresh, as it must: a
+        media player whose active states changed has learned what the old
+        states meant. Motion and sleep likelihoods come from config and are
+        never carried. Weights always come from config.
+        """
+        previous = self._entities
+        self._entities = self._factory.create_all_from_config()
+        for entity_id, new in self._entities.items():
+            old = previous.get(entity_id)
+            if (
+                old is None
+                or old.type.input_type != new.type.input_type
+                or old.type.active_states != new.type.active_states
+                or old.type.active_range != new.type.active_range
+            ):
+                continue
+            if new.type.input_type not in (InputType.MOTION, InputType.SLEEP):
+                new.prob_given_true = old.prob_given_true
+                new.prob_given_false = old.prob_given_false
+                new.analysis_error = old.analysis_error
+                new.correlation_type = old.correlation_type
+                new.learned_gaussian_params = old.learned_gaussian_params
+                new.learned_active_range = old.learned_active_range
+            new.update_decay(old.decay.decay_start, old.decay.is_decaying)
+            new.previous_evidence = old.previous_evidence
+            new.last_updated = old.last_updated
+            new.stuck_since = old.stuck_since
+        previous.clear()
+        _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
+
     async def cleanup(self) -> None:
         """Clean up resources and recreate from config.
 
