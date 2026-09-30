@@ -241,6 +241,15 @@ MAX_PROBABILITY: Final = 0.99
 # fades it smoothly; areas whose prior already clears it are unchanged.
 GROUND_TRUTH_ACTIVE_FLOOR: Final[float] = 0.75
 
+# How long, in half-lives of the sensor's decay, one ground-truth sensor at
+# full weight holds its area above the occupancy threshold after it goes
+# quiet, whatever the prior. The 75% floor alone crossed a 50% threshold after
+# a third of a half-life in a 2.5%-prior bathroom (~170 s of a 450 s half-life),
+# so the purpose half-life said nothing about how long a shower stays lit.
+# One half-life makes it the hold time: rooms that already hold longer, as a
+# 30%-prior room does (~1.75 half-lives), are unchanged.
+GROUND_TRUTH_HOLD_HALF_LIVES: Final[float] = 1.0
+
 # Wasp in Box is deprecated in favour of the built-in presence-continuity
 # model (#558), which takes over wasp_enabled automatically; it is removed one
 # release after that ships. Until then a repair lists the areas using it.

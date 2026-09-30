@@ -202,11 +202,16 @@ def compute_area_preview(
     prior = float(area.prior.value)
     correlations = area.coordinator.get_cached_correlations(area.area_name)
 
-    presence = presence_probability(entities, prior=prior, correlations=correlations)
+    threshold_pct = float(candidate.get(CONF_THRESHOLD, area.config.threshold * 100))
+    presence = presence_probability(
+        entities,
+        prior=prior,
+        correlations=correlations,
+        threshold=threshold_pct / 100.0,
+    )
     env = environmental_confidence(entities, correlations=correlations)
     base = presence if env == 0.5 else combined_probability(presence, env)
 
-    threshold_pct = float(candidate.get(CONF_THRESHOLD, area.config.threshold * 100))
     occupied = base >= threshold_pct / 100.0
 
     active = sorted(eid for eid, e in entities.items() if e.evidence is True)
