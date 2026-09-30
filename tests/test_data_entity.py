@@ -2793,3 +2793,85 @@ class TestGaussianLikelihood:
         # Should use configured values, not Gaussian params or EntityType defaults
         assert p_t == 0.9
         assert p_f == 0.05
+
+
+class TestRefreshFromConfig:
+    """A settings edit must not make the area forget (live report, 2026.9.3).
+
+    Removing a door sensor from the Lounge reset its media player's learned
+    prob_given_true from 0.897 to the 0.65 default until the next hourly
+    analysis, and every sensor's decay state with it.
+    """
+
+    MEDIA = "media_player.mock_tv_player"
+    DOOR = "binary_sensor.door_sensor"
+    MOTION = "binary_sensor.motion_sensor_1"
+
+    @staticmethod
+    def _learn(entity, p_true: float, p_false: float) -> None:
+        entity.update_binary_likelihoods(
+            {
+                "prob_given_true": p_true,
+                "prob_given_false": p_false,
+                "analysis_error": None,
+                "correlation_type": "binary_likelihood",
+            }
+        )
+
+    def test_learned_likelihoods_and_decay_survive(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        manager = coordinator.get_area().entities
+        media = manager.get_entity(self.MEDIA)
+        self._learn(media, 0.897, 0.01)
+        started = dt_util.utcnow() - timedelta(seconds=90)
+        media.update_decay(started, True)
+        media.previous_evidence = False
+
+        manager.refresh_from_config()
+
+        after = manager.get_entity(self.MEDIA)
+        assert after is not media
+        assert after.get_likelihoods() == (0.897, 0.01)
+        assert after.decay.is_decaying
+        assert after.decay.decay_start == started
+        assert after.previous_evidence is False
+
+    def test_changed_meaning_starts_fresh(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A sensor whose active states changed forgets what the old ones meant."""
+        manager = coordinator.get_area().entities
+        media = manager.get_entity(self.MEDIA)
+        door = manager.get_entity(self.DOOR)
+        self._learn(media, 0.897, 0.01)
+        self._learn(door, 0.05, 0.2)
+        # The config now says playing/buffering; the live object still has
+        # the old playing/paused, as it would right after the edit.
+        media.type = EntityType(
+            input_type=InputType.MEDIA,
+            weight=media.type.weight,
+            active_states=["playing", "paused", "idle"],
+        )
+
+        manager.refresh_from_config()
+
+        after = manager.get_entity(self.MEDIA)
+        assert after.get_likelihoods() == (
+            after.type.prob_given_true,
+            after.type.prob_given_false,
+        )
+        # An unrelated sensor in the same area keeps its learning.
+        assert manager.get_entity(self.DOOR).get_likelihoods() == (0.05, 0.2)
+
+    def test_motion_likelihoods_stay_from_config(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        manager = coordinator.get_area().entities
+        motion = manager.get_entity(self.MOTION)
+        configured = motion.get_likelihoods()
+        motion.prob_given_true = 0.5
+
+        manager.refresh_from_config()
+
+        assert manager.get_entity(self.MOTION).get_likelihoods() == configured
