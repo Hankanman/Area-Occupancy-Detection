@@ -133,6 +133,9 @@ CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 CONF_HEALTH_ENABLED: Final = "health_enabled"
+# Optional boolean entity that is on while the household is away (#485). Set,
+# it replaces person tracking and ``zone.home`` as the source for away mode.
+CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"
@@ -257,6 +260,13 @@ WASP_IN_BOX_DEPRECATION_ISSUE: Final = "wasp_in_box_deprecated"
 # Home Assistant's Home zone: its state counts the person entities at home
 # (#485, inactivity alerts pause while it is 0).
 HOME_ZONE_ENTITY_ID: Final = "zone.home"
+# Domains the away-mode entity can come from: anything with an on/off state
+# that a person flips (a vacation toggle) or a template derives.
+AWAY_MODE_ENTITY_DOMAINS: Final[tuple[str, ...]] = (
+    "input_boolean",
+    "binary_sensor",
+    "switch",
+)
 
 WASP_IN_BOX_DOCS_URL: Final = (
     "https://hankanman.github.io/Area-Occupancy-Detection/features/wasp-in-box/"

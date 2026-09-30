@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -18,6 +19,7 @@ from custom_components.area_occupancy.config_flow import (
     _create_area_selector_schema,
     _create_basics_step_schema,
     _create_behavior_step_schema,
+    _create_global_settings_schema,
     _create_motion_step_schema,
     _create_sensors_step_schema,
     _entity_contains_keyword,
@@ -45,6 +47,7 @@ from custom_components.area_occupancy.const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_AWAY_MODE_ENTITY,
     CONF_CUSTOM_BINARY_ACTIVE_STATES,
     CONF_CUSTOM_BINARY_SENSORS,
     CONF_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -67,6 +70,8 @@ from custom_components.area_occupancy.const import (
     CONF_MOTION_TIMEOUT,
     CONF_OPTION_PREFIX_AREA,
     CONF_PURPOSE,
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
     CONF_TEMPERATURE_SENSORS,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
@@ -1495,6 +1500,42 @@ class TestConfigFlowIntegration:
             assert len(schema_dict) > 0
 
 
+#: The global settings the options flow always submits, whatever else it holds.
+GLOBAL_SETTINGS_INPUT = {CONF_SLEEP_START: "23:00:00", CONF_SLEEP_END: "07:00:00"}
+
+
+class TestGlobalSettingsAwayModeEntity:
+    """The away mode entity field of the global settings schema."""
+
+    @pytest.mark.parametrize(
+        "entity_id",
+        ["input_boolean.vacation", "binary_sensor.house_empty", "switch.away"],
+    )
+    def test_accepts_boolean_entities(self, entity_id: str) -> None:
+        """Toggles, binary sensors and switches can all say the household is away."""
+        result = _create_global_settings_schema({})(
+            {**GLOBAL_SETTINGS_INPUT, CONF_AWAY_MODE_ENTITY: entity_id}
+        )
+
+        assert result[CONF_AWAY_MODE_ENTITY] == entity_id
+
+    @pytest.mark.parametrize(
+        "entity_id", ["light.kitchen", "person.alex", "sensor.outdoor_temperature"]
+    )
+    def test_rejects_other_entities(self, entity_id: str) -> None:
+        """Only entities with an on/off state can be chosen."""
+        with pytest.raises(vol.Invalid):
+            _create_global_settings_schema({})(
+                {**GLOBAL_SETTINGS_INPUT, CONF_AWAY_MODE_ENTITY: entity_id}
+            )
+
+    def test_is_optional(self) -> None:
+        """Leaving it out is valid and stores nothing: person tracking decides."""
+        result = _create_global_settings_schema({})(GLOBAL_SETTINGS_INPUT)
+
+        assert CONF_AWAY_MODE_ENTITY not in result
+
+
 class TestAreaOccupancyOptionsFlow:
     """Test AreaOccupancyOptionsFlow class."""
 
@@ -1556,6 +1597,79 @@ class TestAreaOccupancyOptionsFlow:
         assert result_data[CONF_SLEEP_END] == "08:00:00"
         assert result_data[CONF_SENSOR_PRECISION] == 1
         assert isinstance(result_data[CONF_SENSOR_PRECISION], int)
+
+    async def test_options_flow_global_settings_save_away_mode_entity(
+        self,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ):
+        """An away mode entity chosen in global settings is stored in the options."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        result = await flow.async_step_global_settings(
+            {**GLOBAL_SETTINGS_INPUT, CONF_AWAY_MODE_ENTITY: "input_boolean.vacation"}
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["data"][CONF_AWAY_MODE_ENTITY] == "input_boolean.vacation"
+
+    async def test_options_flow_global_settings_clears_away_mode_entity(
+        self,
+        hass: HomeAssistant,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ):
+        """Emptying the field removes the stored entity instead of keeping it.
+
+        A cleared optional field is left out of the submitted input, and
+        merging the input over the old options cannot remove a key.
+        """
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+        hass.config_entries.async_update_entry(
+            flow.config_entry,
+            options={
+                **GLOBAL_SETTINGS_INPUT,
+                CONF_AWAY_MODE_ENTITY: "input_boolean.vacation",
+            },
+        )
+
+        result = await flow.async_step_global_settings(GLOBAL_SETTINGS_INPUT)
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert CONF_AWAY_MODE_ENTITY not in result["data"]
+        assert result["data"][CONF_SLEEP_START] == "23:00:00"
+
+    async def test_options_flow_global_settings_form_shows_away_mode_entity(
+        self,
+        hass: HomeAssistant,
+        config_flow_options_flow,
+        config_flow_mock_config_entry_with_areas,
+    ):
+        """The form is filled in with the entity currently stored, empty otherwise."""
+        flow = config_flow_options_flow
+        flow.config_entry = config_flow_mock_config_entry_with_areas
+
+        def suggested(result) -> Any:
+            field = next(
+                key
+                for key in result["data_schema"].schema
+                if key == CONF_AWAY_MODE_ENTITY
+            )
+            return field.description["suggested_value"]
+
+        hass.config_entries.async_update_entry(flow.config_entry, options={})
+        result = await flow.async_step_global_settings()
+        assert result["type"] == FlowResultType.FORM
+        assert suggested(result) is None
+
+        hass.config_entries.async_update_entry(
+            flow.config_entry,
+            options={CONF_AWAY_MODE_ENTITY: "input_boolean.vacation"},
+        )
+        result = await flow.async_step_global_settings()
+        assert suggested(result) == "input_boolean.vacation"
 
     async def test_options_flow_area_action_menu_includes_reset_learning(
         self,

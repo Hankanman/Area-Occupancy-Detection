@@ -248,6 +248,7 @@ async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> Non
             for entity in area.entities.entities.values():
                 entity.stuck_since = None
         return
+    away_entity = coordinator.integration_config.away_mode_entity
     for area in coordinator.areas.values():
         excluded = set()
         if area.wasp_entity_id:
@@ -255,7 +256,9 @@ async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> Non
         if area.sleep_entity_id:
             excluded.add(area.sleep_entity_id)
         issues = area.health_monitor.check_health(
-            area.entities.entities, excluded_entity_ids=excluded or None
+            area.entities.entities,
+            excluded_entity_ids=excluded or None,
+            away_entity=away_entity,
         )
         if issues:
             _LOGGER.info(
