@@ -224,6 +224,11 @@ async def run_full_analysis(
 
 async def _run_health_check_and_prune(coordinator: AreaOccupancyCoordinator) -> None:
     """Run the periodic DB health check and prune old intervals."""
+    # One-time heal of rows stored before #576 (a no-op once it has run),
+    # before anything downstream reads interval durations.
+    await coordinator.hass.async_add_executor_job(
+        coordinator.db.coalesce_stored_intervals
+    )
     health_ok = await coordinator.hass.async_add_executor_job(
         coordinator.db.periodic_health_check
     )

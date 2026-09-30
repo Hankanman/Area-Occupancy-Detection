@@ -1,6 +1,7 @@
 """Tests for database state synchronization."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+import itertools
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -18,10 +19,13 @@ from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinato
 from custom_components.area_occupancy.data.entity import EntityManager
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.sync import (
+    _commit_intervals,
     _get_existing_interval_keys,
     _get_existing_numeric_sample_keys,
     _states_to_intervals,
     _states_to_numeric_samples,
+    coalesce_state_rows,
+    coalesce_stored_intervals,
     sync_states,
 )
 from custom_components.area_occupancy.time_utils import to_db_utc
@@ -1410,3 +1414,174 @@ class TestStatesToNumericSamples:
         samples = _states_to_numeric_samples(db, states)
         # Should filter out non-numeric entity
         assert len(samples) == 0
+
+
+class TestCoalesceStateRows:
+    """One stored row per stretch, never a chain of overlapping ones (#576)."""
+
+    T0 = datetime(2026, 9, 27, 10, 52, 18)
+
+    def _at(self, hours: float = 0, minutes: float = 0, seconds: float = 0):
+        return self.T0 + timedelta(hours=hours, minutes=minutes, seconds=seconds)
+
+    def test_the_live_chain_becomes_one_row(self) -> None:
+        """The rows found on a live install, each overlapping the last by 1h."""
+        chain = [
+            ("on", self.T0, datetime(2026, 9, 27, 11, 57, 30)),
+            (
+                "on",
+                datetime(2026, 9, 27, 10, 57, 30),
+                datetime(2026, 9, 27, 12, 57, 30),
+            ),
+            (
+                "on",
+                datetime(2026, 9, 27, 11, 57, 30),
+                datetime(2026, 9, 27, 13, 57, 30),
+            ),
+        ]
+
+        assert coalesce_state_rows(chain, {"on"}) == [
+            ("on", self.T0, datetime(2026, 9, 27, 13, 57, 30))
+        ]
+
+    def test_different_states_stay_apart(self) -> None:
+        rows = [
+            ("on", self._at(), self._at(minutes=5)),
+            ("off", self._at(minutes=5), self._at(hours=1)),
+        ]
+
+        assert coalesce_state_rows(rows, {"on"}) == rows
+
+    def test_rows_within_a_second_are_one_stretch(self) -> None:
+        rows = [
+            ("off", self._at(), self._at(minutes=5)),
+            ("off", self._at(minutes=5, seconds=1), self._at(minutes=9)),
+        ]
+
+        assert coalesce_state_rows(rows, {"on"}) == [
+            ("off", self._at(), self._at(minutes=9))
+        ]
+
+    def test_active_stretch_is_capped_from_its_real_start(self) -> None:
+        """25h of rows: kept as the first MAX_INTERVAL_SECONDS; off is never capped."""
+        on_chain = [("on", self._at(hours=h), self._at(hours=h + 2)) for h in range(24)]
+        off = [("off", self._at(hours=26), self._at(hours=60))]
+
+        merged = coalesce_state_rows(on_chain + off, {"on"})
+
+        assert merged == [
+            ("on", self._at(), self._at(seconds=MAX_INTERVAL_SECONDS)),
+            ("off", self._at(hours=26), self._at(hours=60)),
+        ]
+
+
+class TestSyncMerge:
+    """Hourly syncs of a running state store one row, not a chain (#576)."""
+
+    ENTITY = "binary_sensor.motion_sensor_1"
+
+    @staticmethod
+    def _sync(db, area_name: str, watermark, rows) -> None:
+        _commit_intervals(
+            db,
+            [
+                {
+                    "entry_id": db.coordinator.entry_id,
+                    "area_name": area_name,
+                    "entity_id": TestSyncMerge.ENTITY,
+                    "state": state,
+                    "start_time": to_db_utc(start),
+                    "end_time": to_db_utc(end),
+                    "duration_seconds": (end - start).total_seconds(),
+                    "created_at": to_db_utc(end),
+                }
+                for state, start, end in rows
+            ],
+            watermark,
+        )
+
+    def _stored(self, db) -> list[tuple[str, float]]:
+        with db.get_session() as session:
+            rows = (
+                session.query(db.Intervals)
+                .filter(db.Intervals.entity_id == self.ENTITY)
+                .order_by(db.Intervals.start_time)
+                .all()
+            )
+            return [(r.state, r.duration_seconds) for r in rows]
+
+    def test_running_state_over_three_syncs_is_one_row(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Each sync re-reads the state at its watermark (last end - 1h)."""
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        t0 = dt_util.utcnow() - timedelta(hours=4)
+        ends = [t0 + timedelta(hours=h) for h in (1, 2, 3)]
+
+        self._sync(db, area, t0 - timedelta(hours=1), [("on", t0, ends[0])])
+        for prev_end, end in itertools.pairwise(ends):
+            wm = prev_end - timedelta(hours=1)
+            self._sync(db, area, wm, [("on", wm, end)])
+
+        assert self._stored(db) == [("on", 3 * 3600.0)]
+
+    def test_a_change_inside_the_window_splits_cleanly(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        t0 = dt_util.utcnow() - timedelta(hours=4)
+        t1 = t0 + timedelta(hours=1)
+        self._sync(db, area, t0 - timedelta(hours=1), [("on", t0, t1)])
+
+        wm = t1 - timedelta(hours=1)
+        change = t1 + timedelta(minutes=10)
+        self._sync(
+            db, area, wm, [("on", wm, change), ("off", change, t1 + timedelta(hours=1))]
+        )
+
+        assert self._stored(db) == [("on", 4200.0), ("off", 3000.0)]
+
+    def test_a_capped_stretch_grows_no_tail(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """20 hourly syncs of a stuck sensor: one row of MAX_INTERVAL_SECONDS."""
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        t0 = dt_util.utcnow() - timedelta(hours=21)
+        self._sync(
+            db, area, t0 - timedelta(hours=1), [("on", t0, t0 + timedelta(hours=1))]
+        )
+        for h in range(2, 21):
+            end = t0 + timedelta(hours=h)
+            wm = end - timedelta(hours=2)
+            self._sync(db, area, wm, [("on", wm, end)])
+
+        assert self._stored(db) == [("on", float(MAX_INTERVAL_SECONDS))]
+
+    def test_heal_pass_merges_old_chains_once(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        t0 = dt_util.utcnow() - timedelta(hours=5)
+        with db.get_session() as session:
+            for h in range(3):
+                start, end = t0 + timedelta(hours=h), t0 + timedelta(hours=h + 2)
+                session.add(
+                    db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area,
+                        entity_id=self.ENTITY,
+                        state="on",
+                        start_time=to_db_utc(start),
+                        end_time=to_db_utc(end),
+                        duration_seconds=7200.0,
+                    )
+                )
+            session.commit()
+
+        assert coalesce_stored_intervals(db) == 2
+        assert self._stored(db) == [("on", 4 * 3600.0)]
+        assert coalesce_stored_intervals(db) == 0
