@@ -93,6 +93,7 @@ def _create_delegated_methods() -> dict[str, Any]:
         "get_entities_without_intervals": queries.get_entities_without_intervals,
         # Sync methods
         "sync_states": sync.sync_states,
+        "coalesce_stored_intervals": sync.coalesce_stored_intervals,
         # Aggregation methods
         "aggregate_raw_to_daily": aggregation.aggregate_raw_to_daily,
         "aggregate_daily_to_weekly": aggregation.aggregate_daily_to_weekly,
