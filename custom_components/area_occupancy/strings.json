@@ -1,7 +1,7 @@
 {
     "config": {
         "abort": {
-            "already_configured": "A configuration for {title} already exists. {hint}",
+            "already_configured": "Area Occupancy Detection is already set up, and it holds all your areas in one entry. To add an area, open **Settings → Devices & services → Area Occupancy Detection** and choose **Add an area**. To change an area, use **Reconfigure** on that area; global settings are under **Configure**.",
             "cannot_remove_last_area": "Cannot remove the last area. At least one area must remain configured."
         },
         "step": {
