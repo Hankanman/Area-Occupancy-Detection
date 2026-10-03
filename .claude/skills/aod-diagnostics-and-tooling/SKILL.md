@@ -215,7 +215,7 @@ this was the #466 complaint).
 | `stuck_inactive` — media | 14 days | none | |
 | `stuck_inactive` — appliance | 28 days | none | |
 | `stuck_inactive` — door/window/cover/power | 14 days each | none | |
-| `unavailable` | 1h | none | Clock starts from first-seen-unavailable *this HA session*, not persisted `last_updated` — avoids false trips when a source integration is just slow to load at startup |
+| `unavailable` | 1h | none | Offline means `unavailable` or gone from HA, not `unknown`. Clock starts when the state listener sees the sensor go offline (or a check first sees it offline) *this HA session*, not persisted `last_updated` — avoids false trips when a source integration is just slow to load at startup. Sensor-scope repairs are taken down by `HealthMonitor.entity_changed` on the sensor's state change, not at the next hourly check |
 | `never_triggered` | 7 days | none | Uses persisted `last_updated`; only for `_STUCK_CHECK_TYPES` (binary + power + motion + cover) |
 
 Purpose multiplier table (`_PURPOSE_STUCK_ACTIVE_MULTIPLIER`, applies only
