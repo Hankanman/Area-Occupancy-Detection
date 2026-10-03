@@ -2837,6 +2837,25 @@ class TestRefreshFromConfig:
         assert after.decay.decay_start == started
         assert after.previous_evidence is False
 
+    def test_stuck_tracking_survives(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A flagged TV that resumed playing stays released after an edit."""
+        manager = coordinator.get_area().entities
+        media = manager.get_entity(self.MEDIA)
+        flagged = dt_util.utcnow() - timedelta(hours=20)
+        resumed = dt_util.utcnow() - timedelta(minutes=5)
+        media.stuck_since = flagged
+        media.active_state_changed_at = resumed
+        media.previous_state = "playing"
+
+        manager.refresh_from_config()
+
+        after = manager.get_entity(self.MEDIA)
+        assert after.stuck_since == flagged
+        assert after.active_state_changed_at == resumed
+        assert after.previous_state == "playing"
+
     def test_changed_meaning_starts_fresh(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
@@ -2875,3 +2894,103 @@ class TestRefreshFromConfig:
         manager.refresh_from_config()
 
         assert manager.get_entity(self.MOTION).get_likelihoods() == configured
+
+
+def _media(state: dict[str, str]) -> Entity:
+    """A media player active for 30 hours, in whatever ``state`` holds."""
+    return Entity(
+        entity_id="media_player.tv",
+        type=EntityType(
+            input_type=InputType.MEDIA,
+            weight=0.7,
+            active_states=["playing", "paused"],
+        ),
+        prob_given_true=0.9,
+        prob_given_false=0.1,
+        decay=Decay(half_life=300),
+        state_provider=lambda _eid: Mock(state=state["value"]),
+        last_updated=dt_util.utcnow() - timedelta(hours=30),
+        previous_evidence=True,
+    )
+
+
+class TestActiveStateChanges:
+    """A move between two active states ends a stuck stretch.
+
+    ``last_updated`` only moves when the evidence flips, so a stuck TV that
+    resumed playing (paused to playing) used to stay stuck, and muted, until
+    it went idle or off.
+    """
+
+    def test_resuming_a_stuck_tv_releases_it(self) -> None:
+        state = {"value": "paused"}
+        entity = _media(state)
+        entity.has_new_evidence()
+        entity.stuck_since = entity.last_updated
+        assert entity.is_stuck
+        before = entity.last_updated
+
+        state["value"] = "playing"
+
+        assert entity.has_new_evidence()  # it counts again: new evidence
+        assert not entity.is_stuck
+        assert entity.stuck_since is None
+        assert entity.last_updated == before  # the evidence never flipped
+        assert entity.active_since > before
+        assert not entity.decay.is_decaying
+
+    def test_resuming_an_unflagged_tv_is_no_new_evidence(self) -> None:
+        state = {"value": "paused"}
+        entity = _media(state)
+        entity.has_new_evidence()
+
+        state["value"] = "playing"
+
+        assert not entity.has_new_evidence()
+        assert entity.active_state_changed_at is not None
+
+    def test_an_unchanged_state_is_no_move(self) -> None:
+        """An attribute update, or the first look, moves nothing."""
+        entity = _media({"value": "paused"})
+
+        entity.has_new_evidence()
+        entity.has_new_evidence()
+
+        assert entity.active_state_changed_at is None
+        assert entity.active_since == entity.last_updated
+
+    def test_numeric_readings_are_no_moves(self) -> None:
+        """A changing value inside an active range is not a change of state."""
+        reading = {"value": "150"}
+        entity = Entity(
+            entity_id="sensor.tv_power",
+            type=EntityType(
+                input_type=InputType.POWER, weight=0.5, active_range=(50.0, 1000.0)
+            ),
+            prob_given_true=0.9,
+            prob_given_false=0.1,
+            decay=Decay(half_life=300),
+            state_provider=lambda _eid: Mock(state=reading["value"]),
+            previous_evidence=True,
+        )
+        entity.has_new_evidence()
+
+        reading["value"] = "180"
+        entity.has_new_evidence()
+
+        assert entity.active_state_changed_at is None
+
+
+class TestOffline:
+    """Offline is ``unavailable`` or gone; ``unknown`` is reachable."""
+
+    @pytest.mark.parametrize(
+        ("state", "offline"),
+        [("unavailable", True), (None, True), ("unknown", False), ("playing", False)],
+    )
+    def test_offline(self, state: str | None, offline: bool) -> None:
+        entity = _media({"value": state})
+        if state is None:
+            entity.state_provider = lambda _eid: None  # gone from HA
+
+        assert entity.offline is offline
