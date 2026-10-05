@@ -10,6 +10,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -30,7 +31,7 @@ from .entity_type import (
     EntityType,
     InputType,
 )
-from .purpose import get_default_decay_half_life
+from .purpose import AreaPurpose, get_default_decay_half_life
 from .types import GaussianParams
 
 if TYPE_CHECKING:
@@ -38,6 +39,71 @@ if TYPE_CHECKING:
     from ..db import AreaOccupancyDB as DB
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class SleepOverrideProvider:
+    """Live reader of an area's own Sleep Presence sensor for decay switching.
+
+    Used by ``Decay`` to pick the Sleeping purpose's asleep or awake
+    half-life. Three-valued: sensor ``on`` -> ``True`` (asleep), ``off`` ->
+    ``False`` (awake, at any hour), anything else -> ``None`` so ``Decay``
+    falls back to the Sleep Start/End clock window. "Anything else" is: no
+    sleep sensor on the area (``area.sleep_entity_id is None``, e.g. no
+    people assigned), entity missing from the state machine, or state
+    ``unknown``/``unavailable``.
+
+    Both the area and its ``sleep_entity_id`` are looked up at CALL time,
+    never captured at construction:
+
+    * ``SleepPresenceSensor.async_added_to_hass`` sets
+      ``area.sleep_entity_id`` after the EntityManager (and so the factory
+      that builds this provider) has already run.
+    * ``coordinator.areas[area_name]`` is resolved per call so the provider
+      keeps working if the Area object is replaced, instead of holding a
+      stale reference.
+
+    A warning is logged once per transition into the degraded state (a
+    sleep sensor exists but is missing/unknown/unavailable); repeat calls
+    log at DEBUG so the ~10s decay tick does not spam the log. No sleep
+    sensor at all is a normal configuration and is not logged.
+    """
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+        """Initialize the provider.
+
+        Args:
+            coordinator: Coordinator, used to reach hass and the live Area.
+            area_name: Name of the area whose sleep sensor drives the decay.
+        """
+        self._coordinator = coordinator
+        self._area_name = area_name
+        self._was_degraded = False
+
+    def __call__(self) -> bool | None:
+        """Return True (asleep), False (awake) or None (use the clock window)."""
+        area = self._coordinator.areas.get(self._area_name)
+        entity_id = getattr(area, "sleep_entity_id", None)
+        if not entity_id:
+            self._was_degraded = False
+            return None
+
+        state = self._coordinator.hass.states.get(entity_id)
+        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
+            reason = "missing" if state is None else (state.state or "empty")
+            log = _LOGGER.debug if self._was_degraded else _LOGGER.warning
+            log(
+                "Sleep presence sensor %s is %s; using the clock-based sleep "
+                "window for area %s",
+                entity_id,
+                reason,
+                self._area_name,
+            )
+            self._was_degraded = True
+            return None
+
+        self._was_degraded = False
+        return state.state == STATE_ON
+
 
 # Environmental sensor sub-types share a single configurable weight
 # ("environmental") rather than having individual weight fields. This map
@@ -698,6 +764,15 @@ class EntityFactory:
             )
         self.config = coordinator.areas[area_name].config
 
+    def _create_sleep_override_provider(self) -> SleepOverrideProvider:
+        """Build the live sleep-state provider for this factory's area.
+
+        Deliberately captures only the coordinator and the area NAME: the
+        area's sleep sensor entity_id is registered after this factory runs
+        and must be resolved on each call (see ``SleepOverrideProvider``).
+        """
+        return SleepOverrideProvider(self.coordinator, self.area_name)
+
     def create_from_db(self, entity_obj: DB.Entities) -> Entity:
         """Create entity from storage data.
 
@@ -837,12 +912,20 @@ class EntityFactory:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
+            sleep_override_provider = None
         else:
             sleep_start = getattr(
                 self.coordinator.integration_config, "sleep_start", None
             )
             sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
             purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas consult the sleep sensor (Decay
+            # returns early for any purpose without an awake_half_life).
+            sleep_override_provider = (
+                self._create_sleep_override_provider()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
 
         decay = Decay(
             half_life=half_life,
@@ -851,6 +934,7 @@ class EntityFactory:
             purpose=purpose_for_decay,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
+            sleep_override_provider=sleep_override_provider,
         )
 
         # Set default analysis_error based on entity type
@@ -933,12 +1017,20 @@ class EntityFactory:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
+            sleep_override_provider = None
         else:
             sleep_start = getattr(
                 self.coordinator.integration_config, "sleep_start", None
             )
             sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
             purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas consult the sleep sensor (Decay
+            # returns early for any purpose without an awake_half_life).
+            sleep_override_provider = (
+                self._create_sleep_override_provider()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
 
         decay = Decay(
             half_life=half_life,
@@ -947,6 +1039,7 @@ class EntityFactory:
             purpose=purpose_for_decay,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
+            sleep_override_provider=sleep_override_provider,
         )
 
         # Motion sensors use configured likelihoods (user-configurable per area)

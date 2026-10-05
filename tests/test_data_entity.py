@@ -1,22 +1,28 @@
 """Tests for data.entity module."""
 
-from datetime import timedelta
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 import math
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from custom_components.area_occupancy.const import CONF_SLEEP_END, CONF_SLEEP_START
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
     Entity,
     EntityFactory,
     EntityManager,
+    SleepOverrideProvider,
 )
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
+from custom_components.area_occupancy.data.purpose import AreaPurpose
 from custom_components.area_occupancy.data.types import GaussianParams
 from homeassistant.components.lock import LockState
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 # ruff: noqa: SLF001
@@ -2471,6 +2477,314 @@ def mock_binary_entity():
         state_provider=lambda x: STATE_ON,
         last_updated=dt_util.utcnow(),
     )
+
+
+def _at_hour(hour: int):
+    """Freeze Decay's wall clock at the given hour (UTC == local in tests)."""
+    when = datetime(2023, 1, 15, hour, 0, 0, tzinfo=dt_util.UTC)
+    return (
+        patch("homeassistant.util.dt.utcnow", return_value=when),
+        patch("homeassistant.util.dt.as_local", return_value=when),
+    )
+
+
+@contextmanager
+def _clock(hour: int):
+    """Context manager pinning the clock to ``hour``."""
+    p1, p2 = _at_hour(hour)
+    with p1, p2:
+        yield
+
+
+class TestSleepOverrideFromAreaSleepSensor:
+    """The Sleeping half-life follows the area's own Sleep Presence sensor.
+
+    ``EntityFactory`` gives Sleeping-purpose entities a provider that reads
+    ``area.sleep_entity_id`` and its state at call time:
+    on -> asleep, off -> awake (any hour), missing/unknown/unavailable/no
+    sensor -> the Sleep Start/End clock window (23:00-07:00 here).
+    """
+
+    SLEEP_ID = "binary_sensor.master_sleep_presence"
+
+    @pytest.fixture
+    def sleeping_area(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        mock_realistic_config_entry: Mock,
+    ):
+        """Return (area, factory) for a Sleeping area on its default half-life."""
+        mock_realistic_config_entry.options = {
+            CONF_SLEEP_START: "23:00:00",
+            CONF_SLEEP_END: "07:00:00",
+        }
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.config.purpose = AreaPurpose.SLEEPING
+        # 0 -> purpose default, so the #481 custom half-life bypass is off.
+        area.config.decay.half_life = 0
+        area.sleep_entity_id = None
+        return area, EntityFactory(coordinator, area_name=area_name)
+
+    @staticmethod
+    def _make(factory: EntityFactory) -> Decay:
+        decay = factory.create_from_config_spec("binary_sensor.motion1", "motion").decay
+        assert decay._base_half_life == decay.purpose.half_life, (
+            "setup invariant: custom half-life bypass must not be engaged"
+        )
+        return decay
+
+    def test_on_means_asleep_even_outside_clock_window(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        area, factory = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_ON)
+        decay = self._make(factory)
+        with _clock(12):
+            assert decay.half_life == decay.purpose.half_life
+
+    def test_off_means_awake_even_inside_clock_window(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        area, factory = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        decay = self._make(factory)
+        with _clock(2):
+            assert decay.half_life == decay.purpose.awake_half_life
+
+    @pytest.mark.parametrize("degraded", [STATE_UNKNOWN, STATE_UNAVAILABLE])
+    def test_unknown_unavailable_use_clock_window(
+        self, hass: HomeAssistant, sleeping_area, degraded: str
+    ) -> None:
+        area, factory = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, degraded)
+        decay = self._make(factory)
+        with _clock(2):  # inside window -> asleep, NOT awake
+            assert decay.half_life == decay.purpose.half_life
+        with _clock(12):  # outside window -> awake
+            assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_missing_entity_uses_clock_window(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        area, factory = sleeping_area
+        area.sleep_entity_id = "binary_sensor.never_created"
+        decay = self._make(factory)
+        with _clock(2):
+            assert decay.half_life == decay.purpose.half_life
+        with _clock(12):
+            assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_no_people_sleep_entity_id_none_uses_clock_window(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        """No sleep sensor on the area (no people assigned) -> clock window.
+
+        A same-named state exists and is 'off' to prove it is NOT consulted.
+        """
+        area, factory = sleeping_area
+        assert area.sleep_entity_id is None
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        decay = self._make(factory)
+        with _clock(2):
+            assert decay.half_life == decay.purpose.half_life
+        with _clock(12):
+            assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_late_registration_is_picked_up(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        """sleep_entity_id None at factory time, set later -> still honoured.
+
+        Mirrors SleepPresenceSensor.async_added_to_hass, which registers the
+        id after the EntityManager/factory has already built the entities.
+        """
+        area, factory = sleeping_area
+        decay = self._make(factory)  # built while sleep_entity_id is None
+        with _clock(2):
+            assert decay.half_life == decay.purpose.half_life  # clock
+
+        area.sleep_entity_id = self.SLEEP_ID  # registered late
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        with _clock(2):
+            assert decay.half_life == decay.purpose.awake_half_life
+
+        area.sleep_entity_id = None  # sensor removed again
+        with _clock(2):
+            assert decay.half_life == decay.purpose.half_life
+
+    def test_tracks_live_state_without_recreation(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        """One Decay follows off -> on -> unavailable -> off with no rebuild."""
+        area, factory = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        decay = self._make(factory)
+        awake, asleep = decay.purpose.awake_half_life, decay.purpose.half_life
+        with _clock(12):
+            assert decay.half_life == awake
+            hass.states.async_set(self.SLEEP_ID, STATE_ON)
+            assert decay.half_life == asleep
+            hass.states.async_set(self.SLEEP_ID, STATE_UNAVAILABLE)
+            assert decay.half_life == awake  # clock: noon is outside window
+            hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+            assert decay.half_life == awake
+        with _clock(2):
+            assert decay.half_life == awake  # off wins inside the window
+            hass.states.async_set(self.SLEEP_ID, STATE_UNAVAILABLE)
+            assert decay.half_life == asleep  # clock: inside window
+
+    def test_survives_area_object_replacement(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        sleeping_area,
+    ) -> None:
+        """The provider resolves the Area per call, not a captured reference."""
+        _area, factory = sleeping_area
+        decay = self._make(factory)
+        replacement = SimpleNamespace(sleep_entity_id=self.SLEEP_ID)
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        with (
+            patch.dict(coordinator.areas, {factory.area_name: replacement}),
+            _clock(2),
+        ):
+            assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_survives_refresh_from_config(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        sleeping_area,
+    ) -> None:
+        """Entities rebuilt by a settings edit (#577) keep a live provider."""
+        area, _ = sleeping_area
+        area.entities.refresh_from_config()
+        # Sleep sensor registers after the rebuild, as at startup.
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        decays = [
+            e.decay
+            for e in area.entities.entities.values()
+            if e.decay.sleep_override_provider is not None
+        ]
+        assert decays, "rebuilt entities must carry the provider"
+        with _clock(2):
+            for decay in decays:
+                assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_custom_half_life_bypasses_sleep_sensor(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        sleeping_area,
+    ) -> None:
+        """A user-configured half-life wins over the sleep sensor (#481)."""
+        area, factory = sleeping_area
+        area.config.decay.half_life = 123
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        decay = factory.create_from_config_spec("binary_sensor.motion1", "motion").decay
+        with _clock(12):
+            assert decay.half_life == 123
+        hass.states.async_set(self.SLEEP_ID, STATE_ON)
+        with _clock(12):
+            assert decay.half_life == 123
+
+    def test_non_sleeping_purpose_gets_no_provider(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        area, factory = sleeping_area
+        area.config.purpose = AreaPurpose.SOCIAL
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        entity = factory.create_from_config_spec("binary_sensor.motion1", "motion")
+        assert entity.decay.sleep_override_provider is None
+        assert entity.decay.purpose.awake_half_life is None
+        with _clock(12):
+            assert entity.decay.half_life == entity.decay._base_half_life
+
+    def test_sleep_sensor_own_entity_gets_no_provider(
+        self, hass: HomeAssistant, sleeping_area
+    ) -> None:
+        """The SleepPresenceSensor's own entity bypasses sleeping semantics."""
+        area, factory = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        entity = factory.create_from_config_spec(self.SLEEP_ID, "sleep")
+        assert entity.decay.sleep_override_provider is None
+
+
+class TestSleepOverrideProviderUnit:
+    """Direct tests of SleepOverrideProvider logging and state lookups."""
+
+    ENTITY = "binary_sensor.sleep_presence"
+
+    @staticmethod
+    def _coordinator(hass: HomeAssistant, sleep_entity_id: str | None):
+        area = SimpleNamespace(sleep_entity_id=sleep_entity_id)
+        return SimpleNamespace(hass=hass, areas={"bedroom": area}), area
+
+    def test_warns_once_then_debug_then_warns_again_after_recovery(
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        coord, _ = self._coordinator(hass, self.ENTITY)
+        hass.states.async_set(self.ENTITY, STATE_UNAVAILABLE)
+        provider = SleepOverrideProvider(coord, "bedroom")
+        logger = "custom_components.area_occupancy.data.entity"
+        with caplog.at_level("DEBUG", logger=logger):
+            caplog.clear()
+            assert provider() is None
+            assert [r.levelname for r in caplog.records] == ["WARNING"]
+
+            for _ in range(2):
+                caplog.clear()
+                assert provider() is None
+                assert [r.levelname for r in caplog.records] == ["DEBUG"]
+
+            hass.states.async_set(self.ENTITY, STATE_ON)
+            caplog.clear()
+            assert provider() is True
+            assert not caplog.records
+
+            hass.states.async_set(self.ENTITY, STATE_UNKNOWN)
+            caplog.clear()
+            assert provider() is None
+            assert [r.levelname for r in caplog.records] == ["WARNING"]
+
+    def test_no_sleep_sensor_is_silent(
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No people / no sleep sensor is a normal setup: never log."""
+        coord, _ = self._coordinator(hass, None)
+        provider = SleepOverrideProvider(coord, "bedroom")
+        with caplog.at_level("DEBUG", logger="custom_components.area_occupancy"):
+            assert provider() is None
+        assert not caplog.records
+
+    def test_unknown_area_is_none(self, hass: HomeAssistant) -> None:
+        coord, _ = self._coordinator(hass, self.ENTITY)
+        assert SleepOverrideProvider(coord, "not_an_area")() is None
+
+    def test_one_state_lookup_per_call(self, hass: HomeAssistant) -> None:
+        hass.states.async_set(self.ENTITY, STATE_ON)
+        calls: list[str] = []
+        real = hass.states
+
+        class _Counting:
+            def get(self, entity_id: str):
+                calls.append(entity_id)
+                return real.get(entity_id)
+
+        area = SimpleNamespace(sleep_entity_id=self.ENTITY)
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(states=_Counting()), areas={"bedroom": area}
+        )
+        assert SleepOverrideProvider(coord, "bedroom")() is True
+        assert calls == [self.ENTITY]
 
 
 class TestGaussianLikelihood:

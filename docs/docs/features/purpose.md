@@ -57,3 +57,13 @@ Areas with the `Bedroom` purpose have a special dynamic behavior tied to your ho
 - **Outside Sleep Hours:** Automatically switches to behave like a `Living Room` area, recognizing that bedrooms are often used for reading or getting ready during the day where shorter memory is appropriate.
 
 You can configure your global `Sleep Start` and `Sleep End` times in the integration's global settings.
+
+### Sleep Presence Sensor Takes Priority
+
+If the area has a [Sleep Presence sensor](sleep-presence.md) (created when people are assigned to the room), its state decides which half-life applies, instead of the fixed clock window:
+
+- **On** — treated as asleep, using the `Bedroom` half-life.
+- **Off** — treated as awake, using the `Living Room` half-life, at any hour (including inside the `Sleep Start`/`Sleep End` window).
+- **Unavailable, unknown, missing, or no people assigned to the area** — falls back to the `Sleep Start`/`Sleep End` clock window above. A broken sensor never forces the shorter "awake" half-life during real sleep; a warning is logged once when the sensor becomes unhealthy.
+
+The sensor is read live on every decay calculation, so a change in the sensor's state takes effect immediately without a reload. There is no extra setting: areas without a Sleep Presence sensor behave exactly as before. A custom half-life set on the area still overrides all of this.
