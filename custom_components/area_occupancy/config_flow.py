@@ -2641,22 +2641,16 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle the initial step - show area selection form or auto-start first area."""
         # Check if a config entry already exists (e.g., user clicked "Add device" button)
-        # In single-instance architecture, only one config entry should exist
-        # Users should use Options Flow to add more areas
+        # In single-instance architecture, only one config entry should exist;
+        # areas are added as subentries with the entry's "Add an area" button.
         existing_entries = [
             entry
             for entry in self.hass.config_entries.async_entries(DOMAIN)
             if entry.source != "ignore"
         ]
         if existing_entries and user_input is None:
-            # Config entry already exists - guide user to Options Flow
-            return self.async_abort(
-                reason="already_configured",
-                description_placeholders={
-                    "title": "Area Occupancy Detection",
-                    "hint": "To add more areas, please go to Settings > Devices & Services > Integrations > Area Occupancy Detection, then click the cog icon (⚙️) to open the config menu.",
-                },
-            )
+            # Config entry already exists - point to "Add an area" (#582)
+            return self.async_abort(reason="already_configured")
 
         # If no areas exist yet, automatically start configuring the first area
         # This provides a smoother user experience - users don't need to click "Add New Area" first
