@@ -1481,7 +1481,7 @@ class TestSyncMerge:
     ENTITY = "binary_sensor.motion_sensor_1"
 
     @staticmethod
-    def _sync(db, area_name: str, watermark, rows) -> None:
+    def sync_rows(db, area_name: str, watermark, rows) -> None:
         _commit_intervals(
             db,
             [
@@ -1519,10 +1519,10 @@ class TestSyncMerge:
         t0 = dt_util.utcnow() - timedelta(hours=4)
         ends = [t0 + timedelta(hours=h) for h in (1, 2, 3)]
 
-        self._sync(db, area, t0 - timedelta(hours=1), [("on", t0, ends[0])])
+        self.sync_rows(db, area, t0 - timedelta(hours=1), [("on", t0, ends[0])])
         for prev_end, end in itertools.pairwise(ends):
             wm = prev_end - timedelta(hours=1)
-            self._sync(db, area, wm, [("on", wm, end)])
+            self.sync_rows(db, area, wm, [("on", wm, end)])
 
         assert self._stored(db) == [("on", 3 * 3600.0)]
 
@@ -1533,11 +1533,11 @@ class TestSyncMerge:
         area = db.coordinator.get_area_names()[0]
         t0 = dt_util.utcnow() - timedelta(hours=4)
         t1 = t0 + timedelta(hours=1)
-        self._sync(db, area, t0 - timedelta(hours=1), [("on", t0, t1)])
+        self.sync_rows(db, area, t0 - timedelta(hours=1), [("on", t0, t1)])
 
         wm = t1 - timedelta(hours=1)
         change = t1 + timedelta(minutes=10)
-        self._sync(
+        self.sync_rows(
             db, area, wm, [("on", wm, change), ("off", change, t1 + timedelta(hours=1))]
         )
 
@@ -1550,13 +1550,13 @@ class TestSyncMerge:
         db = coordinator.db
         area = db.coordinator.get_area_names()[0]
         t0 = dt_util.utcnow() - timedelta(hours=21)
-        self._sync(
+        self.sync_rows(
             db, area, t0 - timedelta(hours=1), [("on", t0, t0 + timedelta(hours=1))]
         )
         for h in range(2, 21):
             end = t0 + timedelta(hours=h)
             wm = end - timedelta(hours=2)
-            self._sync(db, area, wm, [("on", wm, end)])
+            self.sync_rows(db, area, wm, [("on", wm, end)])
 
         assert self._stored(db) == [("on", float(MAX_INTERVAL_SECONDS))]
 
@@ -1585,3 +1585,102 @@ class TestSyncMerge:
         assert coalesce_stored_intervals(db) == 2
         assert self._stored(db) == [("on", 4 * 3600.0)]
         assert coalesce_stored_intervals(db) == 0
+
+
+class TestSyncNeverInverts:
+    """A state change inside the last hour must not invert a row (#588).
+
+    Live: ``on 14:02:32 -> 13:07:55`` (-3277 s). The re-read row at the
+    watermark was treated as continuing the entity's latest ``on`` row, but
+    that row began *after* the watermark, so the start jumped past the end.
+    """
+
+    ENTITY = TestSyncMerge.ENTITY
+
+    def test_on_off_on_inside_the_window(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        base = dt_util.utcnow().replace(microsecond=0) - timedelta(hours=5)
+        on1 = base + timedelta(minutes=50)  # on since 12:50
+        off = base + timedelta(hours=1, minutes=7, seconds=55)  # 13:07:55
+        on2 = base + timedelta(hours=2, minutes=2, seconds=32)  # 14:02:32
+        prev_sync = base + timedelta(hours=2, minutes=7, seconds=55)  # 14:07:55
+        # Previous sync stored the history up to 14:07:55.
+        TestSyncMerge.sync_rows(
+            db,
+            area,
+            base - timedelta(hours=1),
+            [("on", on1, off), ("off", off, on2), ("on", on2, prev_sync)],
+        )
+        # Next sync from a watermark (13:00) before the 13:07:55 change: the
+        # re-read "on" at the watermark ends at 13:07:55, while the latest
+        # stored "on" row starts later, at 14:02:32.
+        wm = base + timedelta(hours=1)
+        now = base + timedelta(hours=3)
+        TestSyncMerge.sync_rows(
+            db, area, wm, [("on", wm, off), ("off", off, on2), ("on", on2, now)]
+        )
+
+        with db.get_session() as session:
+            rows = (
+                session.query(db.Intervals)
+                .filter(db.Intervals.entity_id == self.ENTITY)
+                .order_by(db.Intervals.start_time)
+                .all()
+            )
+            got = [(r.state, r.duration_seconds) for r in rows]
+            assert all(r.end_time >= r.start_time for r in rows)
+        assert got == [
+            ("on", (off - on1).total_seconds()),
+            ("off", (on2 - off).total_seconds()),
+            ("on", (now - on2).total_seconds()),
+        ]
+
+    def test_coalesce_drops_inverted_rows(self) -> None:
+        t = datetime(2026, 10, 3, 13, 0)
+        rows = [
+            ("on", t + timedelta(hours=1, minutes=2), t + timedelta(minutes=7)),
+            ("on", t + timedelta(hours=1, minutes=2), t + timedelta(hours=2)),
+        ]
+
+        assert coalesce_state_rows(rows, {"on"}) == [
+            ("on", t + timedelta(hours=1, minutes=2), t + timedelta(hours=2))
+        ]
+
+    def test_heal_pass_removes_stored_inverted_rows_after_v1(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Installs that ran the 2026.9.4 heal (v1) still get the inverted row removed."""
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        t = dt_util.utcnow().replace(microsecond=0) - timedelta(hours=4)
+        with db.get_session() as session:
+            session.add(db.Metadata(key="intervals_coalesced_v1", value="1"))
+            for start, end in (
+                (t, t + timedelta(minutes=30)),
+                (t + timedelta(hours=1), t + timedelta(minutes=10)),  # inverted
+            ):
+                session.add(
+                    db.Intervals(
+                        entry_id=db.coordinator.entry_id,
+                        area_name=area,
+                        entity_id=self.ENTITY,
+                        state="on",
+                        start_time=to_db_utc(start),
+                        end_time=to_db_utc(end),
+                        duration_seconds=(end - start).total_seconds(),
+                    )
+                )
+            session.commit()
+
+        coalesce_stored_intervals(db)
+
+        with db.get_session() as session:
+            rows = (
+                session.query(db.Intervals)
+                .filter(db.Intervals.entity_id == self.ENTITY)
+                .all()
+            )
+            assert [(r.state, r.duration_seconds) for r in rows] == [("on", 1800.0)]
