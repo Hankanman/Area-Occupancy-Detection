@@ -2029,8 +2029,8 @@ class TestPriorAboveThreshold:
 
         assert [i.issue_type for i in issues] == [HealthIssueType.PRIOR_ABOVE_THRESHOLD]
         assert issues[0].details == (
-            "At Monday 18:00 the learned prior is 56%, at or above the 50% "
-            "threshold. A threshold of 62% keeps it below."
+            "Busiest time: Monday 18:00. Learned chance someone is there: 56%. "
+            "Occupancy threshold: 50%. Raise the threshold to 62% to stop this."
         )
 
     def test_no_workable_threshold_says_so(self, monitor: HealthMonitor) -> None:
@@ -2038,10 +2038,19 @@ class TestPriorAboveThreshold:
         issues = self._pipeline(monitor, (0.97, "Sunday 03:00"), 0.5)
 
         assert issues[0].details == (
-            "At Sunday 03:00 the learned prior is 97%, at or above the 50% "
-            "threshold. No threshold leaves five points of headroom within "
-            "the 99% limit on occupancy probability: the area is almost "
-            "always occupied then."
+            "Busiest time: Sunday 03:00. Learned chance someone is there: 97%. "
+            "Occupancy threshold: 50%. The room is occupied at that time almost "
+            "every week, so no threshold can stop this and still let sensors "
+            "mark it occupied."
+        )
+
+    def test_equal_whole_percents_show_a_decimal(self, monitor: HealthMonitor) -> None:
+        """#586: "60%, at or above the 60% threshold" read as a contradiction."""
+        issues = self._pipeline(monitor, (0.6034, "Friday 06:00"), 0.6)
+
+        assert issues[0].details == (
+            "Busiest time: Friday 06:00. Learned chance someone is there: 60.3%. "
+            "Occupancy threshold: 60.0%. Raise the threshold to 66% to stop this."
         )
 
     def test_flagging_a_stuck_sensor_is_not_a_departure(

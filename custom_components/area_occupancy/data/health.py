@@ -1045,25 +1045,27 @@ class HealthMonitor:
         if peak < threshold:
             return None
         suggested = suggested_threshold(peak)
-        advice = (
-            f"A threshold of {suggested * 100:.0f}% keeps it below."
-            if suggested is not None
-            else (
-                "No threshold leaves five points of headroom within the "
-                f"{MAX_PROBABILITY * 100:.0f}% limit on occupancy "
-                "probability: the area is almost always occupied then."
-            )
+        # Whole percents, unless that would print the same number twice.
+        decimals = 1 if round(peak * 100) == round(threshold * 100) else 0
+        details = (
+            f"Busiest time: {slot}. "
+            f"Learned chance someone is there: {peak * 100:.{decimals}f}%. "
+            f"Occupancy threshold: {threshold * 100:.{decimals}f}%. "
         )
+        if suggested is not None:
+            details += f"Raise the threshold to {suggested * 100:.0f}% to stop this."
+        else:
+            details += (
+                "The room is occupied at that time almost every week, so no "
+                "threshold can stop this and still let sensors mark it occupied."
+            )
         return HealthIssue(
             entity_id=None,
             issue_type=HealthIssueType.PRIOR_ABOVE_THRESHOLD,
             input_type=None,
             since=now,
             duration_hours=0.0,
-            details=(
-                f"At {slot} the learned prior is {peak * 100:.0f}%, at or "
-                f"above the {threshold * 100:.0f}% threshold. {advice}"
-            ),
+            details=details,
         )
 
     def _check_correlation_failures(
