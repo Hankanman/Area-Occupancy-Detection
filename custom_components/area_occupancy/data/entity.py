@@ -10,6 +10,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -30,7 +31,7 @@ from .entity_type import (
     EntityType,
     InputType,
 )
-from .purpose import get_default_decay_half_life
+from .purpose import AreaPurpose, get_default_decay_half_life
 from .types import GaussianParams
 
 if TYPE_CHECKING:
@@ -38,6 +39,73 @@ if TYPE_CHECKING:
     from ..db import AreaOccupancyDB as DB
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class SleepOverrideProvider:
+    """Live reader of an area's own Sleep Presence sensor for decay switching.
+
+    Used by ``Decay`` to pick the Sleeping purpose's asleep or awake
+    half-life. Three-valued: sensor ``on`` -> ``True`` (asleep), ``off`` ->
+    ``False`` (awake, at any hour), anything else -> ``None`` so ``Decay``
+    falls back to the Sleep Start/End clock window. "Anything else" is: no
+    sleep sensor on the area (``area.sleep_entity_id is None``, e.g. no
+    people assigned), entity missing from the state machine, or state
+    ``unknown``/``unavailable``.
+
+    Both the area and its ``sleep_entity_id`` are looked up at CALL time,
+    never captured at construction:
+
+    * ``SleepPresenceSensor.async_added_to_hass`` sets
+      ``area.sleep_entity_id`` after the EntityManager (and so the factory
+      that builds this provider) has already run.
+    * ``coordinator.areas[area_name]`` is resolved per call so the provider
+      keeps working if the Area object is replaced, instead of holding a
+      stale reference.
+
+    One instance is shared by all entities of an area (see
+    ``EntityFactory._create_sleep_override_provider``), so a warning is
+    logged once per area per transition into the degraded state (a sleep
+    sensor exists but is missing/unknown/unavailable); repeat calls from
+    any of the area's entities log at DEBUG so the ~10s decay tick does not spam the log. No sleep
+    sensor at all is a normal configuration and is not logged.
+    """
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+        """Initialize the provider.
+
+        Args:
+            coordinator: Coordinator, used to reach hass and the live Area.
+            area_name: Name of the area whose sleep sensor drives the decay.
+        """
+        self._coordinator = coordinator
+        self._area_name = area_name
+        self._was_degraded = False
+
+    def __call__(self) -> bool | None:
+        """Return True (asleep), False (awake) or None (use the clock window)."""
+        area = self._coordinator.areas.get(self._area_name)
+        entity_id = getattr(area, "sleep_entity_id", None)
+        if not entity_id:
+            self._was_degraded = False
+            return None
+
+        state = self._coordinator.hass.states.get(entity_id)
+        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
+            reason = "missing" if state is None else (state.state or "empty")
+            log = _LOGGER.debug if self._was_degraded else _LOGGER.warning
+            log(
+                "Sleep presence sensor %s is %s; using the clock-based sleep "
+                "window for area %s",
+                entity_id,
+                reason,
+                self._area_name,
+            )
+            self._was_degraded = True
+            return None
+
+        self._was_degraded = False
+        return state.state == STATE_ON
+
 
 # Environmental sensor sub-types share a single configurable weight
 # ("environmental") rather than having individual weight fields. This map
@@ -79,6 +147,13 @@ class Entity:
     # the user hasn't ignored the repair: the start of the stuck stretch.
     # While set, the sensor contributes no evidence (see ``is_stuck``).
     stuck_since: datetime | None = None
+    # When the sensor last moved between two of its active states, such as a
+    # media player going from paused to playing. ``last_updated`` only moves
+    # when the evidence flips, so it misses these. In memory only: after a
+    # restart the stuck clock falls back to ``last_updated``.
+    active_state_changed_at: datetime | None = None
+    # The state the last ``has_new_evidence`` call saw, to spot those moves.
+    previous_state: str | float | bool | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -114,17 +189,29 @@ class Entity:
         self._prob_given_false = self.prob_given_false
 
     @property
+    def active_since(self) -> datetime | None:
+        """When an active sensor entered the state it is in now.
+
+        The later of its last evidence change and its last move between two
+        active states. Only meaningful while the sensor is active.
+        """
+        if self.active_state_changed_at is None or self.last_updated is None:
+            return self.last_updated
+        return max(self.last_updated, self.active_state_changed_at)
+
+    @property
     def is_stuck(self) -> bool:
         """Whether this sensor is flagged stuck and still in that same state.
 
         Only the stretch the health check flagged counts: the moment the
-        sensor changes state ``last_updated`` moves past ``stuck_since`` and
+        sensor changes state ``active_since`` moves past ``stuck_since`` and
         it counts again, without waiting for the next hourly check.
         """
+        active_since = self.active_since
         return (
             self.stuck_since is not None
-            and self.last_updated is not None
-            and self.last_updated <= self.stuck_since
+            and active_since is not None
+            and active_since <= self.stuck_since
         )
 
     def _calculate_gaussian_density(
@@ -325,19 +412,33 @@ class Entity:
         return self.state is not None
 
     @property
-    def state(self) -> str | float | bool | None:
-        """Get the entity state from Home Assistant or state provider."""
+    def offline(self) -> bool:
+        """Whether the sensor is offline: gone from Home Assistant or ``unavailable``.
+
+        Narrower than ``not available``: ``unknown`` means the device is
+        reachable but has not reported a value yet, which is not offline.
+        """
+        state_value = self._raw_state()
+        return state_value is None or state_value == STATE_UNAVAILABLE
+
+    def _raw_state(self) -> Any:
+        """The state as Home Assistant or the state provider reports it.
+
+        ``None`` when the entity does not exist.
+        """
         if self.state_provider:
             state_obj = self.state_provider(self.entity_id)
             if state_obj is None:
                 return None
             # Handle both object with .state attribute and direct value
-            state_value = state_obj.state if hasattr(state_obj, "state") else state_obj
-        else:
-            ha_state = self.hass.states.get(self.entity_id)
-            if ha_state is None:
-                return None
-            state_value = ha_state.state
+            return state_obj.state if hasattr(state_obj, "state") else state_obj
+        ha_state = self.hass.states.get(self.entity_id)
+        return ha_state.state if ha_state is not None else None
+
+    @property
+    def state(self) -> str | float | bool | None:
+        """Get the entity state from Home Assistant or state provider."""
+        state_value = self._raw_state()
 
         # Check if state is valid
         if state_value in [
@@ -606,20 +707,25 @@ class Entity:
     def has_new_evidence(self) -> bool:
         """Update decay on actual evidence transitions.
 
-        Handles three cases:
+        Handles four cases:
         1. Normal transitions (True→False, False→True)
         2. Entity becoming unavailable (True/False→None)
         3. Entity becoming available (None→True/False)
+        4. A move between two active states (paused→playing), which ends a
+           stuck stretch without changing the evidence
 
         Returns:
-            bool: True if evidence transition occurred, False otherwise
+            bool: True if evidence transition occurred, or a stuck sensor
+            counts again, False otherwise
 
         """
         # Pure calculation from current HA state
         current_evidence = self.evidence
 
-        # Capture previous evidence before updating it
+        # Capture previous evidence and state before updating them
         previous_evidence = self.previous_evidence
+        previous_state = self.previous_state
+        self.previous_state = self.state
 
         # Handle entity becoming unavailable (evidence was known, now None)
         if current_evidence is None:
@@ -656,6 +762,7 @@ class Entity:
         transition_occurred = current_evidence != previous_evidence
 
         # Handle evidence transitions
+        released = False
         if transition_occurred:
             # A stuck stretch contributed nothing, so its end must not start
             # a decay that would count it after all.
@@ -667,10 +774,22 @@ class Entity:
             elif not was_stuck:  # TRUE→FALSE transition
                 # Evidence lost - start decay
                 self.decay.start_decay()
+        elif (
+            current_evidence
+            and self.active_states
+            and previous_state is not None
+            and self.previous_state != previous_state
+        ):
+            # Still active, but in another active state: someone resumed a
+            # paused TV. The evidence holds, so last_updated stays, but the
+            # sensor is not stuck, and a stuck one counts again.
+            released = self.is_stuck
+            self.stuck_since = None
+            self.active_state_changed_at = dt_util.utcnow()
 
         # Update previous evidence for next comparison
         self.previous_evidence = current_evidence
-        return transition_occurred
+        return transition_occurred or released
 
 
 class EntityFactory:
@@ -697,6 +816,26 @@ class EntityFactory:
                 f"Available areas: {available or '(none)'}"
             )
         self.config = coordinator.areas[area_name].config
+        # Shared per-area sleep provider, created lazily (see
+        # _create_sleep_override_provider).
+        self._sleep_override_provider: SleepOverrideProvider | None = None
+
+    def _create_sleep_override_provider(self) -> SleepOverrideProvider:
+        """Build the live sleep-state provider for this factory's area.
+
+        One provider is shared by every entity of the area (the factory is
+        per area), so the "sensor degraded" warning is rate-limited per
+        area rather than once per entity, and that state survives the
+        entity rebuild of a settings edit. It captures only the coordinator
+        and the area NAME: the area's sleep sensor entity_id is registered
+        after this factory runs and must be resolved on each call (see
+        ``SleepOverrideProvider``).
+        """
+        if self._sleep_override_provider is None:
+            self._sleep_override_provider = SleepOverrideProvider(
+                self.coordinator, self.area_name
+            )
+        return self._sleep_override_provider
 
     def create_from_db(self, entity_obj: DB.Entities) -> Entity:
         """Create entity from storage data.
@@ -837,12 +976,20 @@ class EntityFactory:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
+            sleep_override_provider = None
         else:
             sleep_start = getattr(
                 self.coordinator.integration_config, "sleep_start", None
             )
             sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
             purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas consult the sleep sensor (Decay
+            # returns early for any purpose without an awake_half_life).
+            sleep_override_provider = (
+                self._create_sleep_override_provider()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
 
         decay = Decay(
             half_life=half_life,
@@ -851,6 +998,7 @@ class EntityFactory:
             purpose=purpose_for_decay,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
+            sleep_override_provider=sleep_override_provider,
         )
 
         # Set default analysis_error based on entity type
@@ -933,12 +1081,20 @@ class EntityFactory:
             purpose_for_decay = None
             sleep_start = None
             sleep_end = None
+            sleep_override_provider = None
         else:
             sleep_start = getattr(
                 self.coordinator.integration_config, "sleep_start", None
             )
             sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
             purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas consult the sleep sensor (Decay
+            # returns early for any purpose without an awake_half_life).
+            sleep_override_provider = (
+                self._create_sleep_override_provider()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
 
         decay = Decay(
             half_life=half_life,
@@ -947,6 +1103,7 @@ class EntityFactory:
             purpose=purpose_for_decay,
             sleep_start=sleep_start,
             sleep_end=sleep_end,
+            sleep_override_provider=sleep_override_provider,
         )
 
         # Motion sensors use configured likelihoods (user-configurable per area)
@@ -1163,6 +1320,8 @@ class EntityManager:
             new.previous_evidence = old.previous_evidence
             new.last_updated = old.last_updated
             new.stuck_since = old.stuck_since
+            new.active_state_changed_at = old.active_state_changed_at
+            new.previous_state = old.previous_state
         previous.clear()
         _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
 import logging
 
@@ -24,6 +25,7 @@ class Decay:
         purpose: str | None = None,
         sleep_start: str | None = None,
         sleep_end: str | None = None,
+        sleep_override_provider: Callable[[], bool | None] | None = None,
     ) -> None:
         """Initialize the decay model.
 
@@ -34,6 +36,16 @@ class Decay:
             purpose: Area purpose string.
             sleep_start: Sleep start time string (HH:MM:SS).
             sleep_end: Sleep end time string (HH:MM:SS).
+            sleep_override_provider: Zero-arg callable returning the
+                *current* sleep state of the area's own Sleep Presence
+                sensor: True (asleep), False (awake), or None (no sleep
+                sensor / its state is unknown or unavailable). Decay has no
+                hass access, so the caller injects it. It is called fresh
+                on every half-life calculation, so the result tracks live
+                state instead of whatever it was when this Decay was
+                constructed. A non-None result takes priority over the
+                sleep_start/sleep_end clock window; None falls back to the
+                clock window.
         """
         # Ensure decay_start is timezone-aware
         if decay_start is not None:
@@ -46,6 +58,7 @@ class Decay:
         self._purpose = Purpose(purpose) if purpose is not None else None
         self.sleep_start = sleep_start
         self.sleep_end = sleep_end
+        self.sleep_override_provider = sleep_override_provider
         # Adjacent-areas Phase 4 multiplier — coordinator sets it per
         # tick to stretch the effective half-life when this entity's
         # area has silent adjacent neighbours. Defaults to 1.0 (no
@@ -111,6 +124,18 @@ class Decay:
         # is the purpose's own default (#481).
         if self._base_half_life != self._purpose.half_life:
             return self._base_half_life
+
+        # The area's own Sleep Presence sensor, when it reports a definite
+        # on/off, takes priority over the clock window. Resolved via a live
+        # callable on every calculation, never frozen at construction time.
+        if self.sleep_override_provider is not None:
+            override = self.sleep_override_provider()
+            if override is not None:
+                if override:
+                    return self._base_half_life
+                return self._purpose.awake_half_life
+            # None (no sensor / unknown / unavailable): fall through to the
+            # clock-based window below.
 
         # If sleep times are not configured, use base half-life
         if not self.sleep_start or not self.sleep_end:

@@ -4,15 +4,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+from freezegun.api import FrozenDateTimeFactory
 import pytest
 
+from custom_components.area_occupancy.const import CONF_HEALTH_ENABLED, DOMAIN
 from custom_components.area_occupancy.coordinator import (
     AreaOccupancyCoordinator,
     _ground_truth_present,
 )
-from custom_components.area_occupancy.data.analysis import _peak_learned_prior
+from custom_components.area_occupancy.data.analysis import (
+    _peak_learned_prior,
+    _run_sensor_health_check,
+)
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import Entity
 from custom_components.area_occupancy.data.entity_type import EntityType, InputType
@@ -21,12 +26,15 @@ from custom_components.area_occupancy.data.health import (
     HealthIssueType,
     HealthMonitor,
     _format_duration_human,
+    _issue_id,
     stuck_active_threshold,
     suggested_threshold,
 )
 from custom_components.area_occupancy.data.purpose import AreaPurpose
 from custom_components.area_occupancy.utils import evidence_value, sigmoid_probability
-from homeassistant.const import STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
 
@@ -319,6 +327,24 @@ class TestUnavailable:
         # that ``UNAVAILABLE`` does not fire on first observation.
         assert HealthIssueType.UNAVAILABLE not in {i.issue_type for i in issues}
         assert entity.entity_id in monitor._unavailable_since
+
+    def test_unknown_is_not_offline(self, monitor: HealthMonitor) -> None:
+        """``unknown`` is a reachable device with no reading yet.
+
+        Many devices come back from an outage reading ``unknown`` until
+        their first report; counting that as offline kept the repair open.
+        """
+        entity = _make_entity(
+            "binary_sensor.motion_1",
+            InputType.MOTION,
+            state=STATE_UNKNOWN,
+            evidence=None,
+        )
+        with patch("custom_components.area_occupancy.data.health.ir"):
+            issues = monitor.check_health({"motion_1": entity})
+
+        assert issues == []
+        assert entity.entity_id not in monitor._unavailable_since
 
     def test_unavailable_clock_resets_on_recovery(self, monitor: HealthMonitor) -> None:
         """Recovery clears the in-memory mark so the next outage starts fresh."""
@@ -1643,6 +1669,29 @@ class TestAwayFromHome:
 
         assert self._check(monitor, self._idle_motion(10)) == []
 
+    def test_a_state_change_judges_who_is_home_as_the_check_did(
+        self, monitor: HealthMonitor, mock_hass: Mock
+    ) -> None:
+        """Away, then tracking lost: the check runs as home, and so does a change.
+
+        The last usable reading still says away. Judging a state change by
+        that took down the idle repair the hourly check had just raised, and
+        the next check raised it again.
+        """
+        entity = self._idle_motion(10)
+        self._home(mock_hass, "0")
+        self._check(monitor, entity)
+        self._home(mock_hass, "0", persons=("unknown",))
+        assert [i.issue_type for i in self._check(monitor, entity)] == [
+            HealthIssueType.STUCK_INACTIVE
+        ]
+
+        with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
+            assert not monitor.entity_changed(entity)
+
+        mock_ir.async_delete_issue.assert_not_called()
+        assert monitor.get_issue_for_entity(entity.entity_id) is not None
+
     def test_stuck_active_is_still_reported_while_away(
         self, monitor: HealthMonitor, mock_hass: Mock
     ) -> None:
@@ -2029,8 +2078,8 @@ class TestPriorAboveThreshold:
 
         assert [i.issue_type for i in issues] == [HealthIssueType.PRIOR_ABOVE_THRESHOLD]
         assert issues[0].details == (
-            "At Monday 18:00 the learned prior is 56%, at or above the 50% "
-            "threshold. A threshold of 62% keeps it below."
+            "Busiest time: Monday 18:00. Learned chance someone is there: 56%. "
+            "Occupancy threshold: 50%. Raise the threshold to 62% to stop this."
         )
 
     def test_no_workable_threshold_says_so(self, monitor: HealthMonitor) -> None:
@@ -2038,10 +2087,19 @@ class TestPriorAboveThreshold:
         issues = self._pipeline(monitor, (0.97, "Sunday 03:00"), 0.5)
 
         assert issues[0].details == (
-            "At Sunday 03:00 the learned prior is 97%, at or above the 50% "
-            "threshold. No threshold leaves five points of headroom within "
-            "the 99% limit on occupancy probability: the area is almost "
-            "always occupied then."
+            "Busiest time: Sunday 03:00. Learned chance someone is there: 97%. "
+            "Occupancy threshold: 50%. The room is occupied at that time almost "
+            "every week, so no threshold can stop this and still let sensors "
+            "mark it occupied."
+        )
+
+    def test_equal_whole_percents_show_a_decimal(self, monitor: HealthMonitor) -> None:
+        """#586: "60%, at or above the 60% threshold" read as a contradiction."""
+        issues = self._pipeline(monitor, (0.6034, "Friday 06:00"), 0.6)
+
+        assert issues[0].details == (
+            "Busiest time: Friday 06:00. Learned chance someone is there: 60.3%. "
+            "Occupancy threshold: 60.0%. Raise the threshold to 66% to stop this."
         )
 
     def test_flagging_a_stuck_sensor_is_not_a_departure(
@@ -2077,3 +2135,314 @@ class TestPriorAboveThreshold:
 
         assert peak == pytest.approx(0.49948, abs=1e-5)
         assert slot == "Sunday 18:00"
+
+
+class TestRepairsClearOnRecovery:
+    """A sensor's repair goes the moment the sensor recovers.
+
+    Real states, issue registry and coordinator state listener, with the
+    hourly check run as the analysis pipeline runs it. Before, a repair only
+    went at the next hourly check; a sensor that came back ``unknown`` stayed
+    offline; a stuck TV that resumed playing stayed stuck, and muted; and a
+    sensor back from a long outage was reported idle for the outage.
+    """
+
+    MOTION = "binary_sensor.motion"
+    TV = "media_player.tv"
+
+    @staticmethod
+    def _repair_id(
+        coordinator: AreaOccupancyCoordinator,
+        entity_id: str,
+        issue_type: HealthIssueType,
+    ) -> str:
+        return _issue_id(coordinator.get_area().config.area_id, entity_id, issue_type)
+
+    @staticmethod
+    def _repair(hass: HomeAssistant, issue_id: str) -> ir.IssueEntry | None:
+        return ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+
+    @staticmethod
+    async def _listen(coordinator: AreaOccupancyCoordinator) -> None:
+        """Track the area's sensors from their current states, as setup does."""
+        area = coordinator.get_area()
+        await coordinator.track_entity_state_changes(area.entities.entity_ids)
+        for entity in area.entities.entities.values():
+            entity.has_new_evidence()
+
+    @staticmethod
+    async def _set(
+        hass: HomeAssistant, entity_id: str, state: str, **attributes: str
+    ) -> None:
+        hass.states.async_set(entity_id, state, attributes)
+        await hass.async_block_till_done()
+
+    async def _offline_repair(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> str:
+        """Leave the motion sensor offline across two hours of hourly checks."""
+        await self._listen(coordinator)
+        await self._set(hass, self.MOTION, STATE_UNAVAILABLE)
+        await _run_sensor_health_check(coordinator)
+        freezer.tick(timedelta(hours=2))
+        await _run_sensor_health_check(coordinator)
+        issue_id = self._repair_id(
+            coordinator, self.MOTION, HealthIssueType.UNAVAILABLE
+        )
+        assert self._repair(hass, issue_id) is not None
+        return issue_id
+
+    async def test_offline_repair_goes_when_the_sensor_returns(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        coordinator = coordinator_with_sensors
+        issue_id = await self._offline_repair(hass, coordinator, freezer)
+
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+
+        assert self._repair(hass, issue_id) is None
+        monitor = coordinator.get_area().health_monitor
+        assert monitor.get_issue_for_entity(self.MOTION) is None
+
+    async def test_offline_repair_goes_when_the_sensor_returns_unknown(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """Back, but with no reading yet: reachable, so not offline."""
+        coordinator = coordinator_with_sensors
+        issue_id = await self._offline_repair(hass, coordinator, freezer)
+
+        await self._set(hass, self.MOTION, STATE_UNKNOWN, device_class="motion")
+
+        assert self._repair(hass, issue_id) is None
+
+    async def test_resolving_a_repair_refreshes_the_area(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """Coming back inactive is no new evidence, but the health sensor moves."""
+        coordinator = coordinator_with_sensors
+        await self._offline_repair(hass, coordinator, freezer)
+        coordinator._setup_complete = True
+
+        with patch.object(coordinator, "async_refresh", new=AsyncMock()) as refresh:
+            await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+
+        refresh.assert_awaited_once()
+
+    async def test_stuck_repair_goes_when_the_sensor_changes_state(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        coordinator = coordinator_with_sensors
+        area = coordinator.get_area()
+        await self._listen(coordinator)  # the motion sensor is on
+        threshold = stuck_active_threshold(InputType.MOTION, area.purpose.purpose)
+        freezer.tick(threshold + timedelta(hours=1))
+        await _run_sensor_health_check(coordinator)
+        issue_id = self._repair_id(
+            coordinator, self.MOTION, HealthIssueType.STUCK_ACTIVE
+        )
+        assert self._repair(hass, issue_id) is not None
+
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+
+        assert self._repair(hass, issue_id) is None
+
+    async def test_stuck_tv_that_resumes_playing_counts_again(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """Paused to playing changes the state, though not the evidence."""
+        coordinator = coordinator_with_sensors
+        area = coordinator.get_area()
+        await self._set(hass, self.TV, "paused", device_class="tv")
+        await self._listen(coordinator)
+        threshold = stuck_active_threshold(InputType.MEDIA, area.purpose.purpose)
+        freezer.tick(threshold + timedelta(hours=1))
+        await _run_sensor_health_check(coordinator)
+        issue_id = self._repair_id(coordinator, self.TV, HealthIssueType.STUCK_ACTIVE)
+        tv = area.entities.get_entity(self.TV)
+        assert self._repair(hass, issue_id) is not None
+        assert evidence_value(tv) == 0.0
+
+        await self._set(hass, self.TV, "playing", device_class="tv")
+
+        assert self._repair(hass, issue_id) is None
+        assert evidence_value(tv) == 1.0
+        # Nor does the next hourly check flag it again.
+        await _run_sensor_health_check(coordinator)
+        assert self._repair(hass, issue_id) is None
+
+    async def test_back_from_a_long_outage_is_not_idle(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """Idle three days, offline five: not "hasn't triggered for 8 days".
+
+        An offline sensor could not trigger, so its idleness counts from its
+        return, not from before the outage.
+        """
+        coordinator = coordinator_with_sensors
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+        await self._listen(coordinator)
+        freezer.tick(timedelta(days=3))
+        await self._set(hass, self.MOTION, STATE_UNAVAILABLE)
+        await _run_sensor_health_check(coordinator)
+        freezer.tick(timedelta(days=5))
+        await _run_sensor_health_check(coordinator)
+        assert self._repair(
+            hass,
+            self._repair_id(coordinator, self.MOTION, HealthIssueType.UNAVAILABLE),
+        )
+
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+        await _run_sensor_health_check(coordinator)
+
+        for issue_type in (
+            HealthIssueType.UNAVAILABLE,
+            HealthIssueType.STUCK_INACTIVE,
+            HealthIssueType.NEVER_TRIGGERED,
+        ):
+            issue_id = self._repair_id(coordinator, self.MOTION, issue_type)
+            assert self._repair(hass, issue_id) is None, issue_type
+
+    async def test_a_short_outage_leaves_idleness_counting(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """A ten-minute blip after eight idle days is not a fresh start."""
+        coordinator = coordinator_with_sensors
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+        await self._listen(coordinator)
+        freezer.tick(timedelta(days=8))
+        await self._set(hass, self.MOTION, STATE_UNAVAILABLE)
+        freezer.tick(timedelta(minutes=10))
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+
+        await _run_sensor_health_check(coordinator)
+
+        issue_id = self._repair_id(
+            coordinator, self.MOTION, HealthIssueType.STUCK_INACTIVE
+        )
+        assert self._repair(hass, issue_id) is not None
+
+    async def test_a_state_change_never_raises_a_repair(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """Raising stays with the hourly check; the outage counts from the change."""
+        coordinator = coordinator_with_sensors
+        await self._listen(coordinator)
+        await self._set(hass, self.MOTION, STATE_UNAVAILABLE)
+        freezer.tick(timedelta(hours=2))
+        await self._set(hass, self.MOTION, STATE_UNAVAILABLE, reason="still gone")
+        issue_id = self._repair_id(
+            coordinator, self.MOTION, HealthIssueType.UNAVAILABLE
+        )
+        assert self._repair(hass, issue_id) is None
+
+        await _run_sensor_health_check(coordinator)
+
+        assert self._repair(hass, issue_id) is not None
+        issue = coordinator.get_area().health_monitor.get_issue_for_entity(self.MOTION)
+        assert issue is not None
+        assert issue.duration_hours == 2.0
+
+    async def test_ignored_repair_stays_ignored_when_the_sensor_returns(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """The state-change path keeps the sticky ignore (#473) intact."""
+        coordinator = coordinator_with_sensors
+        issue_id = await self._offline_repair(hass, coordinator, freezer)
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+
+        await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+
+        repair = self._repair(hass, issue_id)
+        assert repair is not None
+        assert repair.dismissed_version is not None
+
+    @pytest.mark.parametrize(
+        ("virtual", "health_enabled", "followed"),
+        [(False, True, True), (True, True, False), (False, False, False)],
+        ids=["monitored", "virtual_sensor", "monitoring_off"],
+    )
+    async def test_which_changes_the_monitor_follows(
+        self,
+        hass: HomeAssistant,
+        coordinator_with_sensors: AreaOccupancyCoordinator,
+        virtual: bool,
+        health_enabled: bool,
+        followed: bool,
+    ) -> None:
+        """Not the area's own virtual sensors, nor with monitoring off."""
+        coordinator = coordinator_with_sensors
+        area = coordinator.get_area()
+        if virtual:
+            area.wasp_entity_id = self.MOTION
+        coordinator.config_entry.options = {CONF_HEALTH_ENABLED: health_enabled}
+        await self._listen(coordinator)
+
+        with patch.object(
+            area.health_monitor, "entity_changed", return_value=False
+        ) as entity_changed:
+            await self._set(hass, self.MOTION, STATE_OFF, device_class="motion")
+
+        assert entity_changed.called is followed
+
+
+class TestPipelineRepairsSurviveTheSensorCheck:
+    """The hourly sensor check leaves pipeline repairs alone.
+
+    It used to drop them, deleting each one every hour only for the
+    pipeline check a few steps later to raise it again as new.
+    """
+
+    async def test_pipeline_repair_is_not_deleted_and_raised_again(
+        self, hass: HomeAssistant
+    ) -> None:
+        monitor = HealthMonitor("Lounge", "lounge", hass)
+        monitor.check_pipeline_health(
+            area_age_hours=None,
+            has_global_prior=True,
+            cache_age_hours=1.0,
+            last_analysis_duration_ms=10_000_000.0,
+            correlation_failure_count=0,
+            correlatable_entity_count=0,
+        )
+        issue_id = _issue_id("lounge", None, HealthIssueType.SLOW_ANALYSIS)
+        registry = ir.async_get(hass)
+        created = registry.async_get_issue(DOMAIN, issue_id).created
+
+        monitor.check_health({})
+
+        repair = registry.async_get_issue(DOMAIN, issue_id)
+        assert repair is not None
+        assert repair.created == created
+        assert [issue.issue_type for issue in monitor.issues] == [
+            HealthIssueType.SLOW_ANALYSIS
+        ]

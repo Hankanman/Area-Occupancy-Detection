@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -2984,3 +2986,35 @@ class TestAreaSubentryFlow:
 
         assert result["type"] == FlowResultType.ABORT
         assert result["reason"] == "area_required"
+
+
+class TestAlreadyConfigured:
+    """The "Add device" button points to "Add an area" (#582)."""
+
+    async def test_user_step_aborts_with_current_instructions(
+        self, config_flow_flow
+    ) -> None:
+        existing = Mock(source="user")
+        with patch.object(
+            config_flow_flow.hass.config_entries,
+            "async_entries",
+            return_value=[existing],
+        ):
+            result = await config_flow_flow.async_step_user()
+
+        assert result["type"] == "abort"
+        assert result["reason"] == "already_configured"
+        assert not result.get("description_placeholders")
+
+    def test_message_needs_no_placeholders(self) -> None:
+        """The message must have no placeholders.
+
+        The finish-setup abort reuses this reason without placeholders, so
+        any in the text showed raw (it used to read "{title}").
+        """
+        for path in ("strings.json", "translations/en.json"):
+            text = json.loads(
+                (Path("custom_components/area_occupancy") / path).read_text()
+            )["config"]["abort"]["already_configured"]
+            assert "{" not in text
+            assert "Add an area" in text
