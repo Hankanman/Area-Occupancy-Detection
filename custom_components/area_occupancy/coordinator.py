@@ -1451,13 +1451,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 # Find which area(s) this entity belongs to
                 affected_areas = []
+                health_enabled = self.integration_config.health_enabled
                 for area_name, area in self.areas.items():
                     try:
                         entity = area.entities.get_entity(entity_id)
                     except ValueError:
                         # Entity doesn't belong to this area, skip it
                         continue
-                    if entity.has_new_evidence():
+                    changed = entity.has_new_evidence()
+                    # Take down repairs the change resolved (sensor back
+                    # online, no longer stuck) now, not at the next hourly
+                    # check. The virtual sensors are never checked.
+                    if (
+                        health_enabled
+                        and entity_id not in (area.wasp_entity_id, area.sleep_entity_id)
+                        and area.health_monitor.entity_changed(entity)
+                    ):
+                        changed = True
+                    if changed:
                         affected_areas.append(area_name)
 
                 # If entity affects any area and setup is complete, refresh

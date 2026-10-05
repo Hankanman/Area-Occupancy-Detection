@@ -10,6 +10,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -79,6 +80,13 @@ class Entity:
     # the user hasn't ignored the repair: the start of the stuck stretch.
     # While set, the sensor contributes no evidence (see ``is_stuck``).
     stuck_since: datetime | None = None
+    # When the sensor last moved between two of its active states, such as a
+    # media player going from paused to playing. ``last_updated`` only moves
+    # when the evidence flips, so it misses these. In memory only: after a
+    # restart the stuck clock falls back to ``last_updated``.
+    active_state_changed_at: datetime | None = None
+    # The state the last ``has_new_evidence`` call saw, to spot those moves.
+    previous_state: str | float | bool | None = None
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -114,17 +122,29 @@ class Entity:
         self._prob_given_false = self.prob_given_false
 
     @property
+    def active_since(self) -> datetime | None:
+        """When an active sensor entered the state it is in now.
+
+        The later of its last evidence change and its last move between two
+        active states. Only meaningful while the sensor is active.
+        """
+        if self.active_state_changed_at is None or self.last_updated is None:
+            return self.last_updated
+        return max(self.last_updated, self.active_state_changed_at)
+
+    @property
     def is_stuck(self) -> bool:
         """Whether this sensor is flagged stuck and still in that same state.
 
         Only the stretch the health check flagged counts: the moment the
-        sensor changes state ``last_updated`` moves past ``stuck_since`` and
+        sensor changes state ``active_since`` moves past ``stuck_since`` and
         it counts again, without waiting for the next hourly check.
         """
+        active_since = self.active_since
         return (
             self.stuck_since is not None
-            and self.last_updated is not None
-            and self.last_updated <= self.stuck_since
+            and active_since is not None
+            and active_since <= self.stuck_since
         )
 
     def _calculate_gaussian_density(
@@ -325,19 +345,33 @@ class Entity:
         return self.state is not None
 
     @property
-    def state(self) -> str | float | bool | None:
-        """Get the entity state from Home Assistant or state provider."""
+    def offline(self) -> bool:
+        """Whether the sensor is offline: gone from Home Assistant or ``unavailable``.
+
+        Narrower than ``not available``: ``unknown`` means the device is
+        reachable but has not reported a value yet, which is not offline.
+        """
+        state_value = self._raw_state()
+        return state_value is None or state_value == STATE_UNAVAILABLE
+
+    def _raw_state(self) -> Any:
+        """The state as Home Assistant or the state provider reports it.
+
+        ``None`` when the entity does not exist.
+        """
         if self.state_provider:
             state_obj = self.state_provider(self.entity_id)
             if state_obj is None:
                 return None
             # Handle both object with .state attribute and direct value
-            state_value = state_obj.state if hasattr(state_obj, "state") else state_obj
-        else:
-            ha_state = self.hass.states.get(self.entity_id)
-            if ha_state is None:
-                return None
-            state_value = ha_state.state
+            return state_obj.state if hasattr(state_obj, "state") else state_obj
+        ha_state = self.hass.states.get(self.entity_id)
+        return ha_state.state if ha_state is not None else None
+
+    @property
+    def state(self) -> str | float | bool | None:
+        """Get the entity state from Home Assistant or state provider."""
+        state_value = self._raw_state()
 
         # Check if state is valid
         if state_value in [
@@ -606,20 +640,25 @@ class Entity:
     def has_new_evidence(self) -> bool:
         """Update decay on actual evidence transitions.
 
-        Handles three cases:
+        Handles four cases:
         1. Normal transitions (True→False, False→True)
         2. Entity becoming unavailable (True/False→None)
         3. Entity becoming available (None→True/False)
+        4. A move between two active states (paused→playing), which ends a
+           stuck stretch without changing the evidence
 
         Returns:
-            bool: True if evidence transition occurred, False otherwise
+            bool: True if evidence transition occurred, or a stuck sensor
+            counts again, False otherwise
 
         """
         # Pure calculation from current HA state
         current_evidence = self.evidence
 
-        # Capture previous evidence before updating it
+        # Capture previous evidence and state before updating them
         previous_evidence = self.previous_evidence
+        previous_state = self.previous_state
+        self.previous_state = self.state
 
         # Handle entity becoming unavailable (evidence was known, now None)
         if current_evidence is None:
@@ -656,6 +695,7 @@ class Entity:
         transition_occurred = current_evidence != previous_evidence
 
         # Handle evidence transitions
+        released = False
         if transition_occurred:
             # A stuck stretch contributed nothing, so its end must not start
             # a decay that would count it after all.
@@ -667,10 +707,22 @@ class Entity:
             elif not was_stuck:  # TRUE→FALSE transition
                 # Evidence lost - start decay
                 self.decay.start_decay()
+        elif (
+            current_evidence
+            and self.active_states
+            and previous_state is not None
+            and self.previous_state != previous_state
+        ):
+            # Still active, but in another active state: someone resumed a
+            # paused TV. The evidence holds, so last_updated stays, but the
+            # sensor is not stuck, and a stuck one counts again.
+            released = self.is_stuck
+            self.stuck_since = None
+            self.active_state_changed_at = dt_util.utcnow()
 
         # Update previous evidence for next comparison
         self.previous_evidence = current_evidence
-        return transition_occurred
+        return transition_occurred or released
 
 
 class EntityFactory:
@@ -1163,6 +1215,8 @@ class EntityManager:
             new.previous_evidence = old.previous_evidence
             new.last_updated = old.last_updated
             new.stuck_since = old.stuck_since
+            new.active_state_changed_at = old.active_state_changed_at
+            new.previous_state = old.previous_state
         previous.clear()
         _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
 

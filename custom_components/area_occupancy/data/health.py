@@ -264,6 +264,9 @@ class HealthMonitor:
     - Prolonged unavailability
     - Sensors that have never triggered
 
+    Between those checks it follows each sensor's state changes
+    (``entity_changed``), so a repair goes as soon as the sensor recovers.
+
     Uses the stable area_id (HA area registry ID) for repair issue keys
     so issues survive area renames.
     """
@@ -297,13 +300,23 @@ class HealthMonitor:
         # plenty against thresholds measured in days.
         self._home_was_empty: bool | None = None
         self._home_returned_at: datetime | None = None
-        # In-memory record of when each entity *first* appeared unavailable
-        # in the current HA session. Used instead of ``entity.last_updated``
-        # (which is persisted and reflects the last evidence transition,
-        # often days old) so a sensor whose source integration loads slowly
-        # at startup doesn't instantly cross the 1h threshold. Cleared on
-        # recovery; not persisted, so a restart resets the clock.
+        # Whether the last check ran as nobody home. A state change between
+        # checks is judged the same way, so it can't take down an inactivity
+        # repair that the next check would raise again.
+        self._nobody_home: bool = False
+        # In-memory record of when each entity went offline (its state
+        # change), or was first seen offline by a check if it already was.
+        # Used instead of ``entity.last_updated`` (which is persisted and
+        # reflects the last evidence transition, often days old) so a sensor
+        # whose source integration loads slowly at startup doesn't instantly
+        # cross the 1h threshold. Cleared on recovery; not persisted, so a
+        # restart resets the clock.
         self._unavailable_since: dict[str, datetime] = {}
+        # When each sensor came back from an outage of at least
+        # ``UNAVAILABLE_THRESHOLD``. An offline sensor could not trigger, so
+        # its inactivity checks count from its return, not from before it
+        # went offline. In memory only, like ``_unavailable_since``.
+        self._back_online_at: dict[str, datetime] = {}
         # Seed active issue IDs from the persisted issue registry so that
         # resolved issues can be cleaned up even after a restart.
         self._active_issue_ids: set[str] = self._load_existing_issue_ids()
@@ -425,6 +438,7 @@ class HealthMonitor:
         now = dt_util.utcnow()
         self._last_check = now
         nobody_home = self._sample_home_presence(now, away_entity)
+        self._nobody_home = nobody_home
         excluded = excluded_entity_ids or set()
         issues: list[HealthIssue] = []
         checked = 0
@@ -446,6 +460,11 @@ class HealthMonitor:
             for entity_id, since in self._unavailable_since.items()
             if entity_id in checkable_ids
         }
+        self._back_online_at = {
+            entity_id: since
+            for entity_id, since in self._back_online_at.items()
+            if entity_id in checkable_ids
+        }
 
         for entity in entities.values():
             if entity.entity_id in excluded:
@@ -454,30 +473,83 @@ class HealthMonitor:
                 continue
 
             checked += 1
-            issue = self._check_unavailable(entity, now)
+            issue = self._check_entity(entity, now, nobody_home=nobody_home)
             if issue:
                 issues.append(issue)
-                continue  # Skip other checks if unavailable
-
-            issue = self._check_stuck_sensor(
-                entity, now, check_inactive=not nobody_home
-            )
-            if issue:
-                issues.append(issue)
-                continue
-
-            # Never-triggered uses persisted last_updated, so it survives
-            # restarts. Nobody home means nobody to trigger it (#485).
-            if not nobody_home:
-                issue = self._check_never_triggered(entity, now)
-                if issue:
-                    issues.append(issue)
 
         self._checked_count = checked
-        self._issues = issues
+        # This check does not look at the pipeline, so keep the pipeline
+        # issues the last pipeline check found. Dropping them here deleted
+        # them every hour, only for the pipeline check to raise them anew.
+        self._issues = issues + [
+            issue for issue in self._issues if issue.issue_type in _PIPELINE_ISSUE_TYPES
+        ]
         self._update_repair_issues()
         self._flag_stuck_entities(entities, issues)
         return issues
+
+    def entity_changed(self, entity: Entity) -> bool:
+        """Take down this sensor's repairs that its state change has resolved.
+
+        Called on every state change of a monitored sensor, so a repair goes
+        the moment the sensor recovers: an offline sensor comes back, a stuck
+        one changes state, an idle one triggers. Raising repairs stays with
+        the hourly check, whose thresholds are hours or days. The change also
+        keeps the outage clock on the sensor's real transitions.
+
+        Args:
+            entity: The sensor that changed, after ``has_new_evidence``.
+
+        Returns:
+            True if a repair was resolved.
+        """
+        if entity.type.input_type in _EXCLUDED_TYPES:
+            return False
+        # Re-check the sensor as the last hourly check did, with its reading
+        # of who is home: sampling presence here would move the return time.
+        now = dt_util.utcnow()
+        current = self._check_entity(entity, now, nobody_home=self._nobody_home)
+        resolved = [
+            issue
+            for issue in self._issues
+            if issue.entity_id == entity.entity_id
+            and (current is None or current.issue_type != issue.issue_type)
+        ]
+        if not resolved:
+            return False
+        self._issues = [issue for issue in self._issues if issue not in resolved]
+        if any(issue.issue_type == HealthIssueType.STUCK_ACTIVE for issue in resolved):
+            entity.stuck_since = None
+        self._update_repair_issues()
+        return True
+
+    def _check_entity(
+        self, entity: Entity, now: datetime, *, nobody_home: bool
+    ) -> HealthIssue | None:
+        """The issue a sensor has now, if any.
+
+        Args:
+            entity: The sensor to check.
+            now: The current check time.
+            nobody_home: Whether the household is away, which pauses the
+                inactivity checks (#485).
+
+        Returns:
+            The issue, or None.
+        """
+        issue = self._check_unavailable(entity, now)
+        if issue:
+            return issue  # Skip other checks if unavailable
+
+        issue = self._check_stuck_sensor(entity, now, check_inactive=not nobody_home)
+        if issue:
+            return issue
+
+        # Never-triggered uses persisted last_updated, so it survives
+        # restarts. Nobody home means nobody to trigger it (#485).
+        if nobody_home:
+            return None
+        return self._check_never_triggered(entity, now)
 
     def _flag_stuck_entities(
         self, entities: dict[str, Entity], issues: list[HealthIssue]
@@ -519,6 +591,7 @@ class HealthMonitor:
         self._active_issue_ids.clear()
         self._issues.clear()
         self._unavailable_since.clear()
+        self._back_online_at.clear()
 
     def clear_all_issues(self) -> None:
         """Delete every active repair issue without resetting runtime state.
@@ -703,11 +776,18 @@ class HealthMonitor:
     def _inactive_since(self, entity: Entity) -> datetime | None:
         """When an inactive entity's idleness counts from.
 
-        Its last change, or the last return home if that is later.
+        Its last change, the last return home, or its return from an outage,
+        whichever is latest.
         """
         since = entity.last_updated
-        if since is not None and self._home_returned_at is not None:
-            since = max(since, self._home_returned_at)
+        if since is None:
+            return None
+        for later in (
+            self._home_returned_at,
+            self._back_online_at.get(entity.entity_id),
+        ):
+            if later is not None:
+                since = max(since, later)
         return since
 
     def _check_stuck_sensor(
@@ -735,8 +815,12 @@ class HealthMonitor:
         duration = now - entity.last_updated
         evidence = entity.evidence
 
-        # Check stuck active
+        # Check stuck active, timed from when the sensor entered its current
+        # state: a move between two active states (paused to playing)
+        # restarts the clock, as the sensor is plainly not stuck.
         if evidence is True:
+            since = entity.active_since or entity.last_updated
+            duration = now - since
             threshold = stuck_active_threshold(entity.type.input_type, self._purpose)
             if threshold and duration >= threshold:
                 hours = duration.total_seconds() / 3600
@@ -744,7 +828,7 @@ class HealthMonitor:
                     entity_id=entity.entity_id,
                     issue_type=HealthIssueType.STUCK_ACTIVE,
                     input_type=entity.type.input_type,
-                    since=entity.last_updated,
+                    since=since,
                     duration_hours=round(hours, 1),
                     details=(
                         f"{entity.type.input_type.value} sensor has been active "
@@ -778,15 +862,15 @@ class HealthMonitor:
     def _check_unavailable(self, entity: Entity, now: datetime) -> HealthIssue | None:
         """Check if a sensor has been unavailable for too long.
 
-        Duration is measured from the first time *this* health monitor saw
-        the sensor unavailable in the current HA session, not from
-        ``entity.last_updated``. ``last_updated`` is persisted in the DB
-        and tracks the last evidence transition, so a sensor that's been
-        functioning for weeks will have an ancient timestamp — feeding
-        that into the duration calc would instantly cross the 1h
-        threshold the moment the source integration (Z2M, ESPHome, etc.)
-        is slow to load on HA startup, producing a false-positive repair
-        for every sensor in the area.
+        Duration is measured from when *this* health monitor saw the sensor
+        go offline (or first saw it offline, if it already was) in the
+        current HA session, not from ``entity.last_updated``.
+        ``last_updated`` is persisted in the DB and tracks the last evidence
+        transition, so a sensor that's been functioning for weeks will have
+        an ancient timestamp — feeding that into the duration calc would
+        instantly cross the 1h threshold the moment the source integration
+        (Z2M, ESPHome, etc.) is slow to load on HA startup, producing a
+        false-positive repair for every sensor in the area.
 
         Some entity domains report ``unavailable`` as a normal off-state
         (notably ``media_player.*`` for TVs and speakers that are simply
@@ -794,21 +878,27 @@ class HealthMonitor:
         ``_UNAVAILABLE_EXEMPT_PREFIXES``. This stops the repair from
         firing every night a TV is off, which was the loudest complaint
         in #466.
+
+        Only ``unavailable``, or the entity being gone, is offline. A sensor
+        that reads ``unknown`` is reachable and has yet to report a value,
+        which is how many devices come back, so it is not offline.
         """
         if entity.entity_id.startswith(_UNAVAILABLE_EXEMPT_PREFIXES):
             self._unavailable_since.pop(entity.entity_id, None)
             return None
 
-        if entity.available:
+        if not entity.offline:
             # Recovered (or never was unavailable in this session) — clear
             # any tracked start so the next outage starts a fresh clock.
-            self._unavailable_since.pop(entity.entity_id, None)
+            unavailable_since = self._unavailable_since.pop(entity.entity_id, None)
+            if (
+                unavailable_since is not None
+                and now - unavailable_since >= UNAVAILABLE_THRESHOLD
+            ):
+                self._back_online_at[entity.entity_id] = now
             return None
 
-        unavailable_since = self._unavailable_since.get(entity.entity_id)
-        if unavailable_since is None:
-            unavailable_since = now
-            self._unavailable_since[entity.entity_id] = unavailable_since
+        unavailable_since = self._unavailable_since.setdefault(entity.entity_id, now)
 
         duration = now - unavailable_since
         if duration < UNAVAILABLE_THRESHOLD:

@@ -8,10 +8,10 @@ During the hourly analysis cycle, the integration checks each sensor for:
 
 - **Stuck active** — a binary sensor has been continuously active for longer than expected
 - **Stuck inactive** — a binary sensor hasn't changed state for an unusually long time
-- **Unavailable** — a sensor has been offline for more than 1 hour
+- **Unavailable** — a sensor has been offline (`unavailable`, or gone from Home Assistant) for more than 1 hour
 - **Never triggered** — a sensor has never been active since it was added (checked after 7 days)
 
-When an issue is detected, a repair entry appears in **Settings → System → Repairs** with a description of the problem and actionable troubleshooting steps. Repairs are automatically dismissed when the sensor recovers.
+When an issue is detected, a repair entry appears in **Settings → System → Repairs** with a description of the problem and actionable troubleshooting steps. Repairs are dismissed automatically as soon as the sensor recovers, without waiting for the next hourly check.
 
 ## Detection Thresholds
 
@@ -46,7 +46,8 @@ virtual Sleep presence sensor is excluded from all health checks.
 
 Once a sensor is flagged stuck active, it **no longer counts as evidence**.
 Otherwise a TV left paused for a day would hold the room occupied with nobody
-there. The sensor counts again the moment it changes state. When a stuck
+there. The sensor counts again the moment it changes state, including a move
+from one active state to another, such as that TV starting to play. When a stuck
 stretch finally ends, it doesn't start a decay either, because it never
 counted in the first place.
 
@@ -132,13 +133,17 @@ Repair entries appear in **Settings → System → Repairs** and include:
 
 ### Auto-Resolution
 
-Repair entries are **automatically deleted** when the issue resolves:
+Repair entries are **automatically deleted** the moment the sensor recovers, rather than at the next hourly check:
 
-- A stuck sensor changes state → repair disappears
-- An unavailable sensor comes back online → repair disappears
-- A never-triggered sensor fires for the first time → repair disappears
+- A stuck sensor changes state → repair disappears. A move from one active state to another counts, such as a paused TV that starts playing.
+- An unavailable sensor comes back online → repair disappears. A sensor that comes back reading `unknown` counts as back: it is reachable and has yet to report a value.
+- A sensor that hasn't triggered, or has never triggered, fires → repair disappears
 
-You can also manually dismiss repairs in the HA UI if you've investigated and determined the issue is expected.
+New repairs are still raised by the hourly check, since every threshold is an hour or longer.
+
+A sensor can't trigger while it is offline, so after an outage of an hour or more its inactivity checks count from when it came back. A sensor that spent five days offline doesn't return to a "hasn't triggered for eight days" repair.
+
+A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. To get alerts for that sensor again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
 
 ## Sensor Health Entity
 
