@@ -2638,44 +2638,112 @@ class TestSleepOverrideFromAreaSleepSensor:
             hass.states.async_set(self.SLEEP_ID, STATE_UNAVAILABLE)
             assert decay.half_life == asleep  # clock: inside window
 
-    def test_survives_area_object_replacement(
+    def test_lookup_is_by_area_name_on_every_call(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
         sleeping_area,
     ) -> None:
-        """The provider resolves the Area per call, not a captured reference."""
+        """The provider looks the area up by name per call (no held reference).
+
+        Whatever object is registered under the area name at call time is the
+        one consulted. This does NOT claim a replaced Area keeps its sleep id.
+        """
         _area, factory = sleeping_area
         decay = self._make(factory)
-        replacement = SimpleNamespace(sleep_entity_id=self.SLEEP_ID)
+        other = SimpleNamespace(sleep_entity_id=self.SLEEP_ID)
         hass.states.async_set(self.SLEEP_ID, STATE_OFF)
         with (
-            patch.dict(coordinator.areas, {factory.area_name: replacement}),
+            patch.dict(coordinator.areas, {factory.area_name: other}),
             _clock(2),
         ):
             assert decay.half_life == decay.purpose.awake_half_life
 
-    def test_survives_refresh_from_config(
+    def test_replaced_area_without_sleep_id_falls_back_to_clock(
         self,
         hass: HomeAssistant,
         coordinator: AreaOccupancyCoordinator,
         sleeping_area,
     ) -> None:
-        """Entities rebuilt by a settings edit (#577) keep a live provider."""
-        area, _ = sleeping_area
-        area.entities.refresh_from_config()
-        # Sleep sensor registers after the rebuild, as at startup.
+        """Documents real behaviour after an Area is replaced.
+
+        A new Area starts with ``sleep_entity_id=None`` and nothing
+        re-registers it, so the area uses the clock window even though the
+        sleep sensor state is 'off'. (No production path replaces the Area
+        today: settings edits keep the same Area, see the refresh test.)
+        """
+        area, factory = sleeping_area
         area.sleep_entity_id = self.SLEEP_ID
         hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        decay = self._make(factory)
+        fresh_area = SimpleNamespace(sleep_entity_id=None)
+        with patch.dict(coordinator.areas, {factory.area_name: fresh_area}):
+            with _clock(2):
+                assert decay.half_life == decay.purpose.half_life  # clock: asleep
+            with _clock(12):
+                assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_persisted_sleep_id_honoured_after_refresh_from_config(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        sleeping_area,
+    ) -> None:
+        """Settings-edit path (#577): same Area, id registered BEFORE the rebuild.
+
+        ``refresh_from_config`` rebuilds the entities but the Area (and its
+        already-registered ``sleep_entity_id``) persists, so the rebuilt
+        entities must still honour it.
+        """
+        area, _ = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_OFF)
+        old_ids = set(area.entities.entities)
+        area.entities.refresh_from_config()
+        assert area.sleep_entity_id == self.SLEEP_ID
         decays = [
             e.decay
             for e in area.entities.entities.values()
             if e.decay.sleep_override_provider is not None
         ]
-        assert decays, "rebuilt entities must carry the provider"
+        assert decays and old_ids, "rebuilt entities must carry the provider"
         with _clock(2):
             for decay in decays:
                 assert decay.half_life == decay.purpose.awake_half_life
+
+    def test_warning_is_once_per_area_not_per_entity(
+        self,
+        hass: HomeAssistant,
+        sleeping_area,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Several sensors in one area log ONE warning per degradation."""
+        area, factory = sleeping_area
+        area.sleep_entity_id = self.SLEEP_ID
+        hass.states.async_set(self.SLEEP_ID, STATE_UNAVAILABLE)
+        decays = [
+            factory.create_from_config_spec(eid, "motion").decay
+            for eid in ("binary_sensor.m1", "binary_sensor.m2", "binary_sensor.m3")
+        ]
+
+        def warnings() -> int:
+            return sum(1 for r in caplog.records if r.levelname == "WARNING")
+
+        with caplog.at_level("DEBUG", logger="custom_components.area_occupancy"):
+            caplog.clear()
+            for _ in range(2):  # two ticks across all entities
+                for decay in decays:
+                    _ = decay.half_life
+            assert warnings() == 1
+
+            hass.states.async_set(self.SLEEP_ID, STATE_ON)
+            for decay in decays:
+                _ = decay.half_life
+            caplog.clear()
+            hass.states.async_set(self.SLEEP_ID, STATE_UNKNOWN)
+            for decay in decays:
+                _ = decay.half_life
+            assert warnings() == 1  # warns again after recovery + new degradation
 
     def test_custom_half_life_bypasses_sleep_sensor(
         self,

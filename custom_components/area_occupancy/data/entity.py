@@ -62,9 +62,11 @@ class SleepOverrideProvider:
       keeps working if the Area object is replaced, instead of holding a
       stale reference.
 
-    A warning is logged once per transition into the degraded state (a
-    sleep sensor exists but is missing/unknown/unavailable); repeat calls
-    log at DEBUG so the ~10s decay tick does not spam the log. No sleep
+    One instance is shared by all entities of an area (see
+    ``EntityFactory._create_sleep_override_provider``), so a warning is
+    logged once per area per transition into the degraded state (a sleep
+    sensor exists but is missing/unknown/unavailable); repeat calls from
+    any of the area's entities log at DEBUG so the ~10s decay tick does not spam the log. No sleep
     sensor at all is a normal configuration and is not logged.
     """
 
@@ -763,15 +765,26 @@ class EntityFactory:
                 f"Available areas: {available or '(none)'}"
             )
         self.config = coordinator.areas[area_name].config
+        # Shared per-area sleep provider, created lazily (see
+        # _create_sleep_override_provider).
+        self._sleep_override_provider: SleepOverrideProvider | None = None
 
     def _create_sleep_override_provider(self) -> SleepOverrideProvider:
         """Build the live sleep-state provider for this factory's area.
 
-        Deliberately captures only the coordinator and the area NAME: the
-        area's sleep sensor entity_id is registered after this factory runs
-        and must be resolved on each call (see ``SleepOverrideProvider``).
+        One provider is shared by every entity of the area (the factory is
+        per area), so the "sensor degraded" warning is rate-limited per
+        area rather than once per entity, and that state survives the
+        entity rebuild of a settings edit. It captures only the coordinator
+        and the area NAME: the area's sleep sensor entity_id is registered
+        after this factory runs and must be resolved on each call (see
+        ``SleepOverrideProvider``).
         """
-        return SleepOverrideProvider(self.coordinator, self.area_name)
+        if self._sleep_override_provider is None:
+            self._sleep_override_provider = SleepOverrideProvider(
+                self.coordinator, self.area_name
+            )
+        return self._sleep_override_provider
 
     def create_from_db(self, entity_obj: DB.Entities) -> Entity:
         """Create entity from storage data.

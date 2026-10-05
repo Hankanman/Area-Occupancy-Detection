@@ -64,6 +64,6 @@ If the area has a [Sleep Presence sensor](sleep-presence.md) (created when peopl
 
 - **On** — treated as asleep, using the `Bedroom` half-life.
 - **Off** — treated as awake, using the `Living Room` half-life, at any hour (including inside the `Sleep Start`/`Sleep End` window).
-- **Unavailable, unknown, missing, or no people assigned to the area** — falls back to the `Sleep Start`/`Sleep End` clock window above. A broken sensor never forces the shorter "awake" half-life during real sleep; a warning is logged once when the sensor becomes unhealthy.
+- **Unavailable, unknown, missing, or no people assigned to the area** — falls back to the `Sleep Start`/`Sleep End` clock window above. A broken sensor never forces the shorter "awake" half-life during real sleep; a warning is logged once per area when the sensor becomes unhealthy (and again if it recovers and fails later).
 
 The sensor is read live on every decay calculation, so a change in the sensor's state takes effect immediately without a reload. There is no extra setting: areas without a Sleep Presence sensor behave exactly as before. A custom half-life set on the area still overrides all of this.
