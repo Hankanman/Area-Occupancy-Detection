@@ -20,11 +20,14 @@ from homeassistant.helpers import (
 from .const import (
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_MOTION_TIMEOUT,
     CONF_PEOPLE,
     CONF_PERSON_SLEEP_SENSOR,
     CONF_PERSON_SLEEP_SENSORS,
     CONF_VERSION,
+    DEFAULT_MOTION_TIMEOUT,
     DOMAIN,
+    LEGACY_DEFAULT_MOTION_TIMEOUT,
     SUBENTRY_TYPE_AREA,
 )
 from .db import DB_NAME
@@ -627,6 +630,22 @@ def _migrate_areas_to_subentries(
         )
 
 
+def _migrate_motion_timeout_default(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Move area motion timeouts still at the old 300 s default to 90 s."""
+    for subentry in list(config_entry.subentries.values()):
+        if subentry.subentry_type != SUBENTRY_TYPE_AREA:
+            continue
+        if subentry.data.get(CONF_MOTION_TIMEOUT) != LEGACY_DEFAULT_MOTION_TIMEOUT:
+            continue
+        hass.config_entries.async_update_subentry(
+            config_entry,
+            subentry,
+            data={**subentry.data, CONF_MOTION_TIMEOUT: DEFAULT_MOTION_TIMEOUT},
+        )
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:  # noqa: C901
     """Migrate old entry to the new version.
 
@@ -707,6 +726,19 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             hass.config_entries.async_update_entry(config_entry, version=19)
             _LOGGER.debug(
                 "Migrated entry %s from v18 to v19 (areas as config subentries)",
+                config_entry.entry_id,
+            )
+
+        # v19 -> v20: the motion timeout finally reaches learning, for PIR
+        # sensors (#604), and the default drops from 300 s to 90 s. Until
+        # now the setting did nothing, so a stored 300 was the old default
+        # rather than a value anyone tuned: move exactly that to the new
+        # default and leave every other value alone.
+        if config_entry.version == 19:
+            _migrate_motion_timeout_default(hass, config_entry)
+            hass.config_entries.async_update_entry(config_entry, version=20)
+            _LOGGER.debug(
+                "Migrated entry %s from v19 to v20 (motion timeout default)",
                 config_entry.entry_id,
             )
 
