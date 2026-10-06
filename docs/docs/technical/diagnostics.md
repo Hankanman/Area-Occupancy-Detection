@@ -53,6 +53,8 @@ The live calculation snapshot at the moment the diagnostic ran.
 - **`likelihood_shadow`** (#603): each sensor's likelihoods learned without the database, tick by tick against the live ground truth. Binary sensors get `p(active | occupied)` and `p(active | empty)`; numeric sensors get the mean and spread of their readings in each state, plus their correlation with occupancy. Each sits beside the database's value for the same sensor, with the day's largest gap (`max_diff`) and how many days running it has stayed within `diff_tolerance` (`days_within_tolerance`). This is the evidence for retiring the database in 2026.11.1.
 - **`fusion`** (#501): learned per-sensor weights, reported once the area has `min_samples` ticks. For each sensor, `learned_weight` is what the learner has arrived at, `effective_weight` is the live pipeline's weight (configured weight × information gain, so `0` when the sensor's learned likelihoods carry no information), and `samples` is how many ticks that sensor contributed. A sensor removed from the area, or whose active states change, is forgotten.
 
+The export also has a top-level **`transition_shadow`** block (#603): which room people go to next, learned live from each area's ground-truth label instead of from the database. It follows the same rules as the database's transition learning. For each "from" room (and two-room chain) it shows the share of each next room on both sides, the day's largest gap (`max_diff`), and `days_within_tolerance`, which together are the evidence for retiring the database.
+
 #### `prior`
 
 The learned prior breakdown — surfaces *which term* is driving the occupancy probability, especially useful when an area appears stuck without active evidence.

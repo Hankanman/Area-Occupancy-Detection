@@ -493,6 +493,11 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         shadow.forget_others(set(area.entities.entities))
         result = shadow.compare(db_likelihoods(area))
         shadow.record_divergence(today, result["max_diff"])
+    transitions = coordinator.transition_shadow
+    transitions.record_divergence(
+        today, transitions.compare(coordinator.db_transition_counts())["max_diff"]
+    )
+    await coordinator.async_save_transition_shadow()
     await coordinator.async_save_online_priors()
     await coordinator.async_save_accuracy_history()
     await coordinator.async_save_away_shadow()

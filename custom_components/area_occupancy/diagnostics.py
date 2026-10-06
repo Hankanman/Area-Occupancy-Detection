@@ -26,6 +26,7 @@ from .const import (
     DEVICE_SW_VERSION,
     LIKELIHOOD_DIFF_TOLERANCE,
     ONLINE_PRIOR_DIFF_TOLERANCE,
+    TRANSITION_DIFF_TOLERANCE,
 )
 from .data.metrics import metrics_to_diagnostics
 from .db import queries
@@ -475,8 +476,22 @@ async def async_get_config_entry_diagnostics(
         )
         database_section = {"error": repr(err)}
 
+    transitions = coordinator.transition_shadow
+    comparison = transitions.compare(coordinator.db_transition_counts())
     return {
         "integration": integration_section,
         "areas": areas_section,
         "database": database_section,
+        # Area transitions learned live, beside the database's (#603).
+        "transition_shadow": {
+            "shadow_mode": True,
+            "engaged": False,
+            "max_diff": comparison["max_diff"],
+            "diff_tolerance": TRANSITION_DIFF_TOLERANCE,
+            "days_within_tolerance": transitions.days_within_tolerance(
+                TRANSITION_DIFF_TOLERANCE
+            ),
+            "diff_history": transitions.state.diff_history[-14:],
+            "chains": comparison["chains"],
+        },
     }
