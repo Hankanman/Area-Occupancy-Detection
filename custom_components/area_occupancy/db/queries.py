@@ -327,7 +327,13 @@ def get_observed_intervals(
                     & (db.Intervals.area_name == db.Entities.area_name),
                 )
                 .filter(
-                    *build_base_filters(db, entry_id, lookback_date_db, area_name),
+                    db.Entities.entry_id == entry_id,
+                    db.Entities.area_name == area_name,
+                    db.Intervals.area_name == area_name,
+                    # Overlap, not start: a row that began before the cutoff
+                    # and runs into the window is observed time too; the
+                    # caller clips it to the window.
+                    db.Intervals.end_time > lookback_date_db,
                     db.Entities.entity_type == InputType.MOTION.value,
                 )
                 .all()

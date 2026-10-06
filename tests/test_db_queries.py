@@ -6,6 +6,7 @@ from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
@@ -28,6 +29,7 @@ from custom_components.area_occupancy.db.queries import (
     get_first_interval_timestamp,
     get_global_prior,
     get_latest_interval,
+    get_observed_intervals,
     get_occupied_intervals,
     get_occupied_intervals_cache,
     get_stored_time_priors,
@@ -1438,3 +1440,50 @@ class TestStuckStretchesAreNotGroundTruth:
             "motion": timedelta(hours=32),
             "media": timedelta(hours=48),
         }
+
+
+class TestObservedIntervalsLookback:
+    """A row that began before the cutoff still counts where it overlaps."""
+
+    def test_row_spanning_the_cutoff_is_kept(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        db = coordinator.db
+        area_name = coordinator.get_area_names()[0]
+        db.save_area_data(area_name)
+        now = dt_util.utcnow().replace(microsecond=0)
+        start, end = now - timedelta(days=3), now - timedelta(days=1)
+        with db.get_session() as session:
+            session.add(
+                db.Entities(
+                    entry_id=coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion_cutoff",
+                    entity_type="motion",
+                )
+            )
+            session.add(
+                db.Intervals(
+                    entry_id=coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion_cutoff",
+                    state="off",
+                    start_time=start.replace(tzinfo=None),
+                    end_time=end.replace(tzinfo=None),
+                    duration_seconds=(end - start).total_seconds(),
+                    aggregation_level="raw",
+                )
+            )
+            session.commit()
+
+        with patch(
+            "custom_components.area_occupancy.db.queries.dt_util.utcnow",
+            return_value=now,
+        ):
+            observed = get_observed_intervals(
+                db, coordinator.entry_id, area_name, lookback_days=2
+            )
+
+        # The cutoff (now - 2 days) falls inside the row: it must be kept
+        # whole; observed_coverage clips it to the window later.
+        assert observed == [(start, end)]
