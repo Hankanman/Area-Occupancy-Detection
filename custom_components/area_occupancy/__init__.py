@@ -49,6 +49,8 @@ from .const import (
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
     TIME_PRIORS_CARD_FILENAME,
+    TRANSITION_SHADOW_STORE_KEY_PREFIX,
+    TRANSITION_SHADOW_STORE_VERSION,
     WASP_IN_BOX_DEPRECATION_ISSUE,
     WASP_IN_BOX_DOCS_URL,
 )
@@ -511,6 +513,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove accuracy-history storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the live transitions Store (#603).
+        try:
+            await Store(
+                hass,
+                TRANSITION_SHADOW_STORE_VERSION,
+                f"{TRANSITION_SHADOW_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove live transition storage during entry removal %s",
                 entry.entry_id,
             )
 

@@ -53,6 +53,8 @@ from .const import (
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
+    TRANSITION_SHADOW_STORE_KEY_PREFIX,
+    TRANSITION_SHADOW_STORE_VERSION,
 )
 from .data.adjacency import (
     BoostContribution,
@@ -77,6 +79,7 @@ from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
+from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
 from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
 from .time_utils import to_local
@@ -263,6 +266,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             LIKELIHOOD_SHADOW_STORE_VERSION,
             f"{LIKELIHOOD_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Live transition counts (#603), fed every area's latest label.
+        self._latest_labels: dict[str, bool] = {}
+        self._transition_shadow = TransitionShadow()
+        self._transition_shadow_store: Store[dict] = Store(
+            hass,
+            TRANSITION_SHADOW_STORE_VERSION,
+            f"{TRANSITION_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Away-mode shadow evidence (#584): what lowering every room to the
         # away prior would have done. Never read by the probability path.
@@ -629,6 +640,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         LikelihoodShadowState.from_dict(stored_likelihoods[area_name])
                     )
 
+            # Restore the live transition counts (#603)
+            stored_transitions = await self._transition_shadow_store.async_load()
+            if stored_transitions:
+                self._transition_shadow = TransitionShadow(
+                    TransitionShadowState.from_dict(stored_transitions)
+                )
+
             # Restore the away-mode shadow evidence (#584) for known areas
             stored_away = await self._away_shadow_store.async_load() or {}
             for area_name in self.areas:
@@ -816,6 +834,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         truth = self._label_ground_truth(area_name, area, now)
         self._observe_likelihoods(area_name, area, now, truth)
+        self._latest_labels[area_name] = truth
+        self._transition_shadow.observe(
+            now=now,
+            labels=self._latest_labels,
+            adjacency=self._adjacency_snapshot.adjacency_index,
+        )
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
@@ -936,6 +960,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
         self._likelihood_shadow.setdefault(area_name, LikelihoodShadow()).observe(
             now=now, label=truth, binary=binary, numeric=numeric
+        )
+
+    @property
+    def transition_shadow(self) -> TransitionShadow:
+        """The live transition counts (#603)."""
+        return self._transition_shadow
+
+    def db_transition_counts(self) -> dict[str, dict[int, dict[str, float]]]:
+        """The database's transition counts, keyed like the live shadow."""
+        return {
+            f"{from_area}|{mid_area}": by_hour
+            for (
+                from_area,
+                mid_area,
+            ), by_hour in self._adjacency_snapshot.counts.items()
+        }
+
+    async def async_save_transition_shadow(self) -> None:
+        """Persist the live transition counts via the HA storage helper."""
+        await self._transition_shadow_store.async_save(
+            self._transition_shadow.state.to_dict()
         )
 
     def likelihood_shadow_for(self, area_name: str) -> LikelihoodShadow | None:
@@ -1275,6 +1320,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 format_area_names(self),
                 err,
             )
+        try:
+            await self.async_save_transition_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning("Failed to save live transition counts: %s", err)
         try:
             await self.async_save_likelihood_shadow()
         except (HomeAssistantError, OSError, RuntimeError) as err:

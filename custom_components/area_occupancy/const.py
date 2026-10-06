@@ -462,6 +462,12 @@ LIKELIHOOD_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.likelihood_shadow"
 # counts as agreeing for the switch-over streak.
 LIKELIHOOD_DIFF_TOLERANCE: Final = 0.05
 
+# --- Shadow area transitions without the database (#603) ---
+TRANSITION_SHADOW_STORE_VERSION: Final = 1
+TRANSITION_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.transition_shadow"
+# Largest gap in any next-room share that counts as agreeing.
+TRANSITION_DIFF_TOLERANCE: Final = 0.1
+
 # --- Away mode lowering occupancy (#584, shadow mode) ---
 AWAY_SHADOW_STORE_VERSION: Final = 1
 AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
