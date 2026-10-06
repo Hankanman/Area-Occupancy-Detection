@@ -83,7 +83,7 @@ from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
 from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
 from .time_utils import to_local
-from .utils import evidence_value, format_area_names, logit
+from .utils import clamp_probability, evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -889,6 +889,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # excludes them for the same reason.
         correlations = self.get_cached_correlations(area_name)
         features: dict[str, float] = {}
+        # Σ effective_weight · x, the part of the live logit being learned.
+        learnable = 0.0
         for entity_id, entity in area.entities.entities.items():
             if entity.weight <= 0 or entity.type.input_type in (
                 InputType.MOTION,
@@ -903,6 +905,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             features[entity_id] = (
                 evidence * correlation * entity.prob_given_true * strength_multiplier
             )
+            learnable += (
+                getattr(entity, "effective_weight", entity.weight) * features[entity_id]
+            )
         self._fusion_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
@@ -911,6 +916,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 bias=logit(area.prior.value),
                 features=features,
                 truth=truth,
+                probability=probability,
+                fixed_logit=logit(clamp_probability(probability)) - learnable,
             )
         )
 
