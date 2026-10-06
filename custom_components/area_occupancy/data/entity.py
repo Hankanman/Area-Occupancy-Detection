@@ -144,6 +144,7 @@ class Entity:
     learned_gaussian_params: GaussianParams | None = None
     analysis_error: str | None = None
     correlation_type: str | None = None
+    correlation_coefficient: float | None = None
     # Set by the health check when this sensor is flagged stuck active and
     # the user hasn't ignored the repair: the start of the stuck stretch.
     # While set, the sensor contributes no evidence (see ``is_stuck``).
@@ -553,6 +554,9 @@ class Entity:
         self.analysis_error = correlation_data.get("analysis_error")
         # Store correlation type for reporting
         self.correlation_type = correlation_type
+        # The Pearson coefficient itself, for the shadow likelihood
+        # comparison (#603); not used by the probability path.
+        self.correlation_coefficient = correlation_data.get("correlation_coefficient")
 
         # Get occupied stats
         mean_occupied = correlation_data.get("mean_value_when_occupied")

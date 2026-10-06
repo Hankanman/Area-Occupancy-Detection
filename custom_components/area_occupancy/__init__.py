@@ -43,6 +43,8 @@ from .const import (
     FUSION_STORE_VERSION,
     GROUND_TRUTH_STORE_KEY_PREFIX,
     GROUND_TRUTH_STORE_VERSION,
+    LIKELIHOOD_SHADOW_STORE_KEY_PREFIX,
+    LIKELIHOOD_SHADOW_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
@@ -509,6 +511,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove accuracy-history storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the shadow likelihoods Store (#603).
+        try:
+            await Store(
+                hass,
+                LIKELIHOOD_SHADOW_STORE_VERSION,
+                f"{LIKELIHOOD_SHADOW_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove shadow likelihood storage during entry removal %s",
                 entry.entry_id,
             )
 

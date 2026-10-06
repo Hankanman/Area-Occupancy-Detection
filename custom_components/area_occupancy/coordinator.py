@@ -48,6 +48,8 @@ from .const import (
     FUSION_STORE_VERSION,
     GROUND_TRUTH_STORE_KEY_PREFIX,
     GROUND_TRUTH_STORE_VERSION,
+    LIKELIHOOD_SHADOW_STORE_KEY_PREFIX,
+    LIKELIHOOD_SHADOW_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
@@ -62,9 +64,16 @@ from .data.adjacency import (
 from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
-from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
+from .data.entity_type import (
+    BINARY_INPUT_TYPES,
+    GROUND_TRUTH_INPUT_TYPES,
+    NUMERIC_INPUT_TYPES,
+    PRESENCE_INPUT_TYPES,
+    InputType,
+)
 from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
+from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
@@ -246,6 +255,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             GROUND_TRUTH_STORE_VERSION,
             f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Shadow sensor likelihoods (#603): learned tick by tick against the
+        # live label, compared daily with the database's values.
+        self._likelihood_shadow: dict[str, LikelihoodShadow] = {}
+        self._likelihood_shadow_store: Store[dict[str, dict]] = Store(
+            hass,
+            LIKELIHOOD_SHADOW_STORE_VERSION,
+            f"{LIKELIHOOD_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Away-mode shadow evidence (#584): what lowering every room to the
         # away prior would have done. Never read by the probability path.
@@ -604,6 +621,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         LabelerState.from_dict(stored_labels[area_name])
                     )
 
+            # Restore the shadow likelihoods (#603) for known areas
+            stored_likelihoods = await self._likelihood_shadow_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_likelihoods:
+                    self._likelihood_shadow[area_name] = LikelihoodShadow(
+                        LikelihoodShadowState.from_dict(stored_likelihoods[area_name])
+                    )
+
             # Restore the away-mode shadow evidence (#584) for known areas
             stored_away = await self._away_shadow_store.async_load() or {}
             for area_name in self.areas:
@@ -790,6 +815,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         production refresh cadence.
         """
         truth = self._label_ground_truth(area_name, area, now)
+        self._observe_likelihoods(area_name, area, now, truth)
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
@@ -891,6 +917,38 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             motion=motion,
             other_present=other_present,
             timeout_seconds=area.config.sensors.motion_timeout,
+        )
+
+    def _observe_likelihoods(
+        self, area_name: str, area: Area, now: datetime, truth: bool
+    ) -> None:
+        """Feed this tick into the area's shadow likelihoods (#603)."""
+        binary: dict[str, bool] = {}
+        numeric: dict[str, float] = {}
+        for entity_id, entity in area.entities.entities.items():
+            input_type = entity.type.input_type
+            if input_type in BINARY_INPUT_TYPES:
+                binary[entity_id] = entity.evidence is True
+            elif input_type in NUMERIC_INPUT_TYPES:
+                try:
+                    numeric[entity_id] = float(entity.state)
+                except (TypeError, ValueError):
+                    continue
+        self._likelihood_shadow.setdefault(area_name, LikelihoodShadow()).observe(
+            now=now, label=truth, binary=binary, numeric=numeric
+        )
+
+    def likelihood_shadow_for(self, area_name: str) -> LikelihoodShadow | None:
+        """Return the area's shadow likelihoods, if any were recorded."""
+        return self._likelihood_shadow.get(area_name)
+
+    async def async_save_likelihood_shadow(self) -> None:
+        """Persist the shadow likelihoods via the HA storage helper."""
+        await self._likelihood_shadow_store.async_save(
+            {
+                name: shadow.state.to_dict()
+                for name, shadow in self._likelihood_shadow.items()
+            }
         )
 
     def pulse_classification(self, area_name: str) -> dict[str, bool]:
@@ -1214,6 +1272,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_likelihood_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save shadow likelihoods for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

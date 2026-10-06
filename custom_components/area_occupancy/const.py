@@ -455,6 +455,13 @@ ACCURACY_HISTORY_DAYS: Final = 90
 GROUND_TRUTH_STORE_VERSION: Final = 1
 GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
 
+# --- Shadow sensor likelihoods without the database (#603) ---
+LIKELIHOOD_SHADOW_STORE_VERSION: Final = 1
+LIKELIHOOD_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.likelihood_shadow"
+# Largest gap to the database's values (probabilities, correlations) that
+# counts as agreeing for the switch-over streak.
+LIKELIHOOD_DIFF_TOLERANCE: Final = 0.05
+
 # --- Away mode lowering occupancy (#584, shadow mode) ---
 AWAY_SHADOW_STORE_VERSION: Final = 1
 AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
