@@ -447,6 +447,10 @@ ACCURACY_STORE_VERSION: Final = 1
 ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
 ACCURACY_HISTORY_DAYS: Final = 90
 
+# --- Live ground truth (#603): the label every learner trains against ---
+GROUND_TRUTH_STORE_VERSION: Final = 1
+GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
+
 # --- Away mode lowering occupancy (#584, shadow mode) ---
 AWAY_SHADOW_STORE_VERSION: Final = 1
 AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"

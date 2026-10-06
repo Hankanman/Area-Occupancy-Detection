@@ -293,10 +293,17 @@ def get_occupied_intervals(
         timeout = timedelta(
             seconds=_area_motion_timeout(db, area_name, motion_timeout_seconds)
         )
-        pulse_ids = pulse_like_sensors(
+        # The live labeller's classification is the shared one (so both paths
+        # extend the same sensors); a sensor it hasn't classified yet falls
+        # back to the rule applied to this query's own rows.
+        known = _pulse_classification(db, area_name)
+        pulse_ids = {
+            entity_id for entity_id, is_pulse in known.items() if is_pulse
+        } | pulse_like_sensors(
             {
                 entity_id: [(e - s).total_seconds() for s, e in spans]
                 for entity_id, spans in motion_by_entity.items()
+                if entity_id not in known
             }
         )
         extended_intervals = merge_overlapping_intervals(
@@ -581,6 +588,15 @@ def execute_union_queries(
     # Union all queries then order.
     combined = valid_queries[0].union_all(*valid_queries[1:])
     return combined.order_by(db.Intervals.start_time).all()
+
+
+def _pulse_classification(db: AreaOccupancyDB, area_name: str) -> dict[str, bool]:
+    """The coordinator's shared PIR-like classification, if it has one."""
+    getter = getattr(db.coordinator, "pulse_classification", None)
+    if getter is None:
+        return {}
+    result = getter(area_name)
+    return result if isinstance(result, dict) else {}
 
 
 def _area_motion_timeout(
