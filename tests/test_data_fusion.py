@@ -11,7 +11,7 @@ from custom_components.area_occupancy.data.fusion import (
     FusionState,
     FusionTick,
 )
-from custom_components.area_occupancy.utils import logit
+from custom_components.area_occupancy.utils import clamp_probability, logit
 
 T0 = datetime(2026, 9, 26, 12, 0, 0, tzinfo=UTC)
 
@@ -312,3 +312,176 @@ class TestSyncEntities:
         restored = FusionState.from_dict(state.to_dict())
         assert restored.entity_samples == {"a": 7}
         assert restored.signatures == {"a": "x"}
+
+
+def _scored_tick(
+    seconds: float,
+    *,
+    x: float = 1.0,
+    fixed_logit: float = -1.0,
+    probability: float = 0.5,
+    truth: bool = True,
+) -> FusionTick:
+    return FusionTick(
+        timestamp=T0 + timedelta(seconds=seconds),
+        bias=0.0,
+        features={"binary_sensor.door": x},
+        truth=truth,
+        probability=probability,
+        fixed_logit=fixed_logit,
+    )
+
+
+def _past_gate(weight: float = 2.0) -> FusionLearner:
+    learner = FusionLearner()
+    learner.state.samples = FUSION_MIN_SAMPLES
+    learner.state.weights = {"binary_sensor.door": weight}
+    return learner
+
+
+class TestScore:
+    """Live vs learned calibration scoring (#501 against #499's metric)."""
+
+    def test_hand_computed_scores(self) -> None:
+        """Hand-computed: learned weight 2 vs default 1 on an occupied area.
+
+        fixed_logit = -1, x = 1, so live z = -1 + 1*1 = 0 -> p = 0.5 (as
+        recorded) and learned z = -1 + 2*1 = 1 -> p = sigmoid(1) = 0.731059.
+        Truth occupied throughout, two ticks 10 s apart (the last reuses
+        the gap), so 20 s in one bin per model:
+        live ECE = |0.5 - 1| = 0.5; learned ECE = 1 - 0.731059 = 0.268941.
+        At threshold 0.6 live decides empty (agreement 0), learned
+        occupied (agreement 1). 20 s of occupied is below the hour needed
+        for a false-off rate, so that stays None.
+        """
+        learner = _past_gate()
+        scored = learner.score(
+            [_scored_tick(0), _scored_tick(10)], [], {"binary_sensor.door": 1.0}, 0.6
+        )
+        assert scored == 2
+        calibration = learner.calibration()
+        assert calibration["days"] == 1
+        live, learned = calibration["live"], calibration["learned"]
+        assert live["seconds"] == 20.0
+        assert live["expected_calibration_error"] == pytest.approx(0.5)
+        assert learned["expected_calibration_error"] == pytest.approx(0.2689, abs=1e-4)
+        assert live["agreement"] == 0.0
+        assert learned["agreement"] == 1.0
+        assert live["false_off_rate"] is None
+        assert calibration["daily"] == [
+            {"date": "2026-09-26", "live_ece": 0.5, "learned_ece": 0.2689}
+        ]
+
+    def test_default_weights_reproduce_live(self) -> None:
+        """With no learned weight the learned model is the live one."""
+        learner = _past_gate()
+        learner.state.weights = {}
+        learner.score(
+            [_scored_tick(0, truth=False), _scored_tick(10, truth=False)],
+            [],
+            {"binary_sensor.door": 1.0},
+            0.6,
+        )
+        calibration = learner.calibration()
+        assert calibration["live"] == calibration["learned"]
+
+    def test_below_gate_scores_nothing(self) -> None:
+        learner = _past_gate()
+        learner.state.samples = FUSION_MIN_SAMPLES - 1
+        assert learner.score([_scored_tick(0), _scored_tick(10)], [], {}, 0.6) == 0
+        assert learner.calibration() is None
+
+    def test_trained_ticks_are_not_scored(self) -> None:
+        """Out of sample: ticks already trained on are skipped."""
+        learner = _past_gate()
+        learner.state.trained_through = T0 + timedelta(seconds=10)
+        ticks = [_scored_tick(s) for s in (0, 10, 20, 30)]
+        assert learner.score(ticks, [], {}, 0.6) == 2
+
+    def test_ticks_without_probability_are_skipped(self) -> None:
+        """Ticks recorded before scoring existed carry no live probability."""
+        learner = _past_gate()
+        ticks = [_tick(s, {"binary_sensor.door": 1.0}, 0.0) for s in (0, 10)]
+        assert learner.score(ticks, [], {}, 0.6) == 0
+
+    def test_gaps_are_capped(self) -> None:
+        """A restart gap counts MAX_TICK_GAP_SECONDS (60 s), not hours."""
+        learner = _past_gate()
+        learner.score(
+            [_scored_tick(0), _scored_tick(7200), _scored_tick(7210)], [], {}, 0.6
+        )
+        # 60 (capped) + 10 + 10 (last reuses the previous gap)
+        assert learner.calibration()["live"]["seconds"] == 80.0
+
+    def test_truth_falls_back_to_intervals(self) -> None:
+        learner = _past_gate()
+        ticks = [
+            FusionTick(
+                timestamp=T0 + timedelta(seconds=s),
+                bias=0.0,
+                features={},
+                probability=0.9,
+                fixed_logit=logit(0.9),
+            )
+            for s in (0, 10)
+        ]
+        learner.score(ticks, [(T0, T0 + timedelta(minutes=1))], {}, 0.5)
+        assert learner.calibration()["live"]["agreement"] == 1.0
+
+    def test_days_pool_exactly_and_prune(self) -> None:
+        """Pooled figures are sums across days; 45 days kept, 30 pooled."""
+        learner = _past_gate()
+        for day in range(50):
+            start = day * 86400
+            # Even days occupied, odd days empty, always at p = 0.5.
+            truth = day % 2 == 0
+            learner.score(
+                [
+                    _scored_tick(start, truth=truth),
+                    _scored_tick(start + 10, truth=truth),
+                ],
+                [],
+                {"binary_sensor.door": 1.0},
+                0.6,
+            )
+        assert len(learner.state.score_days) == 45
+        calibration = learner.calibration()
+        assert calibration["days"] == 30
+        # Half the pooled time occupied at p = 0.5: one bin, rate 0.5, ECE 0.
+        assert calibration["live"]["expected_calibration_error"] == 0.0
+        assert calibration["live"]["seconds"] == 600.0
+        # Each day alone is off by 0.5.
+        assert {row["live_ece"] for row in calibration["daily"]} == {0.5}
+
+    def test_snapshot_includes_calibration(self) -> None:
+        learner = _past_gate()
+        learner.score([_scored_tick(0), _scored_tick(10)], [], {}, 0.6)
+        assert "calibration" in learner.snapshot({})
+
+    def test_scores_round_trip(self) -> None:
+        learner = _past_gate()
+        learner.score([_scored_tick(0), _scored_tick(10)], [], {}, 0.6)
+        restored = FusionLearner(FusionState.from_dict(learner.state.to_dict()))
+        assert restored.calibration() == learner.calibration()
+
+    def test_malformed_scores_fall_back_to_empty(self) -> None:
+        data = _past_gate().state.to_dict()
+        data["score_days"] = {"2026-09-26": {"live": {"bin_weight": [1.0]}}}
+        assert FusionState.from_dict(data) == FusionState()
+
+    async def test_tick_records_live_probability_and_fixed_logit(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """fixed_logit + Σ effective_weight·x is the live logit."""
+        area_name = coordinator.get_area_names()[0]
+        await coordinator.async_refresh()
+        tick = coordinator.fusion_ticks_for(area_name)[-1]
+        area = coordinator.get_area(area_name)
+        learnable = sum(
+            area.entities.entities[e].effective_weight * x
+            for e, x in tick.features.items()
+        )
+        assert tick.probability is not None
+        assert tick.fixed_logit + learnable == pytest.approx(
+            logit(clamp_probability(tick.probability))
+        )

@@ -373,6 +373,9 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
                 for entity_id, entity in area.entities.entities.items()
             }
             learner = coordinator.ensure_fusion_learner(area_name)
+            # Score first, so each tick is predicted by weights that have
+            # not trained on it yet.
+            learner.score(fusion_ticks, intervals, defaults, area.config.threshold)
             consumed = learner.update(fusion_ticks, intervals, defaults)
             _LOGGER.debug(
                 "Fusion (shadow) for area %s: consumed=%d total_samples=%d "

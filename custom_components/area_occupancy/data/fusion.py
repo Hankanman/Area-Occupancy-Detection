@@ -17,7 +17,11 @@ Shadow-mode contract: learned weights are computed, persisted (HA
 storage helper, lifecycle mirroring ``online_prior.py``), and exported
 in diagnostics with ``engaged: false``. They are **never read by the
 probability path** — promotion routes through #499's calibration
-comparison, per #501's phases.
+comparison, per #501's phases. That comparison is :meth:`FusionLearner.score`:
+each hour, before training, the new ticks are scored twice against the
+ground truth, once with the live probability and once with the learned
+weights swapped into it, and the two are kept as daily tallies of the
+#499 metrics (calibration error, agreement, false-on/false-off rates).
 
 Safety rails, per the issue:
 
@@ -49,10 +53,112 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import pairwise
 
 from ..const import FUSION_L2, FUSION_LEARNING_RATE, FUSION_MIN_SAMPLES, MAX_WEIGHT
-from ..utils import sigmoid
-from .metrics import _is_occupied_at
+from ..time_utils import to_local
+from ..utils import clamp_probability, sigmoid
+from .metrics import DEFAULT_CALIBRATION_BINS, _is_occupied_at
+from .online_prior import MAX_TICK_GAP_SECONDS
+
+# Days of calibration tallies kept, and how many of the latest are pooled
+# into the diagnostics comparison.
+SCORE_HISTORY_DAYS = 45
+SCORE_WINDOW_DAYS = 30
+# Seconds of each truth class before a false-on/false-off rate is reported
+# (as metrics.ACCURACY_MIN_CLASS_SECONDS).
+SCORE_MIN_CLASS_SECONDS = 3600.0
+
+
+@dataclass
+class CalibrationTally:
+    """Time-weighted calibration and decision sums, mergeable across days.
+
+    The same quantities ``metrics.compute_accuracy_metrics`` reports, kept
+    as sums so hourly batches add up into exact daily and monthly figures.
+    """
+
+    bin_weight: list[float] = field(
+        default_factory=lambda: [0.0] * DEFAULT_CALIBRATION_BINS
+    )
+    bin_probability: list[float] = field(
+        default_factory=lambda: [0.0] * DEFAULT_CALIBRATION_BINS
+    )
+    bin_hits: list[float] = field(
+        default_factory=lambda: [0.0] * DEFAULT_CALIBRATION_BINS
+    )
+    true_on: float = 0.0
+    false_on: float = 0.0
+    false_off: float = 0.0
+    true_off: float = 0.0
+
+    def add(self, probability: float, *, on: bool, truth: bool, seconds: float) -> None:
+        """Credit ``seconds`` of one prediction against the truth."""
+        bins = len(self.bin_weight)
+        p = min(max(probability, 0.0), 1.0)
+        idx = min(int(p * bins), bins - 1)
+        self.bin_weight[idx] += seconds
+        self.bin_probability[idx] += p * seconds
+        if truth:
+            self.bin_hits[idx] += seconds
+        if on and truth:
+            self.true_on += seconds
+        elif on:
+            self.false_on += seconds
+        elif truth:
+            self.false_off += seconds
+        else:
+            self.true_off += seconds
+
+    def merge(self, other: CalibrationTally) -> None:
+        """Add another tally's sums into this one."""
+        for name in ("bin_weight", "bin_probability", "bin_hits"):
+            mine = getattr(self, name)
+            for i, value in enumerate(getattr(other, name)):
+                mine[i] += value
+        self.true_on += other.true_on
+        self.false_on += other.false_on
+        self.false_off += other.false_off
+        self.true_off += other.true_off
+
+    def summary(self) -> dict:
+        """ECE, agreement and the two error rates (None where unknown)."""
+        total = sum(self.bin_weight)
+        if total <= 0:
+            return {"seconds": 0.0}
+        ece = sum(
+            abs(prob - hits)
+            for prob, hits in zip(self.bin_probability, self.bin_hits, strict=True)
+        )
+        truth_off = self.true_off + self.false_on
+        truth_on = self.true_on + self.false_off
+        return {
+            "seconds": round(total, 1),
+            # Σ_bins (w/W)·|Σpw/w − Σhw/w| = Σ_bins |Σpw − Σhw| / W
+            "expected_calibration_error": round(ece / total, 4),
+            "agreement": round((self.true_on + self.true_off) / total, 4),
+            "false_on_rate": round(self.false_on / truth_off, 4)
+            if truth_off >= SCORE_MIN_CLASS_SECONDS
+            else None,
+            "false_off_rate": round(self.false_off / truth_on, 4)
+            if truth_on >= SCORE_MIN_CLASS_SECONDS
+            else None,
+        }
+
+    def to_dict(self) -> dict:
+        """Serialize (JSON-safe)."""
+        return vars(self).copy()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> CalibrationTally:
+        """Restore; raises on malformed data (callers fall back to empty)."""
+        tally = cls(**{k: data[k] for k in data if k in cls.__dataclass_fields__})
+        for name in ("bin_weight", "bin_probability", "bin_hits"):
+            values = [float(v) for v in getattr(tally, name)]
+            if len(values) != DEFAULT_CALIBRATION_BINS:
+                raise ValueError(name)
+            setattr(tally, name, values)
+        return tally
 
 
 @dataclass(frozen=True)
@@ -71,6 +177,12 @@ class FusionTick:
     # Live ground-truth label (data.ground_truth); None falls back to the
     # occupied intervals passed to ``update``.
     truth: bool | None = None
+    # For scoring (see ``FusionLearner.score``): the area's live probability
+    # at this tick, and its logit minus the learnable terms
+    # ``Σ effective_weight_i · x_i``, i.e. everything the learned weights
+    # don't touch (prior, motion and sleep, activity and adjacency boosts).
+    probability: float | None = None
+    fixed_logit: float | None = None
 
 
 @dataclass
@@ -88,6 +200,9 @@ class FusionState:
     # its whole 24h window every hour, so without this each tick would be
     # stepped ~24 times and ``samples`` would pass the reporting gate early.
     trained_through: datetime | None = None
+    # Local date -> {"live": tally, "learned": tally}: how the live
+    # probability and the one with learned weights scored that day.
+    score_days: dict[str, dict[str, CalibrationTally]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -99,6 +214,10 @@ class FusionState:
             "trained_through": (
                 self.trained_through.isoformat() if self.trained_through else None
             ),
+            "score_days": {
+                day: {model: t.to_dict() for model, t in tallies.items()}
+                for day, tallies in self.score_days.items()
+            },
         }
 
     @classmethod
@@ -122,8 +241,15 @@ class FusionState:
                     if (raw := data.get("trained_through"))
                     else None
                 ),
+                score_days={
+                    str(day): {
+                        str(model): CalibrationTally.from_dict(t)
+                        for model, t in tallies.items()
+                    }
+                    for day, tallies in (data.get("score_days") or {}).items()
+                },
             )
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             return cls()
 
 
@@ -208,6 +334,109 @@ class FusionLearner:
         self.state.trained_through = max(t.timestamp for t in ticks)
         return len(ticks)
 
+    def score(
+        self,
+        ticks: list[FusionTick],
+        occupied_intervals: list[tuple[datetime, datetime]],
+        defaults: dict[str, float],
+        threshold: float,
+    ) -> int:
+        """Score the learned weights against the live probability.
+
+        Call before :meth:`update` with the same batch: each new tick is
+        then predicted by weights that have not yet trained on it, so the
+        score is out of sample. The learned probability swaps the learned
+        weights into the live logit and holds everything else fixed:
+        ``sigmoid(fixed_logit + Σ w_i · x_i)``; with every weight at its
+        default it is the live probability. Both are tallied, time-weighted
+        (gap to the next tick, capped at ``MAX_TICK_GAP_SECONDS``), into
+        the tick's local day, deciding "occupied" at ``threshold``.
+
+        Nothing is scored below ``FUSION_MIN_SAMPLES``: until then the
+        weights are not reported, let alone candidates for promotion.
+
+        Returns:
+            The number of ticks scored.
+        """
+        if self.state.samples < FUSION_MIN_SAMPLES:
+            return 0
+        ticks = sorted(
+            (
+                t
+                for t in ticks
+                if t.probability is not None
+                and t.fixed_logit is not None
+                and (
+                    self.state.trained_through is None
+                    or t.timestamp > self.state.trained_through
+                )
+            ),
+            key=lambda t: t.timestamp,
+        )
+        if len(ticks) < 2:
+            return 0
+        gaps = [
+            min(
+                max((b.timestamp - a.timestamp).total_seconds(), 0.0),
+                MAX_TICK_GAP_SECONDS,
+            )
+            for a, b in pairwise(ticks)
+        ]
+        gaps.append(gaps[-1])
+        weights = self.state.weights
+        for tick, seconds in zip(ticks, gaps, strict=True):
+            if seconds <= 0:
+                continue
+            truth = (
+                tick.truth
+                if tick.truth is not None
+                else _is_occupied_at(tick.timestamp, occupied_intervals)
+            )
+            z = tick.fixed_logit
+            for entity_id, x in tick.features.items():
+                z += weights.get(entity_id, defaults.get(entity_id, 0.0)) * x
+            learned = clamp_probability(sigmoid(z))
+            day = to_local(tick.timestamp).date().isoformat()
+            tallies = self.state.score_days.setdefault(
+                day, {"live": CalibrationTally(), "learned": CalibrationTally()}
+            )
+            tallies["live"].add(
+                tick.probability,
+                on=tick.probability >= threshold,
+                truth=truth,
+                seconds=seconds,
+            )
+            tallies["learned"].add(
+                learned, on=learned >= threshold, truth=truth, seconds=seconds
+            )
+        for day in sorted(self.state.score_days)[:-SCORE_HISTORY_DAYS]:
+            del self.state.score_days[day]
+        return len(ticks)
+
+    def calibration(self) -> dict | None:
+        """Live vs learned scores, pooled over the latest days (diagnostics)."""
+        days = sorted(self.state.score_days)[-SCORE_WINDOW_DAYS:]
+        if not days:
+            return None
+        pooled = {"live": CalibrationTally(), "learned": CalibrationTally()}
+        daily = []
+        for day in days:
+            tallies = self.state.score_days[day]
+            row = {"date": day}
+            for model, tally in pooled.items():
+                if model in tallies:
+                    tally.merge(tallies[model])
+                    row[f"{model}_ece"] = (
+                        tallies[model].summary().get("expected_calibration_error")
+                    )
+            daily.append(row)
+        return {
+            "days": len(days),
+            "live": pooled["live"].summary(),
+            "learned": pooled["learned"].summary(),
+            "daily": daily,
+        }
+
     def sync_entities(self, signatures: dict[str, str]) -> list[str]:
         """Forget entities that left the area or changed meaning.
 
@@ -266,4 +495,6 @@ class FusionLearner:
                 }
                 for entity_id, w in sorted(self.state.weights.items())
             }
+        if (calibration := self.calibration()) is not None:
+            block["calibration"] = calibration
         return block
