@@ -22,6 +22,7 @@ from ..const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
+    CONF_CLOSED_DOOR_HOLD,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -361,7 +362,10 @@ class Sensors:
             # Fallback for cases where parent config isn't set
             wasp_enabled = False
 
-        if wasp_enabled:
+        # With the closed-door hold on, the hold replaces Wasp in Box's
+        # entity: counting it as motion too would double the hold and learn
+        # every held hour as real occupancy (#558).
+        if wasp_enabled and not getattr(self._parent_config, "closed_door_hold", False):
             # In multi-area architecture, wasp_entity_id is stored per area
             wasp_id = None
             if (
@@ -683,6 +687,12 @@ class AreaConfig:
 
         self.exclude_from_all_areas = bool(
             data.get(CONF_EXCLUDE_FROM_ALL_AREAS, DEFAULT_EXCLUDE_FROM_ALL_AREAS)
+        )
+
+        # Closed-door hold (#558). Unset, it follows Wasp in Box, which it
+        # replaces: areas using Wasp keep their hold, no one else gains one.
+        self.closed_door_hold = bool(
+            data.get(CONF_CLOSED_DOOR_HOLD, self.wasp_in_box.enabled)
         )
 
     @property

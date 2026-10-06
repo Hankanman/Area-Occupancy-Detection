@@ -34,17 +34,27 @@ from .const import (
     AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
     CONF_VERSION,
+    CONTINUITY_STORE_KEY_PREFIX,
+    CONTINUITY_STORE_VERSION,
     DB_NAME,
     DOMAIN,
+    DOOR_HOLD_STORE_KEY_PREFIX,
+    DOOR_HOLD_STORE_VERSION,
     FRONTEND_DIR,
     FRONTEND_REGISTERED_KEY,
     FRONTEND_URL_BASE,
     FUSION_STORE_KEY_PREFIX,
     FUSION_STORE_VERSION,
+    GROUND_TRUTH_STORE_KEY_PREFIX,
+    GROUND_TRUTH_STORE_VERSION,
+    LIKELIHOOD_SHADOW_STORE_KEY_PREFIX,
+    LIKELIHOOD_SHADOW_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
     TIME_PRIORS_CARD_FILENAME,
+    TRANSITION_SHADOW_STORE_KEY_PREFIX,
+    TRANSITION_SHADOW_STORE_VERSION,
     WASP_IN_BOX_DEPRECATION_ISSUE,
     WASP_IN_BOX_DOCS_URL,
 )
@@ -507,6 +517,69 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove accuracy-history storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the live transitions Store (#603).
+        try:
+            await Store(
+                hass,
+                TRANSITION_SHADOW_STORE_VERSION,
+                f"{TRANSITION_SHADOW_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove live transition storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the shadow likelihoods Store (#603).
+        try:
+            await Store(
+                hass,
+                LIKELIHOOD_SHADOW_STORE_VERSION,
+                f"{LIKELIHOOD_SHADOW_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove shadow likelihood storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the live ground-truth Store (#603).
+        try:
+            await Store(
+                hass,
+                GROUND_TRUTH_STORE_VERSION,
+                f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove ground-truth storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        try:
+            await Store(
+                hass,
+                CONTINUITY_STORE_VERSION,
+                f"{CONTINUITY_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove continuity storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        try:
+            await Store(
+                hass,
+                DOOR_HOLD_STORE_VERSION,
+                f"{DOOR_HOLD_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove closed-door hold storage during entry removal %s",
                 entry.entry_id,
             )
 

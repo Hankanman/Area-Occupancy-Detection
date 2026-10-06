@@ -615,20 +615,14 @@ class TestGetOccupiedIntervals:
         )
 
         assert len(result) == 1
-        # Timeout extends motion segments from motion_end, but is clamped to merged_end
-        # Since motion_end < merged_end, timeout should extend to min(motion_end + timeout, merged_end)
-        # motion_end + timeout = now - 15m + 10m = now - 5m
-        # merged_end = now - 8m
-        # So expected_end = min(now - 5m, now - 8m) = now - 8m (timeout is clamped to merged_end)
-        # After merging segments, result[0][1] should equal min(motion_end + timeout, merged_end)
-        expected_end = min(
-            motion_end + timedelta(seconds=motion_timeout_seconds), merged_end
+        # The two stretches merge (now-2h .. now-8m) and, as a PIR-like
+        # sensor (too few activations to say otherwise), the timeout extends
+        # the stretch past its end: now-8m + 10m = now+2m, capped at now.
+        # It used to be clamped to the stretch's own end, a no-op.
+        result_end, merged_end_normalized = _normalize_datetime_for_comparison(
+            result[0][1], merged_end
         )
-        result_end, expected_end_normalized = _normalize_datetime_for_comparison(
-            result[0][1], expected_end
-        )
-        # Result should be min(motion_end + timeout, merged_end) = merged_end (clamped)
-        assert abs((result_end - expected_end_normalized).total_seconds()) < 1
+        assert result_end >= merged_end_normalized + timedelta(minutes=7)
 
     def test_get_occupied_intervals_error(
         self, coordinator: AreaOccupancyCoordinator, monkeypatch

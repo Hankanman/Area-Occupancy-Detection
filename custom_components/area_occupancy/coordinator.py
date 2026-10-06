@@ -41,14 +41,24 @@ from .const import (
     AWAY_SHADOW_STORE_KEY_PREFIX,
     AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
+    CONTINUITY_STORE_KEY_PREFIX,
+    CONTINUITY_STORE_VERSION,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NAME,
     DOMAIN,
+    DOOR_HOLD_STORE_KEY_PREFIX,
+    DOOR_HOLD_STORE_VERSION,
     FUSION_STORE_KEY_PREFIX,
     FUSION_STORE_VERSION,
+    GROUND_TRUTH_STORE_KEY_PREFIX,
+    GROUND_TRUTH_STORE_VERSION,
+    LIKELIHOOD_SHADOW_STORE_KEY_PREFIX,
+    LIKELIHOOD_SHADOW_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
+    TRANSITION_SHADOW_STORE_KEY_PREFIX,
+    TRANSITION_SHADOW_STORE_VERSION,
 )
 from .data.adjacency import (
     BoostContribution,
@@ -60,15 +70,26 @@ from .data.adjacency import (
 from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
-from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
+from .data.continuity_shadow import ContinuityShadow, ContinuityState, half_life_ratio
+from .data.door_hold import DoorHold, DoorHoldState
+from .data.entity_type import (
+    BINARY_INPUT_TYPES,
+    GROUND_TRUTH_INPUT_TYPES,
+    NUMERIC_INPUT_TYPES,
+    PRESENCE_INPUT_TYPES,
+    InputType,
+)
 from .data.fusion import FusionLearner, FusionState, FusionTick
+from .data.ground_truth import LabelerState, LiveLabeler
+from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
+from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
 from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
 from .time_utils import to_local
-from .utils import evidence_value, format_area_names, logit
+from .utils import clamp_probability, evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,6 +255,45 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Live ground-truth labellers (#603): label each tick by the same
+        # rule the database applies after the fact, so learners don't need
+        # the database to know the truth.
+        self._labelers: dict[str, LiveLabeler] = {}
+        self._ground_truth_store: Store[dict[str, dict]] = Store(
+            hass,
+            GROUND_TRUTH_STORE_VERSION,
+            f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Presence-continuity shadow (#558) for open-plan rooms.
+        self._continuity: dict[str, ContinuityShadow] = {}
+        self._continuity_store: Store[dict[str, dict]] = Store(
+            hass,
+            CONTINUITY_STORE_VERSION,
+            f"{CONTINUITY_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Closed-door holds (#558), persisted so a restart keeps a hold.
+        self._door_holds: dict[str, DoorHold] = {}
+        self._door_hold_store: Store[dict[str, dict]] = Store(
+            hass,
+            DOOR_HOLD_STORE_VERSION,
+            f"{DOOR_HOLD_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Shadow sensor likelihoods (#603): learned tick by tick against the
+        # live label, compared daily with the database's values.
+        self._likelihood_shadow: dict[str, LikelihoodShadow] = {}
+        self._likelihood_shadow_store: Store[dict[str, dict]] = Store(
+            hass,
+            LIKELIHOOD_SHADOW_STORE_VERSION,
+            f"{LIKELIHOOD_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Live transition counts (#603), fed every area's latest label.
+        self._latest_labels: dict[str, bool] = {}
+        self._transition_shadow = TransitionShadow()
+        self._transition_shadow_store: Store[dict] = Store(
+            hass,
+            TRANSITION_SHADOW_STORE_VERSION,
+            f"{TRANSITION_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Away-mode shadow evidence (#584): what lowering every room to the
         # away prior would have done. Never read by the probability path.
@@ -584,6 +644,31 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(history, list):
                     self._accuracy_history[area_name] = history
 
+            # Restore the live ground-truth labellers (#603) for known areas
+            stored_labels = await self._ground_truth_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_labels:
+                    self._labelers[area_name] = LiveLabeler(
+                        LabelerState.from_dict(stored_labels[area_name])
+                    )
+
+            await self._restore_door_state()
+
+            # Restore the shadow likelihoods (#603) for known areas
+            stored_likelihoods = await self._likelihood_shadow_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_likelihoods:
+                    self._likelihood_shadow[area_name] = LikelihoodShadow(
+                        LikelihoodShadowState.from_dict(stored_likelihoods[area_name])
+                    )
+
+            # Restore the live transition counts (#603)
+            stored_transitions = await self._transition_shadow_store.async_load()
+            if stored_transitions:
+                self._transition_shadow = TransitionShadow(
+                    TransitionShadowState.from_dict(stored_transitions)
+                )
+
             # Restore the away-mode shadow evidence (#584) for known areas
             stored_away = await self._away_shadow_store.async_load() or {}
             for area_name in self.areas:
@@ -739,6 +824,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for entity in area.entities.entities.values():
                 entity.decay.set_modifier_factor(modifier.decay_modifier)
 
+        for area_name, area in self.areas.items():
+            self._observe_door_hold(area_name, area, now)
+
         result = {}
         for area_name, area in self.areas.items():
             probability = area.probability()
@@ -769,10 +857,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``_handle_decay_timer``) has no effect on entity state or the
         production refresh cadence.
         """
+        truth = self._label_ground_truth(area_name, area, now)
+        self._observe_likelihoods(area_name, area, now, truth)
+        self._latest_labels[area_name] = truth
+        self._transition_shadow.observe(
+            now=now,
+            labels=self._latest_labels,
+            adjacency=self._adjacency_snapshot.adjacency_index,
+        )
+        self._observe_continuity(area_name, area, now, is_occupied)
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
-            TickSample(timestamp=now, probability=probability, occupied=is_occupied)
+            TickSample(
+                timestamp=now,
+                probability=probability,
+                occupied=is_occupied,
+                truth=truth,
+            )
         )
         # Match db.queries.get_occupied_intervals' ground-truth definition
         # (motion ∪ media ∪ sleep) rather than motion alone, so the online
@@ -781,7 +883,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # replicated here — see module docstring's known approximations.
         presence_active = _ground_truth_present(area)
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
-            motion_active=presence_active, now=now
+            motion_active=truth, now=now
         )
         # Away mode (#584, shadow): what the away prior would have decided.
         # The extra probability calculation only runs while away.
@@ -813,6 +915,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # excludes them for the same reason.
         correlations = self.get_cached_correlations(area_name)
         features: dict[str, float] = {}
+        # Σ effective_weight · x, the part of the live logit being learned.
+        learnable = 0.0
         for entity_id, entity in area.entities.entities.items():
             if entity.weight <= 0 or entity.type.input_type in (
                 InputType.MOTION,
@@ -827,10 +931,217 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             features[entity_id] = (
                 evidence * correlation * entity.prob_given_true * strength_multiplier
             )
+            learnable += (
+                getattr(entity, "effective_weight", entity.weight) * features[entity_id]
+            )
         self._fusion_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
-            FusionTick(timestamp=now, bias=logit(area.prior.value), features=features)
+            FusionTick(
+                timestamp=now,
+                bias=logit(area.prior.value),
+                features=features,
+                truth=truth,
+                probability=probability,
+                fixed_logit=logit(clamp_probability(probability)) - learnable,
+            )
+        )
+
+    def _label_ground_truth(self, area_name: str, area: Area, now: datetime) -> bool:
+        """This tick's ground-truth label for an area (data.ground_truth).
+
+        Motion sensors are tracked one by one (for the PIR-or-presence
+        call); media and sleep count as present while active. Sensors
+        flagged stuck active don't count, as in the database path.
+        """
+        motion: dict[str, bool] = {}
+        other_present = False
+        for entity_id, entity in area.entities.entities.items():
+            input_type = entity.type.input_type
+            if input_type not in GROUND_TRUTH_INPUT_TYPES:
+                continue
+            active = (
+                entity.evidence is True
+                and getattr(entity, "is_stuck", False) is not True
+            )
+            if input_type == InputType.MOTION:
+                motion[entity_id] = active
+            elif active:
+                other_present = True
+        labeler = self._labelers.setdefault(area_name, LiveLabeler())
+        return labeler.observe(
+            now=now,
+            motion=motion,
+            other_present=other_present,
+            timeout_seconds=area.config.sensors.motion_timeout,
+        )
+
+    def _observe_likelihoods(
+        self, area_name: str, area: Area, now: datetime, truth: bool
+    ) -> None:
+        """Feed this tick into the area's shadow likelihoods (#603)."""
+        binary: dict[str, bool] = {}
+        numeric: dict[str, float] = {}
+        for entity_id, entity in area.entities.entities.items():
+            input_type = entity.type.input_type
+            if input_type in BINARY_INPUT_TYPES:
+                binary[entity_id] = entity.evidence is True
+            elif input_type in NUMERIC_INPUT_TYPES:
+                try:
+                    numeric[entity_id] = float(entity.state)
+                except (TypeError, ValueError):
+                    continue
+        self._likelihood_shadow.setdefault(area_name, LikelihoodShadow()).observe(
+            now=now, label=truth, binary=binary, numeric=numeric
+        )
+
+    @property
+    def transition_shadow(self) -> TransitionShadow:
+        """The live transition counts (#603)."""
+        return self._transition_shadow
+
+    def db_transition_counts(self) -> dict[str, dict[int, dict[str, float]]]:
+        """The database's transition counts, keyed like the live shadow."""
+        return {
+            f"{from_area}|{mid_area}": by_hour
+            for (
+                from_area,
+                mid_area,
+            ), by_hour in self._adjacency_snapshot.counts.items()
+        }
+
+    async def async_save_transition_shadow(self) -> None:
+        """Persist the live transition counts via the HA storage helper."""
+        await self._transition_shadow_store.async_save(
+            self._transition_shadow.state.to_dict()
+        )
+
+    def likelihood_shadow_for(self, area_name: str) -> LikelihoodShadow | None:
+        """Return the area's shadow likelihoods, if any were recorded."""
+        return self._likelihood_shadow.get(area_name)
+
+    async def async_save_likelihood_shadow(self) -> None:
+        """Persist the shadow likelihoods via the HA storage helper."""
+        await self._likelihood_shadow_store.async_save(
+            {
+                name: shadow.state.to_dict()
+                for name, shadow in self._likelihood_shadow.items()
+            }
+        )
+
+    def pulse_classification(self, area_name: str) -> dict[str, bool]:
+        """The live labeller's PIR-like classification for an area's sensors.
+
+        The database path uses it too, so both apply the motion timeout to
+        the same sensors (#603).
+        """
+        labeler = self._labelers.get(area_name)
+        return dict(labeler.state.pulse) if labeler is not None else {}
+
+    async def async_save_ground_truth(self) -> None:
+        """Persist the live labellers via the HA storage helper."""
+        await self._ground_truth_store.async_save(
+            {name: labeler.state.to_dict() for name, labeler in self._labelers.items()}
+        )
+
+    def door_hold_for(self, area_name: str) -> DoorHold | None:
+        """The area's closed-door hold, if it has one (#558)."""
+        return self._door_holds.get(area_name)
+
+    def _observe_door_hold(self, area_name: str, area: Area, now: datetime) -> None:
+        """Update an area's closed-door hold from its doors and motion (#558).
+
+        Doors are read by their raw state (``on``/``open`` is open), so the
+        hold works whatever the door's configured active state is.
+        """
+        doors = [
+            entity
+            for entity in area.entities.entities.values()
+            if entity.type.input_type == InputType.DOOR
+        ]
+        if not area.config.closed_door_hold or not doors:
+            self._door_holds.pop(area_name, None)
+            return
+        decay = area.config.decay
+        wasp = area.config.wasp_in_box
+        self._door_holds.setdefault(area_name, DoorHold()).observe(
+            now,
+            doors_open=any(str(door.state) in ("on", "open") for door in doors),
+            motion_on=any(
+                entity.evidence is True
+                and entity.type.input_type == InputType.MOTION
+                and entity.entity_id != area.wasp_entity_id
+                and getattr(entity, "is_stuck", False) is not True
+                for entity in area.entities.entities.values()
+            ),
+            motion_window=wasp.motion_timeout,
+            max_hold=wasp.max_duration,
+            fade_half_life=decay.half_life,
+        )
+
+    async def _restore_door_state(self) -> None:
+        """Restore closed-door holds and the continuity shadow (#558)."""
+        stored_holds = await self._door_hold_store.async_load() or {}
+        stored_continuity = await self._continuity_store.async_load() or {}
+        for area_name in self.areas:
+            if area_name in stored_holds:
+                self._door_holds[area_name] = DoorHold(
+                    DoorHoldState.from_dict(stored_holds[area_name])
+                )
+            if area_name in stored_continuity:
+                self._continuity[area_name] = ContinuityShadow(
+                    ContinuityState.from_dict(stored_continuity[area_name])
+                )
+
+    def continuity_for(self, area_name: str) -> ContinuityShadow | None:
+        """The area's presence-continuity shadow, if it has one (#558)."""
+        return self._continuity.get(area_name)
+
+    def _observe_continuity(
+        self, area_name: str, area: Area, now: datetime, is_occupied: bool
+    ) -> None:
+        """Record one tick of the presence-continuity shadow (#558).
+
+        Open-plan rooms only: a room with the closed-door hold already
+        holds, and one without decay never clears.
+        """
+        if area.config.closed_door_hold or not area.config.decay.enabled:
+            self._continuity.pop(area_name, None)
+            return
+        modifier = self._adjacency_decay_modifiers.get(area_name)
+        ratio = (
+            half_life_ratio(
+                modifier.base_half_life_seconds,
+                modifier.effective_half_life_seconds,
+                modifier.silence_score,
+            )
+            if modifier is not None and modifier.base_half_life_seconds > 0
+            else 1.0
+        )
+        neighbours = self._adjacency_snapshot.adjacency_index.get(area_name, set())
+        self._continuity.setdefault(area_name, ContinuityShadow()).observe(
+            now,
+            present=_ground_truth_present(area),
+            occupied=is_occupied,
+            doors_open=any(
+                str(entity.state) in ("on", "open")
+                for entity in area.entities.entities.values()
+                if entity.type.input_type == InputType.DOOR
+            ),
+            neighbours={n: self._latest_labels.get(n, False) for n in neighbours},
+            half_life_ratio=ratio,
+        )
+
+    async def async_save_continuity(self) -> None:
+        """Persist the presence-continuity shadow via the HA storage helper."""
+        await self._continuity_store.async_save(
+            {name: c.state.to_dict() for name, c in self._continuity.items()}
+        )
+
+    async def async_save_door_holds(self) -> None:
+        """Persist the closed-door holds via the HA storage helper."""
+        await self._door_hold_store.async_save(
+            {name: hold.state.to_dict() for name, hold in self._door_holds.items()}
         )
 
     # --- Adjacent-areas (Phase 4) accessors ---
@@ -1139,6 +1450,42 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_transition_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning("Failed to save live transition counts: %s", err)
+        try:
+            await self.async_save_likelihood_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save shadow likelihoods for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_ground_truth()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save ground-truth labellers for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_continuity()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save the continuity shadow for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_door_holds()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save closed-door holds for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

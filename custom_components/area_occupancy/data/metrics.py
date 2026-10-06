@@ -45,6 +45,10 @@ class TickSample:
     timestamp: datetime
     probability: float
     occupied: bool
+    # The live ground-truth label at this tick (data.ground_truth). When
+    # set it is the truth this sample is scored against; ``None`` falls
+    # back to the occupied intervals passed in.
+    truth: bool | None = None
 
 
 @dataclass
@@ -81,6 +85,9 @@ class AccuracyMetrics:
     # Seconds of each truth class needed before a rate (or a threshold
     # trading the two off) is reported; set by compute_accuracy_metrics.
     min_class_seconds: float = 0.0
+    # Time-weighted share of labelled ticks where the live ground truth
+    # matched the database's occupied history (None without live labels).
+    truth_agreement_with_db: float | None = None
 
 
 def _is_occupied_at(ts: datetime, intervals: list[tuple[datetime, datetime]]) -> bool:
@@ -172,8 +179,18 @@ def compute_accuracy_metrics(
     prev_decision: bool | None = None
     prev_truth: bool | None = None
 
+    agree_weight = labelled_weight = 0.0
     for sample, weight in zip(samples, weights, strict=True):
-        truth = _is_occupied_at(sample.timestamp, occupied_intervals)
+        db_truth = _is_occupied_at(sample.timestamp, occupied_intervals)
+        if sample.truth is None:
+            truth = db_truth
+        else:
+            truth = sample.truth
+            # Parity of the live label with the database's history, the
+            # evidence that retiring the database keeps the same truth.
+            labelled_weight += weight
+            if sample.truth == db_truth:
+                agree_weight += weight
 
         # Calibration accumulation. ``bin_count`` stays a raw sample
         # count for diagnostics readability; the reliability stats below
@@ -233,6 +250,8 @@ def compute_accuracy_metrics(
     if truth_on_total and truth_on_total >= min_class_seconds:
         out.false_off_rate = false_off / truth_on_total
     out.agreement = (true_on + true_off) / total_weight
+    if labelled_weight:
+        out.truth_agreement_with_db = agree_weight / labelled_weight
     out.min_class_seconds = min_class_seconds
 
     return out
@@ -326,6 +345,7 @@ def accuracy_summary(metrics: AccuracyMetrics) -> dict:
         "false_on_rate": metrics.false_on_rate,
         "false_off_rate": metrics.false_off_rate,
         "suggested_threshold": suggest_threshold(metrics),
+        "truth_agreement_with_db": metrics.truth_agreement_with_db,
     }
 
 
@@ -344,6 +364,7 @@ def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict:
         "window_end": metrics.window_end.isoformat() if metrics.window_end else None,
         "expected_calibration_error": metrics.expected_calibration_error,
         "suggested_threshold": suggest_threshold(metrics),
+        "truth_agreement_with_db": metrics.truth_agreement_with_db,
         "agreement": metrics.agreement,
         "false_on_rate": metrics.false_on_rate,
         "false_off_rate": metrics.false_off_rate,

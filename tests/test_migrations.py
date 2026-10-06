@@ -13,6 +13,7 @@ from custom_components.area_occupancy.const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_MOTION_SENSORS,
+    CONF_MOTION_TIMEOUT,
     CONF_PEOPLE,
     CONF_PERSON_ENTITY,
     CONF_PERSON_SLEEP_AREA,
@@ -1668,3 +1669,46 @@ class TestMigrateAreasToSubentries:
 
         assert entry.version == CONF_VERSION
         assert set(self._areas(entry)) == {"Living Room"}
+
+
+class TestMigrateMotionTimeoutDefault:
+    """v19 -> v20: areas still at the old 300 s default move to 90 s (#604).
+
+    The setting never reached learning before, so a stored 300 was the old
+    default, not a tuned value; any other value is left alone.
+    """
+
+    async def test_only_the_old_default_moves(
+        self, hass: HomeAssistant, setup_area_registry: dict[str, str]
+    ) -> None:
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Area Occupancy Detection",
+            version=18,
+            data={
+                CONF_AREAS: [
+                    {
+                        CONF_AREA_ID: setup_area_registry["Living Room"],
+                        CONF_MOTION_TIMEOUT: 300,
+                    },
+                    {
+                        CONF_AREA_ID: setup_area_registry["Kitchen"],
+                        CONF_MOTION_TIMEOUT: 120,
+                    },
+                    {CONF_AREA_ID: setup_area_registry["Testing"]},
+                ]
+            },
+        )
+        entry.add_to_hass(hass)
+        _migrate_areas_to_subentries(hass, entry)
+        hass.config_entries.async_update_entry(entry, version=19)
+
+        assert await async_migrate_entry(hass, entry)
+
+        assert entry.version == 20
+        timeouts = {
+            subentry.title: subentry.data.get(CONF_MOTION_TIMEOUT)
+            for subentry in entry.subentries.values()
+            if subentry.subentry_type == SUBENTRY_TYPE_AREA
+        }
+        assert timeouts == {"Living Room": 90, "Kitchen": 120, "Testing": None}

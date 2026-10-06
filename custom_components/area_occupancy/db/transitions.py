@@ -46,7 +46,6 @@ from ..const import (
     ADJACENCY_TRAJECTORY_WINDOW_S,
     ADJACENCY_TRANSITION_WINDOW_S,
     DEFAULT_LOOKBACK_DAYS,
-    DEFAULT_MOTION_TIMEOUT,
 )
 from ..time_utils import from_db_utc, to_local
 from .queries import get_occupied_intervals
@@ -156,7 +155,6 @@ def _collect_events_for_areas(
             entry_id,
             area_name,
             lookback_days=lookback_days,
-            motion_timeout_seconds=DEFAULT_MOTION_TIMEOUT,
         )
         for start, end in intervals:
             start_aware = from_db_utc(start)

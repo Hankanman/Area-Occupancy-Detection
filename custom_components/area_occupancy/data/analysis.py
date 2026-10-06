@@ -41,6 +41,7 @@ from ..db.utils import (
 from ..time_utils import ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
 from .entity import entity_signature, ground_truth_signature
+from .entity_type import BINARY_INPUT_TYPES, NUMERIC_INPUT_TYPES
 from .online_prior import is_stale
 from .prior import DEFAULT_SLOT_MINUTES, Prior
 from .types import ZonePriors
@@ -372,6 +373,9 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
                 for entity_id, entity in area.entities.entities.items()
             }
             learner = coordinator.ensure_fusion_learner(area_name)
+            # Score first, so each tick is predicted by weights that have
+            # not trained on it yet.
+            learner.score(fusion_ticks, intervals, defaults, area.config.threshold)
             consumed = learner.update(fusion_ticks, intervals, defaults)
             _LOGGER.debug(
                 "Fusion (shadow) for area %s: consumed=%d total_samples=%d "
@@ -482,9 +486,27 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
             buckets_compared,
             estimator.observed_days(now),
         )
+    # Shadow likelihoods (#603): compare with what the database taught each
+    # sensor, and fold the day's worst gap into the switch-over streak.
+    today = to_local(now).date().isoformat()
+    for area_name, area in coordinator.areas.items():
+        shadow = coordinator.likelihood_shadow_for(area_name)
+        if shadow is None:
+            continue
+        shadow.forget_others(set(area.entities.entities))
+        result = shadow.compare(db_likelihoods(area))
+        shadow.record_divergence(today, result["max_diff"])
+    transitions = coordinator.transition_shadow
+    transitions.record_divergence(
+        today, transitions.compare(coordinator.db_transition_counts())["max_diff"]
+    )
+    await coordinator.async_save_transition_shadow()
     await coordinator.async_save_online_priors()
     await coordinator.async_save_accuracy_history()
     await coordinator.async_save_away_shadow()
+    await coordinator.async_save_ground_truth()
+    await coordinator.async_save_door_holds()
+    await coordinator.async_save_continuity()
     await coordinator.async_save_fusion_state()
 
 
@@ -590,6 +612,36 @@ async def start_prior_analysis(
     # Publish the time priors this run saved. Refreshes keep using the
     # previous snapshot until this completes; time_prior never reads SQLite.
     await coordinator.hass.async_add_executor_job(prior.load_time_priors)
+
+
+def db_likelihoods(area: Area) -> dict[str, dict[str, float]]:
+    """What the database-driven analysis has taught each sensor (#603).
+
+    Binary sensors: ``p_true``/``p_false`` once analysed without error.
+    Numeric sensors: the Gaussian means and deviations and the Pearson
+    coefficient. The baseline the shadow likelihoods are compared against.
+    """
+    values: dict[str, dict[str, float]] = {}
+    for entity_id, entity in area.entities.entities.items():
+        input_type = entity.type.input_type
+        if input_type in BINARY_INPUT_TYPES:
+            if entity.analysis_error is None:
+                values[entity_id] = {
+                    "p_true": entity.prob_given_true,
+                    "p_false": entity.prob_given_false,
+                }
+        elif input_type in NUMERIC_INPUT_TYPES:
+            params = entity.learned_gaussian_params
+            coefficient = entity.correlation_coefficient
+            if params is not None and coefficient is not None:
+                values[entity_id] = {
+                    "mean_occupied": params.mean_occupied,
+                    "std_occupied": params.std_occupied,
+                    "mean_unoccupied": params.mean_unoccupied,
+                    "std_unoccupied": params.std_unoccupied,
+                    "correlation": coefficient,
+                }
+    return values
 
 
 def observed_coverage(

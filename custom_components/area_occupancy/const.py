@@ -38,12 +38,12 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.10.2"
+DEVICE_SW_VERSION: Final = "2026.11.1-pre1"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
 # is for.
-CONF_VERSION: Final = 19
+CONF_VERSION: Final = 20
 CONF_VERSION_MINOR: Final = 0
 # Version stamp of the SQLite schema, stored in the ``metadata`` table as
 # ``db_version``. Deliberately independent of ``CONF_VERSION`` (the config
@@ -130,6 +130,8 @@ CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
+# A room with one way in stays occupied while its door is shut (#558).
+CONF_CLOSED_DOOR_HOLD: Final = "closed_door_hold"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 CONF_HEALTH_ENABLED: Final = "health_enabled"
@@ -178,7 +180,11 @@ DEFAULT_CUSTOM_BINARY_ACTIVE_STATES: Final[list[str]] = [STATE_ON]
 DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN: Final = 1.0
 DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX: Final = 1000000.0
 DEFAULT_NAME: Final = "Area Occupancy"
-DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+# 90 s bridges the gaps between a PIR's pulses during one visit (live PIR
+# medians 65-112 s); 300 s mostly added phantom time after people left.
+DEFAULT_MOTION_TIMEOUT: Final = 90
+# The default before CONF_VERSION 20, migrated to the new one (#604).
+LEGACY_DEFAULT_MOTION_TIMEOUT: Final = 300
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
     0.005  # Matches DEFAULT_TYPES[InputType.MOTION]
@@ -446,6 +452,31 @@ ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 ACCURACY_STORE_VERSION: Final = 1
 ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
 ACCURACY_HISTORY_DAYS: Final = 90
+
+# --- Live ground truth (#603): the label every learner trains against ---
+GROUND_TRUTH_STORE_VERSION: Final = 1
+GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
+
+# --- Closed-door hold (#558) ---
+DOOR_HOLD_STORE_VERSION: Final = 1
+DOOR_HOLD_STORE_KEY_PREFIX: Final = f"{DOMAIN}.door_hold"
+
+# --- Shadow sensor likelihoods without the database (#603) ---
+LIKELIHOOD_SHADOW_STORE_VERSION: Final = 1
+LIKELIHOOD_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.likelihood_shadow"
+# Largest gap to the database's values (probabilities, correlations) that
+# counts as agreeing for the switch-over streak.
+LIKELIHOOD_DIFF_TOLERANCE: Final = 0.05
+
+# --- Shadow area transitions without the database (#603) ---
+TRANSITION_SHADOW_STORE_VERSION: Final = 1
+TRANSITION_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.transition_shadow"
+
+# --- Shadow presence continuity for open-plan rooms (#558) ---
+CONTINUITY_STORE_VERSION: Final = 1
+CONTINUITY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.continuity"
+# Largest gap in any next-room share that counts as agreeing.
+TRANSITION_DIFF_TOLERANCE: Final = 0.1
 
 # --- Away mode lowering occupancy (#584, shadow mode) ---
 AWAY_SHADOW_STORE_VERSION: Final = 1

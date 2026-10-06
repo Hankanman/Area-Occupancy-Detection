@@ -24,7 +24,9 @@ from .const import (
     CONF_VERSION,
     CONF_VERSION_MINOR,
     DEVICE_SW_VERSION,
+    LIKELIHOOD_DIFF_TOLERANCE,
     ONLINE_PRIOR_DIFF_TOLERANCE,
+    TRANSITION_DIFF_TOLERANCE,
 )
 from .data.metrics import metrics_to_diagnostics
 from .db import queries
@@ -298,9 +300,33 @@ def _area_snapshot(
                     # full 90-day history lives in the Store.
                     "diff_history": estimator.state.diff_history[-14:],
                 }
+        likelihood_shadow = coordinator.likelihood_shadow_for(area_name)
+        if likelihood_shadow is not None:
+            from .data.analysis import db_likelihoods  # noqa: PLC0415
+
+            comparison = likelihood_shadow.compare(db_likelihoods(area))
+            current["likelihood_shadow"] = {
+                "shadow_mode": True,
+                "engaged": False,
+                "max_diff": comparison["max_diff"],
+                "diff_tolerance": LIKELIHOOD_DIFF_TOLERANCE,
+                "days_within_tolerance": likelihood_shadow.days_within_tolerance(
+                    LIKELIHOOD_DIFF_TOLERANCE
+                ),
+                "diff_history": likelihood_shadow.state.diff_history[-14:],
+                "sensors": comparison["sensors"],
+            }
         away_shadow = coordinator.away_shadow_for(area_name)
         if away_shadow is not None:
             current["away"] = away_shadow.snapshot()
+        continuity = coordinator.continuity_for(area_name)
+        if continuity is not None and (summary := continuity.summary()):
+            current["continuity"] = summary
+        door_hold = coordinator.door_hold_for(area_name)
+        current["door_hold"] = {
+            "enabled": area.config.closed_door_hold,
+            **(door_hold.state.to_dict() if door_hold is not None else {}),
+        }
         fusion = coordinator.fusion_learner_for(area_name)
         if fusion is not None:
             fusion_defaults = {
@@ -458,8 +484,22 @@ async def async_get_config_entry_diagnostics(
         )
         database_section = {"error": repr(err)}
 
+    transitions = coordinator.transition_shadow
+    comparison = transitions.compare(coordinator.db_transition_counts())
     return {
         "integration": integration_section,
         "areas": areas_section,
         "database": database_section,
+        # Area transitions learned live, beside the database's (#603).
+        "transition_shadow": {
+            "shadow_mode": True,
+            "engaged": False,
+            "max_diff": comparison["max_diff"],
+            "diff_tolerance": TRANSITION_DIFF_TOLERANCE,
+            "days_within_tolerance": transitions.days_within_tolerance(
+                TRANSITION_DIFF_TOLERANCE
+            ),
+            "diff_history": transitions.state.diff_history[-14:],
+            "chains": comparison["chains"],
+        },
     }

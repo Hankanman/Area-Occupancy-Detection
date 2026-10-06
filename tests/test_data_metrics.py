@@ -442,3 +442,28 @@ class TestAccuracyHistory:
             freezer.move_to(datetime(2026, 11, 1, tzinfo=UTC) + timedelta(days=day))
             coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=day))
         assert len(coordinator.accuracy_history_for(area)) == ACCURACY_HISTORY_DAYS
+
+
+class TestLiveTruth:
+    """Live labels are scored against, and their DB parity reported."""
+
+    def test_label_used_and_parity_measured(self) -> None:
+        start = datetime(2026, 10, 6, 0, tzinfo=UTC)
+        samples = [
+            TickSample(
+                timestamp=start + timedelta(seconds=10 * i),
+                probability=0.9,
+                occupied=True,
+                truth=i < 6,  # live label occupied for the first 6 ticks
+            )
+            for i in range(10)
+        ]
+        db_truth = [(start, start + timedelta(seconds=40))]  # DB: first 4 ticks
+
+        metrics = compute_accuracy_metrics(samples, db_truth)
+
+        # Scored against the live label: decision on throughout, label on
+        # for 6 of 10 ticks -> agreement 0.6. Parity with the DB: they
+        # differ on ticks 4 and 5 -> 8 of 10 agree (equal weights).
+        assert metrics.agreement == pytest.approx(0.6, abs=0.06)
+        assert metrics.truth_agreement_with_db == pytest.approx(0.8, abs=0.06)

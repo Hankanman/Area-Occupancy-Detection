@@ -93,6 +93,7 @@ from .const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
+    CONF_CLOSED_DOOR_HOLD,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -205,7 +206,7 @@ from .const import (
     get_default_state,
     get_state_options,
 )
-from .data.purpose import Purpose, get_purpose_options
+from .data.purpose import AreaPurpose, Purpose, get_purpose_options
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1305,6 +1306,20 @@ def _create_sensors_step_schema(
     }
 
 
+def _closed_door_hold_default(area: dict[str, Any]) -> bool:
+    """The closed-door hold's form default for an area (#558).
+
+    An area saved before the setting existed follows its Wasp in Box
+    setting, as the loader does. A new area defaults it on for the
+    bathroom purpose, the room most often with one way in.
+    """
+    if CONF_CLOSED_DOOR_HOLD in area:
+        return bool(area[CONF_CLOSED_DOOR_HOLD])
+    if CONF_WASP_ENABLED in area:
+        return bool(area[CONF_WASP_ENABLED])
+    return area.get(CONF_PURPOSE) == AreaPurpose.BATHROOM
+
+
 def _create_behavior_step_schema(
     defaults: dict[str, Any] | None = None,
 ) -> dict[vol.Marker, Any]:
@@ -1325,6 +1340,9 @@ def _create_behavior_step_schema(
         ): BooleanSelector(),
         vol.Optional(
             CONF_EXCLUDE_FROM_ALL_AREAS, default=DEFAULT_EXCLUDE_FROM_ALL_AREAS
+        ): BooleanSelector(),
+        vol.Optional(
+            CONF_CLOSED_DOOR_HOLD, default=_closed_door_hold_default(defaults)
         ): BooleanSelector(),
         vol.Optional(
             CONF_DECAY_HALF_LIFE,
@@ -2425,6 +2443,7 @@ class BaseOccupancyFlow:
             CONF_DECAY_HALF_LIFE,
             CONF_MIN_PRIOR_OVERRIDE,
             CONF_EXCLUDE_FROM_ALL_AREAS,
+            CONF_CLOSED_DOOR_HOLD,
         }
         if user_input is not None:
             data_schema = self.add_suggested_values_to_schema(base_schema, user_input)

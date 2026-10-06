@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     AWAY_PRIOR,
@@ -23,12 +24,16 @@ from ..const import (
 from ..data.activity import ActivityId, DetectedActivity, detect_activity
 from ..data.adjacency import apply_logit_boost
 from ..data.analysis import start_prior_analysis
+from ..data.door_hold import DoorHold
 from ..data.health import HealthMonitor
 from ..utils import (
     apply_activity_boost,
+    clamp_probability,
     combined_probability as calc_combined,
     environmental_confidence as calc_env,
+    logit,
     presence_probability as calc_presence,
+    sigmoid,
 )
 
 if TYPE_CHECKING:
@@ -295,7 +300,28 @@ class Area:
         boost = self.coordinator.adjacency_boost_for(self.area_name)
         if boost is not None:
             result = apply_logit_boost(result, boost)
-        return result
+        return self._apply_door_hold(result)
+
+    def _apply_door_hold(self, result: float) -> float:
+        """Floor the probability while the closed-door hold is on (#558).
+
+        Applied last, as a floor rather than evidence, so it never adds to
+        what the sensors say and nothing can dilute it.
+        """
+        if not self.config.closed_door_hold:
+            return result
+        hold = self.coordinator.door_hold_for(self.area_name)
+        if not isinstance(hold, DoorHold):
+            return result
+        floor = hold.floor_logit(
+            dt_util.utcnow(),
+            bias=logit(self.prior.value),
+            threshold=self.config.threshold,
+            fade_half_life=self.config.decay.half_life,
+        )
+        if floor is None:
+            return result
+        return max(result, clamp_probability(sigmoid(floor)))
 
     def presence_probability(self, prior: float | None = None) -> float:
         """Calculate presence probability from strong binary indicators.
