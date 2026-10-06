@@ -281,10 +281,10 @@ MAX_WEIGHT: Final[float] = 0.99
 # hold an area above the threshold with no active evidence — see issue #435.
 PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 
-# Every room's prior while the away-mode entity is on (#584): the household
-# has said the house is empty. Evidence still works on top, so one active
-# motion sensor (its hold floor scales with the prior) still reads ~99%; a
-# TV left playing does not reach a 50% threshold.
+# The prior away mode would give every room while the away-mode entity is
+# on (#584). Shadow mode for now: recorded beside the live probability,
+# never applied. With it, one active motion sensor (its hold floor scales
+# with the prior) still reads ~99%; a TV left playing reads ~3%.
 AWAY_PRIOR: Final[float] = 0.01
 
 # Time Prior Bounds
@@ -446,6 +446,10 @@ ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 ACCURACY_STORE_VERSION: Final = 1
 ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
 ACCURACY_HISTORY_DAYS: Final = 90
+
+# --- Away mode lowering occupancy (#584, shadow mode) ---
+AWAY_SHADOW_STORE_VERSION: Final = 1
+AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
 
 # --- Learned sensor fusion (#501, shadow mode) ---
 # Store version and key prefix for the per-entry learned-weight state,

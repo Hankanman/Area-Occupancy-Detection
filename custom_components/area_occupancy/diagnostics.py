@@ -298,6 +298,9 @@ def _area_snapshot(
                     # full 90-day history lives in the Store.
                     "diff_history": estimator.state.diff_history[-14:],
                 }
+        away_shadow = coordinator.away_shadow_for(area_name)
+        if away_shadow is not None:
+            current["away"] = away_shadow.snapshot()
         fusion = coordinator.fusion_learner_for(area_name)
         if fusion is not None:
             fusion_defaults = {

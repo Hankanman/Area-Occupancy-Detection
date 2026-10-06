@@ -1030,7 +1030,7 @@
                     "sleep_end": "The time when your sleep schedule ends. Areas with the 'Sleeping' purpose will behave like 'Relaxing' areas outside of sleep hours.",
                     "health_enabled": "When enabled, the integration raises Home Assistant repair issues for stuck, unavailable, or never-triggered sensors and for slow or failing analysis cycles. Turn off to silence all repairs from this integration; previously raised issues will be cleared on the next analysis cycle.",
                     "sensor_precision": "Lower values significantly reduce recorder database writes from diagnostic sensors. 0 is recommended unless you need sub-percent resolution.",
-                    "away_mode_entity": "Optional. A boolean entity (input_boolean, binary_sensor or switch) that is on while the household is away, such as a vacation-mode toggle. While it is on, every room's occupancy prior drops to 1% (sensors still work, so real activity still shows), time away is left out of learning, and the stuck-inactive and never-triggered sensor alerts pause. When set, it is used for alerts instead of person and device tracking. Leave empty to use person tracking for alerts only."
+                    "away_mode_entity": "Optional. A boolean entity (input_boolean, binary_sensor or switch) that is on while the household is away, such as a vacation-mode toggle. While it is on, time away is left out of learning and the stuck-inactive and never-triggered sensor alerts pause. When set, it is used for alerts instead of person and device tracking. Leave empty to use person tracking for alerts only."
                 }
             },
             "manage_people": {

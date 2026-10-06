@@ -15,7 +15,6 @@ from homeassistant.helpers.entity import DeviceInfo
 
 from ..const import (
     ALL_AREAS_IDENTIFIER,
-    AWAY_PRIOR,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
@@ -94,12 +93,7 @@ def _zone_prior(areas: list[Area], empirical: ZonePriors | None) -> float:
     from ..data.forecast import forecast_prior  # noqa: PLC0415
     from ..data.prior import PRIOR_FACTOR  # noqa: PLC0415
 
-    if not areas:
-        return MIN_PROBABILITY
-    # Away (#584): the rooms are all at the away prior, and so is the zone.
-    if areas[0].coordinator.household_away() is True:
-        return AWAY_PRIOR
-    if empirical is None:
+    if empirical is None or not areas:
         return _max(areas, lambda a: a.area_prior(), MIN_PROBABILITY)
     clock = areas[0].prior
     slot = empirical.time_priors.get((clock.day_of_week, clock.time_slot))

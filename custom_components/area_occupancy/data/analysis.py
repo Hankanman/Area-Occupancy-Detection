@@ -484,6 +484,7 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         )
     await coordinator.async_save_online_priors()
     await coordinator.async_save_accuracy_history()
+    await coordinator.async_save_away_shadow()
     await coordinator.async_save_fusion_state()
 
 
