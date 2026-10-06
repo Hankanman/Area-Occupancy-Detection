@@ -43,7 +43,7 @@ DEVICE_SW_VERSION: Final = "2026.10.2"
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
 # is for.
-CONF_VERSION: Final = 19
+CONF_VERSION: Final = 20
 CONF_VERSION_MINOR: Final = 0
 # Version stamp of the SQLite schema, stored in the ``metadata`` table as
 # ``db_version``. Deliberately independent of ``CONF_VERSION`` (the config
@@ -178,7 +178,11 @@ DEFAULT_CUSTOM_BINARY_ACTIVE_STATES: Final[list[str]] = [STATE_ON]
 DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN: Final = 1.0
 DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX: Final = 1000000.0
 DEFAULT_NAME: Final = "Area Occupancy"
-DEFAULT_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+# 90 s bridges the gaps between a PIR's pulses during one visit (live PIR
+# medians 65-112 s); 300 s mostly added phantom time after people left.
+DEFAULT_MOTION_TIMEOUT: Final = 90
+# The default before CONF_VERSION 20, migrated to the new one (#604).
+LEGACY_DEFAULT_MOTION_TIMEOUT: Final = 300
 DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
 DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
     0.005  # Matches DEFAULT_TYPES[InputType.MOTION]
@@ -446,6 +450,10 @@ ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 ACCURACY_STORE_VERSION: Final = 1
 ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
 ACCURACY_HISTORY_DAYS: Final = 90
+
+# --- Live ground truth (#603): the label every learner trains against ---
+GROUND_TRUTH_STORE_VERSION: Final = 1
+GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
 
 # --- Away mode lowering occupancy (#584, shadow mode) ---
 AWAY_SHADOW_STORE_VERSION: Final = 1

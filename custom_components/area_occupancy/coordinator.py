@@ -46,6 +46,8 @@ from .const import (
     DOMAIN,
     FUSION_STORE_KEY_PREFIX,
     FUSION_STORE_VERSION,
+    GROUND_TRUTH_STORE_KEY_PREFIX,
+    GROUND_TRUTH_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
@@ -62,6 +64,7 @@ from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
 from .data.fusion import FusionLearner, FusionState, FusionTick
+from .data.ground_truth import LabelerState, LiveLabeler
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
@@ -234,6 +237,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Live ground-truth labellers (#603): label each tick by the same
+        # rule the database applies after the fact, so learners don't need
+        # the database to know the truth.
+        self._labelers: dict[str, LiveLabeler] = {}
+        self._ground_truth_store: Store[dict[str, dict]] = Store(
+            hass,
+            GROUND_TRUTH_STORE_VERSION,
+            f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Away-mode shadow evidence (#584): what lowering every room to the
         # away prior would have done. Never read by the probability path.
@@ -584,6 +596,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(history, list):
                     self._accuracy_history[area_name] = history
 
+            # Restore the live ground-truth labellers (#603) for known areas
+            stored_labels = await self._ground_truth_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_labels:
+                    self._labelers[area_name] = LiveLabeler(
+                        LabelerState.from_dict(stored_labels[area_name])
+                    )
+
             # Restore the away-mode shadow evidence (#584) for known areas
             stored_away = await self._away_shadow_store.async_load() or {}
             for area_name in self.areas:
@@ -769,10 +789,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``_handle_decay_timer``) has no effect on entity state or the
         production refresh cadence.
         """
+        truth = self._label_ground_truth(area_name, area, now)
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
-            TickSample(timestamp=now, probability=probability, occupied=is_occupied)
+            TickSample(
+                timestamp=now,
+                probability=probability,
+                occupied=is_occupied,
+                truth=truth,
+            )
         )
         # Match db.queries.get_occupied_intervals' ground-truth definition
         # (motion ∪ media ∪ sleep) rather than motion alone, so the online
@@ -781,7 +807,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # replicated here — see module docstring's known approximations.
         presence_active = _ground_truth_present(area)
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
-            motion_active=presence_active, now=now
+            motion_active=truth, now=now
         )
         # Away mode (#584, shadow): what the away prior would have decided.
         # The extra probability calculation only runs while away.
@@ -830,7 +856,56 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._fusion_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
-            FusionTick(timestamp=now, bias=logit(area.prior.value), features=features)
+            FusionTick(
+                timestamp=now,
+                bias=logit(area.prior.value),
+                features=features,
+                truth=truth,
+            )
+        )
+
+    def _label_ground_truth(self, area_name: str, area: Area, now: datetime) -> bool:
+        """This tick's ground-truth label for an area (data.ground_truth).
+
+        Motion sensors are tracked one by one (for the PIR-or-presence
+        call); media and sleep count as present while active. Sensors
+        flagged stuck active don't count, as in the database path.
+        """
+        motion: dict[str, bool] = {}
+        other_present = False
+        for entity_id, entity in area.entities.entities.items():
+            input_type = entity.type.input_type
+            if input_type not in GROUND_TRUTH_INPUT_TYPES:
+                continue
+            active = (
+                entity.evidence is True
+                and getattr(entity, "is_stuck", False) is not True
+            )
+            if input_type == InputType.MOTION:
+                motion[entity_id] = active
+            elif active:
+                other_present = True
+        labeler = self._labelers.setdefault(area_name, LiveLabeler())
+        return labeler.observe(
+            now=now,
+            motion=motion,
+            other_present=other_present,
+            timeout_seconds=area.config.sensors.motion_timeout,
+        )
+
+    def pulse_classification(self, area_name: str) -> dict[str, bool]:
+        """The live labeller's PIR-like classification for an area's sensors.
+
+        The database path uses it too, so both apply the motion timeout to
+        the same sensors (#603).
+        """
+        labeler = self._labelers.get(area_name)
+        return dict(labeler.state.pulse) if labeler is not None else {}
+
+    async def async_save_ground_truth(self) -> None:
+        """Persist the live labellers via the HA storage helper."""
+        await self._ground_truth_store.async_save(
+            {name: labeler.state.to_dict() for name, labeler in self._labelers.items()}
         )
 
     # --- Adjacent-areas (Phase 4) accessors ---
@@ -1139,6 +1214,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_ground_truth()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save ground-truth labellers for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

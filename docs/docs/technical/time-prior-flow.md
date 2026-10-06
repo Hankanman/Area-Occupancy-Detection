@@ -55,7 +55,7 @@ The system uses motion sensors as the "ground truth" for occupancy because they 
    - Prevents double-counting of occupied time
 
 3. Applies motion timeout extension using `utils.py:apply_motion_timeout()`
-   - Extends intervals by the motion timeout period (default: 5 minutes)
+   - Extends each PIR-style motion sensor's "on" stretches by the area's motion timeout (default 90 s); sensors that hold "on" (mmWave) are not extended (`data/ground_truth.py`)
    - Accounts for time after motion stops when area may still be occupied
 
 **Output**: List of `(start_time, end_time)` tuples representing occupied periods

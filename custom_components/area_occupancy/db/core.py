@@ -345,7 +345,7 @@ class AreaOccupancyDB:
         self,
         area_name: str,
         start_time: datetime | None = None,
-        motion_timeout: int = 300,  # Default 5 min if not specified
+        motion_timeout: int | None = None,  # None: the area's configured timeout
     ) -> list[tuple[datetime, datetime]]:
         """Get raw occupied intervals from motion sensors only (without using cache).
 

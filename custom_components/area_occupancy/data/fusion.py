@@ -68,6 +68,9 @@ class FusionTick:
     timestamp: datetime
     bias: float
     features: dict[str, float]
+    # Live ground-truth label (data.ground_truth); None falls back to the
+    # occupied intervals passed to ``update``.
+    truth: bool | None = None
 
 
 @dataclass
@@ -179,7 +182,12 @@ class FusionLearner:
             return 0
         weights = self.state.weights
         for tick in ticks:
-            y = 1.0 if _is_occupied_at(tick.timestamp, occupied_intervals) else 0.0
+            occupied = (
+                tick.truth
+                if tick.truth is not None
+                else _is_occupied_at(tick.timestamp, occupied_intervals)
+            )
+            y = 1.0 if occupied else 0.0
             z = tick.bias
             for entity_id, x in tick.features.items():
                 w = weights.get(entity_id, defaults.get(entity_id, 0.0))

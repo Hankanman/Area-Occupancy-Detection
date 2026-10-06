@@ -41,6 +41,8 @@ from .const import (
     FRONTEND_URL_BASE,
     FUSION_STORE_KEY_PREFIX,
     FUSION_STORE_VERSION,
+    GROUND_TRUTH_STORE_KEY_PREFIX,
+    GROUND_TRUTH_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
@@ -507,6 +509,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove accuracy-history storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the live ground-truth Store (#603).
+        try:
+            await Store(
+                hass,
+                GROUND_TRUTH_STORE_VERSION,
+                f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove ground-truth storage during entry removal %s",
                 entry.entry_id,
             )
 
