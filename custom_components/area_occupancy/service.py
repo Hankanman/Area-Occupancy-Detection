@@ -24,6 +24,7 @@ from .const import (
     ALL_AREAS_IDENTIFIER,
     CONF_AREA_ID,
     CONF_AREAS,
+    CONF_CLOSED_DOOR_HOLD,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -74,6 +75,7 @@ SETTABLE_AREA_OPTIONS: dict[str, Any] = {
     ),
     CONF_MIN_PRIOR_OVERRIDE: vol.Coerce(float),
     CONF_WASP_ENABLED: cv.boolean,
+    CONF_CLOSED_DOOR_HOLD: cv.boolean,
 }
 
 

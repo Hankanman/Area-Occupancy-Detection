@@ -44,6 +44,8 @@ from .const import (
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NAME,
     DOMAIN,
+    DOOR_HOLD_STORE_KEY_PREFIX,
+    DOOR_HOLD_STORE_VERSION,
     FUSION_STORE_KEY_PREFIX,
     FUSION_STORE_VERSION,
     GROUND_TRUTH_STORE_KEY_PREFIX,
@@ -66,6 +68,7 @@ from .data.adjacency import (
 from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
+from .data.door_hold import DoorHold, DoorHoldState
 from .data.entity_type import (
     BINARY_INPUT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
@@ -258,6 +261,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             GROUND_TRUTH_STORE_VERSION,
             f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Closed-door holds (#558), persisted so a restart keeps a hold.
+        self._door_holds: dict[str, DoorHold] = {}
+        self._door_hold_store: Store[dict[str, dict]] = Store(
+            hass,
+            DOOR_HOLD_STORE_VERSION,
+            f"{DOOR_HOLD_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Shadow sensor likelihoods (#603): learned tick by tick against the
         # live label, compared daily with the database's values.
@@ -632,6 +642,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         LabelerState.from_dict(stored_labels[area_name])
                     )
 
+            # Restore closed-door holds (#558) for known areas
+            stored_holds = await self._door_hold_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_holds:
+                    self._door_holds[area_name] = DoorHold(
+                        DoorHoldState.from_dict(stored_holds[area_name])
+                    )
+
             # Restore the shadow likelihoods (#603) for known areas
             stored_likelihoods = await self._likelihood_shadow_store.async_load() or {}
             for area_name in self.areas:
@@ -801,6 +819,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             for entity in area.entities.entities.values():
                 entity.decay.set_modifier_factor(modifier.decay_modifier)
+
+        for area_name, area in self.areas.items():
+            self._observe_door_hold(area_name, area, now)
 
         result = {}
         for area_name, area in self.areas.items():
@@ -1016,6 +1037,47 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Persist the live labellers via the HA storage helper."""
         await self._ground_truth_store.async_save(
             {name: labeler.state.to_dict() for name, labeler in self._labelers.items()}
+        )
+
+    def door_hold_for(self, area_name: str) -> DoorHold | None:
+        """The area's closed-door hold, if it has one (#558)."""
+        return self._door_holds.get(area_name)
+
+    def _observe_door_hold(self, area_name: str, area: Area, now: datetime) -> None:
+        """Update an area's closed-door hold from its doors and motion (#558).
+
+        Doors are read by their raw state (``on``/``open`` is open), so the
+        hold works whatever the door's configured active state is.
+        """
+        doors = [
+            entity
+            for entity in area.entities.entities.values()
+            if entity.type.input_type == InputType.DOOR
+        ]
+        if not area.config.closed_door_hold or not doors:
+            self._door_holds.pop(area_name, None)
+            return
+        decay = area.config.decay
+        wasp = area.config.wasp_in_box
+        self._door_holds.setdefault(area_name, DoorHold()).observe(
+            now,
+            doors_open=any(str(door.state) in ("on", "open") for door in doors),
+            motion_on=any(
+                entity.evidence is True
+                and entity.type.input_type == InputType.MOTION
+                and entity.entity_id != area.wasp_entity_id
+                and getattr(entity, "is_stuck", False) is not True
+                for entity in area.entities.entities.values()
+            ),
+            motion_window=wasp.motion_timeout,
+            max_hold=wasp.max_duration,
+            fade_half_life=decay.half_life,
+        )
+
+    async def async_save_door_holds(self) -> None:
+        """Persist the closed-door holds via the HA storage helper."""
+        await self._door_hold_store.async_save(
+            {name: hold.state.to_dict() for name, hold in self._door_holds.items()}
         )
 
     # --- Adjacent-areas (Phase 4) accessors ---
@@ -1344,6 +1406,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save ground-truth labellers for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_door_holds()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save closed-door holds for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

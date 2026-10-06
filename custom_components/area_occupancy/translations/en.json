@@ -452,14 +452,16 @@
                     "decay_enabled": "Enable Time Decay",
                     "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
-                    "exclude_from_all_areas": "Exclude from All Areas"
+                    "exclude_from_all_areas": "Exclude from All Areas",
+                    "closed_door_hold": "Closed door means still occupied"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                     "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
                     "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
-                    "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas."
+                    "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas.",
+                    "closed_door_hold": "For a room with one way in, such as a bathroom. While its doors stay closed after motion, the area stays occupied, even if motion loses someone keeping still. It clears when a door opens, or after the Wasp in Box maximum duration (an hour by default). Needs a door sensor. Replaces Wasp in Box."
                 },
                 "sections": {
                     "wasp_in_box": {
@@ -969,14 +971,16 @@
                     "decay_enabled": "Enable Time Decay",
                     "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
-                    "exclude_from_all_areas": "Exclude from All Areas"
+                    "exclude_from_all_areas": "Exclude from All Areas",
+                    "closed_door_hold": "Closed door means still occupied"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
                     "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                     "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
                     "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
-                    "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas."
+                    "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas.",
+                    "closed_door_hold": "For a room with one way in, such as a bathroom. While its doors stay closed after motion, the area stays occupied, even if motion loses someone keeping still. It clears when a door opens, or after the Wasp in Box maximum duration (an hour by default). Needs a door sensor. Replaces Wasp in Box."
                 },
                 "sections": {
                     "wasp_in_box": {
@@ -1221,6 +1225,10 @@
                 "wasp_enabled": {
                     "name": "Enable Wasp in Box",
                     "description": "Whether the Wasp in Box virtual sensor runs for this area."
+                },
+                "closed_door_hold": {
+                    "name": "Closed door means still occupied",
+                    "description": "Whether the area stays occupied while its doors stay closed after motion."
                 }
             }
         }
@@ -1493,14 +1501,16 @@
                         "decay_enabled": "Enable Time Decay",
                         "decay_half_life": "Decay Half-Life",
                         "min_prior_override": "Minimum Prior Override",
-                        "exclude_from_all_areas": "Exclude from All Areas"
+                        "exclude_from_all_areas": "Exclude from All Areas",
+                        "closed_door_hold": "Closed door means still occupied"
                     },
                     "data_description": {
                         "threshold": "The probability threshold above which the area is considered occupied.",
                         "decay_enabled": "Whether to enable time-based decay of occupancy probability.",
                         "decay_half_life": "Time window over which occupancy probability decays by half. Set to 0 to use the purpose-based default value, or enter a value between 10 seconds and 1 hour to override.",
                         "min_prior_override": "The minimum prior probability that will be used regardless of learned patterns. Set to 0.0 to disable (default).",
-                        "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas."
+                        "exclude_from_all_areas": "When enabled, this area won't contribute to the All Areas aggregate sensors. Useful for garages, driveways, and outdoor areas.",
+                        "closed_door_hold": "For a room with one way in, such as a bathroom. While its doors stay closed after motion, the area stays occupied, even if motion loses someone keeping still. It clears when a door opens, or after the Wasp in Box maximum duration (an hour by default). Needs a door sensor. Replaces Wasp in Box."
                     },
                     "sections": {
                         "wasp_in_box": {

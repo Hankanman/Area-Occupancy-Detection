@@ -124,6 +124,7 @@ class TestSensorsGetMotionSensors:
         mock_parent_config = Mock()
         mock_parent_config.wasp_in_box = Mock()
         mock_parent_config.wasp_in_box.enabled = wasp_enabled
+        mock_parent_config.closed_door_hold = False
         mock_parent_config.area_name = "Test Area"
 
         sensors = Sensors(
@@ -138,6 +139,23 @@ class TestSensorsGetMotionSensors:
         result = sensors.get_motion_sensors(mock_coordinator)
         assert result == expected_result
 
+    def test_closed_door_hold_replaces_the_wasp_entity(self) -> None:
+        """With the hold on, Wasp in Box's entity is not counted as motion (#558)."""
+        mock_parent_config = Mock()
+        mock_parent_config.wasp_in_box = Mock()
+        mock_parent_config.wasp_in_box.enabled = True
+        mock_parent_config.closed_door_hold = True
+        mock_parent_config.area_name = "Test Area"
+        sensors = Sensors(
+            motion=["binary_sensor.motion1"], _parent_config=mock_parent_config
+        )
+        mock_coordinator = Mock()
+        mock_coordinator.areas = {
+            "Test Area": Mock(wasp_entity_id="binary_sensor.wasp")
+        }
+
+        assert sensors.get_motion_sensors(mock_coordinator) == ["binary_sensor.motion1"]
+
     def test_get_motion_sensors_with_none_coordinator(self) -> None:
         """Test get_motion_sensors handles None coordinator gracefully."""
         sensors = Sensors(motion=["binary_sensor.motion1"])
@@ -149,6 +167,7 @@ class TestSensorsGetMotionSensors:
         mock_parent_config = Mock()
         mock_parent_config.wasp_in_box = Mock()
         mock_parent_config.wasp_in_box.enabled = True
+        mock_parent_config.closed_door_hold = False
         mock_parent_config.area_name = "Test Area"
 
         sensors = Sensors(motion=[], _parent_config=mock_parent_config)
@@ -165,6 +184,7 @@ class TestSensorsGetMotionSensors:
         mock_parent_config = Mock()
         mock_parent_config.wasp_in_box = Mock()
         mock_parent_config.wasp_in_box.enabled = True
+        mock_parent_config.closed_door_hold = False
         mock_parent_config.area_name = "Living Room"
 
         sensors = Sensors(
