@@ -319,6 +319,11 @@ def _area_snapshot(
         away_shadow = coordinator.away_shadow_for(area_name)
         if away_shadow is not None:
             current["away"] = away_shadow.snapshot()
+        door_hold = coordinator.door_hold_for(area_name)
+        current["door_hold"] = {
+            "enabled": area.config.closed_door_hold,
+            **(door_hold.state.to_dict() if door_hold is not None else {}),
+        }
         fusion = coordinator.fusion_learner_for(area_name)
         if fusion is not None:
             fusion_defaults = {

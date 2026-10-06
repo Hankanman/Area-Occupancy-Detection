@@ -130,6 +130,8 @@ CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
 CONF_MOTION_TIMEOUT: Final = "motion_timeout"
 CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
+# A room with one way in stays occupied while its door is shut (#558).
+CONF_CLOSED_DOOR_HOLD: Final = "closed_door_hold"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 CONF_HEALTH_ENABLED: Final = "health_enabled"
@@ -454,6 +456,10 @@ ACCURACY_HISTORY_DAYS: Final = 90
 # --- Live ground truth (#603): the label every learner trains against ---
 GROUND_TRUTH_STORE_VERSION: Final = 1
 GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
+
+# --- Closed-door hold (#558) ---
+DOOR_HOLD_STORE_VERSION: Final = 1
+DOOR_HOLD_STORE_KEY_PREFIX: Final = f"{DOMAIN}.door_hold"
 
 # --- Shadow sensor likelihoods without the database (#603) ---
 LIKELIHOOD_SHADOW_STORE_VERSION: Final = 1

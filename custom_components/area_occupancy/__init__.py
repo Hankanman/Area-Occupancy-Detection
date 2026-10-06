@@ -36,6 +36,8 @@ from .const import (
     CONF_VERSION,
     DB_NAME,
     DOMAIN,
+    DOOR_HOLD_STORE_KEY_PREFIX,
+    DOOR_HOLD_STORE_VERSION,
     FRONTEND_DIR,
     FRONTEND_REGISTERED_KEY,
     FRONTEND_URL_BASE,
@@ -552,6 +554,18 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove ground-truth storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        try:
+            await Store(
+                hass,
+                DOOR_HOLD_STORE_VERSION,
+                f"{DOOR_HOLD_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove closed-door hold storage during entry removal %s",
                 entry.entry_id,
             )
 

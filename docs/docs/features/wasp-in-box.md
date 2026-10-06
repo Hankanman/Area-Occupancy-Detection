@@ -4,30 +4,63 @@ description: Detect occupancy in rooms with a single entry/exit point
 
 # Wasp in Box
 
-!!! warning "Deprecated: being replaced by built-in presence continuity"
-    Wasp in Box is being replaced by occupancy that is built into the areas
-    themselves ([#558](https://github.com/Hankanman/Area-Occupancy-Detection/issues/558)).
-    An area will stay occupied while its door stays closed after motion (the Wasp
-    in Box behaviour), and also while nobody is seen leaving it through a
-    neighbouring area, which covers open-plan rooms and gaps in motion coverage
-    that Wasp in Box never could.
-
-    **You don't lose anything.** When the replacement ships, areas with Wasp in
-    Box enabled switch over automatically with the same behaviour. The Wasp in Box
-    setting and its sensor are removed in the release after that.
+!!! warning "Deprecated: replaced by the closed-door hold"
+    From 2026.11.1 each area has its own **closed-door hold**
+    ([#558](https://github.com/Hankanman/Area-Occupancy-Detection/issues/558)),
+    which does what Wasp in Box did inside the area's own probability. Areas with
+    Wasp in Box enabled get the hold automatically, with the same rules. Wasp in Box
+    and its sensor are removed in the release after that.
 
     **What to do now:**
 
-    - Keep Wasp in Box on until then: turning it off only loses the hold early.
+    - Nothing, for the hold itself: it is already on wherever Wasp in Box is.
     - If an automation or dashboard uses a Wasp in Box sensor, point it at the
-      area's **Occupancy Status** sensor instead, which will carry the hold.
-    - While any area has it enabled, a notice in **Settings → Repairs** lists
-      them. Once nothing uses the Wasp in Box sensor, you can ignore it.
+      area's **Occupancy Status** sensor instead, which carries the hold.
+    - While any area has Wasp in Box enabled, a notice in **Settings → Repairs**
+      lists them. Once nothing uses the Wasp in Box sensor, turn Wasp in Box off;
+      the hold stays.
 
     **Why:** Wasp in Box is a separate state machine bolted onto the
     probability model, and it feeds its hold back into learning as if it were
-    motion, which inflates those areas' learned priors. The replacement lives in
-    the model and never counts as ground truth.
+    motion, which inflates those areas' learned priors. The hold lives in the
+    model and never counts as ground truth.
+
+## Closed-door hold
+
+**Closed door means still occupied** is an area setting (in the area's
+behaviour settings, and settable with the
+[`set_area_option`](services.md) service). Turn it on for a room with one way
+in, such as a bathroom. It needs at least one door sensor in the area.
+
+While it is on:
+
+- The area is **held** when motion is seen while all its doors are closed, or
+  when the doors close within the Wasp in Box motion timeout (5 minutes by
+  default) of motion: someone went in and shut the door.
+- While held, the area's probability is kept at **75%** at least (or just above
+  its threshold, if that is higher), so it reads as occupied even when motion
+  loses someone keeping still. The sensors' own evidence still counts on top.
+- **Any door opening releases the hold** straight away.
+- The hold lasts up to the Wasp in Box maximum duration (an hour by default; 0
+  means no limit) after the last motion seen behind the closed door. It then
+  fades towards the area's prior over the area's decay half-life, rather than
+  dropping at once.
+- A hold survives a Home Assistant restart.
+
+Differences from Wasp in Box:
+
+- The hold is a floor on the probability, not a virtual motion sensor, so it
+  isn't capped by a weight. Wasp in Box at its 0.8 weight held a 3% bathroom at
+  about 54%, under a 55% threshold; the hold keeps it at 75%.
+- With the hold on, the Wasp in Box sensor no longer counts as one of the
+  area's motion sensors, so held time is no longer learned as real occupancy.
+  **Expect that area's learned prior to fall** over the following days, by the
+  share of time it spent held without motion.
+- Doors are read as open or closed directly, whatever their active state is
+  set to.
+
+Existing areas follow their Wasp in Box setting. New areas with the bathroom
+purpose start with the hold on.
 
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 

@@ -97,3 +97,8 @@ set_area_option:
       description: Whether the Wasp in Box virtual sensor runs for this area.
       selector:
         boolean:
+    closed_door_hold:
+      name: Closed door means still occupied
+      description: Whether the area stays occupied while its doors stay closed after motion.
+      selector:
+        boolean:

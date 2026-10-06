@@ -230,6 +230,7 @@ Change one area's detection tunables from an automation or script. This is the o
 | `decay_half_life` | no | Decay half-life; 0 follows the area's purpose default, any other value must be 10 seconds to 1 hour |
 | `min_prior_override` | no | Floor for the learned prior, 0 to 1; 0 disables it |
 | `wasp_enabled` | no | Whether the Wasp in Box virtual sensor runs |
+| `closed_door_hold` | no | Whether the area stays occupied while its doors stay closed after motion ([closed-door hold](wasp-in-box.md#closed-door-hold)) |
 
 At least one option besides `area_id` must be given. Only the options you name are written; everything else in the area is left alone.
 
