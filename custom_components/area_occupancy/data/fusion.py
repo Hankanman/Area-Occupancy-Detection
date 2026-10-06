@@ -76,6 +76,11 @@ class FusionState:
 
     weights: dict[str, float] = field(default_factory=dict)
     samples: int = 0
+    # Ticks each entity contributed a nonzero feature to (its own sample
+    # count; ``samples`` counts the area's ticks).
+    entity_samples: dict[str, int] = field(default_factory=dict)
+    # Fingerprint (type, active states) each weight was learned under.
+    signatures: dict[str, str] = field(default_factory=dict)
     # Timestamp of the newest tick already trained on. The analysis passes
     # its whole 24h window every hour, so without this each tick would be
     # stepped ~24 times and ``samples`` would pass the reporting gate early.
@@ -86,6 +91,8 @@ class FusionState:
         return {
             "weights": dict(self.weights),
             "samples": self.samples,
+            "entity_samples": dict(self.entity_samples),
+            "signatures": dict(self.signatures),
             "trained_through": (
                 self.trained_through.isoformat() if self.trained_through else None
             ),
@@ -100,6 +107,13 @@ class FusionState:
                     str(k): float(v) for k, v in (data.get("weights") or {}).items()
                 },
                 samples=int(data.get("samples", 0)),
+                entity_samples={
+                    str(k): int(v)
+                    for k, v in (data.get("entity_samples") or {}).items()
+                },
+                signatures={
+                    str(k): str(v) for k, v in (data.get("signatures") or {}).items()
+                },
                 trained_through=(
                     datetime.fromisoformat(raw)
                     if (raw := data.get("trained_through"))
@@ -178,9 +192,46 @@ class FusionLearner:
                 gradient = error * x + l2 * (w - default)
                 w -= learning_rate * gradient
                 weights[entity_id] = min(max(w, 0.0), MAX_WEIGHT)
+            for entity_id in tick.features:
+                self.state.entity_samples[entity_id] = (
+                    self.state.entity_samples.get(entity_id, 0) + 1
+                )
         self.state.samples += len(ticks)
         self.state.trained_through = max(t.timestamp for t in ticks)
         return len(ticks)
+
+    def sync_entities(self, signatures: dict[str, str]) -> list[str]:
+        """Forget entities that left the area or changed meaning.
+
+        A removed sensor's weight is dead weight in the export; a sensor
+        whose active states changed learned what the old states meant.
+        Either way its weight and sample count go, and a changed one
+        starts again from its live default. An entity with no stored
+        fingerprint (state saved before fingerprints) adopts the current one.
+
+        Args:
+            signatures: entity_id -> fingerprint for the area's current
+                entities.
+
+        Returns:
+            The entity ids whose learning was discarded.
+        """
+        state = self.state
+        dropped = [
+            entity_id
+            for entity_id in set(state.weights) | set(state.entity_samples)
+            if entity_id not in signatures
+            or state.signatures.get(entity_id, signatures[entity_id])
+            != signatures[entity_id]
+        ]
+        for entity_id in dropped:
+            state.weights.pop(entity_id, None)
+            state.entity_samples.pop(entity_id, None)
+            state.signatures.pop(entity_id, None)
+        state.signatures = {
+            entity_id: signatures[entity_id] for entity_id in state.weights
+        }
+        return sorted(dropped)
 
     def snapshot(self, defaults: dict[str, float]) -> dict:
         """Return the JSON-safe diagnostics block for this area.
@@ -199,7 +250,11 @@ class FusionLearner:
             block["weights"] = {
                 entity_id: {
                     "learned_weight": round(w, 4),
-                    "default_weight": round(defaults.get(entity_id, 0.0), 4),
+                    # The live pipeline's weight for it: configured weight
+                    # x information gain (0 when its learned likelihoods
+                    # carry no information), the anchor learning starts from.
+                    "effective_weight": round(defaults.get(entity_id, 0.0), 4),
+                    "samples": self.state.entity_samples.get(entity_id, 0),
                 }
                 for entity_id, w in sorted(self.state.weights.items())
             }

@@ -33,6 +33,9 @@ from homeassistant.util import dt as dt_util
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .config_helpers import iter_area_subentries
 from .const import (
+    ACCURACY_HISTORY_DAYS,
+    ACCURACY_STORE_KEY_PREFIX,
+    ACCURACY_STORE_VERSION,
     ACCURACY_TICK_BUFFER_MAXLEN,
     ADJACENCY_TRANSITION_WINDOW_S,
     CONF_AREA_ID,
@@ -55,7 +58,7 @@ from .data.analysis import run_full_analysis
 from .data.config import IntegrationConfig
 from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
 from .data.fusion import FusionLearner, FusionState, FusionTick
-from .data.metrics import AccuracyMetrics, TickSample
+from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
@@ -206,6 +209,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Nothing here feeds back into probability or thresholds.
         self._accuracy_ticks: dict[str, deque[TickSample]] = {}
         self._accuracy_metrics: dict[str, AccuracyMetrics] = {}
+        # Daily summaries of the above, persisted so the metric's stability
+        # can be judged across restarts (the tick window is memory-only).
+        self._accuracy_history: dict[str, list[dict[str, Any]]] = {}
+        self._accuracy_store: Store[dict[str, list]] = Store(
+            hass,
+            ACCURACY_STORE_VERSION,
+            f"{ACCURACY_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
         # DB-retirement epic (#500), shadow mode: per-area online prior
         # estimators fed from live motion evidence each tick, persisted
         # via the HA storage helper, and diffed against the DB-computed
@@ -550,6 +561,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         OnlinePriorState.from_dict(stored_priors[area_name])
                     )
 
+            # Restore the accuracy history (#499) for known areas
+            stored_accuracy = await self._accuracy_store.async_load() or {}
+            for area_name in self.areas:
+                history = stored_accuracy.get(area_name)
+                if isinstance(history, list):
+                    self._accuracy_history[area_name] = history
+
             # Restore learned-fusion shadow state (#501) for known areas
             stored_fusion = await self._fusion_store.async_load() or {}
             for area_name in self.areas:
@@ -811,13 +829,45 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._accuracy_metrics.get(area_name)
 
     def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
-        """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
+        """Cache an area's shadow accuracy snapshot (analysis pipeline).
+
+        Also records it as the day's summary: each hourly run overwrites
+        the day's entry, so a day keeps its latest 24-hour window.
+        """
         self._accuracy_metrics[area_name] = metrics
+        day = to_local(dt_util.utcnow()).date().isoformat()
+        record = {"date": day, **accuracy_summary(metrics)}
+        history = self._accuracy_history.setdefault(area_name, [])
+        if history and history[-1].get("date") == day:
+            history[-1] = record
+        else:
+            history.append(record)
+        del history[:-ACCURACY_HISTORY_DAYS]
+
+    def accuracy_history_for(self, area_name: str) -> list[dict[str, Any]]:
+        """Return an area's persisted daily accuracy summaries, oldest first."""
+        return list(self._accuracy_history.get(area_name, ()))
+
+    async def async_save_accuracy_history(self) -> None:
+        """Persist the daily accuracy summaries via the HA storage helper."""
+        await self._accuracy_store.async_save(dict(self._accuracy_history))
 
     # --- Online prior (#500, shadow mode) accessors ---
     def online_prior_for(self, area_name: str) -> OnlinePriorEstimator | None:
         """Return the area's shadow online-prior estimator, if any ticks seen."""
         return self._online_priors.get(area_name)
+
+    def reset_online_prior(self, area_name: str, signature: str) -> None:
+        """Discard an area's online-prior statistics and start again.
+
+        Args:
+            area_name: The area.
+            signature: Its current ground-truth fingerprint, recorded on
+                the fresh statistics.
+        """
+        self._online_priors[area_name] = OnlinePriorEstimator(
+            OnlinePriorState(config_signature=signature)
+        )
 
     async def async_save_online_priors(self) -> None:
         """Persist online-prior shadow state via the HA storage helper."""
@@ -980,6 +1030,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_accuracy_history()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save accuracy history for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

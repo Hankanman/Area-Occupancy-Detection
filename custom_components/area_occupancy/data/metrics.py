@@ -78,6 +78,9 @@ class AccuracyMetrics:
     false_on_rate: float | None = None  # P(decision on | truth off)
     false_off_rate: float | None = None  # P(decision off | truth on)
     agreement: float | None = None  # fraction of samples where decision == truth
+    # Seconds of each truth class needed before a rate (or a threshold
+    # trading the two off) is reported; set by compute_accuracy_metrics.
+    min_class_seconds: float = 0.0
 
 
 def _is_occupied_at(ts: datetime, intervals: list[tuple[datetime, datetime]]) -> bool:
@@ -124,8 +127,13 @@ def compute_accuracy_metrics(
     occupied_intervals: list[tuple[datetime, datetime]],
     *,
     bins: int = DEFAULT_CALIBRATION_BINS,
+    min_class_seconds: float = 0.0,
 ) -> AccuracyMetrics:
     """Score an area's probability stream against motion-confirmed truth.
+
+    A false-on (false-off) rate is only reported when the window holds at
+    least ``min_class_seconds`` of empty (occupied) time; the analysis
+    passes ``ACCURACY_MIN_CLASS_SECONDS``.
 
     Args:
         samples: Tick observations ordered oldest-first. Samples outside
@@ -137,6 +145,8 @@ def compute_accuracy_metrics(
         occupied_intervals: Motion-confirmed ``(start, end)`` ground
             truth, same source the prior learning uses.
         bins: Number of equal-width probability bands for calibration.
+        min_class_seconds: Seconds of empty (occupied) time below which
+            the false-on (false-off) rate is left unreported.
 
     Returns:
         ``AccuracyMetrics``; with no samples, a zeroed snapshot whose
@@ -215,11 +225,15 @@ def compute_accuracy_metrics(
 
     truth_off_total = true_off + false_on
     truth_on_total = true_on + false_off
-    if truth_off_total:
+    # A rate over a few minutes of one truth class is noise: a bedroom
+    # occupied all night has seconds of "empty", and two mis-scored ticks
+    # there read as a 100% false-on rate.
+    if truth_off_total and truth_off_total >= min_class_seconds:
         out.false_on_rate = false_on / truth_off_total
-    if truth_on_total:
+    if truth_on_total and truth_on_total >= min_class_seconds:
         out.false_off_rate = false_off / truth_on_total
     out.agreement = (true_on + true_off) / total_weight
+    out.min_class_seconds = min_class_seconds
 
     return out
 
@@ -233,6 +247,10 @@ def compute_accuracy_metrics(
 # which is exactly what the #499 "stable for a release cycle" promotion
 # gate watches before auto-threshold may ever consume this value.
 SUGGEST_THRESHOLD_MIN_SAMPLES = 100
+
+# Seconds of each truth class (occupied, empty) a window needs before its
+# false-on / false-off rate, or a threshold trading them off, is reported.
+ACCURACY_MIN_CLASS_SECONDS = 3600.0
 
 
 def suggest_threshold(metrics: AccuracyMetrics) -> float | None:
@@ -266,7 +284,15 @@ def suggest_threshold(metrics: AccuracyMetrics) -> float | None:
 
     truth_on_total = sum(b.weight * b.observed_rate for b in populated)
     truth_off_total = sum(b.weight * (1.0 - b.observed_rate) for b in populated)
-    if truth_on_total <= 0 or truth_off_total <= 0:
+    # A class too small to rate (see compute_accuracy_metrics'
+    # min_class_seconds) can't anchor a tradeoff either.
+    floor = max(metrics.min_class_seconds, 0.0)
+    if (
+        truth_on_total <= 0
+        or truth_off_total <= 0
+        or truth_on_total < floor
+        or truth_off_total < floor
+    ):
         return None
 
     best_threshold: float | None = None
@@ -289,6 +315,18 @@ def suggest_threshold(metrics: AccuracyMetrics) -> float | None:
             best_cost = cost
             best_threshold = threshold
     return best_threshold
+
+
+def accuracy_summary(metrics: AccuracyMetrics) -> dict:
+    """The headline numbers of a snapshot, for the persisted daily history."""
+    return {
+        "samples": metrics.sample_count,
+        "agreement": metrics.agreement,
+        "expected_calibration_error": metrics.expected_calibration_error,
+        "false_on_rate": metrics.false_on_rate,
+        "false_off_rate": metrics.false_off_rate,
+        "suggested_threshold": suggest_threshold(metrics),
+    }
 
 
 def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict:

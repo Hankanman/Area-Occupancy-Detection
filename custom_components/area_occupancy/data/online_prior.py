@@ -44,7 +44,7 @@ modulo the two approximations above.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..const import (
     MAX_PRIOR,
@@ -98,6 +98,11 @@ class OnlinePriorState:
     # where the diffs are the day's MAX absolute divergence (worst case,
     # so a briefly-good hourly sample can't mask a bad day).
     diff_history: list[dict] = field(default_factory=list)
+    # Fingerprint of the area's ground-truth sensors and their active
+    # states when these statistics started. Statistics gathered under a
+    # different set (sensors swapped, "paused" no longer active, another
+    # house) don't describe the area any more; see ``is_stale``.
+    config_signature: str | None = None
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -116,6 +121,7 @@ class OnlinePriorState:
                 str(k): v for k, v in self.slot_total_seconds.items()
             },
             "diff_history": list(self.diff_history),
+            "config_signature": self.config_signature,
         }
 
     @classmethod
@@ -151,9 +157,44 @@ class OnlinePriorState:
                     for entry in (data.get("diff_history") or [])
                     if isinstance(entry, dict)
                 ],
+                config_signature=(
+                    str(data["config_signature"])
+                    if data.get("config_signature")
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             return cls()
+
+
+def is_stale(
+    state: OnlinePriorState,
+    signature: str,
+    db_first_seen: datetime | None,
+) -> bool:
+    """Whether stored statistics no longer describe the area.
+
+    True when they were gathered under a different ground-truth sensor
+    set. Statistics saved before the fingerprint existed are judged by
+    age instead: starting more than a day before anything the database
+    holds means they outlived a database reset or a sensor swap, and
+    their history would never line up with the database's again.
+
+    Args:
+        state: The stored statistics.
+        signature: The area's current ground-truth fingerprint.
+        db_first_seen: The area's earliest ground-truth row in the DB.
+
+    Returns:
+        True if the statistics should be discarded.
+    """
+    if state.config_signature is not None:
+        return state.config_signature != signature
+    if state.first_observation is None or db_first_seen is None:
+        return False
+    return state.first_observation < ensure_utc_datetime(db_first_seen) - timedelta(
+        days=1
+    )
 
 
 class OnlinePriorEstimator:

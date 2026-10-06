@@ -35,6 +35,8 @@ from ..db.queries import (
 from ..db.utils import merge_overlapping_intervals
 from ..time_utils import ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
+from .entity import entity_signature, ground_truth_signature
+from .online_prior import is_stale
 from .prior import DEFAULT_SLOT_MINUTES, Prior
 from .types import ZonePriors
 
@@ -308,7 +310,10 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
     Nothing feeds back into probability, thresholds, or decay.
     """
     # Lazy import mirrors the transition-learning step's pattern.
-    from .metrics import compute_accuracy_metrics  # noqa: PLC0415
+    from .metrics import (  # noqa: PLC0415
+        ACCURACY_MIN_CLASS_SECONDS,
+        compute_accuracy_metrics,
+    )
 
     now = dt_util.utcnow()
     window_start = now - timedelta(hours=ACCURACY_WINDOW_HOURS)
@@ -325,7 +330,9 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
                 area_name=name, start_time=window_start
             )
         )
-        metrics = compute_accuracy_metrics(samples, intervals)
+        metrics = compute_accuracy_metrics(
+            samples, intervals, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS
+        )
         coordinator.set_accuracy_metrics(area_name, metrics)
 
         # Learned-fusion shadow update (#501): one gradient pass over the
@@ -333,6 +340,20 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         # intervals the metrics above scored with. Weight defaults (the
         # L2 anchors / cold-start values) are the live pipeline's current
         # effective weights.
+        learner = coordinator.fusion_learner_for(area_name)
+        if learner is not None:
+            dropped = learner.sync_entities(
+                {
+                    entity_id: entity_signature(entity)
+                    for entity_id, entity in coordinator.areas[
+                        area_name
+                    ].entities.entities.items()
+                }
+            )
+            if dropped:
+                _LOGGER.debug(
+                    "Fusion (shadow) for area %s: forgot %s", area_name, dropped
+                )
         fusion_ticks = [
             t
             for t in coordinator.fusion_ticks_for(area_name)
@@ -381,6 +402,23 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
         estimator = coordinator.online_prior_for(area_name)
         if estimator is None:
             continue
+        # Statistics gathered under another sensor set (or before a DB
+        # reset) would never line up with the DB again: start them over.
+        signature = ground_truth_signature(area.entities.entities)
+        db_first_seen = None
+        if estimator.state.config_signature is None:
+            db_first_seen = await coordinator.hass.async_add_executor_job(
+                coordinator.db.get_first_interval_timestamp, area_name
+            )
+        if is_stale(estimator.state, signature, db_first_seen):
+            _LOGGER.info(
+                "Online prior (shadow) for area %s restarted: its sensors or "
+                "history changed since it began",
+                area_name,
+            )
+            coordinator.reset_online_prior(area_name, signature)
+            continue
+        estimator.state.config_signature = signature
         online = estimator.prior(now)
         if online is None:
             continue
@@ -439,6 +477,7 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
             estimator.observed_days(now),
         )
     await coordinator.async_save_online_priors()
+    await coordinator.async_save_accuracy_history()
     await coordinator.async_save_fusion_state()
 
 

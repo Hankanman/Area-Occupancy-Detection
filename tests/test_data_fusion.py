@@ -177,7 +177,8 @@ class TestSnapshot:
         block = learner.snapshot({"s.a": 0.5})
         assert block["weights"]["s.a"] == {
             "learned_weight": 0.4,
-            "default_weight": 0.5,
+            "effective_weight": 0.5,
+            "samples": 0,
         }
 
 
@@ -254,3 +255,60 @@ class TestCoordinatorWiring:
         restored = FusionState.from_dict(stored[area_name])
         assert restored.weights == {"binary_sensor.test": 0.33}
         assert restored.samples == 42
+
+
+class TestSyncEntities:
+    """Removed or re-meant sensors don't keep stale learning (live report)."""
+
+    def test_removed_sensor_is_forgotten(self) -> None:
+        state = FusionState(
+            weights={"door_2": 0.99, "tv": 0.6},
+            entity_samples={"door_2": 500, "tv": 800},
+        )
+        learner = FusionLearner(state)
+
+        dropped = learner.sync_entities({"tv": "media|playing|None"})
+
+        assert dropped == ["door_2"]
+        assert state.weights == {"tv": 0.6}
+        assert state.entity_samples == {"tv": 800}
+        assert state.signatures == {"tv": "media|playing|None"}
+
+    def test_changed_meaning_is_forgotten(self) -> None:
+        state = FusionState(
+            weights={"tv": 0.9},
+            entity_samples={"tv": 800},
+            signatures={"tv": "media|paused,playing|None"},
+        )
+
+        dropped = FusionLearner(state).sync_entities(
+            {"tv": "media|buffering,playing|None"}
+        )
+
+        assert dropped == ["tv"]
+        assert state.weights == {}
+
+    def test_entity_samples_count_ticks_with_a_feature(self) -> None:
+        now = datetime(2026, 10, 6, 12, tzinfo=UTC)
+        ticks = [
+            FusionTick(
+                timestamp=now + timedelta(seconds=10 * i),
+                bias=0.0,
+                features={"a": 1.0} if i % 2 else {"a": 1.0, "b": 1.0},
+            )
+            for i in range(4)
+        ]
+        learner = FusionLearner()
+
+        learner.update(ticks, [], {"a": 0.5, "b": 0.5})
+
+        assert learner.state.samples == 4
+        assert learner.state.entity_samples == {"a": 4, "b": 2}
+
+    def test_new_fields_round_trip(self) -> None:
+        state = FusionState(
+            weights={"a": 0.4}, entity_samples={"a": 7}, signatures={"a": "x"}
+        )
+        restored = FusionState.from_dict(state.to_dict())
+        assert restored.entity_samples == {"a": 7}
+        assert restored.signatures == {"a": "x"}
