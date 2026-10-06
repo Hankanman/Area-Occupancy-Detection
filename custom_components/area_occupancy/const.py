@@ -471,6 +471,10 @@ LIKELIHOOD_DIFF_TOLERANCE: Final = 0.05
 # --- Shadow area transitions without the database (#603) ---
 TRANSITION_SHADOW_STORE_VERSION: Final = 1
 TRANSITION_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.transition_shadow"
+
+# --- Shadow presence continuity for open-plan rooms (#558) ---
+CONTINUITY_STORE_VERSION: Final = 1
+CONTINUITY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.continuity"
 # Largest gap in any next-room share that counts as agreeing.
 TRANSITION_DIFF_TOLERANCE: Final = 0.1
 
