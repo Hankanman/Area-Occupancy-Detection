@@ -12,11 +12,15 @@ from sqlalchemy.sql import literal
 
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_TIME_PRIOR, OBSERVED_GAP_TOLERANCE_SECONDS
+from ..const import (
+    DEFAULT_MOTION_TIMEOUT,
+    DEFAULT_TIME_PRIOR,
+    OBSERVED_GAP_TOLERANCE_SECONDS,
+)
 from ..data.entity_type import InputType
+from ..data.ground_truth import extend_pulses, pulse_like_sensors
 from ..time_utils import from_db_utc, to_db_utc, to_utc
 from .utils import (
-    apply_motion_timeout,
     area_active_states_by_type,
     merge_overlapping_intervals,
     merge_with_tolerance,
@@ -229,7 +233,7 @@ def get_occupied_intervals(
     entry_id: str,
     area_name: str,
     lookback_days: int,
-    motion_timeout_seconds: int,
+    motion_timeout_seconds: int | None = None,
 ) -> list[tuple[datetime, datetime]]:
     """Fetch occupied intervals from presence sensors (direct query).
 
@@ -255,9 +259,21 @@ def get_occupied_intervals(
             all_results = execute_union_queries(
                 session, db, [motion_query, presence_query]
             )
-            all_intervals, motion_raw = process_query_results(
-                all_results, _stuck_limits(db, area_name)
-            )
+            limits = _stuck_limits(db, area_name)
+            all_intervals, motion_raw = process_query_results(all_results, limits)
+            # Motion "on" stretches per sensor (clipped like the rest), to
+            # find the PIR-like ones the motion timeout applies to.
+            motion_by_entity: dict[str, list[tuple[datetime, datetime]]] = {}
+            presence_intervals: list[tuple[datetime, datetime]] = []
+            for row in all_results:
+                start, end = from_db_utc(row[0]), from_db_utc(row[1])
+                limit = limits.get(row[2])
+                if limit is not None and end - start > limit:
+                    end = start + limit
+                if row[2] == "motion":
+                    motion_by_entity.setdefault(row[3], []).append((start, end))
+                else:
+                    presence_intervals.append((start, end))
 
         query_time = (dt_util.utcnow() - start_time).total_seconds()
         _LOGGER.debug(
@@ -271,10 +287,25 @@ def get_occupied_intervals(
         if not all_intervals:
             return []
 
-        merged_intervals = merge_overlapping_intervals(all_intervals)
-        extended_intervals = apply_motion_timeout(
-            merged_intervals, motion_raw, motion_timeout_seconds
+        # The motion timeout bridges PIR pulses: it applies to PIR-like
+        # sensors only (see data.ground_truth), and actually extends them
+        # (the previous segmentation capped it at the stretch's own end).
+        timeout = timedelta(
+            seconds=_area_motion_timeout(db, area_name, motion_timeout_seconds)
         )
+        pulse_ids = pulse_like_sensors(
+            {
+                entity_id: [(e - s).total_seconds() for s, e in spans]
+                for entity_id, spans in motion_by_entity.items()
+            }
+        )
+        extended_intervals = merge_overlapping_intervals(
+            presence_intervals + extend_pulses(motion_by_entity, pulse_ids, timeout)
+        )
+        now_aware = dt_util.utcnow()
+        extended_intervals = [
+            (start, min(end, now_aware)) for start, end in extended_intervals
+        ]
 
         processing_time = (dt_util.utcnow() - start_time).total_seconds()
         _LOGGER.debug(
@@ -462,6 +493,7 @@ def build_motion_query(
             db.Intervals.start_time,
             db.Intervals.end_time,
             literal("motion").label("sensor_type"),
+            db.Intervals.entity_id,
         )
         .join(
             db.Entities,
@@ -519,6 +551,7 @@ def build_presence_query(
             db.Intervals.start_time,
             db.Intervals.end_time,
             db.Entities.entity_type.label("sensor_type"),
+            db.Intervals.entity_id,
         )
         .join(
             db.Entities,
@@ -548,6 +581,22 @@ def execute_union_queries(
     # Union all queries then order.
     combined = valid_queries[0].union_all(*valid_queries[1:])
     return combined.order_by(db.Intervals.start_time).all()
+
+
+def _area_motion_timeout(
+    db: AreaOccupancyDB, area_name: str, fallback: int | None
+) -> int:
+    """The motion timeout to apply, in seconds.
+
+    An explicit value wins; otherwise the area's configured timeout (which
+    used to be ignored here), and the default when the area isn't loaded.
+    """
+    if fallback is not None:
+        return int(fallback)
+    area = db.coordinator.get_area(area_name)
+    if area is not None:
+        return int(area.config.sensors.motion_timeout)
+    return DEFAULT_MOTION_TIMEOUT
 
 
 def _stuck_limits(db: AreaOccupancyDB, area_name: str) -> dict[str, timedelta]:
@@ -589,7 +638,8 @@ def process_query_results(
     all_intervals: list[tuple[datetime, datetime]] = []
     limits = max_durations or {}
 
-    for start, end, sensor_type in results:
+    for row in results:
+        start, end, sensor_type = row[0], row[1], row[2]
         # DB stores naive UTC; convert to aware UTC for runtime computations
         interval = (from_db_utc(start), from_db_utc(end))
         limit = limits.get(sensor_type)
