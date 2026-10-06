@@ -1061,46 +1061,52 @@ class TestFailedTimePriorLoad:
             assert prior._cached_time_prior_points[slot_key] == 4
 
 
-class TestAwayPrior:
-    """While the away-mode entity is on, every room's prior is 1% (#584)."""
+class TestAwayPriorIsShadow:
+    """Away mode records, never applies, the away prior (#584, shadow)."""
 
     ENTITY = "input_boolean.away"
 
     @staticmethod
     def _away(coordinator, state: str | None):
         if state is not None:
-            coordinator.hass.states.async_set(TestAwayPrior.ENTITY, state)
+            coordinator.hass.states.async_set(TestAwayPriorIsShadow.ENTITY, state)
         return patch.object(
             type(coordinator.integration_config),
             "away_mode_entity",
             new_callable=PropertyMock,
-            return_value=TestAwayPrior.ENTITY,
+            return_value=TestAwayPriorIsShadow.ENTITY,
         )
 
-    async def test_on_sets_the_away_prior_over_floors(
+    async def test_live_prior_and_zones_unchanged_while_away(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         area = coordinator.get_area(coordinator.get_area_names()[0])
         area.prior.global_prior = 0.3
-        area.config.min_prior_override = 0.3
+        all_areas = coordinator.get_all_areas()
+        prior_home, zone_home = area.prior.value, all_areas.area_prior()
 
         with self._away(coordinator, "on"):
-            assert area.prior.value == AWAY_PRIOR
-            assert area.prior.diagnostic_snapshot()["min_prior_floor_applied"] == "away"
+            assert coordinator.household_away() is True
+            assert area.prior.value == prior_home
+            assert all_areas.area_prior() == zone_home
 
-    async def test_off_unavailable_or_unset_change_nothing(
+    async def test_away_adjusted_probability_uses_the_away_prior(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         area = coordinator.get_area(coordinator.get_area_names()[0])
         area.prior.global_prior = 0.3
-        baseline = area.prior.value
 
+        with patch.object(
+            area, "presence_probability", wraps=area.presence_probability
+        ) as presence:
+            area.away_adjusted_probability()
+
+        presence.assert_called_with(prior=AWAY_PRIOR)
+
+    async def test_only_an_on_away_entity_counts(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
         for state in ("off", "unavailable", "unknown"):
             with self._away(coordinator, state):
-                assert area.prior.value == baseline
+                assert coordinator.household_away() is False
         assert coordinator.household_away() is False
-
-    async def test_zones_follow(self, coordinator: AreaOccupancyCoordinator) -> None:
-        all_areas = coordinator.get_all_areas()
-        with self._away(coordinator, "on"):
-            assert all_areas.area_prior() == AWAY_PRIOR

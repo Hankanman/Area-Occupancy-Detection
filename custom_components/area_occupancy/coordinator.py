@@ -38,6 +38,8 @@ from .const import (
     ACCURACY_STORE_VERSION,
     ACCURACY_TICK_BUFFER_MAXLEN,
     ADJACENCY_TRANSITION_WINDOW_S,
+    AWAY_SHADOW_STORE_KEY_PREFIX,
+    AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NAME,
@@ -56,6 +58,7 @@ from .data.adjacency import (
     compute_decay_modifier,
 )
 from .data.analysis import run_full_analysis
+from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
 from .data.fusion import FusionLearner, FusionState, FusionTick
@@ -231,6 +234,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Away-mode shadow evidence (#584): what lowering every room to the
+        # away prior would have done. Never read by the probability path.
+        self._away_shadow: dict[str, AwayShadow] = {}
+        self._away_shadow_store: Store[dict[str, dict]] = Store(
+            hass,
+            AWAY_SHADOW_STORE_VERSION,
+            f"{AWAY_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Learned-fusion shadow state (#501): per-area training ticks
         # (sparse per-entity features) and per-area learners, persisted
@@ -573,6 +584,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(history, list):
                     self._accuracy_history[area_name] = history
 
+            # Restore the away-mode shadow evidence (#584) for known areas
+            stored_away = await self._away_shadow_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_away:
+                    self._away_shadow[area_name] = AwayShadow(
+                        AwayShadowState.from_dict(stored_away[area_name])
+                    )
+
             # Restore learned-fusion shadow state (#501) for known areas
             stored_fusion = await self._fusion_store.async_load() or {}
             for area_name in self.areas:
@@ -764,6 +783,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=presence_active, now=now
         )
+        # Away mode (#584, shadow): what the away prior would have decided.
+        # The extra probability calculation only runs while away.
+        away = self.household_away()
+        away_shadow = (
+            self._away_shadow.setdefault(area_name, AwayShadow())
+            if away
+            else self._away_shadow.get(area_name)
+        )
+        if away_shadow is not None:
+            away_occupied = (
+                area.away_adjusted_probability() >= area.config.threshold
+                if away
+                else is_occupied
+            )
+            away_shadow.observe(
+                now=now,
+                away=away,
+                present=presence_active,
+                live_occupied=is_occupied,
+                away_occupied=away_occupied,
+            )
         # Learned-fusion training row (#501): the bias and per-entity
         # feature products the live pipeline would use, minus the weight
         # being learned. evidence_value() is the same helper
@@ -934,6 +974,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {name: est.state.to_dict() for name, est in self._online_priors.items()}
         )
 
+    def away_shadow_for(self, area_name: str) -> AwayShadow | None:
+        """Return the area's away-mode shadow evidence, if any was recorded."""
+        return self._away_shadow.get(area_name)
+
+    async def async_save_away_shadow(self) -> None:
+        """Persist the away-mode shadow evidence via the HA storage helper."""
+        await self._away_shadow_store.async_save(
+            {name: shadow.state.to_dict() for name, shadow in self._away_shadow.items()}
+        )
+
     def fusion_learner_for(self, area_name: str) -> FusionLearner | None:
         """Return the area's shadow fusion learner, if any ticks/state exist."""
         return self._fusion_learners.get(area_name)
@@ -1089,6 +1139,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_away_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save away-mode shadow state for areas: %s: %s",
                 format_area_names(self),
                 err,
             )
