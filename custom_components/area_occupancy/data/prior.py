@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    AWAY_PRIOR,
     DEFAULT_AREA_PRIOR,
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
@@ -120,7 +121,8 @@ class Prior:
 
         Returns:
             Tuple of (prior value, floor label). Floor label is one of
-            ``"none"``, ``"purpose"``, ``"override"``. The label reflects the
+            ``"none"``, ``"purpose"``, ``"override"``, or ``"away"`` when the
+            away-mode entity is on (#584). The label reflects the
             floor responsible for raising the value above the learned prior,
             or ``"none"`` if the learned prior is already at or above every
             floor.
@@ -179,6 +181,11 @@ class Prior:
         if capped_override > result:
             result = capped_override
             applied = "override"
+
+        # The household said it's away (#584): after the floors, so no floor
+        # can cancel it. Sensors still work on top of this prior.
+        if self.coordinator.household_away() is True:
+            return AWAY_PRIOR, "away"
 
         return result, applied
 

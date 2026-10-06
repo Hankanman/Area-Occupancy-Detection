@@ -820,6 +820,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the cached decay modifier for ``area_name`` this tick."""
         return self._adjacency_decay_modifiers.get(area_name)
 
+    def household_away(self) -> bool:
+        """Whether the away-mode entity says the household is away (#584).
+
+        Only an explicit away-mode entity reading ``on``. Person tracking,
+        ``unknown``, ``unavailable`` or no entity all mean "not away", so
+        nobody's readings change unless they set the entity.
+        """
+        entity_id = self.integration_config.away_mode_entity
+        if not entity_id:
+            return False
+        state = self.hass.states.get(entity_id)
+        return state is not None and state.state == STATE_ON
+
     async def async_refresh_away_spans(self) -> None:
         """Load when the away-mode entity was on, for prior learning (#584).
 

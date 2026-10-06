@@ -50,6 +50,12 @@ To reduce database writes and storage consumption in the Home Assistant recorder
 **Away Mode Entity:**
 The stuck inactive and never triggered sensor health alerts pause while the household is away. By default the integration works out that you are away from your [person entities](https://www.home-assistant.io/integrations/person/). If you would rather say so yourself, pick an `input_boolean`, `binary_sensor` or `switch` under `Away mode entity` in the **Global Settings** menu. While it is on the household counts as away, and it is used instead of person tracking. Leave it empty to keep using person tracking. See [Away from home](../features/sensor-health.md#away-from-home) for what pauses and how the return is handled.
 
+While the away mode entity is **on**, it also tells occupancy that the house is empty:
+- **Rooms:** every room's prior drops to 1%, so a TV left on, a drifting CO₂ reading or a robot vacuum can't hold a room, a floor or All Areas occupied. Real activity still shows: one motion sensor still takes its room to about 99%, so a house-sitter or an intruder stays visible.
+- **Learning:** time spent away is left out, so a holiday doesn't teach your rooms that they're usually empty.
+
+Person tracking never does this, only the away mode entity. Don't drive the away mode entity from Area Occupancy's own sensors (for example "All Areas clear for 2 hours"): while it's on, those sensors read near-empty, so it would keep itself on until something else turns it off.
+
 ### Step 2: Motion Sensors
 
 Configure motion and presence sensors for the area. At least one motion sensor is required. You can also adjust:
