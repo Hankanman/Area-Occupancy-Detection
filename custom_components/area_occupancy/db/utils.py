@@ -535,3 +535,53 @@ def validate_sample_count(
             "analysis_error": error_type,
         }
     return None
+
+
+Span = tuple[datetime, datetime]
+
+
+def merge_with_tolerance(intervals: list[Span], tolerance: timedelta) -> list[Span]:
+    """Merge intervals, also joining ones separated by at most ``tolerance``."""
+    merged: list[list[datetime]] = []
+    for start, end in sorted(intervals, key=lambda x: x[0]):
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1] + tolerance:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(start, end) for start, end in merged]
+
+
+def subtract_intervals(intervals: list[Span], removed: list[Span]) -> list[Span]:
+    """``intervals`` minus ``removed``; both sorted and non-overlapping."""
+    result: list[Span] = []
+    for start, end in intervals:
+        cursor = start
+        for r_start, r_end in removed:
+            if r_end <= cursor or r_start >= end:
+                continue
+            if r_start > cursor:
+                result.append((cursor, r_start))
+            cursor = max(cursor, r_end)
+            if cursor >= end:
+                break
+        if cursor < end:
+            result.append((cursor, end))
+    return result
+
+
+def intersect_intervals(a: list[Span], b: list[Span]) -> list[Span]:
+    """Time covered by both; inputs sorted and non-overlapping."""
+    result: list[Span] = []
+    i = j = 0
+    while i < len(a) and j < len(b):
+        start = max(a[i][0], b[j][0])
+        end = min(a[i][1], b[j][1])
+        if start < end:
+            result.append((start, end))
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return result

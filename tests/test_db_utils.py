@@ -1,7 +1,7 @@
 """Tests for database utility functions."""
 
 from contextlib import contextmanager
-from datetime import UTC, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,13 +16,16 @@ from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.db.utils import (
     area_active_states_by_type,
     entity_active_states,
+    intersect_intervals,
     is_active_state,
     is_intervals_empty,
     is_timestamp_in_prepared_intervals,
     is_timestamp_occupied,
     is_valid_state,
+    merge_with_tolerance,
     prepare_occupied_intervals,
     resolve_active_states,
+    subtract_intervals,
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -329,3 +332,35 @@ class TestActiveStateResolution:
         assert semantic == {"open"}
         assert is_active_state("on", semantic) is True
         assert is_active_state("off", semantic) is False
+
+
+class TestSpanHelpers:
+    """Interval arithmetic behind observed time (#574)."""
+
+    T = datetime(2026, 9, 20, tzinfo=UTC)
+
+    def _h(self, hours: float) -> datetime:
+        return self.T + timedelta(hours=hours)
+
+    def test_merge_bridges_small_gaps(self) -> None:
+        spans = [
+            (self._h(0), self._h(1)),
+            (self._h(1.1), self._h(2)),
+            (self._h(3), self._h(4)),
+        ]
+        assert merge_with_tolerance(spans, timedelta(minutes=10)) == [
+            (self._h(0), self._h(2)),
+            (self._h(3), self._h(4)),
+        ]
+
+    def test_subtract(self) -> None:
+        assert subtract_intervals(
+            [(self._h(0), self._h(10))],
+            [(self._h(2), self._h(3)), (self._h(8), self._h(12))],
+        ) == [(self._h(0), self._h(2)), (self._h(3), self._h(8))]
+
+    def test_intersect(self) -> None:
+        assert intersect_intervals(
+            [(self._h(0), self._h(5)), (self._h(6), self._h(9))],
+            [(self._h(4), self._h(7))],
+        ) == [(self._h(4), self._h(5)), (self._h(6), self._h(7))]

@@ -38,7 +38,7 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.10.1"
+DEVICE_SW_VERSION: Final = "2026.10.2"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
@@ -281,6 +281,12 @@ MAX_WEIGHT: Final[float] = 0.99
 # hold an area above the threshold with no active evidence — see issue #435.
 PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 
+# The prior away mode would give every room while the away-mode entity is
+# on (#584). Shadow mode for now: recorded beside the live probability,
+# never applied. With it, one active motion sensor (its hold floor scales
+# with the prior) still reads ~99%; a TV left playing reads ~3%.
+AWAY_PRIOR: Final[float] = 0.01
+
 # Time Prior Bounds
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
@@ -350,6 +356,10 @@ DEFAULT_SENSOR_PRECISION: Final = ROUNDING_PRECISION
 
 # Performance optimization constants
 DEFAULT_LOOKBACK_DAYS: Final = 60  # Days of interval data to load for analysis
+# Gaps in a motion sensor's recorded history shorter than this still count
+# as observed when learning priors (#574): restarts and dropped sub-5 s rows
+# leave seconds-to-minutes gaps that aren't outages.
+OBSERVED_GAP_TOLERANCE_SECONDS: Final = 600
 DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
 RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
 
@@ -428,6 +438,18 @@ ONLINE_PRIOR_STORE_KEY_PREFIX: Final = f"{DOMAIN}.online_prior"
 ONLINE_PRIOR_DIFF_TOLERANCE: Final = 0.02
 # How many daily divergence summaries the store retains per area.
 ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
+
+# --- Accuracy history (#499, shadow mode) ---
+# The accuracy window is in memory and restarts with Home Assistant, so a
+# daily summary is persisted to make "stable for a release cycle" checkable
+# across restarts. Same Store lifecycle as the online-prior pair above.
+ACCURACY_STORE_VERSION: Final = 1
+ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
+ACCURACY_HISTORY_DAYS: Final = 90
+
+# --- Away mode lowering occupancy (#584, shadow mode) ---
+AWAY_SHADOW_STORE_VERSION: Final = 1
+AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
 
 # --- Learned sensor fusion (#501, shadow mode) ---
 # Store version and key prefix for the per-entry learned-weight state,

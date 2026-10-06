@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from ..const import (
+    AWAY_PRIOR,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
@@ -222,7 +223,7 @@ class Area:
             sw_version=DEVICE_SW_VERSION,
         )
 
-    def _base_probability(self) -> float:
+    def _base_probability(self, prior: float | None = None) -> float:
         """Calculate sensor-only occupancy probability (no activity boost).
 
         Combines presence probability (from strong binary indicators) with
@@ -239,7 +240,7 @@ class Area:
         if not entities:
             return MIN_PROBABILITY
 
-        presence = self.presence_probability()
+        presence = self.presence_probability(prior=prior)
         env = self.environmental_confidence()
 
         # Short-circuit on neutral environmental confidence. 0.5 is what
@@ -267,7 +268,19 @@ class Area:
         Returns:
             Probability value (0.0-1.0)
         """
-        base = self._base_probability()
+        return self._probability_from_base(self._base_probability())
+
+    def away_adjusted_probability(self) -> float:
+        """The probability with the away prior in place of the learned one.
+
+        Shadow mode (#584): computed while the away-mode entity is on and
+        recorded beside the live probability, never used for occupancy.
+        Same pipeline as :meth:`probability`, only the prior differs.
+        """
+        return self._probability_from_base(self._base_probability(prior=AWAY_PRIOR))
+
+    def _probability_from_base(self, base: float) -> float:
+        """Apply the activity and adjacency boosts to a base probability."""
         is_occupied = base >= self.config.threshold
 
         activity = detect_activity(self, base_probability=base, is_occupied=is_occupied)
@@ -284,11 +297,15 @@ class Area:
             result = apply_logit_boost(result, boost)
         return result
 
-    def presence_probability(self) -> float:
+    def presence_probability(self, prior: float | None = None) -> float:
         """Calculate presence probability from strong binary indicators.
 
         Uses motion, media, appliances, doors, windows, covers, power, and
         Wi-Fi client-count sensors to determine presence likelihood.
+
+        Args:
+            prior: Prior to use instead of the area's learned one (the
+                away shadow, #584). ``None`` uses ``self.prior.value``.
 
         Returns:
             Probability value (0.0-1.0)
@@ -301,7 +318,7 @@ class Area:
 
         return calc_presence(
             entities,
-            prior=self.prior.value,
+            prior=self.prior.value if prior is None else prior,
             correlations=correlations,
             threshold=self.config.threshold,
         )

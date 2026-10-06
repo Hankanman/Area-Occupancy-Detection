@@ -6,6 +6,7 @@ from unittest.mock import PropertyMock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
+    AWAY_PRIOR,
     DEFAULT_AREA_PRIOR,
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
@@ -1058,3 +1059,54 @@ class TestFailedTimePriorLoad:
             assert prior.time_prior == pytest.approx(0.6)
             assert prior._cached_time_priors is not None
             assert prior._cached_time_prior_points[slot_key] == 4
+
+
+class TestAwayPriorIsShadow:
+    """Away mode records, never applies, the away prior (#584, shadow)."""
+
+    ENTITY = "input_boolean.away"
+
+    @staticmethod
+    def _away(coordinator, state: str | None):
+        if state is not None:
+            coordinator.hass.states.async_set(TestAwayPriorIsShadow.ENTITY, state)
+        return patch.object(
+            type(coordinator.integration_config),
+            "away_mode_entity",
+            new_callable=PropertyMock,
+            return_value=TestAwayPriorIsShadow.ENTITY,
+        )
+
+    async def test_live_prior_and_zones_unchanged_while_away(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        area.prior.global_prior = 0.3
+        all_areas = coordinator.get_all_areas()
+        prior_home, zone_home = area.prior.value, all_areas.area_prior()
+
+        with self._away(coordinator, "on"):
+            assert coordinator.household_away() is True
+            assert area.prior.value == prior_home
+            assert all_areas.area_prior() == zone_home
+
+    async def test_away_adjusted_probability_uses_the_away_prior(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        area.prior.global_prior = 0.3
+
+        with patch.object(
+            area, "presence_probability", wraps=area.presence_probability
+        ) as presence:
+            area.away_adjusted_probability()
+
+        presence.assert_called_with(prior=AWAY_PRIOR)
+
+    async def test_only_an_on_away_entity_counts(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        for state in ("off", "unavailable", "unknown"):
+            with self._away(coordinator, state):
+                assert coordinator.household_away() is False
+        assert coordinator.household_away() is False

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,11 +18,14 @@ from custom_components.area_occupancy.coordinator import (
     AreaOccupancyCoordinator,
     OnlinePriorStore,
 )
+from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
+from custom_components.area_occupancy.data.entity import ground_truth_signature
 from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.data.online_prior import (
     MAX_TICK_GAP_SECONDS,
     OnlinePriorEstimator,
     OnlinePriorState,
+    is_stale,
 )
 from homeassistant.util import dt as dt_util
 
@@ -398,3 +402,84 @@ class TestDivergenceHistory:
                 buckets_compared=168,
             )
         assert est.days_within_tolerance(0.02) == 31
+
+
+class TestIsStale:
+    """Statistics from another sensor set or before a DB reset restart (live).
+
+    Live: a Bedroom showed 29.87 observed days while every other area had
+    9 (the DB was reset and resynced 10 days), and a Kitchen kept counting
+    "paused" media after "paused" stopped being an active state.
+    """
+
+    NOW = datetime(2026, 10, 6, 8, tzinfo=UTC)
+
+    def test_changed_sensor_set_is_stale(self) -> None:
+        state = OnlinePriorState(config_signature="old", first_observation=self.NOW)
+        assert is_stale(state, "new", None)
+
+    def test_same_sensor_set_is_not(self) -> None:
+        state = OnlinePriorState(config_signature="same", first_observation=self.NOW)
+        assert not is_stale(state, "same", None)
+
+    def test_legacy_state_predating_the_database_is_stale(self) -> None:
+        """No fingerprint: judged by age against the DB's first row."""
+        state = OnlinePriorState(first_observation=self.NOW - timedelta(days=30))
+        assert is_stale(state, "sig", self.NOW - timedelta(days=10))
+
+    def test_legacy_state_inside_the_database_history_is_kept(self) -> None:
+        state = OnlinePriorState(first_observation=self.NOW - timedelta(days=9))
+        assert not is_stale(state, "sig", self.NOW - timedelta(days=10))
+        assert not is_stale(state, "sig", None)
+
+    def test_signature_round_trips(self) -> None:
+        state = OnlinePriorState(config_signature="sig")
+        assert OnlinePriorState.from_dict(state.to_dict()).config_signature == "sig"
+
+
+class TestShadowStepResetsStaleState:
+    """The hourly shadow step restarts stale online-prior statistics."""
+
+    async def test_legacy_state_older_than_the_database_restarts(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        await coordinator.update()
+        now = dt_util.utcnow()
+        stale = coordinator.online_prior_for(area_name)
+        stale.state.first_observation = now - timedelta(days=30)
+        stale.state.config_signature = None
+        area = coordinator.get_area(area_name)
+        area.prior.global_prior = 0.2
+
+        with patch.object(
+            coordinator.db,
+            "get_first_interval_timestamp",
+            return_value=now - timedelta(days=10),
+        ):
+            await _run_shadow_metrics(coordinator)
+
+        fresh = coordinator.online_prior_for(area_name)
+        assert fresh is not stale
+        assert fresh.state.first_observation is None
+        assert fresh.state.config_signature == ground_truth_signature(
+            area.entities.entities
+        )
+
+    async def test_current_state_adopts_the_fingerprint(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        await coordinator.update()
+        estimator = coordinator.online_prior_for(area_name)
+        coordinator.get_area(area_name).prior.global_prior = 0.2
+
+        with patch.object(
+            coordinator.db,
+            "get_first_interval_timestamp",
+            return_value=dt_util.utcnow() - timedelta(days=10),
+        ):
+            await _run_shadow_metrics(coordinator)
+
+        assert coordinator.online_prior_for(area_name) is estimator
+        assert estimator.state.config_signature is not None

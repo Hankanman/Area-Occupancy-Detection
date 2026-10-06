@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import itertools
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -261,8 +262,9 @@ def _states_to_intervals(
 # state at a boundary by a fraction of a second.
 _COALESCE_TOLERANCE = timedelta(seconds=1)
 # Metadata key recording that the one-time heal of pre-#576 rows has run.
-# v2 reruns it once to drop the inverted rows 2026.9.4 could store (#588).
-_COALESCED_METADATA_KEY = "intervals_coalesced_v2"
+# v2 reruns it once to drop the inverted rows 2026.9.4 could store (#588);
+# v3 to clip the provisional ends that overlap the next state.
+_COALESCED_METADATA_KEY = "intervals_coalesced_v3"
 
 Row = tuple[str, datetime, datetime]
 
@@ -303,9 +305,16 @@ def coalesce_state_rows(
             merged[-1][2] = max(merged[-1][2], end)
         else:
             merged.append([state, start, end])
+    # A sensor is in one state at a time: a row running past the start of
+    # the next (different) state is a provisional end the sync wrote before
+    # it learned of the change, so the change wins.
+    for current, following in itertools.pairwise(merged):
+        current[2] = min(current[2], following[1])
     cap = timedelta(seconds=cap_seconds)
     result: list[Row] = []
     for state, start, end in merged:
+        if end <= start:
+            continue
         if is_active_state(state, active_states) and end - start > cap:
             end = start + cap
         result.append((state, start, end))

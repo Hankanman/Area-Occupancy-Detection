@@ -270,6 +270,10 @@ def _area_snapshot(
         accuracy = coordinator.accuracy_metrics_for(area_name)
         if accuracy is not None:
             current["accuracy"] = metrics_to_diagnostics(accuracy)
+            # Daily summaries survive restarts; the last two weeks here.
+            current["accuracy"]["history"] = coordinator.accuracy_history_for(
+                area_name
+            )[-14:]
         estimator = coordinator.online_prior_for(area_name)
         if estimator is not None:
             now = dt_util.utcnow()
@@ -294,6 +298,9 @@ def _area_snapshot(
                     # full 90-day history lives in the Store.
                     "diff_history": estimator.state.diff_history[-14:],
                 }
+        away_shadow = coordinator.away_shadow_for(area_name)
+        if away_shadow is not None:
+            current["away"] = away_shadow.snapshot()
         fusion = coordinator.fusion_learner_for(area_name)
         if fusion is not None:
             fusion_defaults = {

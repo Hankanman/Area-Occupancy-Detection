@@ -11,7 +11,7 @@ from typing import Any
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
@@ -33,9 +33,15 @@ from homeassistant.util import dt as dt_util
 from .area import AllAreas, Area, AreaDeviceHandle, FloorAreas
 from .config_helpers import iter_area_subentries
 from .const import (
+    ACCURACY_HISTORY_DAYS,
+    ACCURACY_STORE_KEY_PREFIX,
+    ACCURACY_STORE_VERSION,
     ACCURACY_TICK_BUFFER_MAXLEN,
     ADJACENCY_TRANSITION_WINDOW_S,
+    AWAY_SHADOW_STORE_KEY_PREFIX,
+    AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
+    DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NAME,
     DOMAIN,
     FUSION_STORE_KEY_PREFIX,
@@ -52,10 +58,11 @@ from .data.adjacency import (
     compute_decay_modifier,
 )
 from .data.analysis import run_full_analysis
+from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.entity_type import GROUND_TRUTH_INPUT_TYPES, PRESENCE_INPUT_TYPES, InputType
 from .data.fusion import FusionLearner, FusionState, FusionTick
-from .data.metrics import AccuracyMetrics, TickSample
+from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .db import AreaOccupancyDB
@@ -206,6 +213,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Nothing here feeds back into probability or thresholds.
         self._accuracy_ticks: dict[str, deque[TickSample]] = {}
         self._accuracy_metrics: dict[str, AccuracyMetrics] = {}
+        # Spans the away-mode entity was on over the learning window,
+        # refreshed before each prior recalculation; prior learning leaves
+        # them out (#574/#584). Empty without an away-mode entity.
+        self.away_spans: list[tuple[datetime, datetime]] = []
+        # Daily summaries of the above, persisted so the metric's stability
+        # can be judged across restarts (the tick window is memory-only).
+        self._accuracy_history: dict[str, list[dict[str, Any]]] = {}
+        self._accuracy_store: Store[dict[str, list]] = Store(
+            hass,
+            ACCURACY_STORE_VERSION,
+            f"{ACCURACY_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
         # DB-retirement epic (#500), shadow mode: per-area online prior
         # estimators fed from live motion evidence each tick, persisted
         # via the HA storage helper, and diffed against the DB-computed
@@ -215,6 +234,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Away-mode shadow evidence (#584): what lowering every room to the
+        # away prior would have done. Never read by the probability path.
+        self._away_shadow: dict[str, AwayShadow] = {}
+        self._away_shadow_store: Store[dict[str, dict]] = Store(
+            hass,
+            AWAY_SHADOW_STORE_VERSION,
+            f"{AWAY_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Learned-fusion shadow state (#501): per-area training ticks
         # (sparse per-entity features) and per-area learners, persisted
@@ -550,6 +577,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         OnlinePriorState.from_dict(stored_priors[area_name])
                     )
 
+            # Restore the accuracy history (#499) for known areas
+            stored_accuracy = await self._accuracy_store.async_load() or {}
+            for area_name in self.areas:
+                history = stored_accuracy.get(area_name)
+                if isinstance(history, list):
+                    self._accuracy_history[area_name] = history
+
+            # Restore the away-mode shadow evidence (#584) for known areas
+            stored_away = await self._away_shadow_store.async_load() or {}
+            for area_name in self.areas:
+                if area_name in stored_away:
+                    self._away_shadow[area_name] = AwayShadow(
+                        AwayShadowState.from_dict(stored_away[area_name])
+                    )
+
             # Restore learned-fusion shadow state (#501) for known areas
             stored_fusion = await self._fusion_store.async_load() or {}
             for area_name in self.areas:
@@ -741,6 +783,27 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=presence_active, now=now
         )
+        # Away mode (#584, shadow): what the away prior would have decided.
+        # The extra probability calculation only runs while away.
+        away = self.household_away()
+        away_shadow = (
+            self._away_shadow.setdefault(area_name, AwayShadow())
+            if away
+            else self._away_shadow.get(area_name)
+        )
+        if away_shadow is not None:
+            away_occupied = (
+                area.away_adjusted_probability() >= area.config.threshold
+                if away
+                else is_occupied
+            )
+            away_shadow.observe(
+                now=now,
+                away=away,
+                present=presence_active,
+                live_occupied=is_occupied,
+                away_occupied=away_occupied,
+            )
         # Learned-fusion training row (#501): the bias and per-entity
         # feature products the live pipeline would use, minus the weight
         # being learned. evidence_value() is the same helper
@@ -797,6 +860,60 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the cached decay modifier for ``area_name`` this tick."""
         return self._adjacency_decay_modifiers.get(area_name)
 
+    def household_away(self) -> bool:
+        """Whether the away-mode entity says the household is away (#584).
+
+        Only an explicit away-mode entity reading ``on``. Person tracking,
+        ``unknown``, ``unavailable`` or no entity all mean "not away", so
+        nobody's readings change unless they set the entity.
+        """
+        entity_id = self.integration_config.away_mode_entity
+        if not entity_id:
+            return False
+        state = self.hass.states.get(entity_id)
+        return state is not None and state.state == STATE_ON
+
+    async def async_refresh_away_spans(self) -> None:
+        """Load when the away-mode entity was on, for prior learning (#584).
+
+        Only an explicit away-mode entity counts; person tracking never
+        shapes learning. Any state other than ``on`` (including
+        ``unavailable``) counts as home, as it does for health alerts. A
+        recorder failure leaves the spans empty, which is today's behaviour.
+        """
+        entity_id = self.integration_config.away_mode_entity
+        if not entity_id:
+            self.away_spans = []
+            return
+        # Lazy import: recorder history is only needed with an away entity.
+        from homeassistant.components.recorder.history import (  # noqa: PLC0415
+            get_significant_states,
+        )
+        from homeassistant.helpers.recorder import get_instance  # noqa: PLC0415
+
+        end = dt_util.utcnow()
+        start = end - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        try:
+            history = await get_instance(self.hass).async_add_executor_job(
+                lambda: get_significant_states(
+                    self.hass, start, end, [entity_id], minimal_response=False
+                )
+            )
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.debug("Could not read away-mode history: %s", err)
+            self.away_spans = []
+            return
+        states = sorted(
+            (history or {}).get(entity_id, []), key=lambda st: st.last_changed
+        )
+        spans: list[tuple[datetime, datetime]] = []
+        for current, following in zip(states, [*states[1:], None], strict=True):
+            if current.state != STATE_ON:
+                continue
+            span_end = following.last_changed if following is not None else end
+            spans.append((current.last_changed, span_end))
+        self.away_spans = spans
+
     # --- Trust score (#499, shadow mode) accessors ---
     def accuracy_samples_for(self, area_name: str) -> list[TickSample]:
         """Return the rolling tick observations for an area, oldest first."""
@@ -811,18 +928,60 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._accuracy_metrics.get(area_name)
 
     def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
-        """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
+        """Cache an area's shadow accuracy snapshot (analysis pipeline).
+
+        Also records it as the day's summary: each hourly run overwrites
+        the day's entry, so a day keeps its latest 24-hour window.
+        """
         self._accuracy_metrics[area_name] = metrics
+        day = to_local(dt_util.utcnow()).date().isoformat()
+        record = {"date": day, **accuracy_summary(metrics)}
+        history = self._accuracy_history.setdefault(area_name, [])
+        if history and history[-1].get("date") == day:
+            history[-1] = record
+        else:
+            history.append(record)
+        del history[:-ACCURACY_HISTORY_DAYS]
+
+    def accuracy_history_for(self, area_name: str) -> list[dict[str, Any]]:
+        """Return an area's persisted daily accuracy summaries, oldest first."""
+        return list(self._accuracy_history.get(area_name, ()))
+
+    async def async_save_accuracy_history(self) -> None:
+        """Persist the daily accuracy summaries via the HA storage helper."""
+        await self._accuracy_store.async_save(dict(self._accuracy_history))
 
     # --- Online prior (#500, shadow mode) accessors ---
     def online_prior_for(self, area_name: str) -> OnlinePriorEstimator | None:
         """Return the area's shadow online-prior estimator, if any ticks seen."""
         return self._online_priors.get(area_name)
 
+    def reset_online_prior(self, area_name: str, signature: str) -> None:
+        """Discard an area's online-prior statistics and start again.
+
+        Args:
+            area_name: The area.
+            signature: Its current ground-truth fingerprint, recorded on
+                the fresh statistics.
+        """
+        self._online_priors[area_name] = OnlinePriorEstimator(
+            OnlinePriorState(config_signature=signature)
+        )
+
     async def async_save_online_priors(self) -> None:
         """Persist online-prior shadow state via the HA storage helper."""
         await self._online_prior_store.async_save(
             {name: est.state.to_dict() for name, est in self._online_priors.items()}
+        )
+
+    def away_shadow_for(self, area_name: str) -> AwayShadow | None:
+        """Return the area's away-mode shadow evidence, if any was recorded."""
+        return self._away_shadow.get(area_name)
+
+    async def async_save_away_shadow(self) -> None:
+        """Persist the away-mode shadow evidence via the HA storage helper."""
+        await self._away_shadow_store.async_save(
+            {name: shadow.state.to_dict() for name, shadow in self._away_shadow.items()}
         )
 
     def fusion_learner_for(self, area_name: str) -> FusionLearner | None:
@@ -980,6 +1139,22 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save online-prior shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_away_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save away-mode shadow state for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_accuracy_history()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save accuracy history for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

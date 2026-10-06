@@ -26,6 +26,7 @@ from .decay import Decay
 from .entity_type import (
     BINARY_INPUT_TYPES,
     DEFAULT_TYPES,
+    GROUND_TRUTH_INPUT_TYPES,
     AnalysisStatus,
     CorrelationType,
     EntityType,
@@ -790,6 +791,28 @@ class Entity:
         # Update previous evidence for next comparison
         self.previous_evidence = current_evidence
         return transition_occurred or released
+
+
+def entity_signature(entity: Entity) -> str:
+    """Fingerprint what an entity's evidence means: type and active states.
+
+    Shadow learners key their stored statistics to it, so a sensor whose
+    meaning changes (``paused`` dropped from a media player's active
+    states) stops being judged by what it learned under the old meaning.
+    """
+    states = ",".join(sorted(entity.type.active_states or ()))
+    return f"{entity.type.input_type.value}|{states}|{entity.type.active_range}"
+
+
+def ground_truth_signature(entities: dict[str, Entity]) -> str:
+    """Fingerprint an area's ground-truth sensors (motion, media, sleep)."""
+    return "\n".join(
+        sorted(
+            f"{entity_id}|{entity_signature(entity)}"
+            for entity_id, entity in entities.items()
+            if entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
+        )
+    )
 
 
 class EntityFactory:

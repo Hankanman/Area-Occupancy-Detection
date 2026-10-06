@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from custom_components.area_occupancy.const import ACCURACY_HISTORY_DAYS
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
 from custom_components.area_occupancy.data.metrics import (
@@ -13,6 +14,7 @@ from custom_components.area_occupancy.data.metrics import (
     AccuracyMetrics,
     CalibrationBin,
     TickSample,
+    accuracy_summary,
     compute_accuracy_metrics,
     metrics_to_diagnostics,
     suggest_threshold,
@@ -381,3 +383,62 @@ class TestSuggestThreshold:
         diag = metrics_to_diagnostics(metrics)
         assert diag["suggested_threshold"] == pytest.approx(0.2)
         json.dumps(diag)
+
+
+class TestMinClassSeconds:
+    """A rate over minutes of one truth class isn't reported (live report).
+
+    Live: a bedroom occupied all night showed false_on_rate = 1.0 from two
+    mis-scored ticks of "empty".
+    """
+
+    def test_rates_need_an_hour_of_each_class(self) -> None:
+        start = datetime(2026, 10, 6, 0, tzinfo=UTC)
+        # 2 h occupied with the decision on, then 60 s empty, decision still on.
+        samples = [
+            TickSample(
+                timestamp=start + timedelta(seconds=10 * i),
+                probability=0.9,
+                occupied=True,
+            )
+            for i in range(726)
+        ]
+        truth = [(start, start + timedelta(hours=2))]
+
+        guarded = compute_accuracy_metrics(samples, truth, min_class_seconds=3600)
+        unguarded = compute_accuracy_metrics(samples, truth)
+
+        assert unguarded.false_on_rate == pytest.approx(1.0)
+        assert guarded.false_on_rate is None
+        assert guarded.false_off_rate == pytest.approx(0.0)
+        assert suggest_threshold(guarded) is None
+
+    def test_daily_summary_carries_the_headline_numbers(self) -> None:
+        metrics = AccuracyMetrics(sample_count=5, agreement=0.9, false_on_rate=0.1)
+        summary = accuracy_summary(metrics)
+        assert summary["samples"] == 5
+        assert summary["agreement"] == 0.9
+        assert summary["false_on_rate"] == 0.1
+        assert summary["suggested_threshold"] is None
+
+
+class TestAccuracyHistory:
+    """Daily summaries survive restarts so stability can be judged (#499)."""
+
+    def test_one_entry_per_day_capped(
+        self, coordinator: AreaOccupancyCoordinator, freezer
+    ) -> None:
+        area = coordinator.get_area_names()[0]
+        freezer.move_to("2026-10-06 10:00:00+00:00")
+        coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=1))
+        coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=2))
+        assert [h["samples"] for h in coordinator.accuracy_history_for(area)] == [2]
+
+        freezer.move_to("2026-10-07 10:00:00+00:00")
+        coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=3))
+        assert [h["samples"] for h in coordinator.accuracy_history_for(area)] == [2, 3]
+
+        for day in range(100):
+            freezer.move_to(datetime(2026, 11, 1, tzinfo=UTC) + timedelta(days=day))
+            coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=day))
+        assert len(coordinator.accuracy_history_for(area)) == ACCURACY_HISTORY_DAYS
