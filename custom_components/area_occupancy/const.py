@@ -281,6 +281,12 @@ MAX_WEIGHT: Final[float] = 0.99
 # hold an area above the threshold with no active evidence — see issue #435.
 PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
 
+# Every room's prior while the away-mode entity is on (#584): the household
+# has said the house is empty. Evidence still works on top, so one active
+# motion sensor (its hold floor scales with the prior) still reads ~99%; a
+# TV left playing does not reach a 50% threshold.
+AWAY_PRIOR: Final[float] = 0.01
+
 # Time Prior Bounds
 TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
 TIME_PRIOR_MAX_BOUND: Final[float] = 0.9

@@ -6,6 +6,7 @@ from unittest.mock import PropertyMock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
+    AWAY_PRIOR,
     DEFAULT_AREA_PRIOR,
     DEFAULT_TIME_PRIOR,
     MAX_PRIOR,
@@ -1058,3 +1059,48 @@ class TestFailedTimePriorLoad:
             assert prior.time_prior == pytest.approx(0.6)
             assert prior._cached_time_priors is not None
             assert prior._cached_time_prior_points[slot_key] == 4
+
+
+class TestAwayPrior:
+    """While the away-mode entity is on, every room's prior is 1% (#584)."""
+
+    ENTITY = "input_boolean.away"
+
+    @staticmethod
+    def _away(coordinator, state: str | None):
+        if state is not None:
+            coordinator.hass.states.async_set(TestAwayPrior.ENTITY, state)
+        return patch.object(
+            type(coordinator.integration_config),
+            "away_mode_entity",
+            new_callable=PropertyMock,
+            return_value=TestAwayPrior.ENTITY,
+        )
+
+    async def test_on_sets_the_away_prior_over_floors(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        area.prior.global_prior = 0.3
+        area.config.min_prior_override = 0.3
+
+        with self._away(coordinator, "on"):
+            assert area.prior.value == AWAY_PRIOR
+            assert area.prior.diagnostic_snapshot()["min_prior_floor_applied"] == "away"
+
+    async def test_off_unavailable_or_unset_change_nothing(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area = coordinator.get_area(coordinator.get_area_names()[0])
+        area.prior.global_prior = 0.3
+        baseline = area.prior.value
+
+        for state in ("off", "unavailable", "unknown"):
+            with self._away(coordinator, state):
+                assert area.prior.value == baseline
+        assert coordinator.household_away() is False
+
+    async def test_zones_follow(self, coordinator: AreaOccupancyCoordinator) -> None:
+        all_areas = coordinator.get_all_areas()
+        with self._away(coordinator, "on"):
+            assert all_areas.area_prior() == AWAY_PRIOR

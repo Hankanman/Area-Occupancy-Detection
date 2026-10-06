@@ -1014,3 +1014,42 @@ class TestGroundTruthHold:
         assert sigmoid_probability(
             {"m": half}, prior=self.PRIOR, threshold=0.5
         ) == pytest.approx(0.5, abs=1e-6)
+
+
+class TestAwayPriorEvidence:
+    """What the 1% away prior does to evidence (#584), hand-computed.
+
+    bias = logit(0.01) = -4.5951. Motion's hold (threshold 0.5) is
+    2 * 4.5951 = 9.1902, so one active motion sensor still reads 99% (an
+    intruder or house-sitter stays visible). A TV left playing: p_t 0.65,
+    p_f 0.02, gain 0.9692, signal 0.65 * 2 = 1.3 -> z = -3.335 -> 3.44%; at
+    a normal 30% prior the same TV alone reads 60.17%.
+    """
+
+    @staticmethod
+    def _tv() -> Mock:
+        gain = (0.65 - 0.02) / 0.65
+        return _create_mock_entity(
+            evidence=True,
+            prob_given_true=0.65,
+            prob_given_false=0.02,
+            weight=1.0,
+            effective_weight=gain,
+            input_type=InputType.MEDIA,
+        )
+
+    def test_motion_still_reads_occupied(self) -> None:
+        motion = _create_mock_entity(
+            evidence=True, prob_given_true=0.95, prob_given_false=0.005
+        )
+        assert sigmoid_probability(
+            {"m": motion}, prior=0.01, threshold=0.5
+        ) == pytest.approx(0.99, abs=1e-4)
+
+    def test_a_playing_tv_no_longer_holds_the_room(self) -> None:
+        assert sigmoid_probability(
+            {"tv": self._tv()}, prior=0.01, threshold=0.5
+        ) == pytest.approx(0.03439, abs=1e-4)
+        assert sigmoid_probability(
+            {"tv": self._tv()}, prior=0.3, threshold=0.5
+        ) == pytest.approx(0.6017, abs=1e-4)
