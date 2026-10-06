@@ -134,6 +134,13 @@ The calculation follows these steps:
      current local hour. The hour in progress is the live present, not
      history; counting it let an occupied hour rewrite its own slot at the
      :57 analysis, and the prior dropped back on the hour.
+   - Counts **observed time only** (#574): a slot's denominator is the time
+     the area was observed: any motion sensor with a recorded state (gaps
+     under `OBSERVED_GAP_TOLERANCE_SECONDS` = 600 s bridged) or occupied,
+     minus the spans the away-mode entity was on. The global prior uses the
+     same observed time. Unobserved hours count as neither occupied nor
+     empty, and a slot never observed is left unwritten. Floors and All
+     Areas count a moment as observed only while every member room was.
 
 5. **Save to Database**: Calls `save_time_priors()` to store all calculated priors with metadata:
    - `prior_value`: The calculated probability

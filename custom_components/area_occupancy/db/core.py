@@ -367,6 +367,21 @@ class AreaOccupancyDB:
             motion_timeout,
         )
 
+    def get_observed_intervals(
+        self, area_name: str, start_time: datetime | None = None
+    ) -> list[tuple[datetime, datetime]]:
+        """When the area's motion sensors had a recorded state (#574).
+
+        Delegates to ``queries.get_observed_intervals`` with the same
+        lookback convention as :meth:`get_occupied_intervals`.
+        """
+        lookback_days = DEFAULT_LOOKBACK_DAYS
+        if start_time:
+            lookback_days = (dt_util.utcnow() - start_time).days + 1
+        return queries.get_observed_intervals(
+            self, self.coordinator.entry_id, area_name, lookback_days
+        )
+
     def get_first_interval_timestamp(self, area_name: str) -> datetime | None:
         """Return the earliest any-state interval timestamp for this area.
 

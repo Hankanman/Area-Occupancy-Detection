@@ -32,7 +32,12 @@ from ..db.queries import (
     get_occupied_intervals_cache_age_hours,
     is_occupied_intervals_cache_valid,
 )
-from ..db.utils import merge_overlapping_intervals
+from ..db.utils import (
+    intersect_intervals,
+    merge_overlapping_intervals,
+    merge_with_tolerance,
+    subtract_intervals,
+)
 from ..time_utils import ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
 from .entity import entity_signature, ground_truth_signature
@@ -126,6 +131,7 @@ async def run_full_analysis(
         await coordinator.db.sync_states()
 
     async def _recalculate_priors() -> None:
+        await coordinator.async_refresh_away_spans()
         for area in coordinator.areas.values():
             await area.run_prior_analysis()
         await _recalculate_zone_priors(coordinator)
@@ -585,10 +591,96 @@ async def start_prior_analysis(
     await coordinator.hass.async_add_executor_job(prior.load_time_priors)
 
 
+def observed_coverage(
+    observed: list[tuple[datetime, datetime]],
+    occupied: list[tuple[datetime, datetime]],
+    period_start: datetime,
+    period_end: datetime,
+    excluded: list[tuple[datetime, datetime]] = (),
+) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
+    """The time a prior should learn from, and the occupied part of it (#574).
+
+    Observed time is when a motion sensor had a recorded state, plus any
+    occupied time (seen occupied is seen). Within the period, ``excluded``
+    spans (the household marked away, #584) are removed from both: that
+    time says nothing about the at-home pattern.
+
+    Args:
+        observed: Merged spans when the area's motion sensors reported.
+        occupied: Occupied spans.
+        period_start: Start of the learning window.
+        period_end: End of the learning window.
+        excluded: Spans to leave out entirely.
+
+    Returns:
+        ``(coverage, occupied_in_coverage)``, both merged and clipped.
+    """
+    start = ensure_utc_datetime(period_start)
+    end = ensure_utc_datetime(period_end)
+
+    def clip(spans: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+        return [
+            (max(ensure_utc_datetime(s), start), min(ensure_utc_datetime(e), end))
+            for s, e in spans
+            if ensure_utc_datetime(e) > start and ensure_utc_datetime(s) < end
+        ]
+
+    removed = merge_with_tolerance(clip(list(excluded)), timedelta(0))
+    occupied_c = merge_with_tolerance(clip(occupied), timedelta(0))
+    coverage = merge_with_tolerance(clip(observed) + occupied_c, timedelta(0))
+    return (
+        subtract_intervals(coverage, removed),
+        subtract_intervals(occupied_c, removed),
+    )
+
+
+def _total_seconds(spans: list[tuple[datetime, datetime]]) -> float:
+    return sum((end - start).total_seconds() for start, end in spans)
+
+
+def _slot_seconds(
+    intervals: list[tuple[datetime, datetime]],
+    start_utc: datetime,
+    end_utc: datetime,
+) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], set[tuple[int, int]]]]:
+    """Seconds each weekly slot spends inside ``intervals``, and its weeks.
+
+    Slots are local wall-clock hours; overlap arithmetic is in UTC so DST
+    fall-back (a repeated local hour) is walked correctly.
+    """
+    seconds: dict[tuple[int, int], float] = {}
+    weeks: dict[tuple[int, int], set[tuple[int, int]]] = {}
+    for start, end in intervals:
+        start_c = max(to_utc(start), start_utc)
+        end_c = min(to_utc(end), end_utc)
+        current_utc = start_c
+        while current_utc < end_c:
+            current_local = to_local(current_utc)
+            fold = getattr(current_local, "fold", 0)
+            slot_start_local = current_local.replace(
+                minute=0, second=0, microsecond=0, fold=fold
+            )
+            slot_end_utc = to_utc(slot_start_local + timedelta(hours=1))
+            slot_start_utc = to_utc(slot_start_local)
+            if slot_end_utc <= slot_start_utc:
+                break
+            overlap = (
+                min(end_c, slot_end_utc) - max(current_utc, slot_start_utc)
+            ).total_seconds()
+            if overlap > 0:
+                key = (slot_start_local.weekday(), slot_start_local.hour)
+                seconds[key] = seconds.get(key, 0.0) + overlap
+                year, week_number, _ = slot_start_local.isocalendar()
+                weeks.setdefault(key, set()).add((year, week_number))
+            current_utc = slot_end_utc
+    return seconds, weeks
+
+
 def compute_slot_priors(
     occupied_intervals: list[tuple[datetime, datetime]],
     period_start: datetime,
     period_end: datetime,
+    observed: list[tuple[datetime, datetime]] | None = None,
 ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], int]]:
     """Time priors for all 168 weekly slots from occupied intervals.
 
@@ -601,16 +693,16 @@ def compute_slot_priors(
         occupied_intervals: ``(start, end)`` occupied periods, merged.
         period_start: Start of the data period.
         period_end: End of the data period.
+        observed: The time that was actually observed (#574). A slot's
+            denominator is its observed time, so an hour when every
+            ground-truth sensor was offline (or the household was away)
+            counts neither as occupied nor as empty. ``None`` treats the
+            whole period as observed.
 
     Returns:
         ``(time_priors, data_points)``: slot to bounded prior, and slot to
         the number of distinct weeks observed.
     """
-
-    # Policy: bucket by Home Assistant local wall-clock time.
-    # We do overlap arithmetic in UTC, but derive slot keys from the corresponding local time.
-    slot_occupied_seconds: dict[tuple[int, int], float] = {}
-
     period_start_utc = to_utc(period_start)
     period_end_utc = to_utc(period_end)
     # Completed hours only. The hour in progress is the live present, not
@@ -621,96 +713,32 @@ def compute_slot_priors(
     hour_start_utc = to_utc(end_local.replace(minute=0, second=0, microsecond=0))
     period_end_utc = min(period_end_utc, hour_start_utc)
 
-    # Track total possible seconds per slot over the period to handle DST correctly.
-    # Keyed by (day_of_week, hour) in local time.
-    slot_total_seconds: dict[tuple[int, int], float] = {}
-    slot_weeks_total: dict[tuple[int, int], set[tuple[int, int]]] = {}
+    # Denominators: every slot the period (or its observed part) covered.
+    # A covered slot with zero occupancy is a real learned observation
+    # ("empty on Tuesdays at 04:00") and must be stored, not left unwritten
+    # to read back as a neutral-high default.
+    denominator_intervals = (
+        [(period_start_utc, period_end_utc)] if observed is None else observed
+    )
+    slot_total_seconds, slot_weeks = _slot_seconds(
+        denominator_intervals, period_start_utc, period_end_utc
+    )
+    slot_occupied_seconds, _ = _slot_seconds(
+        occupied_intervals, period_start_utc, period_end_utc
+    )
 
-    # Build denominators by walking local hour slots across the analysis period.
-    # Iterate in UTC to avoid ambiguity during DST fall-back (repeated local hours).
-    current_utc = period_start_utc
-    while current_utc < period_end_utc:
-        current_local = to_local(current_utc)
-        fold = getattr(current_local, "fold", 0)
-        slot_start_local = current_local.replace(
-            minute=0, second=0, microsecond=0, fold=fold
-        )
-        slot_end_local = slot_start_local + timedelta(hours=1)
-
-        slot_start_utc = to_utc(slot_start_local)
-        slot_end_utc = to_utc(slot_end_local)
-        if slot_end_utc <= slot_start_utc:
-            break
-
-        slot_key = (slot_start_local.weekday(), slot_start_local.hour)
-        overlap_start = max(period_start_utc, slot_start_utc)
-        overlap_end = min(period_end_utc, slot_end_utc)
-        slot_seconds = max(0.0, (overlap_end - overlap_start).total_seconds())
-        if slot_seconds > 0:
-            slot_total_seconds[slot_key] = (
-                slot_total_seconds.get(slot_key, 0.0) + slot_seconds
-            )
-            year, week_number, _ = slot_start_local.isocalendar()
-            slot_weeks_total.setdefault(slot_key, set()).add((year, week_number))
-
-        current_utc = slot_end_utc
-
-    # Process each occupied interval
-    for start_time, end_time in occupied_intervals:
-        start_utc = to_utc(start_time)
-        end_utc = to_utc(end_time)
-
-        # Clamp to analysis period bounds
-        start_utc = max(start_utc, period_start_utc)
-        end_utc = min(end_utc, period_end_utc)
-        if start_utc >= end_utc:
-            continue
-
-        current_utc = start_utc
-        while current_utc < end_utc:
-            current_local = to_local(current_utc)
-            fold = getattr(current_local, "fold", 0)
-            slot_start_local = current_local.replace(
-                minute=0, second=0, microsecond=0, fold=fold
-            )
-            slot_end_local = slot_start_local + timedelta(hours=1)
-
-            slot_start_utc = to_utc(slot_start_local)
-            slot_end_utc = to_utc(slot_end_local)
-            if slot_end_utc <= slot_start_utc:
-                break
-
-            slot_key = (slot_start_local.weekday(), slot_start_local.hour)
-            overlap_start = max(start_utc, current_utc, slot_start_utc)
-            overlap_end = min(end_utc, slot_end_utc)
-            overlap_seconds = max(0.0, (overlap_end - overlap_start).total_seconds())
-            if overlap_seconds > 0:
-                slot_occupied_seconds[slot_key] = (
-                    slot_occupied_seconds.get(slot_key, 0.0) + overlap_seconds
-                )
-
-            current_utc = slot_end_utc
-
-    # Calculate prior values for each slot
     time_priors: dict[tuple[int, int], float] = {}
     data_points: dict[tuple[int, int], int] = {}
-
-    # Iterate the *denominators*, not the occupied buckets: a slot that the
-    # analysis period covered but that saw zero occupancy is a real learned
-    # observation ("this area is empty on Tuesdays at 04:00") and must be
-    # persisted. Iterating slot_occupied_seconds instead left those slots
-    # unwritten, so they read back as DEFAULT_TIME_PRIOR — a neutral-high
-    # value that outranks genuinely low-occupancy slots and biases both the
-    # forecast and the live prior.
     for slot_key, total_slot_seconds in slot_total_seconds.items():
         if total_slot_seconds <= 0:
             continue
-        occupied_seconds = slot_occupied_seconds.get(slot_key, 0.0)
-
+        occupied_seconds = min(
+            slot_occupied_seconds.get(slot_key, 0.0), total_slot_seconds
+        )
         prior_value = occupied_seconds / total_slot_seconds
         prior_value = max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, prior_value))
         time_priors[slot_key] = prior_value
-        data_points[slot_key] = len(slot_weeks_total.get(slot_key, set()))
+        data_points[slot_key] = len(slot_weeks.get(slot_key, set()))
 
     return time_priors, data_points
 
@@ -719,6 +747,8 @@ def compute_zone_priors(
     member_intervals: list[list[tuple[datetime, datetime]]],
     period_start: datetime,
     period_end: datetime,
+    member_observed: list[list[tuple[datetime, datetime]]] | None = None,
+    excluded: list[tuple[datetime, datetime]] = (),
 ) -> ZonePriors | None:
     """Priors for an aggregate zone from the union of its rooms' intervals.
 
@@ -731,10 +761,13 @@ def compute_zone_priors(
         member_intervals: Each member room's occupied intervals.
         period_start: Start of the observation window.
         period_end: End of the observation window.
+        member_observed: Each member room's observed spans (#574). ``None``
+            treats the whole window as observed.
+        excluded: Spans to leave out (household away, #584).
 
     Returns:
-        The zone priors, or None when the window is shorter than the prior
-        warm-up span.
+        The zone priors, or None when the window (or its observed part) is
+        shorter than the prior warm-up span.
     """
     period_start = ensure_utc_datetime(period_start)
     period_end = ensure_utc_datetime(period_end)
@@ -750,8 +783,23 @@ def compute_zone_priors(
         for start, end in intervals
     ]
     union = merge_overlapping_intervals([(s, e) for s, e in clamped if s < e])
-    occupied = sum((end - start).total_seconds() for start, end in union)
-    time_priors, data_points = compute_slot_priors(union, period_start, period_end)
+    observed: list[tuple[datetime, datetime]] | None = None
+    if member_observed is not None:
+        # "Nobody in the zone" is only observed while every room is (#574);
+        # time any room was occupied is observed for the zone regardless.
+        shared = [(period_start, period_end)]
+        for spans in member_observed:
+            shared = intersect_intervals(shared, merge_overlapping_intervals(spans))
+        observed, union = observed_coverage(
+            shared, union, period_start, period_end, excluded
+        )
+        span = _total_seconds(observed)
+        if span < PRIOR_WARMUP_MIN_SPAN_HOURS * 3600:
+            return None
+    occupied = _total_seconds(union)
+    time_priors, data_points = compute_slot_priors(
+        union, period_start, period_end, observed=observed
+    )
     return ZonePriors(
         global_prior=max(MIN_PRIOR, min(MAX_PRIOR, occupied / span)),
         time_priors=time_priors,
@@ -792,7 +840,16 @@ def calculate_zone_priors_for(
         db.get_occupied_intervals(area_name=name, start_time=period_start)
         for name in area_names
     ]
-    return compute_zone_priors(member_intervals, period_start, now)
+    member_observed = [
+        db.get_observed_intervals(name, start_time=period_start) for name in area_names
+    ]
+    return compute_zone_priors(
+        member_intervals,
+        period_start,
+        now,
+        member_observed=member_observed,
+        excluded=coordinator.away_spans,
+    )
 
 
 async def _recalculate_zone_priors(coordinator: AreaOccupancyCoordinator) -> None:
@@ -978,10 +1035,29 @@ class PriorAnalyzer:
                         if ensure_utc_datetime(start) <= ensure_utc_datetime(end)
                     ]
 
-            occupied_duration = sum(
-                (ensure_utc_datetime(end) - ensure_utc_datetime(start)).total_seconds()
-                for start, end in occupied_intervals
+            # 2b. Observed time (#574): an hour no motion sensor could see,
+            # or one the household was away for, is neither occupied nor
+            # empty, so it leaves the denominator instead of reading as
+            # empty and dragging the prior down.
+            coverage, occupied_intervals = observed_coverage(
+                self.db.get_observed_intervals(self.area_name, start_time=period_start),
+                occupied_intervals,
+                period_start,
+                now,
+                self.coordinator.away_spans,
             )
+            observation_span_seconds = _total_seconds(coverage)
+            if observation_span_seconds < min_span_seconds:
+                _LOGGER.debug(
+                    "Too little observed time for area %s (%.1fh < %.1fh) — "
+                    "deferring prior update",
+                    self.area_name,
+                    observation_span_seconds / 3600,
+                    min_span_seconds / 3600,
+                )
+                return
+
+            occupied_duration = _total_seconds(occupied_intervals)
 
             # Ensure valid probability (MIN_PRIOR to MAX_PRIOR)
             global_prior = max(
@@ -1037,6 +1113,7 @@ class PriorAnalyzer:
                     occupied_intervals,
                     period_start,
                     now,
+                    observed=coverage,
                 )
                 if time_priors:
                     success = self.db.save_time_priors(
@@ -1082,6 +1159,7 @@ class PriorAnalyzer:
         occupied_intervals: list[tuple[datetime, datetime]],
         period_start: datetime,
         period_end: datetime,
+        observed: list[tuple[datetime, datetime]] | None = None,
     ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], int]]:
         """Calculate time priors for all 168 time slots (7 days × 24 hours).
 
@@ -1090,6 +1168,8 @@ class PriorAnalyzer:
                 occupied periods (already merged and extended)
             period_start: Start of the data period
             period_end: End of the data period
+            observed: Observed time (see ``observed_coverage``); ``None``
+                treats the whole period as observed
 
         Returns:
             Tuple of:
@@ -1104,7 +1184,7 @@ class PriorAnalyzer:
             period_end,
         )
         time_priors, data_points = compute_slot_priors(
-            occupied_intervals, period_start, period_end
+            occupied_intervals, period_start, period_end, observed=observed
         )
         _LOGGER.debug(
             "Time priors calculated for area %s: %d slots populated out of 168",

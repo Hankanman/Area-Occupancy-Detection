@@ -1684,3 +1684,31 @@ class TestSyncNeverInverts:
                 .all()
             )
             assert [(r.state, r.duration_seconds) for r in rows] == [("on", 1800.0)]
+
+
+class TestCrossStateOverlap:
+    """A provisional end never overlaps the next state (live leftovers)."""
+
+    def test_earlier_row_is_clipped_at_the_next_state(self) -> None:
+        t = datetime(2026, 10, 5, 21, 0)
+        rows = [
+            ("on", t, t + timedelta(minutes=30)),  # provisional end
+            ("off", t + timedelta(minutes=10), t + timedelta(minutes=40)),
+        ]
+
+        assert coalesce_state_rows(rows, {"on"}) == [
+            ("on", t, t + timedelta(minutes=10)),
+            ("off", t + timedelta(minutes=10), t + timedelta(minutes=40)),
+        ]
+
+    def test_a_row_swallowed_by_the_next_state_is_dropped(self) -> None:
+        t = datetime(2026, 10, 5, 21, 0)
+        rows = [
+            ("off", t, t + timedelta(minutes=5)),
+            ("on", t, t + timedelta(minutes=20)),
+        ]
+
+        merged = coalesce_state_rows(rows, {"on"})
+
+        assert all(end > start for _, start, end in merged)
+        assert all(a[2] <= b[1] for a, b in itertools.pairwise(merged))

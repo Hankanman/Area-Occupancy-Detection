@@ -12,13 +12,14 @@ from sqlalchemy.sql import literal
 
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_TIME_PRIOR
+from ..const import DEFAULT_TIME_PRIOR, OBSERVED_GAP_TOLERANCE_SECONDS
 from ..data.entity_type import InputType
 from ..time_utils import from_db_utc, to_db_utc, to_utc
 from .utils import (
     apply_motion_timeout,
     area_active_states_by_type,
     merge_overlapping_intervals,
+    merge_with_tolerance,
 )
 
 if TYPE_CHECKING:
@@ -296,6 +297,48 @@ def get_occupied_intervals(
         return []
     else:
         return extended_intervals
+
+
+def get_observed_intervals(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    lookback_days: int,
+) -> list[tuple[datetime, datetime]]:
+    """When the area's motion sensors had a recorded state, merged (#574).
+
+    A motion sensor reporting anything, ``on`` or ``off``, is the area
+    being watched; ``unavailable``/``unknown`` are never stored, so its
+    gaps are the outages. Media and sleep states don't count: a TV that
+    is off says nothing about whether the room is empty. Gaps up to
+    ``OBSERVED_GAP_TOLERANCE_SECONDS`` are bridged.
+
+    Returns:
+        Merged ``(start, end)`` spans in aware UTC, or ``[]``.
+    """
+    lookback_date_db = to_db_utc(dt_util.utcnow() - timedelta(days=lookback_days))
+    try:
+        with db.get_session() as session:
+            rows = (
+                session.query(db.Intervals.start_time, db.Intervals.end_time)
+                .join(
+                    db.Entities,
+                    (db.Intervals.entity_id == db.Entities.entity_id)
+                    & (db.Intervals.area_name == db.Entities.area_name),
+                )
+                .filter(
+                    *build_base_filters(db, entry_id, lookback_date_db, area_name),
+                    db.Entities.entity_type == InputType.MOTION.value,
+                )
+                .all()
+            )
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error in get_observed_intervals: %s", e)
+        return []
+    return merge_with_tolerance(
+        [(from_db_utc(start), from_db_utc(end)) for start, end in rows],
+        timedelta(seconds=OBSERVED_GAP_TOLERANCE_SECONDS),
+    )
 
 
 def get_first_interval_timestamp(
