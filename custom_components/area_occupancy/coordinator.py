@@ -11,7 +11,7 @@ from typing import Any
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
@@ -39,6 +39,7 @@ from .const import (
     ACCURACY_TICK_BUFFER_MAXLEN,
     ADJACENCY_TRANSITION_WINDOW_S,
     CONF_AREA_ID,
+    DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NAME,
     DOMAIN,
     FUSION_STORE_KEY_PREFIX,
@@ -209,6 +210,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Nothing here feeds back into probability or thresholds.
         self._accuracy_ticks: dict[str, deque[TickSample]] = {}
         self._accuracy_metrics: dict[str, AccuracyMetrics] = {}
+        # Spans the away-mode entity was on over the learning window,
+        # refreshed before each prior recalculation; prior learning leaves
+        # them out (#574/#584). Empty without an away-mode entity.
+        self.away_spans: list[tuple[datetime, datetime]] = []
         # Daily summaries of the above, persisted so the metric's stability
         # can be judged across restarts (the tick window is memory-only).
         self._accuracy_history: dict[str, list[dict[str, Any]]] = {}
@@ -814,6 +819,47 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> DecayModifierContribution | None:
         """Return the cached decay modifier for ``area_name`` this tick."""
         return self._adjacency_decay_modifiers.get(area_name)
+
+    async def async_refresh_away_spans(self) -> None:
+        """Load when the away-mode entity was on, for prior learning (#584).
+
+        Only an explicit away-mode entity counts; person tracking never
+        shapes learning. Any state other than ``on`` (including
+        ``unavailable``) counts as home, as it does for health alerts. A
+        recorder failure leaves the spans empty, which is today's behaviour.
+        """
+        entity_id = self.integration_config.away_mode_entity
+        if not entity_id:
+            self.away_spans = []
+            return
+        # Lazy import: recorder history is only needed with an away entity.
+        from homeassistant.components.recorder.history import (  # noqa: PLC0415
+            get_significant_states,
+        )
+        from homeassistant.helpers.recorder import get_instance  # noqa: PLC0415
+
+        end = dt_util.utcnow()
+        start = end - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        try:
+            history = await get_instance(self.hass).async_add_executor_job(
+                lambda: get_significant_states(
+                    self.hass, start, end, [entity_id], minimal_response=False
+                )
+            )
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.debug("Could not read away-mode history: %s", err)
+            self.away_spans = []
+            return
+        states = sorted(
+            (history or {}).get(entity_id, []), key=lambda st: st.last_changed
+        )
+        spans: list[tuple[datetime, datetime]] = []
+        for current, following in zip(states, [*states[1:], None], strict=True):
+            if current.state != STATE_ON:
+                continue
+            span_end = following.last_changed if following is not None else end
+            spans.append((current.last_changed, span_end))
+        self.away_spans = spans
 
     # --- Trust score (#499, shadow mode) accessors ---
     def accuracy_samples_for(self, area_name: str) -> list[TickSample]:

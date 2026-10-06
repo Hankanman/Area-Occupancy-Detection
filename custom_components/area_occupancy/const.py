@@ -350,6 +350,10 @@ DEFAULT_SENSOR_PRECISION: Final = ROUNDING_PRECISION
 
 # Performance optimization constants
 DEFAULT_LOOKBACK_DAYS: Final = 60  # Days of interval data to load for analysis
+# Gaps in a motion sensor's recorded history shorter than this still count
+# as observed when learning priors (#574): restarts and dropped sub-5 s rows
+# leave seconds-to-minutes gaps that aren't outages.
+OBSERVED_GAP_TOLERANCE_SECONDS: Final = 600
 DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
 RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
 

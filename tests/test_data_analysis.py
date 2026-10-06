@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, Mock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,7 +19,10 @@ from custom_components.area_occupancy.data.analysis import (
     PriorAnalyzer,
     _run_pipeline_health_check,
     _run_sensor_health_check,
+    compute_slot_priors,
+    compute_zone_priors,
     ensure_occupied_intervals_cache,
+    observed_coverage,
     run_full_analysis,
     run_interval_aggregation,
     run_numeric_aggregation,
@@ -170,6 +173,20 @@ class TestPriorAnalyzerWithRealDB:
 
 class TestPriorAnalyzerCalculateAndUpdatePrior:
     """Test PriorAnalyzer.calculate_and_update_prior method."""
+
+    @pytest.fixture(autouse=True)
+    def _fully_observed(self):
+        """Treat every moment as observed.
+
+        These tests predate observed time (#574); a fully observed window
+        is exactly the old whole-period denominator.
+        """
+        always = [(datetime(2000, 1, 1, tzinfo=UTC), datetime(2100, 1, 1, tzinfo=UTC))]
+        with patch(
+            "custom_components.area_occupancy.db.core.AreaOccupancyDB.get_observed_intervals",
+            return_value=always,
+        ):
+            yield
 
     def test_no_data_at_all_logs_warning_and_preserves_prior(
         self, coordinator: AreaOccupancyCoordinator, freeze_time: datetime
@@ -1978,3 +1995,198 @@ class TestIsTimestampOccupied:
         timestamp = now + timestamp_offset
         result = is_timestamp_occupied(timestamp, occupied_intervals)
         assert result == expected_result, f"Failed for {description}"
+
+
+T0 = datetime(2026, 9, 20, 0, tzinfo=UTC)
+
+
+def _h(hours: float) -> datetime:
+    return T0 + timedelta(hours=hours)
+
+
+class TestObservedCoverage:
+    """Unobserved time leaves the denominator instead of reading as empty (#574).
+
+    Live: a Lounge motion sensor was unavailable for days, yet the Lounge's
+    weekly slots for that time were learned as "empty".
+    """
+
+    OBSERVED = [(_h(0), _h(10)), (_h(34), _h(48))]  # offline 10h-34h
+    OCCUPIED = [(_h(5), _h(7)), (_h(40), _h(41))]
+
+    def test_outage_is_not_counted(self) -> None:
+        """24 h observed, 3 h occupied: 3/24 = 0.125 (old: 3/48 = 0.0625)."""
+        coverage, occupied = observed_coverage(
+            self.OBSERVED, self.OCCUPIED, _h(0), _h(48)
+        )
+
+        assert sum((e - s).total_seconds() for s, e in coverage) == 24 * 3600
+        assert sum((e - s).total_seconds() for s, e in occupied) == 3 * 3600
+
+    def test_away_time_is_left_out(self) -> None:
+        """Away 36h-46h: observed 14 h, occupied 2 h -> 2/14 = 0.1429."""
+        coverage, occupied = observed_coverage(
+            self.OBSERVED, self.OCCUPIED, _h(0), _h(48), [(_h(36), _h(46))]
+        )
+
+        assert coverage == [(_h(0), _h(10)), (_h(34), _h(36)), (_h(46), _h(48))]
+        assert occupied == [(_h(5), _h(7))]
+
+    def test_occupied_time_counts_as_observed(self) -> None:
+        """Seen occupied is seen, even with no motion row (media, sleep)."""
+        coverage, _ = observed_coverage([], [(_h(1), _h(2))], _h(0), _h(48))
+        assert coverage == [(_h(1), _h(2))]
+
+    def test_slot_denominators_skip_the_outage(self) -> None:
+        """A slot never observed gets no prior; an observed one keeps its own."""
+        observed = [(_h(0), _h(1))]
+        priors, points = compute_slot_priors([], _h(0), _h(48), observed=observed)
+        full, _ = compute_slot_priors([], _h(0), _h(48))
+
+        assert len(priors) == 1
+        assert len(full) == 48
+        assert set(points.values()) == {1}
+
+
+class TestPriorUsesObservedTime:
+    """End to end through the DB: the motion sensor's rows define observed time."""
+
+    def test_global_prior_over_observed_time(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Motion rows 0-10h and 24-48h (offline between), occupied 3 h.
+
+        Expected 3/34 = 0.0882; the whole-window denominator gave 0.0625.
+        """
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        db = coordinator.db
+        db.save_area_data(area_name)
+        with db.get_session() as session:
+            session.add(
+                db.Entities(
+                    entry_id=coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id="binary_sensor.motion_574",
+                    entity_type="motion",
+                )
+            )
+            for state, start, end in (
+                ("off", 0, 5),
+                ("on", 5, 7),
+                ("off", 7, 10),
+                ("off", 24, 40),
+                ("on", 40, 41),
+                ("off", 41, 48),
+            ):
+                session.add(
+                    db.Intervals(
+                        entry_id=coordinator.entry_id,
+                        area_name=area_name,
+                        entity_id="binary_sensor.motion_574",
+                        state=state,
+                        start_time=_h(start).replace(tzinfo=None),
+                        end_time=_h(end).replace(tzinfo=None),
+                        duration_seconds=(end - start) * 3600.0,
+                        aggregation_level="raw",
+                    )
+                )
+            session.commit()
+        analyzer = PriorAnalyzer(coordinator, area_name)
+
+        with (
+            patch.object(
+                analyzer,
+                "get_occupied_intervals",
+                return_value=[(_h(5), _h(7)), (_h(40), _h(41))],
+            ),
+            patch.object(
+                analyzer.db, "get_first_interval_timestamp", return_value=_h(0)
+            ),
+            patch(
+                "custom_components.area_occupancy.data.analysis.dt_util.utcnow",
+                return_value=_h(48),
+            ),
+            patch(
+                "custom_components.area_occupancy.db.queries.dt_util.utcnow",
+                return_value=_h(48),
+            ),
+        ):
+            analyzer.calculate_and_update_prior()
+
+        assert area.prior.global_prior == pytest.approx(3 / 34)
+
+
+class TestZoneObservedTime:
+    def test_zone_is_observed_only_while_every_room_is(self) -> None:
+        """Room B observed only 0-30h: zone observed 30 h, occupied 2 h.
+
+        2/30 = 0.0667; over the whole window it was 2/48 = 0.0417.
+        """
+        zone = compute_zone_priors(
+            [[(_h(10), _h(12))], []],
+            _h(0),
+            _h(48),
+            member_observed=[[(_h(0), _h(48))], [(_h(0), _h(30))]],
+        )
+
+        assert zone is not None
+        assert zone.global_prior == pytest.approx(2 / 30)
+
+
+class TestAwaySpans:
+    """Away-mode entity history becomes spans prior learning leaves out."""
+
+    async def test_on_stretches_become_spans(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        def state(value: str, hours: float) -> Mock:
+            return Mock(state=value, last_changed=_h(hours))
+
+        history = {
+            "input_boolean.away": [
+                state("off", 0),
+                state("on", 10),
+                state("off", 20),
+                state("unavailable", 25),
+                state("on", 30),
+            ]
+        }
+        with (
+            patch.object(
+                type(coordinator.integration_config),
+                "away_mode_entity",
+                new_callable=PropertyMock,
+                return_value="input_boolean.away",
+            ),
+            patch(
+                "homeassistant.components.recorder.history.get_significant_states",
+                return_value=history,
+            ),
+            patch(
+                "homeassistant.helpers.recorder.get_instance",
+                return_value=Mock(
+                    async_add_executor_job=AsyncMock(side_effect=lambda f: f())
+                ),
+            ),
+            patch(
+                "custom_components.area_occupancy.coordinator.dt_util.utcnow",
+                return_value=_h(48),
+            ),
+        ):
+            await coordinator.async_refresh_away_spans()
+
+        assert coordinator.away_spans == [(_h(10), _h(20)), (_h(30), _h(48))]
+
+    async def test_no_away_entity_means_no_spans(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        coordinator.away_spans = [(_h(0), _h(1))]
+        with patch.object(
+            type(coordinator.integration_config),
+            "away_mode_entity",
+            new_callable=PropertyMock,
+            return_value=None,
+        ):
+            await coordinator.async_refresh_away_spans()
+        assert coordinator.away_spans == []
