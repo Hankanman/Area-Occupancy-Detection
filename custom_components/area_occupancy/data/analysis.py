@@ -506,6 +506,7 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
     await coordinator.async_save_away_shadow()
     await coordinator.async_save_ground_truth()
     await coordinator.async_save_door_holds()
+    await coordinator.async_save_continuity()
     await coordinator.async_save_fusion_state()
 
 

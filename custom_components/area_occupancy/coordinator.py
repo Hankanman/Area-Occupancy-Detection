@@ -41,6 +41,8 @@ from .const import (
     AWAY_SHADOW_STORE_KEY_PREFIX,
     AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
+    CONTINUITY_STORE_KEY_PREFIX,
+    CONTINUITY_STORE_VERSION,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NAME,
     DOMAIN,
@@ -68,6 +70,7 @@ from .data.adjacency import (
 from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
+from .data.continuity_shadow import ContinuityShadow, ContinuityState, half_life_ratio
 from .data.door_hold import DoorHold, DoorHoldState
 from .data.entity_type import (
     BINARY_INPUT_TYPES,
@@ -261,6 +264,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             GROUND_TRUTH_STORE_VERSION,
             f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Presence-continuity shadow (#558) for open-plan rooms.
+        self._continuity: dict[str, ContinuityShadow] = {}
+        self._continuity_store: Store[dict[str, dict]] = Store(
+            hass,
+            CONTINUITY_STORE_VERSION,
+            f"{CONTINUITY_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Closed-door holds (#558), persisted so a restart keeps a hold.
         self._door_holds: dict[str, DoorHold] = {}
@@ -642,13 +652,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         LabelerState.from_dict(stored_labels[area_name])
                     )
 
-            # Restore closed-door holds (#558) for known areas
-            stored_holds = await self._door_hold_store.async_load() or {}
-            for area_name in self.areas:
-                if area_name in stored_holds:
-                    self._door_holds[area_name] = DoorHold(
-                        DoorHoldState.from_dict(stored_holds[area_name])
-                    )
+            await self._restore_door_state()
 
             # Restore the shadow likelihoods (#603) for known areas
             stored_likelihoods = await self._likelihood_shadow_store.async_load() or {}
@@ -861,6 +865,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             labels=self._latest_labels,
             adjacency=self._adjacency_snapshot.adjacency_index,
         )
+        self._observe_continuity(area_name, area, now, is_occupied)
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
@@ -1072,6 +1077,65 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             motion_window=wasp.motion_timeout,
             max_hold=wasp.max_duration,
             fade_half_life=decay.half_life,
+        )
+
+    async def _restore_door_state(self) -> None:
+        """Restore closed-door holds and the continuity shadow (#558)."""
+        stored_holds = await self._door_hold_store.async_load() or {}
+        stored_continuity = await self._continuity_store.async_load() or {}
+        for area_name in self.areas:
+            if area_name in stored_holds:
+                self._door_holds[area_name] = DoorHold(
+                    DoorHoldState.from_dict(stored_holds[area_name])
+                )
+            if area_name in stored_continuity:
+                self._continuity[area_name] = ContinuityShadow(
+                    ContinuityState.from_dict(stored_continuity[area_name])
+                )
+
+    def continuity_for(self, area_name: str) -> ContinuityShadow | None:
+        """The area's presence-continuity shadow, if it has one (#558)."""
+        return self._continuity.get(area_name)
+
+    def _observe_continuity(
+        self, area_name: str, area: Area, now: datetime, is_occupied: bool
+    ) -> None:
+        """Record one tick of the presence-continuity shadow (#558).
+
+        Open-plan rooms only: a room with the closed-door hold already
+        holds, and one without decay never clears.
+        """
+        if area.config.closed_door_hold or not area.config.decay.enabled:
+            self._continuity.pop(area_name, None)
+            return
+        modifier = self._adjacency_decay_modifiers.get(area_name)
+        ratio = (
+            half_life_ratio(
+                modifier.base_half_life_seconds,
+                modifier.effective_half_life_seconds,
+                modifier.silence_score,
+            )
+            if modifier is not None and modifier.base_half_life_seconds > 0
+            else 1.0
+        )
+        neighbours = self._adjacency_snapshot.adjacency_index.get(area_name, set())
+        self._continuity.setdefault(area_name, ContinuityShadow()).observe(
+            now,
+            present=_ground_truth_present(area),
+            occupied=is_occupied,
+            doors_open=any(
+                str(entity.state) in ("on", "open")
+                for entity in area.entities.entities.values()
+                if entity.type.input_type == InputType.DOOR
+            ),
+            neighbours={n: self._latest_labels.get(n, False) for n in neighbours},
+            half_life_ratio=ratio,
+        )
+
+    async def async_save_continuity(self) -> None:
+        """Persist the presence-continuity shadow via the HA storage helper."""
+        await self._continuity_store.async_save(
+            {name: c.state.to_dict() for name, c in self._continuity.items()}
         )
 
     async def async_save_door_holds(self) -> None:
@@ -1406,6 +1470,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save ground-truth labellers for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_continuity()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save the continuity shadow for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

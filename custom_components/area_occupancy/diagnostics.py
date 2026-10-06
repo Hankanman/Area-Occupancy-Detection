@@ -319,6 +319,9 @@ def _area_snapshot(
         away_shadow = coordinator.away_shadow_for(area_name)
         if away_shadow is not None:
             current["away"] = away_shadow.snapshot()
+        continuity = coordinator.continuity_for(area_name)
+        if continuity is not None and (summary := continuity.summary()):
+            current["continuity"] = summary
         door_hold = coordinator.door_hold_for(area_name)
         current["door_hold"] = {
             "enabled": area.config.closed_door_hold,

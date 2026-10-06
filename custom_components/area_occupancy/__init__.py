@@ -34,6 +34,8 @@ from .const import (
     AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
     CONF_VERSION,
+    CONTINUITY_STORE_KEY_PREFIX,
+    CONTINUITY_STORE_VERSION,
     DB_NAME,
     DOMAIN,
     DOOR_HOLD_STORE_KEY_PREFIX,
@@ -554,6 +556,18 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove ground-truth storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        try:
+            await Store(
+                hass,
+                CONTINUITY_STORE_VERSION,
+                f"{CONTINUITY_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove continuity storage during entry removal %s",
                 entry.entry_id,
             )
 
