@@ -45,6 +45,12 @@ The live calculation snapshot at the moment the diagnostic ran.
 | `decaying_entity_count` | How many sensors are currently mid-decay |
 | `entity_count` | Total sensors configured for the area |
 
+`current` also carries three **shadow-mode** blocks. Each is marked `shadow_mode: true`: computed and recorded, but never used by the live probability. They exist to gather evidence before any of them is allowed to change behaviour.
+
+- **`accuracy`** (#499): how well the area's decisions matched motion-confirmed ground truth over the last 24 hours. It shows agreement, calibration error, false-on and false-off rates, and a suggested threshold. A rate (and the suggestion) stays blank until the window has at least an hour of that truth class. The window lives in memory and restarts with Home Assistant, so `history` keeps one summary per day (the last 14 shown, 90 kept) that survives restarts.
+- **`online_prior`** (#500): a continuously updated estimate of the area's prior, compared with the hourly database calculation (`diff`, `diff_history`, `days_within_tolerance`). It restarts automatically when the area's motion, media or sleep sensors (or their active states) change, or when its history predates the database by more than a day (after a database reset), because statistics from another sensor set never line up with the database again.
+- **`fusion`** (#501): learned per-sensor weights, reported once the area has `min_samples` ticks. For each sensor, `learned_weight` is what the learner has arrived at, `effective_weight` is the live pipeline's weight (configured weight × information gain, so `0` when the sensor's learned likelihoods carry no information), and `samples` is how many ticks that sensor contributed. A sensor removed from the area, or whose active states change, is forgotten.
+
 #### `prior`
 
 The learned prior breakdown — surfaces *which term* is driving the occupancy probability, especially useful when an area appears stuck without active evidence.

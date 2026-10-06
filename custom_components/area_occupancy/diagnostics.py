@@ -270,6 +270,10 @@ def _area_snapshot(
         accuracy = coordinator.accuracy_metrics_for(area_name)
         if accuracy is not None:
             current["accuracy"] = metrics_to_diagnostics(accuracy)
+            # Daily summaries survive restarts; the last two weeks here.
+            current["accuracy"]["history"] = coordinator.accuracy_history_for(
+                area_name
+            )[-14:]
         estimator = coordinator.online_prior_for(area_name)
         if estimator is not None:
             now = dt_util.utcnow()

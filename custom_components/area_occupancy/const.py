@@ -429,6 +429,14 @@ ONLINE_PRIOR_DIFF_TOLERANCE: Final = 0.02
 # How many daily divergence summaries the store retains per area.
 ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 
+# --- Accuracy history (#499, shadow mode) ---
+# The accuracy window is in memory and restarts with Home Assistant, so a
+# daily summary is persisted to make "stable for a release cycle" checkable
+# across restarts. Same Store lifecycle as the online-prior pair above.
+ACCURACY_STORE_VERSION: Final = 1
+ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
+ACCURACY_HISTORY_DAYS: Final = 90
+
 # --- Learned sensor fusion (#501, shadow mode) ---
 # Store version and key prefix for the per-entry learned-weight state,
 # shared between the coordinator (persistence) and __init__.py (removal

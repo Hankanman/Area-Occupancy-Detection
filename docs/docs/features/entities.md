@@ -119,9 +119,9 @@ These entities provide insight into the internal calculations and are useful for
     *   **Entity Category:** `diagnostic`
     *   **Attributes:**
         *   `expected_calibration_error`: Mean gap between predicted probability and observed occupancy rate (lower is better-calibrated).
-        *   `false_on_rate` / `false_off_rate`: Time-weighted share of truly-empty time spent reporting occupied, and vice versa.
+        *   `false_on_rate` / `false_off_rate`: Time-weighted share of truly-empty time spent reporting occupied, and vice versa. Each needs at least an hour of truly-empty (or occupied) time in the window and is blank until then; a few minutes of one class is too little to rate.
         *   `decision_transitions` / `truth_transitions`: Occupancy flips vs. ground-truth flips over the window.
-        *   `suggested_threshold`: The threshold (%) the calibration data currently argues for. Informational only — nothing applies it automatically.
+        *   `suggested_threshold`: The threshold (%) the calibration data currently argues for. Blank until the window holds an hour of both occupied and empty time. Informational only — nothing applies it automatically.
         *   `calibration_bins`: Per-probability-band reliability rows (excluded from the recorder).
         *   `sample_count`, `window_start`, `window_end`: The observation window behind the numbers.
 

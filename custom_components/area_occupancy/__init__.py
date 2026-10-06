@@ -28,6 +28,8 @@ from homeassistant.loader import async_get_integration
 
 from .config_helpers import iter_area_subentries
 from .const import (
+    ACCURACY_STORE_KEY_PREFIX,
+    ACCURACY_STORE_VERSION,
     CONF_AREA_ID,
     CONF_VERSION,
     DB_NAME,
@@ -490,6 +492,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove online-prior storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the accuracy-history Store (#499).
+        try:
+            await Store(
+                hass,
+                ACCURACY_STORE_VERSION,
+                f"{ACCURACY_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove accuracy-history storage during entry removal %s",
                 entry.entry_id,
             )
 
