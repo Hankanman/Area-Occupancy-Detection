@@ -320,7 +320,12 @@ class SensorHealthRepairs:
             if (
                 not self._areas
                 or issue_id in orphaned_ids
-                or issue_id.startswith(f"sensor_health_{area_id}_")
+                or (
+                    # Only legacy IDs sanitize the entity ID's dot. A room
+                    # named "media" must not match shared media_player IDs.
+                    "." not in issue_id
+                    and issue_id.startswith(f"sensor_health_{area_id}_")
+                )
             ):
                 ir.async_delete_issue(self._hass, DOMAIN, issue_id)
                 self._active_issue_ids.discard(issue_id)
@@ -342,79 +347,10 @@ class SensorHealthRepairs:
                 if issue.entity_id is not None:
                     by_entity.setdefault(issue.entity_id, []).append((area_name, issue))
 
-        # A shared sensor can have different mappings/thresholds in each room.
-        # Show its most urgent finding, deterministically, rather than raising
-        # several repairs. Every finding remains in its area's diagnostics.
-        priority = {
-            HealthIssueType.UNAVAILABLE: 0,
-            HealthIssueType.STUCK_ACTIVE: 1,
-            HealthIssueType.STUCK_INACTIVE: 2,
-            HealthIssueType.NEVER_TRIGGERED: 3,
+        current_ids = {
+            self._publish_sensor(entity_id, findings)
+            for entity_id, findings in by_entity.items()
         }
-        current_ids: set[str] = set()
-        for entity_id, findings in by_entity.items():
-            _, issue = min(
-                findings,
-                key=lambda item: (
-                    priority[item[1].issue_type],
-                    -item[1].duration_hours,
-                    item[0],
-                ),
-            )
-            repair_id = _issue_id("", entity_id, issue.issue_type)
-            current_ids.add(repair_id)
-            area_names = ", ".join(
-                sorted(
-                    {
-                        name
-                        for name, finding in findings
-                        if finding.issue_type == issue.issue_type
-                    }
-                )
-            )
-            ir.async_create_issue(
-                self._hass,
-                DOMAIN,
-                repair_id,
-                is_fixable=False,
-                severity=(
-                    ir.IssueSeverity.ERROR
-                    if issue.issue_type
-                    in (HealthIssueType.UNAVAILABLE, HealthIssueType.STUCK_ACTIVE)
-                    else ir.IssueSeverity.WARNING
-                ),
-                translation_key=f"sensor_health_{issue.issue_type}",
-                translation_placeholders={
-                    "area": area_names,
-                    "entity_id": entity_id,
-                    "duration": str(round(issue.duration_hours)),
-                    "sensor_type": issue.input_type.value if issue.input_type else "",
-                },
-            )
-            # Retire pre-consolidation IDs without losing an Ignore choice.
-            # Inactive legacy ignores remain until their problem recurs, since
-            # HA persists only their ID and dismissal across a restart.
-            for area_id, entity_ids in self._entities.items():
-                if entity_id not in entity_ids:
-                    continue
-                legacy_id = f"sensor_health_{area_id}_{entity_id.replace('.', '_')}_{issue.issue_type}"
-                if legacy_id not in self._active_issue_ids:
-                    continue
-                if _is_ignored(self._hass, legacy_id):
-                    ir.async_ignore_issue(self._hass, DOMAIN, repair_id, True)
-                ir.async_delete_issue(self._hass, DOMAIN, legacy_id)
-                self._active_issue_ids.discard(legacy_id)
-
-            if repair_id not in self._active_issue_ids and not _is_ignored(
-                self._hass, repair_id
-            ):
-                _LOGGER.warning(
-                    "New sensor health issues in area(s) '%s': %s (%s)",
-                    area_names,
-                    entity_id,
-                    issue.issue_type,
-                )
-
         resolved_ids = {
             issue_id
             for issue_id in self._active_issue_ids - current_ids
@@ -425,6 +361,87 @@ class SensorHealthRepairs:
         if resolved_ids:
             _LOGGER.info("Resolved %d sensor health issue(s)", len(resolved_ids))
         self._active_issue_ids = (self._active_issue_ids - resolved_ids) | current_ids
+
+    def _publish_sensor(
+        self, entity_id: str, findings: list[tuple[str, HealthIssue]]
+    ) -> str:
+        """Publish the most urgent finding and return this sensor's repair ID."""
+        # A shared sensor can have different mappings/thresholds in each room.
+        # Show its most urgent finding, deterministically, rather than raising
+        # several repairs. Every finding remains in its area's diagnostics.
+        priority = {
+            HealthIssueType.UNAVAILABLE: 0,
+            HealthIssueType.STUCK_ACTIVE: 1,
+            HealthIssueType.STUCK_INACTIVE: 2,
+            HealthIssueType.NEVER_TRIGGERED: 3,
+        }
+        _, issue = min(
+            findings,
+            key=lambda item: (
+                priority[item[1].issue_type],
+                -item[1].duration_hours,
+                item[0],
+            ),
+        )
+        repair_id = _issue_id("", entity_id, issue.issue_type)
+        area_names = ", ".join(
+            sorted(
+                {
+                    name
+                    for name, finding in findings
+                    if finding.issue_type == issue.issue_type
+                }
+            )
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            repair_id,
+            is_fixable=False,
+            severity=(
+                ir.IssueSeverity.ERROR
+                if issue.issue_type
+                in (HealthIssueType.UNAVAILABLE, HealthIssueType.STUCK_ACTIVE)
+                else ir.IssueSeverity.WARNING
+            ),
+            translation_key=f"sensor_health_{issue.issue_type}",
+            translation_placeholders={
+                "area": area_names,
+                "entity_id": entity_id,
+                "duration": str(round(issue.duration_hours)),
+                "sensor_type": issue.input_type.value if issue.input_type else "",
+            },
+        )
+        self._migrate_legacy_repairs(entity_id, issue.issue_type, repair_id)
+        if repair_id not in self._active_issue_ids and not _is_ignored(
+            self._hass, repair_id
+        ):
+            _LOGGER.warning(
+                "New sensor health issues in area(s) '%s': %s (%s)",
+                area_names,
+                entity_id,
+                issue.issue_type,
+            )
+        return repair_id
+
+    def _migrate_legacy_repairs(
+        self, entity_id: str, issue_type: HealthIssueType, repair_id: str
+    ) -> None:
+        """Retire this sensor's per-area repair IDs, preserving any Ignore choice."""
+        # Inactive legacy ignores remain until their problem recurs, since
+        # HA persists only their ID and dismissal across a restart.
+        for area_id, entity_ids in self._entities.items():
+            if entity_id not in entity_ids:
+                continue
+            legacy_id = (
+                f"sensor_health_{area_id}_{entity_id.replace('.', '_')}_{issue_type}"
+            )
+            if legacy_id not in self._active_issue_ids:
+                continue
+            if _is_ignored(self._hass, legacy_id):
+                ir.async_ignore_issue(self._hass, DOMAIN, repair_id, True)
+            ir.async_delete_issue(self._hass, DOMAIN, legacy_id)
+            self._active_issue_ids.discard(legacy_id)
 
 
 class HealthMonitor:
