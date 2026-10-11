@@ -631,6 +631,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._validate_areas_configured()
 
+            await self.sensor_health_repairs.async_load()
+
             # Restore online-prior shadow state (#500) for known areas
             stored_priors = await self._online_prior_store.async_load() or {}
             for area_name in self.areas:
@@ -1537,6 +1539,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._save_timer = None
 
         # Step 7: Clean up all areas (clears caches, entities, and internal references)
+        # Unloading is not area removal: retain shared repairs and their Ignore
+        # choices, including choices archived after a problem changed type.
+        try:
+            await self.sensor_health_repairs.async_shutdown()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning("Failed to save sensor health Ignore choices: %s", err)
         for area in list(self.areas.values()):
             await area.async_cleanup()
 

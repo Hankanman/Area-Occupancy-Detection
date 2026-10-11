@@ -155,7 +155,7 @@ New repairs are still raised by the hourly check, since every threshold is an ho
 
 A sensor can't trigger while it is offline, so after an outage of an hour or more its inactivity checks count from when it came back. A sensor that spent five days offline doesn't return to a "hasn't triggered for eight days" repair.
 
-A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. To get alerts for that sensor again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
+A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. If a different problem replaces it, only the new repair is shown; the earlier Ignore choice is saved separately and restored when that problem returns, including across restarts. Ignoring one problem does not silence a different problem with the same sensor. To get alerts for a currently ignored problem again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
 
 ## Sensor Health Entity
 

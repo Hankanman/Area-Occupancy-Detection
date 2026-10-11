@@ -59,6 +59,7 @@ from .const import (
     WASP_IN_BOX_DOCS_URL,
 )
 from .coordinator import AreaOccupancyCoordinator
+from .data.health import SensorHealthRepairs
 from .db.operations import delete_area_data as _delete_area_data
 from .db.schema import (
     AreaRelationships,
@@ -611,6 +612,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         # When no other entries remain, drop the whole database so a re-install
         # starts clean.
+        if not other_entries:
+            await SensorHealthRepairs(hass).async_remove()
         if not other_entries and db_path is not None:
             try:
                 await hass.async_add_executor_job(_delete_db_file, db_path)

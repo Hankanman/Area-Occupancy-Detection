@@ -25,9 +25,16 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from ..const import DOMAIN, HOME_ZONE_ENTITY_ID, MAX_PROBABILITY
+from ..const import (
+    DOMAIN,
+    HOME_ZONE_ENTITY_ID,
+    MAX_PROBABILITY,
+    SENSOR_HEALTH_IGNORE_STORE_KEY,
+    SENSOR_HEALTH_IGNORE_STORE_VERSION,
+)
 from .entity_type import BINARY_INPUT_TYPES, InputType
 from .purpose import AreaPurpose
 
@@ -276,6 +283,13 @@ class SensorHealthRepairs:
         self._hass = hass
         self._areas: dict[str, tuple[str, list[HealthIssue]]] = {}
         self._entities: dict[str, set[str]] = {}
+        # HA deletes a repair's Ignore choice with its registry entry. Keep
+        # superseded choices separately so only one repair remains per sensor.
+        self._ignored_issue_ids: set[str] = set()
+        self._ignore_store: Store[list[str]] = Store(
+            hass, SENSOR_HEALTH_IGNORE_STORE_VERSION, SENSOR_HEALTH_IGNORE_STORE_KEY
+        )
+        self._shutting_down = False
         try:
             self._active_issue_ids = {
                 issue_id
@@ -284,6 +298,28 @@ class SensorHealthRepairs:
             }
         except (AttributeError, KeyError, TypeError):
             self._active_issue_ids = set()
+
+    async def async_load(self) -> None:
+        """Restore Ignore choices for sensor problems replaced by another type."""
+        self._ignored_issue_ids = set(await self._ignore_store.async_load() or [])
+
+    async def async_shutdown(self) -> None:
+        """Flush saved choices and preserve repairs during coordinator teardown."""
+        self._shutting_down = True
+        await self._ignore_store.async_save(sorted(self._ignored_issue_ids))
+
+    async def async_remove(self) -> None:
+        """Remove repairs and saved choices when the integration is deleted."""
+        self.clear()
+        await self._ignore_store.async_remove()
+
+    def is_ignored(self, issue_id: str) -> bool:
+        """Include saved choices when another problem occupies the sensor's repair."""
+        return issue_id in self._ignored_issue_ids or _is_ignored(self._hass, issue_id)
+
+    def _save_ignores(self) -> None:
+        """Persist changed choices, coalescing updates from different rooms."""
+        self._ignore_store.async_delay_save(lambda: sorted(self._ignored_issue_ids), 5)
 
     def register_area(self, area_id: str, area_name: str, entity_ids: set[str]) -> None:
         """Register ownership before checking, including legacy Ignore choices."""
@@ -307,6 +343,8 @@ class SensorHealthRepairs:
 
     def remove_area(self, area_id: str) -> None:
         """Withdraw an area, preserving repairs and ignores used elsewhere."""
+        if self._shutting_down:
+            return
         self._areas.pop(area_id, None)
         removed_entities = self._entities.pop(area_id, set())
         remaining_entities = set().union(*self._entities.values())
@@ -329,6 +367,14 @@ class SensorHealthRepairs:
             ):
                 ir.async_delete_issue(self._hass, DOMAIN, issue_id)
                 self._active_issue_ids.discard(issue_id)
+        removed_ignores = (
+            self._ignored_issue_ids & orphaned_ids
+            if self._areas
+            else self._ignored_issue_ids.copy()
+        )
+        if removed_ignores:
+            self._ignored_issue_ids.difference_update(removed_ignores)
+            self._save_ignores()
         self._publish()
 
     def clear(self) -> None:
@@ -338,6 +384,9 @@ class SensorHealthRepairs:
         self._active_issue_ids.clear()
         self._areas.clear()
         self._entities.clear()
+        if self._ignored_issue_ids:
+            self._ignored_issue_ids.clear()
+            self._save_ignores()
 
     def _publish(self) -> None:
         """Merge sensor findings and announce only newly detected problems."""
@@ -384,6 +433,7 @@ class SensorHealthRepairs:
             ),
         )
         repair_id = _issue_id("", entity_id, issue.issue_type)
+        self._retire_other_types(entity_id, repair_id)
         area_names = ", ".join(
             sorted(
                 {
@@ -412,7 +462,12 @@ class SensorHealthRepairs:
                 "sensor_type": issue.input_type.value if issue.input_type else "",
             },
         )
-        self._migrate_legacy_repairs(entity_id, issue.issue_type, repair_id)
+        self._migrate_legacy_repairs(entity_id)
+        if repair_id in self._ignored_issue_ids:
+            ir.async_ignore_issue(self._hass, DOMAIN, repair_id, True)
+            # HA now owns this choice again, including a subsequent Unignore.
+            self._ignored_issue_ids.remove(repair_id)
+            self._save_ignores()
         if repair_id not in self._active_issue_ids and not _is_ignored(
             self._hass, repair_id
         ):
@@ -424,24 +479,35 @@ class SensorHealthRepairs:
             )
         return repair_id
 
-    def _migrate_legacy_repairs(
-        self, entity_id: str, issue_type: HealthIssueType, repair_id: str
-    ) -> None:
+    def _retire_other_types(self, entity_id: str, current_id: str) -> None:
+        """Replace older problem types without forgetting their Ignore choices."""
+        other_ids = {
+            _issue_id("", entity_id, issue_type)
+            for issue_type in HealthIssueType
+            if issue_type not in _PIPELINE_ISSUE_TYPES
+        } - {current_id}
+        for issue_id in self._active_issue_ids & other_ids:
+            self._retire_repair(issue_id, issue_id)
+
+    def _retire_repair(self, issue_id: str, shared_id: str) -> None:
+        """Remove a superseded repair, saving its Ignore under the shared ID."""
+        if _is_ignored(self._hass, issue_id):
+            self._ignored_issue_ids.add(shared_id)
+            self._save_ignores()
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        self._active_issue_ids.discard(issue_id)
+
+    def _migrate_legacy_repairs(self, entity_id: str) -> None:
         """Retire this sensor's per-area repair IDs, preserving any Ignore choice."""
-        # Inactive legacy ignores remain until their problem recurs, since
-        # HA persists only their ID and dismissal across a restart.
         for area_id, entity_ids in self._entities.items():
             if entity_id not in entity_ids:
                 continue
-            legacy_id = (
-                f"sensor_health_{area_id}_{entity_id.replace('.', '_')}_{issue_type}"
-            )
-            if legacy_id not in self._active_issue_ids:
-                continue
-            if _is_ignored(self._hass, legacy_id):
-                ir.async_ignore_issue(self._hass, DOMAIN, repair_id, True)
-            ir.async_delete_issue(self._hass, DOMAIN, legacy_id)
-            self._active_issue_ids.discard(legacy_id)
+            for issue_type in HealthIssueType:
+                if issue_type in _PIPELINE_ISSUE_TYPES:
+                    continue
+                legacy_id = f"sensor_health_{area_id}_{entity_id.replace('.', '_')}_{issue_type}"
+                if legacy_id in self._active_issue_ids:
+                    self._retire_repair(legacy_id, _issue_id("", entity_id, issue_type))
 
 
 class HealthMonitor:
@@ -538,7 +604,7 @@ class HealthMonitor:
 
     def _is_ignored(self, issue_id: str) -> bool:
         """Keep the user's Ignore choice across recovery and recurrence."""
-        return _is_ignored(self._hass, issue_id)
+        return self._sensor_repairs.is_ignored(issue_id)
 
     @property
     def issues(self) -> list[HealthIssue]:

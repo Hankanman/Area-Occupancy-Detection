@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -79,11 +80,12 @@ def _make_entity(
 
 
 @pytest.fixture
-def mock_hass() -> Mock:
+def mock_hass() -> Generator[Mock]:
     """Create a mock Home Assistant instance with no person entities."""
     hass = Mock()
     hass.states.async_all.return_value = []
-    return hass
+    with patch("custom_components.area_occupancy.data.health.Store"):
+        yield hass
 
 
 @pytest.fixture
@@ -2632,6 +2634,190 @@ class TestSharedSensorRepairs:
         assert not any("New sensor health issues" in r.message for r in caplog.records)
         monitors[1].clear_all_issues()
         assert self._repairs(hass) == []
+
+    @pytest.mark.parametrize(
+        ("state", "input_type", "issue_type"),
+        [
+            ("off", InputType.MOTION, HealthIssueType.STUCK_INACTIVE),
+            ("off", InputType.APPLIANCE, HealthIssueType.NEVER_TRIGGERED),
+            ("unavailable", InputType.MOTION, HealthIssueType.UNAVAILABLE),
+        ],
+    )
+    async def test_ignored_problem_type_change_keeps_one_repair(
+        self,
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
+        state: str,
+        input_type: InputType,
+        issue_type: HealthIssueType,
+    ) -> None:
+        """A different problem replaces an ignored repair without inheriting Ignore."""
+        monitors = self._monitors(hass)
+        for monitor in monitors:
+            monitor.check_health({self.SENSOR: self._entity()})
+        ignored_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, ignored_id, True)
+        caplog.clear()
+
+        for monitor in monitors:
+            entity = self._entity(hours=8 * 24, state=state, input_type=input_type)
+            if state == "unavailable":
+                monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+            assert len(self._repairs(hass)) == 1
+
+        repair = self._repairs(hass)[0]
+        assert repair.translation_key == f"sensor_health_{issue_type}"
+        assert repair.dismissed_version is None
+        assert sum("New sensor health issues" in r.message for r in caplog.records) == 1
+
+        # The original problem must still be ignored when it returns, including
+        # while another room's higher-priority unavailable finding is visible.
+        caplog.clear()
+        for monitor in monitors:
+            entity = self._entity()
+            monitor.check_health({self.SENSOR: entity})
+            assert not entity.is_stuck
+            assert len(self._repairs(hass)) == 1
+        repair = self._repairs(hass)[0]
+        assert repair.issue_id == ignored_id
+        assert repair.dismissed_version is not None
+        assert not any("New sensor health issues" in r.message for r in caplog.records)
+
+    async def test_type_specific_ignore_survives_restart_and_can_be_removed(
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Archived Ignore choices persist, but restoring one still allows Unignore."""
+        kitchen, hall = self._monitors(hass)
+        for monitor in (kitchen, hall):
+            monitor.check_health({self.SENSOR: self._entity()})
+        active_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, active_id, True)
+        for monitor in (kitchen, hall):
+            entity = self._entity(hours=2, state="unavailable")
+            monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+        unavailable_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, unavailable_id, True)
+
+        # Unload flushes the real HA Store before room cleanup. A new publisher
+        # must restore choices even when the first check finds a healthy sensor.
+        await kitchen._sensor_repairs.async_shutdown()
+        kitchen.cleanup()
+        hall.cleanup()
+        publisher = SensorHealthRepairs(hass)
+        await publisher.async_load()
+        hall = HealthMonitor("Hall", "hall", hass, sensor_repairs=publisher)
+        hall.check_health({self.SENSOR: self._entity(hours=0, state="off")})
+        caplog.clear()
+        entity = self._entity()
+        hall.check_health({self.SENSOR: entity})
+        assert not entity.is_stuck
+        assert len(self._repairs(hass)) == 1
+        assert self._repairs(hass)[0].issue_id == active_id
+        assert self._repairs(hass)[0].dismissed_version is not None
+        assert not any("New sensor health issues" in r.message for r in caplog.records)
+
+        ir.async_ignore_issue(hass, DOMAIN, active_id, False)
+        hall.check_health({self.SENSOR: entity})
+        assert entity.is_stuck
+        unavailable = self._entity(hours=2, state="unavailable")
+        hall._unavailable_since[self.SENSOR] = unavailable.last_updated
+        hall.check_health({self.SENSOR: unavailable})
+        assert len(self._repairs(hass)) == 1
+        assert self._repairs(hass)[0].issue_id == unavailable_id
+        assert self._repairs(hass)[0].dismissed_version is not None
+
+        # Another restart and type change must not resurrect the removed Ignore.
+        await publisher.async_shutdown()
+        hall.cleanup()
+        publisher = SensorHealthRepairs(hass)
+        await publisher.async_load()
+        hall = HealthMonitor("Hall", "hall", hass, sensor_repairs=publisher)
+        caplog.clear()
+        entity = self._entity()
+        hall.check_health({self.SENSOR: entity})
+        assert entity.is_stuck
+        assert len(self._repairs(hass)) == 1
+        assert self._repairs(hass)[0].dismissed_version is None
+        assert sum("New sensor health issues" in r.message for r in caplog.records) == 1
+
+    @pytest.mark.parametrize(
+        "action", ["disable", "remove_areas", "remove_integration"]
+    )
+    async def test_clearing_monitoring_removes_archived_ignores(
+        self, hass: HomeAssistant, action: str
+    ) -> None:
+        """Explicit removal clears both the visible repair and older Ignore choices."""
+        kitchen, hall = self._monitors(hass)
+        for monitor in (kitchen, hall):
+            monitor.check_health({self.SENSOR: self._entity()})
+        ir.async_ignore_issue(hass, DOMAIN, self._repairs(hass)[0].issue_id, True)
+        for monitor in (kitchen, hall):
+            entity = self._entity(hours=2, state="unavailable")
+            monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+        publisher = kitchen._sensor_repairs
+        if action == "disable":
+            publisher.clear()
+        elif action == "remove_areas":
+            kitchen.cleanup()
+            # Removing just one room must retain the shared sensor's Ignore.
+            assert publisher.is_ignored(
+                _issue_id("", self.SENSOR, HealthIssueType.STUCK_ACTIVE)
+            )
+            hall.cleanup()
+        else:
+            await publisher.async_remove()
+        assert self._repairs(hass) == []
+        await publisher.async_shutdown()
+
+        publisher = SensorHealthRepairs(hass)
+        await publisher.async_load()
+        hall = HealthMonitor("Hall", "hall", hass, sensor_repairs=publisher)
+        entity = self._entity()
+        hall.check_health({self.SENSOR: entity})
+        assert entity.is_stuck
+        assert self._repairs(hass)[0].dismissed_version is None
+
+    async def test_legacy_ignores_for_other_types_do_not_leave_duplicate_repairs(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Migrate ignored legacy problems even when a different problem is shown."""
+        for area_id, issue_type in (
+            ("kitchen", HealthIssueType.STUCK_ACTIVE),
+            ("hall", HealthIssueType.STUCK_INACTIVE),
+        ):
+            legacy_id = (
+                f"sensor_health_{area_id}_{self.SENSOR.replace('.', '_')}_{issue_type}"
+            )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                legacy_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key=f"sensor_health_{issue_type}",
+            )
+            ir.async_ignore_issue(hass, DOMAIN, legacy_id, True)
+        monitors = self._monitors(hass)
+        for monitor in monitors:
+            monitor._sensor_repairs.register_area(
+                monitor._area_id, monitor._area_name, {self.SENSOR}
+            )
+        for monitor in monitors:
+            entity = self._entity(hours=2, state="unavailable")
+            monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+            assert len(self._repairs(hass)) == 1
+            assert self._repairs(hass)[0].dismissed_version is None
+        for state in ("on", "off"):
+            for monitor in monitors:
+                monitor.check_health(
+                    {self.SENSOR: self._entity(hours=8 * 24, state=state)}
+                )
+                assert len(self._repairs(hass)) == 1
+            assert self._repairs(hass)[0].dismissed_version is not None
 
     @pytest.mark.parametrize("ignored", [False, True])
     async def test_legacy_repairs_consolidate_and_preserve_ignore(
