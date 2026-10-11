@@ -81,6 +81,7 @@ from .data.entity_type import (
 )
 from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
+from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
@@ -171,6 +172,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Integration-level configuration (global settings for entire integration)
         self.integration_config = IntegrationConfig(self, config_entry)
+        self.sensor_health_repairs = SensorHealthRepairs(hass)
 
         # Multi-area architecture: dict[str, Area] keyed by area name
         self.areas: dict[str, Area] = {}

@@ -13,6 +13,18 @@ During the hourly analysis cycle, the integration checks each sensor for:
 
 When an issue is detected, a repair entry appears in **Settings → System → Repairs** with a description of the problem and actionable troubleshooting steps. Repairs are dismissed automatically as soon as the sensor recovers, without waiting for the next hourly check.
 
+A sensor used in several rooms gets one repair entry and one warning log when
+the problem is first detected. The repair lists the affected rooms. Each room's
+diagnostic health sensor still reports its own findings, using that room's
+thresholds and sensor settings. If those settings produce different problems
+for the same sensor, the repair shows the most urgent one: unavailable, stuck
+active, stuck inactive, then never triggered.
+
+Removing a room or clearing its finding updates the shared repair; it remains
+until no room reports the problem. Ignoring a sensor repair applies to that
+problem across all rooms, including after a restart. Existing per-room repairs
+are consolidated automatically, preserving Ignore choices.
+
 ## Detection Thresholds
 
 Thresholds are tuned per sensor type to avoid false positives:
