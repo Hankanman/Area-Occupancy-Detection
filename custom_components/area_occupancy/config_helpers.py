@@ -21,6 +21,8 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_BUTTON_PULSE_DURATION,
+    CONF_BUTTON_SENSORS,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
     CONF_CUSTOM_BINARY_ACTIVE_STATES,
@@ -47,6 +49,7 @@ from .const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_BUTTON,
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_CUSTOM_BINARY,
     CONF_WEIGHT_CUSTOM_NUMERIC,
@@ -61,6 +64,7 @@ from .const import (
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_BUTTON_PULSE_DURATION,
     DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -75,6 +79,7 @@ from .const import (
     DEFAULT_PURPOSE,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_BUTTON,
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_CUSTOM_BINARY,
     DEFAULT_WEIGHT_CUSTOM_NUMERIC,
@@ -115,6 +120,7 @@ WEIGHT_KEYS: tuple[tuple[str, float], ...] = (
     (CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
     (CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
     (CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+    (CONF_WEIGHT_BUTTON, DEFAULT_WEIGHT_BUTTON),
     (CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
     (CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK),
     (CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
@@ -355,6 +361,17 @@ def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
         half_life = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
         if error := validate_decay_half_life(half_life):
             errors[CONF_DECAY_HALF_LIFE] = error
+
+    if data.get(CONF_BUTTON_SENSORS):
+        pulse_duration = data.get(
+            CONF_BUTTON_PULSE_DURATION, DEFAULT_BUTTON_PULSE_DURATION
+        )
+        if (
+            not isinstance(pulse_duration, (int, float))
+            or isinstance(pulse_duration, bool)
+            or not 5 <= pulse_duration <= 600
+        ):
+            errors[CONF_BUTTON_PULSE_DURATION] = "invalid_button_pulse_duration"
 
     return errors
 

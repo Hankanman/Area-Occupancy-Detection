@@ -43,6 +43,7 @@ class InputType(StrEnum):
     MOTION = "motion"
     MEDIA = "media"
     APPLIANCE = "appliance"
+    BUTTON = "button"
     DOOR = "door"
     LOCK = "lock"
     WINDOW = "window"
@@ -195,6 +196,7 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.MOTION,
     InputType.MEDIA,
     InputType.APPLIANCE,
+    InputType.BUTTON,
     InputType.DOOR,
     InputType.LOCK,
     InputType.WINDOW,
@@ -279,6 +281,14 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
         "active_states": [STATE_ON, STATE_STANDBY],
+        "active_range": None,
+        "strength_multiplier": 2.0,
+    },
+    InputType.BUTTON: {
+        "weight": 0.7,
+        "prob_given_true": 0.8,
+        "prob_given_false": 0.01,
+        "active_states": [STATE_ON],
         "active_range": None,
         "strength_multiplier": 2.0,
     },

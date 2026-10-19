@@ -496,6 +496,23 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
+    def test_button_press_is_short_lived_presence_evidence(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A button press contributes evidence only for its configured pulse."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        entity.button_pulse_duration = 60
+
+        assert entity.evidence is False
+        entity.record_button_press()
+        assert entity.evidence is True
+
+        entity.button_pressed_at = dt_util.utcnow() - timedelta(seconds=61)
+        assert entity.evidence is False
+
     def test_has_new_evidence_transitions(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:

@@ -106,6 +106,7 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
         "motion": len(sensors.motion),
         "media": len(sensors.media),
         "appliance": len(sensors.appliance),
+        "button": len(sensors.button),
         "door": len(sensors.door),
         "lock": len(sensors.lock),
         "window": len(sensors.window),
@@ -139,6 +140,7 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
             "motion": weights.motion,
             "media": weights.media,
             "appliance": weights.appliance,
+            "button": weights.button,
             "door": weights.door,
             "lock": weights.lock,
             "window": weights.window,
@@ -152,6 +154,7 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
         },
         "min_prior_override": getattr(config, "min_prior_override", None),
         "motion_timeout": sensors.motion_timeout,
+        "button_pulse_duration": sensors.button_pulse_duration,
         "sensor_counts": sensor_counts,
     }
 

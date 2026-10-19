@@ -11,7 +11,7 @@ from typing import Any
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
+from homeassistant.const import EVENT_CALL_SERVICE, EVENT_HOMEASSISTANT_STOP, STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
@@ -22,6 +22,7 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.event import (
     async_track_point_in_time,
+    async_track_event,
     async_track_state_change_event,
 )
 from homeassistant.helpers.start import async_at_started
@@ -184,6 +185,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
+        self._button_service_listener: CALLBACK_TYPE | None = None
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
@@ -1518,6 +1520,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
+        if self._button_service_listener is not None:
+            self._button_service_listener()
+            self._button_service_listener = None
 
         # Step 4: Cancel prior update tracker
         if self._global_decay_timer is not None:
@@ -1962,6 +1967,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
+        self._track_button_service_calls()
 
         # Only create listener if we have entities to track
         if entity_ids:
@@ -2003,6 +2009,114 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             # Store listener (using a single key since we have one listener for all)
             self._area_state_listeners["_all"] = listener
+
+    def _track_button_service_calls(self) -> None:
+        """Track button.press calls for configured button entities."""
+        if self._button_service_listener is not None:
+            self._button_service_listener()
+            self._button_service_listener = None
+
+        configured_buttons = {
+            entity.entity_id
+            for area in self.areas.values()
+            for entity in area.entities.entities.values()
+            if entity.type.input_type is InputType.BUTTON
+        }
+        if not configured_buttons:
+            return
+
+        async def _handle_button_press(event: Event) -> None:
+            if event.data.get("domain") != "button" or event.data.get("service") != "press":
+                return
+
+            entity_ids: set[str] = set()
+            for target in (
+                event.data.get("service_data", {}),
+                event.data.get("target", {}),
+            ):
+                if not isinstance(target, dict):
+                    continue
+                raw_entity_ids = target.get("entity_id", [])
+                if isinstance(raw_entity_ids, str):
+                    entity_ids.add(raw_entity_ids)
+                elif isinstance(raw_entity_ids, (list, tuple, set)):
+                    entity_ids.update(
+                        value for value in raw_entity_ids if isinstance(value, str)
+                    )
+                nested_target = target.get("target", {})
+                if isinstance(nested_target, dict):
+                    raw_entity_ids = nested_target.get("entity_id", [])
+                    if isinstance(raw_entity_ids, str):
+                        entity_ids.add(raw_entity_ids)
+                    elif isinstance(raw_entity_ids, (list, tuple, set)):
+                        entity_ids.update(
+                            value
+                            for value in raw_entity_ids
+                            if isinstance(value, str)
+                        )
+
+            target_data = event.data.get("target", {})
+            service_data = event.data.get("service_data", {})
+            if isinstance(service_data, dict) and isinstance(
+                service_data.get("target"), dict
+            ):
+                target_data = service_data["target"]
+            if isinstance(target_data, dict):
+                device_ids = target_data.get("device_id", [])
+                area_ids = target_data.get("area_id", [])
+                if isinstance(device_ids, str):
+                    device_ids = [device_ids]
+                if isinstance(area_ids, str):
+                    area_ids = [area_ids]
+                if isinstance(device_ids, (list, tuple, set)) or isinstance(
+                    area_ids, (list, tuple, set)
+                ):
+                    entity_registry = er.async_get(self.hass)
+                    device_registry = dr.async_get(self.hass)
+                    device_ids = (
+                        device_ids if isinstance(device_ids, (list, tuple, set)) else []
+                    )
+                    area_ids = (
+                        area_ids if isinstance(area_ids, (list, tuple, set)) else []
+                    )
+                    target_area_ids = set(area_ids)
+                    target_device_ids = set(device_ids)
+                    for configured_entity_id in configured_buttons:
+                        entry = entity_registry.async_get(configured_entity_id)
+                        if entry is None:
+                            continue
+                        if entry.device_id in target_device_ids:
+                            entity_ids.add(configured_entity_id)
+                            continue
+                        if entry.area_id in target_area_ids:
+                            entity_ids.add(configured_entity_id)
+                            continue
+                        if entry.device_id is None:
+                            continue
+                        device = device_registry.async_get(entry.device_id)
+                        if device and device.area_id in target_area_ids:
+                            entity_ids.add(configured_entity_id)
+
+            affected = configured_buttons & entity_ids
+            if not affected:
+                return
+
+            changed = False
+            for area in self.areas.values():
+                for entity_id in affected:
+                    try:
+                        entity = area.entities.get_entity(entity_id)
+                    except ValueError:
+                        continue
+                    entity.record_button_press()
+                    changed = True
+
+            if changed and self.setup_complete:
+                await self.async_refresh()
+
+        self._button_service_listener = async_track_event(
+            self.hass, EVENT_CALL_SERVICE, _handle_button_press
+        )
 
     # --- Save Timer Handling ---
     def _start_save_timer(self) -> None:

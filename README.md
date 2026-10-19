@@ -96,6 +96,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **All Areas Aggregation**: Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration.
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability.
+- **Button Presence Signals**: Treat a configured Home Assistant button press as a strong, short-lived presence signal with an adjustable pulse duration.
 - **Purpose-Based Defaults**: Selecting a room purpose (12 options from Passageway to Bedroom) automatically sets sensible decay timing.
 
 ## Planned Features

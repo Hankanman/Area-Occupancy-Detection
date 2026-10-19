@@ -156,6 +156,8 @@ class Entity:
     active_state_changed_at: datetime | None = None
     # The state the last ``has_new_evidence`` call saw, to spot those moves.
     previous_state: str | float | bool | None = None
+    button_pressed_at: datetime | None = None
+    button_pulse_duration: int = 60
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -493,6 +495,12 @@ class Entity:
             bool | None: True if entity is active, False if inactive, None if state unknown
 
         """
+        if self.type.input_type == InputType.BUTTON:
+            if self.button_pressed_at is None:
+                return False
+            age = (dt_util.utcnow() - self.button_pressed_at).total_seconds()
+            return 0 <= age <= self.button_pulse_duration
+
         if self.state is None:
             return None
 
@@ -509,6 +517,13 @@ class Entity:
                 return False
 
         return None
+
+    def record_button_press(self) -> None:
+        """Record a button press as a short-lived positive presence signal."""
+        self.button_pressed_at = dt_util.utcnow()
+        self.last_updated = self.button_pressed_at
+        self.previous_evidence = False
+        self.decay.stop_decay()
 
     @property
     def active(self) -> bool:
@@ -1046,6 +1061,9 @@ class EntityFactory:
             last_updated=last_updated,
             previous_evidence=previous_evidence,
             analysis_error=analysis_error,
+            button_pulse_duration=int(
+                getattr(self.config.sensors, "button_pulse_duration", 60)
+            ),
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
@@ -1170,6 +1188,9 @@ class EntityFactory:
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
             analysis_error=analysis_error,
+            button_pulse_duration=int(
+                getattr(self.config.sensors, "button_pulse_duration", 60)
+            ),
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:

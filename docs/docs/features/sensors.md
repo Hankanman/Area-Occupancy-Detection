@@ -12,6 +12,7 @@ You will be prompted to select entities for various categories. You only need to
 | Window Sensors               | `binary_sensor`                     | Relevant window sensors.                                             | `Open`               |
 | Media Devices                | `media_player`                      | Relevant media players.                                              | `playing`, `paused`  |
 | Appliances                   | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances.          | `on`, `standby`      |
+| Presence Buttons             | `button`                           | Buttons whose press is treated as a short, direct presence signal.    | 60-second pulse      |
 | Illuminance Sensors          | `sensor`                            | Illuminance sensors measuring light levels (lux)                     | `30.0 - 100000.0`    |
 | Temperature Sensors          | `sensor`                            | Temperature sensors measuring temperature                            | `18.0 - 24.0`        |
 | Humidity Sensors             | `sensor`                            | Humidity sensors measuring humidity                                  | `70.0 - 100.0`       |
@@ -35,6 +36,13 @@ You will be prompted to select entities for various categories. You only need to
 !!! note
     Custom sensors have **no domain or device_class filter at all** — every other section restricts you to entities HA can identify as door, motion, power, etc. Use custom sensors when your entity doesn't fit any of the typed sections above, such as an MQTT or [HASS.Agent](https://hassagent.spablo.com) sensor with unique state semantics. The active states and range can't be inferred from the entity, so the defaults (`on`, and a band of `1` to `1,000,000`) are only a starting point — set them to match your sensor in the Custom Sensors section.
 
+!!! note
+    A button press is recorded when Home Assistant calls `button.press` for
+    the configured entity. It contributes presence evidence for the configured
+    button pulse duration (5 seconds to 10 minutes, default 60 seconds), then
+    expires automatically. A button is therefore a strong indication that
+    someone was present recently, not a permanent occupancy state.
+
 ## Sensor Weights
 
 Weights allow you to adjust the influence of different _types_ of sensors on the final probability calculation. Weights range from 0.0 (no influence) to 1.0 (maximum influence). Default values are provided based on typical sensor reliability for occupancy. You can override the default weights in the configuration menu for each sensor type.
@@ -47,6 +55,7 @@ Weights allow you to adjust the influence of different _types_ of sensors on the
 | Wasp in Box          | 0.80           |
 | Cover Sensor         | 0.50           |
 | Appliance            | 0.40           |
+| Presence Button      | 0.70           |
 | Wi-Fi Client Sensor  | 0.35           |
 | Custom Binary Sensor | 0.40           |
 | Door Sensor          | 0.30           |
