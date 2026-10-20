@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    DEFAULT_BUTTON_PULSE_DURATION,
     MAX_WEIGHT,
     MIN_WEIGHT,
     SLEEP_PRESENCE_HALF_LIFE,
@@ -157,7 +158,7 @@ class Entity:
     # The state the last ``has_new_evidence`` call saw, to spot those moves.
     previous_state: str | float | bool | None = None
     button_pressed_at: datetime | None = None
-    button_pulse_duration: int = 60
+    button_pulse_duration: int = DEFAULT_BUTTON_PULSE_DURATION
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -1062,7 +1063,11 @@ class EntityFactory:
             previous_evidence=previous_evidence,
             analysis_error=analysis_error,
             button_pulse_duration=int(
-                getattr(self.config.sensors, "button_pulse_duration", 60)
+                getattr(
+                    self.config.sensors,
+                    "button_pulse_duration",
+                    DEFAULT_BUTTON_PULSE_DURATION,
+                )
             ),
         )
 
@@ -1189,7 +1194,11 @@ class EntityFactory:
             previous_evidence=None,
             analysis_error=analysis_error,
             button_pulse_duration=int(
-                getattr(self.config.sensors, "button_pulse_duration", 60)
+                getattr(
+                    self.config.sensors,
+                    "button_pulse_duration",
+                    DEFAULT_BUTTON_PULSE_DURATION,
+                )
             ),
         )
 
@@ -1370,6 +1379,7 @@ class EntityManager:
             new.stuck_since = old.stuck_since
             new.active_state_changed_at = old.active_state_changed_at
             new.previous_state = old.previous_state
+            new.button_pressed_at = old.button_pressed_at
         previous.clear()
         _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
 

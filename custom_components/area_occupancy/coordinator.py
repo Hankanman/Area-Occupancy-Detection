@@ -2026,7 +2026,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         async def _handle_button_press(event: Event) -> None:
-            if event.data.get("domain") != "button" or event.data.get("service") != "press":
+            """Record direct button targets from a button.press service call.
+
+            Home Assistant resolves groups and labels before the service event
+            reaches integrations, so those indirect targets are not handled
+            here unless the resulting entity IDs are included in the event.
+            """
+            if (
+                event.data.get("domain") != "button"
+                or event.data.get("service") != "press"
+            ):
                 return
 
             entity_ids: set[str] = set()
@@ -2036,24 +2045,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ):
                 if not isinstance(target, dict):
                     continue
-                raw_entity_ids = target.get("entity_id", [])
-                if isinstance(raw_entity_ids, str):
-                    entity_ids.add(raw_entity_ids)
-                elif isinstance(raw_entity_ids, (list, tuple, set)):
-                    entity_ids.update(
-                        value for value in raw_entity_ids if isinstance(value, str)
-                    )
-                nested_target = target.get("target", {})
+                entity_ids.update(self._as_id_set(target.get("entity_id")))
+                nested_target = target.get("target")
                 if isinstance(nested_target, dict):
-                    raw_entity_ids = nested_target.get("entity_id", [])
-                    if isinstance(raw_entity_ids, str):
-                        entity_ids.add(raw_entity_ids)
-                    elif isinstance(raw_entity_ids, (list, tuple, set)):
-                        entity_ids.update(
-                            value
-                            for value in raw_entity_ids
-                            if isinstance(value, str)
-                        )
+                    entity_ids.update(self._as_id_set(nested_target.get("entity_id")))
 
             target_data = event.data.get("target", {})
             service_data = event.data.get("service_data", {})
@@ -2062,40 +2057,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ):
                 target_data = service_data["target"]
             if isinstance(target_data, dict):
-                device_ids = target_data.get("device_id", [])
-                area_ids = target_data.get("area_id", [])
-                if isinstance(device_ids, str):
-                    device_ids = [device_ids]
-                if isinstance(area_ids, str):
-                    area_ids = [area_ids]
-                if isinstance(device_ids, (list, tuple, set)) or isinstance(
-                    area_ids, (list, tuple, set)
-                ):
-                    entity_registry = er.async_get(self.hass)
-                    device_registry = dr.async_get(self.hass)
-                    device_ids = (
-                        device_ids if isinstance(device_ids, (list, tuple, set)) else []
+                entity_ids.update(
+                    self._button_entity_ids_for_targets(
+                        configured_buttons, target_data
                     )
-                    area_ids = (
-                        area_ids if isinstance(area_ids, (list, tuple, set)) else []
-                    )
-                    target_area_ids = set(area_ids)
-                    target_device_ids = set(device_ids)
-                    for configured_entity_id in configured_buttons:
-                        entry = entity_registry.async_get(configured_entity_id)
-                        if entry is None:
-                            continue
-                        if entry.device_id in target_device_ids:
-                            entity_ids.add(configured_entity_id)
-                            continue
-                        if entry.area_id in target_area_ids:
-                            entity_ids.add(configured_entity_id)
-                            continue
-                        if entry.device_id is None:
-                            continue
-                        device = device_registry.async_get(entry.device_id)
-                        if device and device.area_id in target_area_ids:
-                            entity_ids.add(configured_entity_id)
+                )
 
             affected = configured_buttons & entity_ids
             if not affected:
@@ -2117,6 +2083,41 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._button_service_listener = async_track_event(
             self.hass, EVENT_CALL_SERVICE, _handle_button_press
         )
+
+    @staticmethod
+    def _as_id_set(value: object) -> set[str]:
+        """Normalize a Home Assistant target value to a set of string IDs."""
+        if isinstance(value, str):
+            return {value}
+        if isinstance(value, (list, tuple, set)):
+            return {item for item in value if isinstance(item, str)}
+        return set()
+
+    def _button_entity_ids_for_targets(
+        self, configured_buttons: set[str], target_data: dict[str, object]
+    ) -> set[str]:
+        """Resolve configured buttons targeted by device or area IDs."""
+        target_device_ids = self._as_id_set(target_data.get("device_id"))
+        target_area_ids = self._as_id_set(target_data.get("area_id"))
+        if not target_device_ids and not target_area_ids:
+            return set()
+
+        entity_registry = er.async_get(self.hass)
+        device_registry = dr.async_get(self.hass)
+        affected: set[str] = set()
+        for configured_entity_id in configured_buttons:
+            entry = entity_registry.async_get(configured_entity_id)
+            if entry is None:
+                continue
+            if entry.device_id in target_device_ids or entry.area_id in target_area_ids:
+                affected.add(configured_entity_id)
+                continue
+            if entry.device_id is None:
+                continue
+            device = device_registry.async_get(entry.device_id)
+            if device and device.area_id in target_area_ids:
+                affected.add(configured_entity_id)
+        return affected
 
     # --- Save Timer Handling ---
     def _start_save_timer(self) -> None:
@@ -2199,6 +2200,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
         else:
+            button_expired = any(
+                entity.has_new_evidence()
+                for area in self.areas.values()
+                for entity in area.entities.entities.values()
+                if entity.type.input_type is InputType.BUTTON
+            )
+            if button_expired:
+                await self.async_refresh()
             # Shadow-mode estimators (#499/#500) still need a steady tick
             # cadence even when no area has decay enabled — without this,
             # they'd only observe on evidence-triggered refreshes, whose

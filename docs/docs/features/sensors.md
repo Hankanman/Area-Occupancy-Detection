@@ -12,7 +12,7 @@ You will be prompted to select entities for various categories. You only need to
 | Window Sensors               | `binary_sensor`                     | Relevant window sensors.                                             | `Open`               |
 | Media Devices                | `media_player`                      | Relevant media players.                                              | `playing`, `paused`  |
 | Appliances                   | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances.          | `on`, `standby`      |
-| Presence Buttons             | `button`                           | Buttons whose press is treated as a short, direct presence signal.    | 60-second pulse      |
+| Presence Buttons             | `button`                           | Buttons whose press is treated as a short, direct presence signal.    | 60-second pulse       |
 | Illuminance Sensors          | `sensor`                            | Illuminance sensors measuring light levels (lux)                     | `30.0 - 100000.0`    |
 | Temperature Sensors          | `sensor`                            | Temperature sensors measuring temperature                            | `18.0 - 24.0`        |
 | Humidity Sensors             | `sensor`                            | Humidity sensors measuring humidity                                  | `70.0 - 100.0`       |

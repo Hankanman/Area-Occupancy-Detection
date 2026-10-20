@@ -113,6 +113,8 @@ THRESHOLD_MAX = 100
 # decay_default``).
 DECAY_HALF_LIFE_MIN = 10
 DECAY_HALF_LIFE_MAX = 3600
+BUTTON_PULSE_MIN = 5
+BUTTON_PULSE_MAX = 600
 
 # Every per-type weight key with its default, in one place so the validator
 # and any future per-type UI iterate the same list.
@@ -369,7 +371,7 @@ def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
         if (
             not isinstance(pulse_duration, (int, float))
             or isinstance(pulse_duration, bool)
-            or not 5 <= pulse_duration <= 600
+            or not BUTTON_PULSE_MIN <= pulse_duration <= BUTTON_PULSE_MAX
         ):
             errors[CONF_BUTTON_PULSE_DURATION] = "invalid_button_pulse_duration"
 
