@@ -1510,6 +1510,44 @@ class TestSyncMerge:
             )
             return [(r.state, r.duration_seconds) for r in rows]
 
+    def _stored_areas(self, db) -> list[tuple[str, str, float]]:
+        with db.get_session() as session:
+            rows = (
+                session.query(db.Intervals)
+                .filter(db.Intervals.entity_id == self.ENTITY)
+                .order_by(db.Intervals.start_time)
+                .all()
+            )
+            return [(r.area_name, r.state, r.duration_seconds) for r in rows]
+
+    def test_a_sensor_whose_area_changed_does_not_break_sync(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """#613: rows stored under the sensor's old area are replaced, not duplicated.
+
+        A sensor maps to one area per sync (the last one listing it). Moving
+        it, renaming the area, or listing it in a second area changes that
+        area, and the stored rows were only looked up under the new one: the
+        same (entity, start, end) went in again and broke the UNIQUE key,
+        failing every sync from then on.
+        """
+        db = coordinator.db
+        area = db.coordinator.get_area_names()[0]
+        t0 = dt_util.utcnow() - timedelta(hours=3)
+        t1 = t0 + timedelta(minutes=20)
+        t2 = t0 + timedelta(minutes=50)
+
+        self.sync_rows(
+            db, "Old Room", t0 - timedelta(hours=1), [("on", t0, t1), ("off", t1, t2)]
+        )
+        # Next sync re-reads the same window, now mapped to the current area.
+        self.sync_rows(db, area, t0, [("on", t0, t1), ("off", t1, t2)])
+
+        assert self._stored_areas(db) == [
+            (area, "on", 1200.0),
+            (area, "off", 1800.0),
+        ]
+
     def test_running_state_over_three_syncs_is_one_row(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
