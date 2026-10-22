@@ -204,7 +204,9 @@ def sigmoid_probability(
     Given the area's ``threshold``, it is also at least
     ``(logit(threshold) - bias) * 2 ** GROUND_TRUTH_HOLD_HALF_LIVES``, so the
     same sensor keeps the area at or above the threshold for that many
-    half-lives of its decay after it goes quiet.
+    half-lives of its decay after it goes quiet; while it fades its strength
+    is exactly that hold, so the area releases then rather than crawling
+    towards a prior close to the threshold.
 
     Args:
         entities: Dict of Entity objects
@@ -230,6 +232,7 @@ def sigmoid_probability(
     # this prior to GROUND_TRUTH_ACTIVE_FLOOR on its own. Without it, motion's
     # fixed 2.85 cannot overcome a learned prior below ~5.5%.
     ground_truth_floor = logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias
+    hold: float | None = None
     if threshold is not None:
         # Decay scales the contribution by 2^-t/half_life, so a signal of
         # (logit(threshold) - bias) * 2^H is still at the threshold after H
@@ -275,7 +278,14 @@ def sigmoid_probability(
             # sensor), which would cut a 450 s hold to ~300 s, so divide it
             # back out; a lower configured weight still scales it down.
             gain = ew / entity.weight if ew > 0 else 1.0
-            signal = max(signal, ground_truth_floor / gain)
+            if hold is not None and hold > 0 and 0.0 < evidence < 1.0:
+                # Fading: exactly the hold, so the area releases after H
+                # half-lives whatever its prior. Fading from motion's fixed
+                # 2.85 instead crawls towards a prior near the threshold: a
+                # 42% bedroom (threshold 50%) took 3.1 half-lives, ~48 min.
+                signal = hold / gain
+            else:
+                signal = max(signal, ground_truth_floor / gain)
         contribution = ew * evidence * correlation * signal
         z += contribution
 

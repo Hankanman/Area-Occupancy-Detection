@@ -1053,3 +1053,61 @@ class TestAwayPriorEvidence:
         assert sigmoid_probability(
             {"tv": self._tv()}, prior=0.3, threshold=0.5
         ) == pytest.approx(0.6017, abs=1e-4)
+
+
+class TestFadingHold:
+    """A fading motion sensor releases its area after one half-life.
+
+    Live report (2026.10.2): a 41.8%-prior bedroom (threshold 50%) took
+    ~48 min to clear after one motion pulse. Hand-computed:
+    ``bias = logit(0.418) = -0.33099``; motion's fixed 2.85 beats the floor
+    (1.4296) and the hold (2 * 0.33099 = 0.66198), so it faded from 2.85
+    and crossed 50% only at f = 0.33099 / 2.85 = 0.1161, i.e. 3.11
+    half-lives (32 min awake, 62 min asleep). Fading from the hold instead
+    crosses at f = 0.5: one half-life, whatever the prior.
+    """
+
+    PRIOR = 0.418
+
+    @staticmethod
+    def _motion(**overrides: Any) -> Mock:
+        params: dict[str, Any] = {
+            "evidence": True,
+            "prob_given_true": 0.95,
+            "prob_given_false": 0.005,
+            "weight": 1.0,
+            "input_type": InputType.MOTION,
+        }
+        return _create_mock_entity(**(params | overrides))
+
+    def _fading(self, factor: float, prior: float | None = None) -> float:
+        motion = self._motion(evidence=False, is_decaying=True, decay_factor=factor)
+        return sigmoid_probability(
+            {"m": motion}, prior=prior or self.PRIOR, threshold=0.5
+        )
+
+    def test_active_is_unchanged(self) -> None:
+        """sigmoid(-0.33099 + 2.85) = 92.55%, as before."""
+        assert sigmoid_probability(
+            {"m": self._motion()}, prior=self.PRIOR, threshold=0.5
+        ) == pytest.approx(0.92546, abs=1e-4)
+
+    def test_still_counts_in_full_during_the_motion_timeout(self) -> None:
+        """Decay pending (factor 1.0, the PIR timeout): still 92.55%."""
+        assert self._fading(1.0) == pytest.approx(0.92546, abs=1e-4)
+
+    def test_releases_at_one_half_life(self) -> None:
+        """At f = 0.5 exactly 50%; at f = 0.45 49.17% (was 74.91% at f = 0.5)."""
+        assert self._fading(0.5) == pytest.approx(0.5, abs=1e-6)
+        assert self._fading(0.45) == pytest.approx(0.49173, abs=1e-4)
+
+    def test_a_30_percent_room_no_longer_holds_175_half_lives(self) -> None:
+        """30% prior: hold 1.6946, f = 0.5 -> exactly 50% (was 64.05%)."""
+        assert self._fading(0.5, prior=0.3) == pytest.approx(0.5, abs=1e-6)
+
+    def test_without_a_threshold_fading_is_unchanged(self) -> None:
+        """No threshold, no hold: fades from 2.85 as before (74.91% at f=0.5)."""
+        motion = self._motion(evidence=False, is_decaying=True, decay_factor=0.5)
+        assert sigmoid_probability({"m": motion}, prior=self.PRIOR) == pytest.approx(
+            0.74914, abs=1e-4
+        )

@@ -969,12 +969,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif active:
                 other_present = True
         labeler = self._labelers.setdefault(area_name, LiveLabeler())
-        return labeler.observe(
+        timeout = area.config.sensors.motion_timeout
+        label = labeler.observe(
             now=now,
             motion=motion,
             other_present=other_present,
-            timeout_seconds=area.config.sensors.motion_timeout,
+            timeout_seconds=timeout,
         )
+        # The live probability bridges a PIR sensor's gaps the same way:
+        # it counts in full for the motion timeout after it turns off, then
+        # decays. Sensors that hold "on" while someone is there don't.
+        for entity_id in motion:
+            area.entities.entities[entity_id].decay_delay = (
+                float(timeout) if labeler.state.pulse.get(entity_id, True) else 0.0
+            )
+        return label
 
     def _observe_likelihoods(
         self, area_name: str, area: Area, now: datetime, truth: bool
