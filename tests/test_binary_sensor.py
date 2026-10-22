@@ -2461,3 +2461,111 @@ class TestSleepPresenceSensor:
         attributes = sensor.extra_state_attributes
         assert attributes["people"][0]["sleeping"] is True
         assert attributes["people_sleeping"] == ["person.test"]
+
+
+class TestEntityIdChangedInPlace:
+    """HA 2026.11 renames entities in place; the area must follow (#614)."""
+
+    async def test_sleep_sensor_keeps_feeding_its_area(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        sensor = SleepPresenceSensor(
+            area_handle=coordinator.get_area_handle(area_name),
+            config_entry=Mock(),
+            people=[
+                PersonConfig(
+                    person_entity="person.test",
+                    sleep_sensors=["binary_sensor.in_bed"],
+                    sleep_area_id="bedroom",
+                )
+            ],
+        )
+        sensor.hass = hass
+        old, new = "binary_sensor.old_sleep", "binary_sensor.new_sleep"
+        area.sleep_entity_id = old
+        area.entities.register_entity(old, "sleep")
+        sensor.entity_id = new
+
+        with patch.object(
+            coordinator, "async_track_area_entities", AsyncMock()
+        ) as retrack:
+            sensor.async_entity_id_changed(old)
+            await hass.async_block_till_done()
+
+        assert area.sleep_entity_id == new
+        assert new in area.entities.entity_ids
+        assert old not in area.entities.entity_ids
+        retrack.assert_awaited_once()
+
+    async def test_wasp_sensor_moves_its_motion_input(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+        area = wasp_coordinator.get_area(wasp_coordinator.get_area_names()[0])
+        old, new = entity.entity_id, "binary_sensor.renamed_wasp"
+        area.wasp_entity_id = old
+        area.entities.register_entity(old, "motion")
+        entity.entity_id = new
+
+        with patch.object(
+            wasp_coordinator, "async_track_area_entities", AsyncMock()
+        ) as retrack:
+            entity.async_entity_id_changed(old)
+            await hass.async_block_till_done()
+
+        assert area.wasp_entity_id == new
+        assert new in area.entities.entity_ids
+        assert old not in area.entities.entity_ids
+        retrack.assert_awaited_once()
+
+    async def test_wasp_not_counted_as_motion_stays_out(
+        self,
+        hass: HomeAssistant,
+        wasp_coordinator: AreaOccupancyCoordinator,
+        wasp_config_entry: Mock,
+    ) -> None:
+        """With the closed-door hold on, Wasp is not an input: don't add it."""
+        entity = create_wasp_entity(wasp_coordinator, wasp_config_entry)
+        entity.hass = hass
+        area = wasp_coordinator.get_area(wasp_coordinator.get_area_names()[0])
+        old, new = entity.entity_id, "binary_sensor.renamed_wasp"
+        area.wasp_entity_id = old
+        area.entities.deregister_entity(old)
+        entity.entity_id = new
+
+        entity.async_entity_id_changed(old)
+
+        assert area.wasp_entity_id == new
+        assert new not in area.entities.entity_ids
+
+    def test_occupancy_sensor_updates_its_id(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        entity = Occupancy(area_handle=coordinator.get_area_handle(area_name))
+        area.occupancy_entity_id = "binary_sensor.old_occupancy"
+        entity.entity_id = "binary_sensor.new_occupancy"
+
+        entity.async_entity_id_changed("binary_sensor.old_occupancy")
+
+        assert area.occupancy_entity_id == "binary_sensor.new_occupancy"
+
+    def test_another_sensors_id_is_left_alone(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        entity = Occupancy(area_handle=coordinator.get_area_handle(area_name))
+        area.occupancy_entity_id = "binary_sensor.someone_else"
+        entity.entity_id = "binary_sensor.new_occupancy"
+
+        entity.async_entity_id_changed("binary_sensor.old_occupancy")
+
+        assert area.occupancy_entity_id == "binary_sensor.someone_else"

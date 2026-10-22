@@ -432,10 +432,14 @@ def _merge_intervals(
 
     with db.get_session() as session:
         for (entry_id, entity_id, area_name), new_rows in groups.items():
+            # Stored rows are found by entity, not entity and area: the
+            # UNIQUE key has no area, and a sensor's area changes when it is
+            # moved, its area renamed or a second area lists it. Rows left
+            # under the old area were missed and inserted again, failing
+            # every sync (#613). Re-inserted, they move to the current area.
             base = session.query(db.Intervals).filter(
                 db.Intervals.entry_id == entry_id,
                 db.Intervals.entity_id == entity_id,
-                db.Intervals.area_name == area_name,
                 db.Intervals.aggregation_level == "raw",
             )
             latest = base.order_by(db.Intervals.start_time.desc()).first()
