@@ -1953,13 +1953,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._reconcile_entity_state()
 
         # Re-establish entity state tracking with new entity lists
-        all_entity_ids = []
-        for area in self.areas.values():
-            all_entity_ids.extend(area.entities.entity_ids)
-
-        # Remove duplicates
-        all_entity_ids = list(set(all_entity_ids))
-        await self.track_entity_state_changes(all_entity_ids)
+        await self.async_track_area_entities()
 
         # Rebuild floor-based aggregators for updated areas
         self._build_floor_aggregators()
@@ -1975,6 +1969,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.async_request_refresh()
 
     # --- Entity State Tracking ---
+    async def async_track_area_entities(self) -> None:
+        """Track state changes for every area's current inputs."""
+        await self.track_entity_state_changes(
+            sorted(
+                {
+                    eid
+                    for area in self.areas.values()
+                    for eid in area.entities.entity_ids
+                }
+            )
+        )
+
     async def track_entity_state_changes(self, entity_ids: list[str]) -> None:
         """Track state changes for a list of entity_ids across all areas."""
         # Clean up existing listeners
