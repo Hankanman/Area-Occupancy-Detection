@@ -62,12 +62,20 @@ A **decaying** entity's evidence value is the decay factor itself (`1.0` fresh, 
 
 #### Motion and sleep: floor and hold
 
-A motion or sleep sensor's `strength` has a lower limit that depends on the prior, because a fixed strength can't lift a room that is rarely occupied:
+A motion or sleep sensor's `strength` depends on the prior, because a fixed strength can't lift a room that is rarely occupied. While the sensor is active, or still inside its motion timeout, it has a lower limit:
 
 ```
+hold = (logit(threshold) - logit(prior)) * 2 ** 1            # above threshold for one half-life
+
 strength = max(prob_given_true * strength_multiplier,
                logit(0.75) - logit(prior),                   # floor: at least 75% while active
-               (logit(threshold) - logit(prior)) * 2 ** 1)   # hold: above threshold for one half-life
+               hold)
+```
+
+Once it decays (evidence between 0 and 1), its strength is the hold alone:
+
+```
+strength = hold
 ```
 
 - **Floor:** while active, one such sensor at full weight reads at least 75%.
