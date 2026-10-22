@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -25,6 +26,7 @@ from custom_components.area_occupancy.data.health import (
     STUCK_ACTIVE_THRESHOLDS,
     HealthIssueType,
     HealthMonitor,
+    SensorHealthRepairs,
     _format_duration_human,
     _issue_id,
     stuck_active_threshold,
@@ -36,6 +38,7 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
+from tests.conftest import create_test_area
 
 
 def _make_entity(
@@ -77,11 +80,12 @@ def _make_entity(
 
 
 @pytest.fixture
-def mock_hass() -> Mock:
+def mock_hass() -> Generator[Mock]:
     """Create a mock Home Assistant instance with no person entities."""
     hass = Mock()
     hass.states.async_all.return_value = []
-    return hass
+    with patch("custom_components.area_occupancy.data.health.Store"):
+        yield hass
 
 
 @pytest.fixture
@@ -1311,11 +1315,11 @@ class TestClearAllIssues:
         )
         with patch("custom_components.area_occupancy.data.health.ir") as mock_ir:
             monitor.check_health({"motion_1": entity})
-            assert monitor._active_issue_ids  # sanity
+            assert monitor._sensor_repairs._active_issue_ids  # sanity
             monitor.clear_all_issues()
 
         assert mock_ir.async_delete_issue.call_count == 1
-        assert monitor._active_issue_ids == set()
+        assert monitor._sensor_repairs._active_issue_ids == set()
         assert monitor.issues == []
 
     def test_clear_is_no_op_when_no_active_issues(self, monitor: HealthMonitor) -> None:
@@ -1376,8 +1380,10 @@ class TestStickyIgnore:
         )
         with patch("custom_components.area_occupancy.data.health.ir"):
             monitor.check_health({"tv": entity})
-        assert monitor._active_issue_ids, "seed step must register an issue"
-        return next(iter(monitor._active_issue_ids))
+        assert monitor._sensor_repairs._active_issue_ids, (
+            "seed step must register an issue"
+        )
+        return next(iter(monitor._sensor_repairs._active_issue_ids))
 
     def test_ignored_issue_is_not_deleted_when_condition_clears(
         self, monitor: HealthMonitor
@@ -1413,7 +1419,7 @@ class TestStickyIgnore:
         with patch("custom_components.area_occupancy.data.health.ir", mock_ir):
             monitor.check_health({"tv": entity_ok})
 
-        assert issue_id in monitor._active_issue_ids
+        assert issue_id in monitor._sensor_repairs._active_issue_ids
 
     def test_non_ignored_resolved_issue_is_deleted(
         self, monitor: HealthMonitor
@@ -1433,7 +1439,7 @@ class TestStickyIgnore:
             monitor.check_health({"tv": entity_ok})
 
         mock_ir.async_delete_issue.assert_called_once()
-        assert monitor._active_issue_ids == set()
+        assert monitor._sensor_repairs._active_issue_ids == set()
 
     def test_recurring_condition_is_idempotent_for_ignored_issue(
         self, monitor: HealthMonitor
@@ -1489,7 +1495,7 @@ class TestStickyIgnore:
         assert not any("New sensor health issues" in msg for msg in warning_messages), (
             warning_messages
         )
-        assert issue_id in monitor._active_issue_ids
+        assert issue_id in monitor._sensor_repairs._active_issue_ids
 
 
 class TestSanerDefaults:
@@ -2446,3 +2452,589 @@ class TestPipelineRepairsSurviveTheSensorCheck:
         assert [issue.issue_type for issue in monitor.issues] == [
             HealthIssueType.SLOW_ANALYSIS
         ]
+
+
+class TestSharedSensorRepairs:
+    """A shared input has one repair while each room retains its diagnosis."""
+
+    SENSOR = "binary_sensor.shared_motion"
+
+    @staticmethod
+    def _monitors(hass: HomeAssistant) -> tuple[HealthMonitor, HealthMonitor]:
+        """Create two room monitors using one sensor repair publisher."""
+        repairs = SensorHealthRepairs(hass)
+        return (
+            HealthMonitor("Kitchen", "kitchen", hass, sensor_repairs=repairs),
+            HealthMonitor("Hall", "hall", hass, sensor_repairs=repairs),
+        )
+
+    @staticmethod
+    def _repairs(hass: HomeAssistant) -> list[ir.IssueEntry]:
+        """Return sensor repairs without including per-room pipeline issues."""
+        return [
+            entry
+            for (domain, issue_id), entry in ir.async_get(hass).issues.items()
+            if domain == DOMAIN and issue_id.startswith("sensor_health_")
+        ]
+
+    @classmethod
+    def _entity(
+        cls,
+        *,
+        hours: int = 9,
+        state: str = "on",
+        input_type: InputType = InputType.MOTION,
+    ) -> Entity:
+        """Build a shared sensor with a controlled state and evidence age."""
+        return _make_entity(
+            cls.SENSOR,
+            input_type,
+            state=state,
+            last_updated=dt_util.utcnow() - timedelta(hours=hours),
+            evidence=state == "on",
+        )
+
+    @pytest.mark.parametrize(
+        ("state", "hours", "input_type", "issue_type"),
+        [
+            ("on", 9, InputType.MOTION, HealthIssueType.STUCK_ACTIVE),
+            ("off", 8 * 24, InputType.MOTION, HealthIssueType.STUCK_INACTIVE),
+            ("off", 8 * 24, InputType.APPLIANCE, HealthIssueType.NEVER_TRIGGERED),
+            ("unavailable", 2, InputType.MOTION, HealthIssueType.UNAVAILABLE),
+        ],
+    )
+    async def test_one_repair_and_warning_per_sensor(
+        self,
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
+        state: str,
+        hours: int,
+        input_type: InputType,
+        issue_type: HealthIssueType,
+    ) -> None:
+        """Repeated room checks update one repair and announce a problem once."""
+        monitors = self._monitors(hass)
+        for _ in range(2):
+            for monitor in monitors:
+                entity = self._entity(hours=hours, state=state, input_type=input_type)
+                if state == "unavailable":
+                    monitor._unavailable_since[self.SENSOR] = entity.last_updated
+                assert [
+                    i.issue_type for i in monitor.check_health({self.SENSOR: entity})
+                ] == [issue_type]
+                assert monitor.issue_count == 1
+        repairs = self._repairs(hass)
+        assert len(repairs) == 1
+        assert repairs[0].translation_key == f"sensor_health_{issue_type}"
+        assert repairs[0].translation_placeholders["area"] == "Hall, Kitchen"
+        assert sum("New sensor health issues" in r.message for r in caplog.records) == 1
+
+    @pytest.mark.parametrize("action", ["recover", "exclude", "remove", "disable"])
+    async def test_one_room_cannot_clear_another_rooms_repair(
+        self, hass: HomeAssistant, action: str
+    ) -> None:
+        """Withdrawing one room leaves the other room's repair intact."""
+        kitchen, hall = self._monitors(hass)
+        for monitor in (kitchen, hall):
+            monitor.check_health({self.SENSOR: self._entity()})
+        created = self._repairs(hass)[0].created
+
+        if action == "recover":
+            assert kitchen.entity_changed(self._entity(hours=0, state="off"))
+        elif action == "exclude":
+            kitchen.check_health({self.SENSOR: self._entity()}, {self.SENSOR})
+        elif action == "remove":
+            kitchen.cleanup()
+        else:
+            kitchen.clear_all_issues()
+
+        repairs = self._repairs(hass)
+        assert len(repairs) == 1
+        assert repairs[0].created == created
+        assert repairs[0].translation_placeholders["area"] == "Hall"
+        assert hall.issue_count == 1
+        hall.cleanup()
+        assert self._repairs(hass) == []
+
+    async def test_distinct_sensors_still_have_distinct_repairs(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Consolidation groups rooms for a sensor without combining different sensors."""
+        kitchen, hall = self._monitors(hass)
+        kitchen.check_health({self.SENSOR: self._entity()})
+        other = self._entity()
+        other.entity_id = "binary_sensor.other_motion"
+        hall.check_health({other.entity_id: other})
+        assert {
+            r.translation_placeholders["entity_id"] for r in self._repairs(hass)
+        } == {self.SENSOR, other.entity_id}
+
+    async def test_different_thresholds_keep_local_evidence_and_health(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Room-specific thresholds still decide whether an input counts as evidence."""
+        kitchen, bedroom = self._monitors(hass)
+        bedroom._purpose = AreaPurpose.SLEEPING
+        first, second = self._entity(), self._entity()
+        kitchen.check_health({self.SENSOR: first})
+        bedroom.check_health({self.SENSOR: second})
+        assert first.is_stuck
+        assert not second.is_stuck
+        assert kitchen.issue_count == 1
+        assert bedroom.issue_count == 0
+        assert self._repairs(hass)[0].translation_placeholders["area"] == "Kitchen"
+        kitchen.cleanup()
+        assert self._repairs(hass) == []
+
+    async def test_different_findings_show_only_the_most_urgent(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A lower-priority finding becomes visible when the more urgent one clears."""
+        kitchen, hall = self._monitors(hass)
+        active = self._entity(hours=8 * 24)
+        inactive = self._entity(hours=8 * 24)
+        inactive.type.active_states = ["off"]
+        kitchen.check_health({self.SENSOR: active})
+        hall.check_health({self.SENSOR: inactive})
+        assert [r.translation_key for r in self._repairs(hass)] == [
+            "sensor_health_stuck_active"
+        ]
+        assert hall.issues[0].issue_type == HealthIssueType.STUCK_INACTIVE
+        kitchen.check_health({})
+        assert [r.translation_key for r in self._repairs(hass)] == [
+            "sensor_health_stuck_inactive"
+        ]
+
+    async def test_ignore_survives_recovery_restart_and_room_removal(
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A saved Ignore applies across rooms and remains sticky after recovery."""
+        monitors = self._monitors(hass)
+        for monitor in monitors:
+            monitor.check_health({self.SENSOR: self._entity()})
+        repair_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, repair_id, True)
+        for monitor in monitors:
+            monitor.check_health({self.SENSOR: self._entity(hours=0, state="off")})
+
+        # New runtime objects rediscover the saved ignore, even if the sensor
+        # is healthy on their first check after a restart.
+        monitors = self._monitors(hass)
+        caplog.clear()
+        for monitor in monitors:
+            monitor.check_health({self.SENSOR: self._entity(hours=0, state="off")})
+        for monitor in monitors:
+            entity = self._entity()
+            monitor.check_health({self.SENSOR: entity})
+            assert not entity.is_stuck
+        monitors[0].cleanup()
+        repairs = self._repairs(hass)
+        assert len(repairs) == 1
+        assert repairs[0].dismissed_version is not None
+        assert not any("New sensor health issues" in r.message for r in caplog.records)
+        monitors[1].clear_all_issues()
+        assert self._repairs(hass) == []
+
+    @pytest.mark.parametrize(
+        ("state", "input_type", "issue_type"),
+        [
+            ("off", InputType.MOTION, HealthIssueType.STUCK_INACTIVE),
+            ("off", InputType.APPLIANCE, HealthIssueType.NEVER_TRIGGERED),
+            ("unavailable", InputType.MOTION, HealthIssueType.UNAVAILABLE),
+        ],
+    )
+    async def test_ignored_problem_type_change_keeps_one_repair(
+        self,
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
+        state: str,
+        input_type: InputType,
+        issue_type: HealthIssueType,
+    ) -> None:
+        """A different problem replaces an ignored repair without inheriting Ignore."""
+        monitors = self._monitors(hass)
+        for monitor in monitors:
+            monitor.check_health({self.SENSOR: self._entity()})
+        ignored_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, ignored_id, True)
+        caplog.clear()
+
+        for monitor in monitors:
+            entity = self._entity(hours=8 * 24, state=state, input_type=input_type)
+            if state == "unavailable":
+                monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+            assert len(self._repairs(hass)) == 1
+
+        repair = self._repairs(hass)[0]
+        assert repair.translation_key == f"sensor_health_{issue_type}"
+        assert repair.dismissed_version is None
+        assert sum("New sensor health issues" in r.message for r in caplog.records) == 1
+
+        # The original problem must still be ignored when it returns, including
+        # while another room's higher-priority unavailable finding is visible.
+        caplog.clear()
+        for monitor in monitors:
+            entity = self._entity()
+            monitor.check_health({self.SENSOR: entity})
+            assert not entity.is_stuck
+            assert len(self._repairs(hass)) == 1
+        repair = self._repairs(hass)[0]
+        assert repair.issue_id == ignored_id
+        assert repair.dismissed_version is not None
+        assert not any("New sensor health issues" in r.message for r in caplog.records)
+
+    async def test_type_specific_ignore_survives_restart_and_can_be_removed(
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Archived Ignore choices persist, but restoring one still allows Unignore."""
+        kitchen, hall = self._monitors(hass)
+        for monitor in (kitchen, hall):
+            monitor.check_health({self.SENSOR: self._entity()})
+        active_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, active_id, True)
+        for monitor in (kitchen, hall):
+            entity = self._entity(hours=2, state="unavailable")
+            monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+        unavailable_id = self._repairs(hass)[0].issue_id
+        ir.async_ignore_issue(hass, DOMAIN, unavailable_id, True)
+
+        # Unload flushes the real HA Store before room cleanup. A new publisher
+        # must restore choices even when the first check finds a healthy sensor.
+        await kitchen._sensor_repairs.async_shutdown()
+        kitchen.cleanup()
+        hall.cleanup()
+        publisher = SensorHealthRepairs(hass)
+        await publisher.async_load()
+        hall = HealthMonitor("Hall", "hall", hass, sensor_repairs=publisher)
+        hall.check_health({self.SENSOR: self._entity(hours=0, state="off")})
+        caplog.clear()
+        entity = self._entity()
+        hall.check_health({self.SENSOR: entity})
+        assert not entity.is_stuck
+        assert len(self._repairs(hass)) == 1
+        assert self._repairs(hass)[0].issue_id == active_id
+        assert self._repairs(hass)[0].dismissed_version is not None
+        assert not any("New sensor health issues" in r.message for r in caplog.records)
+
+        ir.async_ignore_issue(hass, DOMAIN, active_id, False)
+        hall.check_health({self.SENSOR: entity})
+        assert entity.is_stuck
+        unavailable = self._entity(hours=2, state="unavailable")
+        hall._unavailable_since[self.SENSOR] = unavailable.last_updated
+        hall.check_health({self.SENSOR: unavailable})
+        assert len(self._repairs(hass)) == 1
+        assert self._repairs(hass)[0].issue_id == unavailable_id
+        assert self._repairs(hass)[0].dismissed_version is not None
+
+        # Another restart and type change must not resurrect the removed Ignore.
+        await publisher.async_shutdown()
+        hall.cleanup()
+        publisher = SensorHealthRepairs(hass)
+        await publisher.async_load()
+        hall = HealthMonitor("Hall", "hall", hass, sensor_repairs=publisher)
+        caplog.clear()
+        entity = self._entity()
+        hall.check_health({self.SENSOR: entity})
+        assert entity.is_stuck
+        assert len(self._repairs(hass)) == 1
+        assert self._repairs(hass)[0].dismissed_version is None
+        assert sum("New sensor health issues" in r.message for r in caplog.records) == 1
+
+    @pytest.mark.parametrize(
+        "action", ["disable", "remove_areas", "remove_integration"]
+    )
+    async def test_clearing_monitoring_removes_archived_ignores(
+        self, hass: HomeAssistant, action: str
+    ) -> None:
+        """Explicit removal clears both the visible repair and older Ignore choices."""
+        kitchen, hall = self._monitors(hass)
+        for monitor in (kitchen, hall):
+            monitor.check_health({self.SENSOR: self._entity()})
+        ir.async_ignore_issue(hass, DOMAIN, self._repairs(hass)[0].issue_id, True)
+        for monitor in (kitchen, hall):
+            entity = self._entity(hours=2, state="unavailable")
+            monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+        publisher = kitchen._sensor_repairs
+        if action == "disable":
+            publisher.clear()
+        elif action == "remove_areas":
+            kitchen.cleanup()
+            # Removing just one room must retain the shared sensor's Ignore.
+            assert publisher.is_ignored(
+                _issue_id("", self.SENSOR, HealthIssueType.STUCK_ACTIVE)
+            )
+            hall.cleanup()
+        else:
+            await publisher.async_remove()
+        assert self._repairs(hass) == []
+        await publisher.async_shutdown()
+
+        publisher = SensorHealthRepairs(hass)
+        await publisher.async_load()
+        hall = HealthMonitor("Hall", "hall", hass, sensor_repairs=publisher)
+        entity = self._entity()
+        hall.check_health({self.SENSOR: entity})
+        assert entity.is_stuck
+        assert self._repairs(hass)[0].dismissed_version is None
+
+    async def test_legacy_ignores_for_other_types_do_not_leave_duplicate_repairs(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Migrate ignored legacy problems even when a different problem is shown."""
+        for area_id, issue_type in (
+            ("kitchen", HealthIssueType.STUCK_ACTIVE),
+            ("hall", HealthIssueType.STUCK_INACTIVE),
+        ):
+            legacy_id = (
+                f"sensor_health_{area_id}_{self.SENSOR.replace('.', '_')}_{issue_type}"
+            )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                legacy_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key=f"sensor_health_{issue_type}",
+            )
+            ir.async_ignore_issue(hass, DOMAIN, legacy_id, True)
+        monitors = self._monitors(hass)
+        for monitor in monitors:
+            monitor._sensor_repairs.register_area(
+                monitor._area_id, monitor._area_name, {self.SENSOR}
+            )
+        for monitor in monitors:
+            entity = self._entity(hours=2, state="unavailable")
+            monitor._unavailable_since[self.SENSOR] = entity.last_updated
+            monitor.check_health({self.SENSOR: entity})
+            assert len(self._repairs(hass)) == 1
+            assert self._repairs(hass)[0].dismissed_version is None
+        for state in ("on", "off"):
+            for monitor in monitors:
+                monitor.check_health(
+                    {self.SENSOR: self._entity(hours=8 * 24, state=state)}
+                )
+                assert len(self._repairs(hass)) == 1
+            assert self._repairs(hass)[0].dismissed_version is not None
+
+    @pytest.mark.parametrize("ignored", [False, True])
+    async def test_legacy_repairs_consolidate_and_preserve_ignore(
+        self, hass: HomeAssistant, ignored: bool
+    ) -> None:
+        """Migrate old room repair IDs without losing a dismissal from either room."""
+        for area_id in ("kitchen", "hall"):
+            legacy_id = (
+                f"sensor_health_{area_id}_binary_sensor_shared_motion_stuck_active"
+            )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                legacy_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="sensor_health_stuck_active",
+            )
+            if ignored and area_id == "hall":
+                ir.async_ignore_issue(hass, DOMAIN, legacy_id, True)
+
+        monitors = self._monitors(hass)
+        # As in the hourly pipeline, register every room before any check.
+        for monitor in monitors:
+            monitor._sensor_repairs.register_area(
+                monitor._area_id, monitor._area_name, {self.SENSOR}
+            )
+        for monitor in monitors:
+            entity = self._entity()
+            monitor.check_health({self.SENSOR: entity})
+            assert entity.is_stuck is not ignored
+        repairs = self._repairs(hass)
+        assert len(repairs) == 1
+        assert (repairs[0].dismissed_version is not None) is ignored
+        assert repairs[0].translation_placeholders["area"] == "Hall, Kitchen"
+
+    async def test_renamed_room_updates_the_existing_repair(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Renaming a room changes repair text without replacing the repair."""
+        kitchen, hall = self._monitors(hass)
+        kitchen.check_health({self.SENSOR: self._entity()})
+        hall.check_health({self.SENSOR: self._entity()})
+        before = self._repairs(hass)[0]
+        renamed = HealthMonitor(
+            "Dining", "kitchen", hass, sensor_repairs=kitchen._sensor_repairs
+        )
+        renamed.check_health({self.SENSOR: self._entity()})
+        after = self._repairs(hass)[0]
+        assert after.issue_id == before.issue_id
+        assert after.created == before.created
+        assert after.translation_placeholders["area"] == "Dining, Hall"
+
+    async def test_pipeline_repairs_remain_separate_per_room(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Shared sensor reporting leaves each room's pipeline repairs independent."""
+        for monitor in self._monitors(hass):
+            monitor.check_pipeline_health(
+                area_age_hours=24 * 14,
+                has_global_prior=False,
+                cache_age_hours=1,
+                last_analysis_duration_ms=None,
+                correlation_failure_count=0,
+                correlatable_entity_count=0,
+            )
+        assert self._repairs(hass) == []
+        registry = ir.async_get(hass)
+        for area in ("kitchen", "hall"):
+            assert (
+                registry.async_get_issue(
+                    DOMAIN, f"pipeline_health_{area}_insufficient_priors"
+                )
+                is not None
+            )
+
+    async def test_real_coordinator_clears_shared_repair_on_state_change(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
+    ) -> None:
+        """One live sensor recovery clears every affected room and the shared repair."""
+        rooms = [
+            create_test_area(
+                coordinator,
+                area_name=name,
+                area_id=name.lower(),
+                entity_ids=[self.SENSOR],
+            )
+            for name in ("Kitchen", "Hall")
+        ]
+        await coordinator.track_entity_state_changes([self.SENSOR])
+        hass.states.async_set(self.SENSOR, STATE_UNAVAILABLE)
+        await hass.async_block_till_done()
+        await _run_sensor_health_check(coordinator)
+        freezer.tick(timedelta(hours=2))
+        await _run_sensor_health_check(coordinator)
+        repairs = [
+            r
+            for r in self._repairs(hass)
+            if r.translation_placeholders["entity_id"] == self.SENSOR
+        ]
+        assert len(repairs) == 1
+        assert repairs[0].translation_placeholders["area"] == "Hall, Kitchen"
+        assert all(room.health_monitor.issue_count == 1 for room in rooms)
+        hass.states.async_set(self.SENSOR, STATE_OFF)
+        await hass.async_block_till_done()
+        assert not any(
+            r.translation_placeholders["entity_id"] == self.SENSOR
+            for r in self._repairs(hass)
+        )
+        assert all(room.health_monitor.issue_count == 0 for room in rooms)
+
+    async def test_removing_replaced_area_with_no_monitor_clears_its_findings(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Remove stale findings even when a replacement area has no monitor yet."""
+        area = create_test_area(
+            coordinator,
+            area_name="Kitchen",
+            area_id="kitchen",
+            entity_ids=[self.SENSOR],
+        )
+        area.health_monitor.check_health({self.SENSOR: self._entity()})
+        # Options updates replace Area objects and the new monitor is lazy.
+        replacement = create_test_area(
+            coordinator,
+            area_name="Kitchen",
+            area_id="kitchen",
+            entity_ids=[self.SENSOR],
+        )
+        assert replacement._health_monitor is None
+        await replacement.async_cleanup()
+        assert self._repairs(hass) == []
+
+    async def test_disabling_monitoring_clears_all_shared_repairs_without_warnings(
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Disabling health checks clears conflicting findings without new alerts."""
+        for name in ("Kitchen", "Hall"):
+            area = create_test_area(
+                coordinator,
+                area_name=name,
+                area_id=name.lower(),
+                entity_ids=[self.SENSOR],
+            )
+            entity = self._entity(hours=8 * 24)
+            if name == "Hall":
+                entity.type.active_states = ["off"]
+            area.health_monitor.check_health({self.SENSOR: entity})
+        assert len(self._repairs(hass)) == 1
+        caplog.clear()
+        coordinator.config_entry.options = {CONF_HEALTH_ENABLED: False}
+        await _run_sensor_health_check(coordinator)
+        assert self._repairs(hass) == []
+        assert not any("New sensor health issues" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize(
+        ("area_id", "entity_id", "input_type"),
+        [
+            ("media", "media_player.shared", InputType.MEDIA),
+            ("binary", "binary_sensor.shared", InputType.MOTION),
+            ("input", "input_boolean.shared", InputType.APPLIANCE),
+        ],
+    )
+    @pytest.mark.parametrize("cleanup_method", ["cleanup", "clear_all_issues"])
+    async def test_area_domain_prefix_does_not_erase_shared_ignore(
+        self,
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
+        area_id: str,
+        entity_id: str,
+        input_type: InputType,
+        cleanup_method: str,
+    ) -> None:
+        """Cleaning up legacy repairs must preserve overlapping shared IDs."""
+        legacy_id = f"sensor_health_{area_id}_binary_sensor.old_stuck_active".replace(
+            ".", "_"
+        )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            legacy_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="sensor_health_stuck_active",
+        )
+        ir.async_ignore_issue(hass, DOMAIN, legacy_id, True)
+        publisher = SensorHealthRepairs(hass)
+        removed = HealthMonitor(
+            area_id.title(), area_id, hass, sensor_repairs=publisher
+        )
+        other = HealthMonitor("Kitchen", "kitchen", hass, sensor_repairs=publisher)
+        removed.check_health({})
+        entity = _make_entity(
+            entity_id,
+            input_type,
+            state="on",
+            last_updated=dt_util.utcnow() - timedelta(hours=25),
+            evidence=True,
+        )
+        other.check_health({entity_id: entity})
+        shared_id = _issue_id("kitchen", entity_id, HealthIssueType.STUCK_ACTIVE)
+        ir.async_ignore_issue(hass, DOMAIN, shared_id, True)
+        registry = ir.async_get(hass)
+        before = registry.async_get_issue(DOMAIN, shared_id)
+        caplog.clear()
+
+        getattr(removed, cleanup_method)()
+
+        assert registry.async_get_issue(DOMAIN, legacy_id) is None
+        assert registry.async_get_issue(DOMAIN, shared_id) is before
+        assert before.dismissed_version is not None
+        assert len(self._repairs(hass)) == 1
+        assert other.issue_count == 1
+        assert not any("New sensor health issues" in r.message for r in caplog.records)

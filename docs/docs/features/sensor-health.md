@@ -13,6 +13,18 @@ During the hourly analysis cycle, the integration checks each sensor for:
 
 When an issue is detected, a repair entry appears in **Settings → System → Repairs** with a description of the problem and actionable troubleshooting steps. Repairs are dismissed automatically as soon as the sensor recovers, without waiting for the next hourly check.
 
+A sensor used in several rooms gets one repair entry and one warning log when
+the problem is first detected. The repair lists the affected rooms. Each room's
+diagnostic health sensor still reports its own findings, using that room's
+thresholds and sensor settings. If those settings produce different problems
+for the same sensor, the repair shows the most urgent one: unavailable, stuck
+active, stuck inactive, then never triggered.
+
+Removing a room or clearing its finding updates the shared repair; it remains
+until no room reports the problem. Ignoring a sensor repair applies to that
+problem across all rooms, including after a restart. Existing per-room repairs
+are consolidated automatically, preserving Ignore choices.
+
 ## Detection Thresholds
 
 Thresholds are tuned per sensor type to avoid false positives:
@@ -143,7 +155,7 @@ New repairs are still raised by the hourly check, since every threshold is an ho
 
 A sensor can't trigger while it is offline, so after an outage of an hour or more its inactivity checks count from when it came back. A sensor that spent five days offline doesn't return to a "hasn't triggered for eight days" repair.
 
-A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. To get alerts for that sensor again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
+A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. If a different problem replaces it, only the new repair is shown; the earlier Ignore choice is saved separately and restored when that problem returns, including across restarts. Ignoring one problem does not silence a different problem with the same sensor. To get alerts for a currently ignored problem again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
 
 ## Sensor Health Entity
 

@@ -25,9 +25,16 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from ..const import DOMAIN, HOME_ZONE_ENTITY_ID, MAX_PROBABILITY
+from ..const import (
+    DOMAIN,
+    HOME_ZONE_ENTITY_ID,
+    MAX_PROBABILITY,
+    SENSOR_HEALTH_IGNORE_STORE_KEY,
+    SENSOR_HEALTH_IGNORE_STORE_VERSION,
+)
 from .entity_type import BINARY_INPUT_TYPES, InputType
 from .purpose import AreaPurpose
 
@@ -244,16 +251,263 @@ def stuck_active_threshold(
 
 
 def _issue_id(area_id: str, entity_id: str | None, issue_type: HealthIssueType) -> str:
-    """Build a unique repair issue ID using the stable area_id.
+    """Build a repair ID, shared across areas for sensor issues.
 
-    Sensor-scope issues key on ``area_id`` + ``entity_id`` + type; pipeline
-    issues drop the entity_id and use a separate prefix so the two
-    namespaces don't collide.
+    Keep the issue type so ignoring one problem does not silence a different
+    problem with the same sensor. Pipeline issues still belong to an area.
     """
     if issue_type in _PIPELINE_ISSUE_TYPES:
         return f"pipeline_health_{area_id}_{issue_type}"
-    safe_entity = (entity_id or "").replace(".", "_")
-    return f"sensor_health_{area_id}_{safe_entity}_{issue_type}"
+    return f"sensor_health_{entity_id}_{issue_type}"
+
+
+def _is_ignored(hass: HomeAssistant, issue_id: str) -> bool:
+    """Read HA's persistent Ignore choice, including for inactive repairs."""
+    try:
+        entry = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return isinstance(getattr(entry, "dismissed_version", None), str)
+
+
+class SensorHealthRepairs:
+    """Publish one sensor repair across all of the coordinator's areas.
+
+    Monitors retain their own findings and thresholds. This publisher owns
+    the shared repair's lifetime, so one area's recovery or removal cannot
+    delete a repair still reported by another area.
+    """
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the shared publisher and recover persisted repair IDs."""
+        self._hass = hass
+        self._areas: dict[str, tuple[str, list[HealthIssue]]] = {}
+        self._entities: dict[str, set[str]] = {}
+        # HA deletes a repair's Ignore choice with its registry entry. Keep
+        # superseded choices separately so only one repair remains per sensor.
+        self._ignored_issue_ids: set[str] = set()
+        self._ignore_store: Store[list[str]] = Store(
+            hass, SENSOR_HEALTH_IGNORE_STORE_VERSION, SENSOR_HEALTH_IGNORE_STORE_KEY
+        )
+        self._shutting_down = False
+        try:
+            self._active_issue_ids = {
+                issue_id
+                for domain, issue_id in ir.async_get(hass).issues
+                if domain == DOMAIN and issue_id.startswith("sensor_health_")
+            }
+        except (AttributeError, KeyError, TypeError):
+            self._active_issue_ids = set()
+
+    async def async_load(self) -> None:
+        """Restore Ignore choices for sensor problems replaced by another type."""
+        self._ignored_issue_ids = set(await self._ignore_store.async_load() or [])
+
+    async def async_shutdown(self) -> None:
+        """Flush saved choices and preserve repairs during coordinator teardown."""
+        self._shutting_down = True
+        await self._ignore_store.async_save(sorted(self._ignored_issue_ids))
+
+    async def async_remove(self) -> None:
+        """Remove repairs and saved choices when the integration is deleted."""
+        self.clear()
+        await self._ignore_store.async_remove()
+
+    def is_ignored(self, issue_id: str) -> bool:
+        """Include saved choices when another problem occupies the sensor's repair."""
+        return issue_id in self._ignored_issue_ids or _is_ignored(self._hass, issue_id)
+
+    def _save_ignores(self) -> None:
+        """Persist changed choices, coalescing updates from different rooms."""
+        self._ignore_store.async_delay_save(lambda: sorted(self._ignored_issue_ids), 5)
+
+    def register_area(self, area_id: str, area_name: str, entity_ids: set[str]) -> None:
+        """Register ownership before checking, including legacy Ignore choices."""
+        self._areas.setdefault(area_id, (area_name, []))
+        self._entities[area_id] = entity_ids
+
+    def update(
+        self,
+        area_id: str,
+        area_name: str,
+        issues: list[HealthIssue],
+        entity_ids: set[str],
+    ) -> None:
+        """Replace one area's sensor findings and refresh the shared repairs."""
+        self._areas[area_id] = (
+            area_name,
+            [issue for issue in issues if issue.entity_id is not None],
+        )
+        self._entities[area_id] = entity_ids
+        self._publish()
+
+    def remove_area(self, area_id: str) -> None:
+        """Withdraw an area, preserving repairs and ignores used elsewhere."""
+        if self._shutting_down:
+            return
+        self._areas.pop(area_id, None)
+        removed_entities = self._entities.pop(area_id, set())
+        remaining_entities = set().union(*self._entities.values())
+        orphaned_ids = {
+            _issue_id(area_id, entity_id, issue_type)
+            for entity_id in removed_entities - remaining_entities
+            for issue_type in HealthIssueType
+            if issue_type not in _PIPELINE_ISSUE_TYPES
+        }
+        for issue_id in self._active_issue_ids.copy():
+            if (
+                not self._areas
+                or issue_id in orphaned_ids
+                or (
+                    # Only legacy IDs sanitize the entity ID's dot. A room
+                    # named "media" must not match shared media_player IDs.
+                    "." not in issue_id
+                    and issue_id.startswith(f"sensor_health_{area_id}_")
+                )
+            ):
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+                self._active_issue_ids.discard(issue_id)
+        removed_ignores = (
+            self._ignored_issue_ids & orphaned_ids
+            if self._areas
+            else self._ignored_issue_ids.copy()
+        )
+        if removed_ignores:
+            self._ignored_issue_ids.difference_update(removed_ignores)
+            self._save_ignores()
+        self._publish()
+
+    def clear(self) -> None:
+        """Clear sensor repairs together when global monitoring is disabled."""
+        for issue_id in self._active_issue_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        self._active_issue_ids.clear()
+        self._areas.clear()
+        self._entities.clear()
+        if self._ignored_issue_ids:
+            self._ignored_issue_ids.clear()
+            self._save_ignores()
+
+    def _publish(self) -> None:
+        """Merge sensor findings and announce only newly detected problems."""
+        by_entity: dict[str, list[tuple[str, HealthIssue]]] = {}
+        for area_name, issues in self._areas.values():
+            for issue in issues:
+                if issue.entity_id is not None:
+                    by_entity.setdefault(issue.entity_id, []).append((area_name, issue))
+
+        current_ids = {
+            self._publish_sensor(entity_id, findings)
+            for entity_id, findings in by_entity.items()
+        }
+        resolved_ids = {
+            issue_id
+            for issue_id in self._active_issue_ids - current_ids
+            if not _is_ignored(self._hass, issue_id)
+        }
+        for issue_id in resolved_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        if resolved_ids:
+            _LOGGER.info("Resolved %d sensor health issue(s)", len(resolved_ids))
+        self._active_issue_ids = (self._active_issue_ids - resolved_ids) | current_ids
+
+    def _publish_sensor(
+        self, entity_id: str, findings: list[tuple[str, HealthIssue]]
+    ) -> str:
+        """Publish the most urgent finding and return this sensor's repair ID."""
+        # A shared sensor can have different mappings/thresholds in each room.
+        # Show its most urgent finding, deterministically, rather than raising
+        # several repairs. Every finding remains in its area's diagnostics.
+        priority = {
+            HealthIssueType.UNAVAILABLE: 0,
+            HealthIssueType.STUCK_ACTIVE: 1,
+            HealthIssueType.STUCK_INACTIVE: 2,
+            HealthIssueType.NEVER_TRIGGERED: 3,
+        }
+        _, issue = min(
+            findings,
+            key=lambda item: (
+                priority[item[1].issue_type],
+                -item[1].duration_hours,
+                item[0],
+            ),
+        )
+        repair_id = _issue_id("", entity_id, issue.issue_type)
+        self._retire_other_types(entity_id, repair_id)
+        area_names = ", ".join(
+            sorted(
+                {
+                    name
+                    for name, finding in findings
+                    if finding.issue_type == issue.issue_type
+                }
+            )
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            repair_id,
+            is_fixable=False,
+            severity=(
+                ir.IssueSeverity.ERROR
+                if issue.issue_type
+                in (HealthIssueType.UNAVAILABLE, HealthIssueType.STUCK_ACTIVE)
+                else ir.IssueSeverity.WARNING
+            ),
+            translation_key=f"sensor_health_{issue.issue_type}",
+            translation_placeholders={
+                "area": area_names,
+                "entity_id": entity_id,
+                "duration": str(round(issue.duration_hours)),
+                "sensor_type": issue.input_type.value if issue.input_type else "",
+            },
+        )
+        self._migrate_legacy_repairs(entity_id)
+        if repair_id in self._ignored_issue_ids:
+            ir.async_ignore_issue(self._hass, DOMAIN, repair_id, True)
+            # HA now owns this choice again, including a subsequent Unignore.
+            self._ignored_issue_ids.remove(repair_id)
+            self._save_ignores()
+        if repair_id not in self._active_issue_ids and not _is_ignored(
+            self._hass, repair_id
+        ):
+            _LOGGER.warning(
+                "New sensor health issues in area(s) '%s': %s (%s)",
+                area_names,
+                entity_id,
+                issue.issue_type,
+            )
+        return repair_id
+
+    def _retire_other_types(self, entity_id: str, current_id: str) -> None:
+        """Replace older problem types without forgetting their Ignore choices."""
+        other_ids = {
+            _issue_id("", entity_id, issue_type)
+            for issue_type in HealthIssueType
+            if issue_type not in _PIPELINE_ISSUE_TYPES
+        } - {current_id}
+        for issue_id in self._active_issue_ids & other_ids:
+            self._retire_repair(issue_id, issue_id)
+
+    def _retire_repair(self, issue_id: str, shared_id: str) -> None:
+        """Remove a superseded repair, saving its Ignore under the shared ID."""
+        if _is_ignored(self._hass, issue_id):
+            self._ignored_issue_ids.add(shared_id)
+            self._save_ignores()
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        self._active_issue_ids.discard(issue_id)
+
+    def _migrate_legacy_repairs(self, entity_id: str) -> None:
+        """Retire this sensor's per-area repair IDs, preserving any Ignore choice."""
+        for area_id, entity_ids in self._entities.items():
+            if entity_id not in entity_ids:
+                continue
+            for issue_type in HealthIssueType:
+                if issue_type in _PIPELINE_ISSUE_TYPES:
+                    continue
+                legacy_id = f"sensor_health_{area_id}_{entity_id.replace('.', '_')}_{issue_type}"
+                if legacy_id in self._active_issue_ids:
+                    self._retire_repair(legacy_id, _issue_id("", entity_id, issue_type))
 
 
 class HealthMonitor:
@@ -267,8 +521,8 @@ class HealthMonitor:
     Between those checks it follows each sensor's state changes
     (``entity_changed``), so a repair goes as soon as the sensor recovers.
 
-    Uses the stable area_id (HA area registry ID) for repair issue keys
-    so issues survive area renames.
+    Shares sensor repairs across areas; pipeline repairs use the stable
+    area_id (HA area registry ID) so they survive area renames.
     """
 
     def __init__(
@@ -277,6 +531,7 @@ class HealthMonitor:
         area_id: str,
         hass: HomeAssistant,
         purpose: AreaPurpose | None = None,
+        sensor_repairs: SensorHealthRepairs | None = None,
     ) -> None:
         """Initialize health monitor for an area.
 
@@ -286,11 +541,14 @@ class HealthMonitor:
             hass: Home Assistant instance
             purpose: Area purpose, used to scale stuck-active thresholds.
                 ``None`` falls back to the base thresholds (multiplier 1.0).
+            sensor_repairs: Shared sensor repair publisher for this integration.
         """
         self._area_name = area_name
         self._area_id = area_id
         self._hass = hass
         self._purpose = purpose
+        self._sensor_repairs = sensor_repairs or SensorHealthRepairs(hass)
+        self._entity_ids: set[str] = set()
         self._issues: list[HealthIssue] = []
         self._checked_count: int = 0
         self._last_check: datetime | None = None
@@ -326,20 +584,15 @@ class HealthMonitor:
 
         This ensures that issues created before a restart can be properly
         cleaned up if the underlying sensor or pipeline state has recovered
-        while HA was down. Loads both sensor-scope (``sensor_health_*``)
-        and pipeline-scope (``pipeline_health_*``) namespaces so neither
-        family leaks orphaned issues across restarts.
+        while HA was down. Sensor repairs are owned by the shared publisher.
         """
-        prefixes = (
-            f"sensor_health_{self._area_id}_",
-            f"pipeline_health_{self._area_id}_",
-        )
+        prefix = f"pipeline_health_{self._area_id}_"
         try:
             registry = ir.async_get(self._hass)
             return {
                 issue_id
                 for (domain, issue_id) in registry.issues
-                if domain == DOMAIN and issue_id.startswith(prefixes)
+                if domain == DOMAIN and issue_id.startswith(prefix)
             }
         except (AttributeError, KeyError, TypeError):
             _LOGGER.debug(
@@ -350,36 +603,8 @@ class HealthMonitor:
             return set()
 
     def _is_ignored(self, issue_id: str) -> bool:
-        """Whether the user has marked this repair issue as Ignored in HA.
-
-        Without this guard the next ``_update_repair_issues`` call deletes
-        any issue whose condition has cleared. That delete also wipes HA's
-        ignore state, so when the condition recurs (TV unavailable again
-        the following evening) a fresh issue is created and the user's
-        prior "Ignore" is silently forgotten. Treating an ignored issue as
-        if it had already been deleted lets the registry's own suppression
-        survive these flap cycles.
-
-        HA represents the ignore state on ``IssueEntry`` via
-        ``dismissed_version: str | None`` — populated with the HA version
-        at the moment the user clicked Ignore (see
-        ``IssueRegistry.async_ignore`` in homeassistant/helpers/issue_registry.py).
-        It is preserved across restart even for non-persistent issues, so a
-        plain ``is not None`` test is the canonical "is ignored" check.
-
-        We require ``isinstance(..., str)`` rather than ``is not None`` so a
-        bare ``unittest.mock.Mock()`` standing in for the ``ir`` module
-        (used by older tests) — whose attribute access yields another
-        Mock, which is itself ``not None`` — doesn't accidentally suppress
-        deletion. The real registry only stores string versions.
-        """
-        try:
-            entry = ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id)
-        except (AttributeError, KeyError, TypeError):
-            return False
-        if entry is None:
-            return False
-        return isinstance(getattr(entry, "dismissed_version", None), str)
+        """Keep the user's Ignore choice across recovery and recurrence."""
+        return self._sensor_repairs.is_ignored(issue_id)
 
     @property
     def issues(self) -> list[HealthIssue]:
@@ -455,6 +680,7 @@ class HealthMonitor:
             if entity.entity_id not in excluded
             and entity.type.input_type not in _EXCLUDED_TYPES
         }
+        self._entity_ids = checkable_ids
         self._unavailable_since = {
             entity_id: since
             for entity_id, since in self._unavailable_since.items()
@@ -579,6 +805,7 @@ class HealthMonitor:
         Call when the area is unloaded, removed, or the integration shuts down
         to prevent orphaned repair entries.
         """
+        self._sensor_repairs.remove_area(self._area_id)
         for issue_id in self._active_issue_ids:
             ir.async_delete_issue(self._hass, DOMAIN, issue_id)
 
@@ -606,6 +833,7 @@ class HealthMonitor:
         isn't (yet) mirrored to ``_active_issue_ids`` doesn't linger after
         a toggle-off.
         """
+        self._sensor_repairs.remove_area(self._area_id)
         for issue_id in self._active_issue_ids:
             ir.async_delete_issue(self._hass, DOMAIN, issue_id)
         if self._active_issue_ids:
@@ -1197,137 +1425,59 @@ class HealthMonitor:
         )
 
     def _update_repair_issues(self) -> None:
-        """Create or delete HA repair issues based on current health state."""
+        """Publish shared sensor repairs and this area's pipeline repairs."""
+        self._sensor_repairs.update(
+            self._area_id, self._area_name, self._issues, self._entity_ids
+        )
         current_issue_ids: set[str] = set()
-
-        # Severity mapping
-        severity_map = {
-            HealthIssueType.STUCK_ACTIVE: ir.IssueSeverity.ERROR,
-            HealthIssueType.UNAVAILABLE: ir.IssueSeverity.ERROR,
-            HealthIssueType.STUCK_INACTIVE: ir.IssueSeverity.WARNING,
-            HealthIssueType.NEVER_TRIGGERED: ir.IssueSeverity.WARNING,
-            HealthIssueType.INSUFFICIENT_PRIORS: ir.IssueSeverity.WARNING,
-            HealthIssueType.STALE_INTERVALS_CACHE: ir.IssueSeverity.ERROR,
-            HealthIssueType.SLOW_ANALYSIS: ir.IssueSeverity.WARNING,
-            HealthIssueType.CORRELATION_FAILURES: ir.IssueSeverity.WARNING,
-            HealthIssueType.PRIOR_ABOVE_THRESHOLD: ir.IssueSeverity.WARNING,
-        }
-
         for issue in self._issues:
-            repair_id = _issue_id(self._area_id, issue.entity_id, issue.issue_type)
+            if issue.issue_type not in _PIPELINE_ISSUE_TYPES:
+                continue
+            repair_id = _issue_id(self._area_id, None, issue.issue_type)
             current_issue_ids.add(repair_id)
-
-            if issue.issue_type in _PIPELINE_ISSUE_TYPES:
-                translation_key = f"pipeline_health_{issue.issue_type}"
-                # Adaptive Xs/Ym/Zh/Wd format — pipeline durations can be
-                # sub-hour (slow_analysis) or zero-as-sentinel
-                # (correlation_failures), so the sensor-scope
-                # ``str(round(hours))`` would collapse to "0".
-                placeholders = {
-                    "area": self._area_name,
-                    "duration": _format_duration_human(issue.duration_hours),
-                    "details": issue.details,
-                }
-            else:
-                translation_key = f"sensor_health_{issue.issue_type}"
-                placeholders = {
-                    "area": self._area_name,
-                    "entity_id": issue.entity_id or "",
-                    "duration": str(round(issue.duration_hours)),
-                    "sensor_type": (issue.input_type.value if issue.input_type else ""),
-                }
-
             ir.async_create_issue(
                 self._hass,
                 DOMAIN,
                 repair_id,
                 is_fixable=False,
-                severity=severity_map.get(issue.issue_type, ir.IssueSeverity.WARNING),
-                translation_key=translation_key,
-                translation_placeholders=placeholders,
+                severity=(
+                    ir.IssueSeverity.ERROR
+                    if issue.issue_type == HealthIssueType.STALE_INTERVALS_CACHE
+                    else ir.IssueSeverity.WARNING
+                ),
+                translation_key=f"pipeline_health_{issue.issue_type}",
+                translation_placeholders={
+                    "area": self._area_name,
+                    "duration": _format_duration_human(issue.duration_hours),
+                    "details": issue.details,
+                },
             )
 
-        # Delete resolved issues. Split the announce log by scope so a run
-        # that only clears pipeline issues doesn't read as "Resolved N
-        # sensor health issue(s)" — same scope-namespace pattern used for
-        # the new-issue path below. The repair_id prefix is the source of
-        # truth (``_issue_id`` chooses ``pipeline_health_*`` for any issue
-        # type in ``_PIPELINE_ISSUE_TYPES``).
-        #
-        # Issues the user has explicitly Ignored in HA's Repairs UI are
-        # left in place: deleting would also wipe HA's ignore state, so
-        # the next time the condition recurs (e.g. TV unavailable again
-        # tomorrow night) a fresh issue would appear and the user's
-        # Ignore would be silently forgotten. Drop them from our active
-        # set instead so we don't re-create them on the next cycle
-        # (HA will keep them suppressed; if the user un-ignores, the
-        # condition either resolves or persists naturally).
+        # Deleting an ignored issue would also erase HA's persistent Ignore
+        # choice. Keep tracking it so a recurrence is not announced as new.
         candidate_ids = self._active_issue_ids - current_issue_ids
         ignored_ids = {i for i in candidate_ids if self._is_ignored(i)}
         resolved_ids = candidate_ids - ignored_ids
         for resolved_id in resolved_ids:
             ir.async_delete_issue(self._hass, DOMAIN, resolved_id)
-        if ignored_ids:
-            _LOGGER.debug(
-                "Preserved %d user-ignored repair issue(s) in area '%s' "
-                "despite condition clearing",
-                len(ignored_ids),
-                self._area_name,
-            )
-
-        pipeline_prefix = f"pipeline_health_{self._area_id}_"
-        resolved_pipeline_ids = {
-            issue_id
-            for issue_id in resolved_ids
-            if issue_id.startswith(pipeline_prefix)
-        }
-        resolved_sensor_ids = resolved_ids - resolved_pipeline_ids
-
-        if resolved_sensor_ids:
-            _LOGGER.info(
-                "Resolved %d sensor health issue(s) in area '%s'",
-                len(resolved_sensor_ids),
-                self._area_name,
-            )
-        if resolved_pipeline_ids:
+        if resolved_ids:
             _LOGGER.info(
                 "Resolved %d pipeline health issue(s) in area '%s'",
-                len(resolved_pipeline_ids),
+                len(resolved_ids),
                 self._area_name,
             )
 
         new_issue_ids = current_issue_ids - self._active_issue_ids
         if new_issue_ids:
-            new_issues = [
-                i
-                for i in self._issues
-                if _issue_id(self._area_id, i.entity_id, i.issue_type) in new_issue_ids
-            ]
-            sensor_descriptions = [
-                f"{i.entity_id} ({i.issue_type})"
-                for i in new_issues
-                if i.issue_type not in _PIPELINE_ISSUE_TYPES
-            ]
-            pipeline_descriptions = [
-                str(i.issue_type)
-                for i in new_issues
-                if i.issue_type in _PIPELINE_ISSUE_TYPES
-            ]
-            if sensor_descriptions:
-                _LOGGER.warning(
-                    "New sensor health issues in area '%s': %s",
-                    self._area_name,
-                    ", ".join(sensor_descriptions),
-                )
-            if pipeline_descriptions:
-                _LOGGER.warning(
-                    "New pipeline health issues in area '%s': %s",
-                    self._area_name,
-                    ", ".join(pipeline_descriptions),
-                )
-
-        # Keep ignored-but-resolved ids in the tracked active set so a
-        # later recurrence of the same condition isn't logged as a "new"
-        # issue. ``async_create_issue`` is idempotent and preserves HA's
-        # ``dismissed_version`` on existing entries.
+            _LOGGER.warning(
+                "New pipeline health issues in area '%s': %s",
+                self._area_name,
+                ", ".join(
+                    str(issue.issue_type)
+                    for issue in self._issues
+                    if issue.issue_type in _PIPELINE_ISSUE_TYPES
+                    and _issue_id(self._area_id, None, issue.issue_type)
+                    in new_issue_ids
+                ),
+            )
         self._active_issue_ids = current_issue_ids | ignored_ids
