@@ -17,6 +17,7 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
+from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import area_registry as ar
@@ -528,6 +529,48 @@ class TestAreaOccupancyCoordinator:
         mock_refresh.assert_not_called()
         assert len(coordinator.accuracy_samples_for(area_name)) == 1
         assert coordinator.online_prior_for(area_name) is not None
+
+    async def test_handle_decay_timer_checks_all_buttons_without_bypassing_occupied(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """The decay tick must inspect every button and honor occupancy."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._global_decay_timer = Mock()
+        area = create_test_area(coordinator, area_name="Test Area")
+        coordinator.areas = {area.area_name: area}
+        area.config.decay.enabled = False
+        area.probability = Mock(return_value=0.9)
+        area.threshold = Mock(return_value=0.5)
+
+        first_button = Mock()
+        first_button.type.input_type = InputType.BUTTON
+        first_button.has_new_evidence.return_value = False
+        second_button = Mock()
+        second_button.type.input_type = InputType.BUTTON
+        second_button.has_new_evidence.return_value = True
+        area.entities.entities = {
+            "button.first": first_button,
+            "button.second": second_button,
+        }
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+
+        first_button.has_new_evidence.assert_called_once_with(
+            count_button_press=False
+        )
+        second_button.has_new_evidence.assert_called_once_with(
+            count_button_press=False
+        )
+        mock_refresh.assert_called_once()
 
     async def test_run_analysis(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
