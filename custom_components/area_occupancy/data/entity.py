@@ -750,9 +750,13 @@ class Entity:
             self.previous_state = current_state
             if state_changed and count_button_press and current_state is not None:
                 pressed_at = dt_util.parse_datetime(str(current_state))
-                if pressed_at is not None:
+                if pressed_at is not None and 0 <= (
+                    dt_util.utcnow() - to_utc(pressed_at)
+                ).total_seconds() <= BUTTON_PRESS_WINDOW:
                     self.record_press(pressed_at)
                     press_recorded = True
+                else:
+                    self.previous_evidence = False
             elif state_changed:
                 self.previous_evidence = False
 

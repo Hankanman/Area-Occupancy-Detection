@@ -2114,12 +2114,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
         else:
-            button_expired = any(
-                entity.has_new_evidence()
-                for area in self.areas.values()
-                for entity in area.entities.entities.values()
-                if entity.type.input_type is InputType.BUTTON
-            )
+            button_expired = False
+            for area in self.areas.values():
+                area_occupied = area.probability() >= area.threshold()
+                for entity in area.entities.entities.values():
+                    if entity.type.input_type is not InputType.BUTTON:
+                        continue
+                    button_expired |= entity.has_new_evidence(
+                        count_button_press=not area_occupied
+                    )
             if button_expired:
                 await self.async_refresh()
             # Shadow-mode estimators (#499/#500) still need a steady tick
