@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import (
-    DEFAULT_BUTTON_PULSE_DURATION,
+    BUTTON_PRESS_WINDOW,
     MAX_WEIGHT,
     MIN_WEIGHT,
     SLEEP_PRESENCE_HALF_LIFE,
@@ -157,7 +157,7 @@ class Entity:
     active_state_changed_at: datetime | None = None
     # The state the last ``has_new_evidence`` call saw, to spot those moves.
     previous_state: str | float | bool | None = None
-    button_pressed_at: datetime | None = None
+    press_recorded_at: datetime | None = None
     # Seconds this sensor still counts in full after it turns off before it
     # starts to decay: the area's motion timeout for a PIR-like motion
     # sensor (set by the coordinator from the live labeller's call), else 0.
@@ -500,10 +500,10 @@ class Entity:
 
         """
         if self.type.input_type == InputType.BUTTON:
-            if self.button_pressed_at is None:
+            if self.press_recorded_at is None:
                 return False
-            age = (dt_util.utcnow() - self.button_pressed_at).total_seconds()
-            return 0 <= age <= self.button_pulse_duration
+            age = (dt_util.utcnow() - self.press_recorded_at).total_seconds()
+            return 0 <= age <= BUTTON_PRESS_WINDOW
 
         if self.state is None:
             return None
@@ -522,12 +522,12 @@ class Entity:
 
         return None
 
-    def record_button_press(self) -> None:
-        """Record a button press as a short-lived positive presence signal."""
-        self.button_pressed_at = dt_util.utcnow()
-        self.last_updated = self.button_pressed_at
+    def record_press(self, pressed_at: datetime) -> None:
+        """Record a state-reported press as a short-lived presence signal."""
+        self.press_recorded_at = to_utc(pressed_at)
+        self.last_updated = self.press_recorded_at
         self.previous_evidence = False
-        self.decay.stop_decay()
+        self.decay.start_decay(delay=BUTTON_PRESS_WINDOW)
 
     @property
     def active(self) -> bool:
@@ -728,7 +728,7 @@ class Entity:
         )
         self.decay.is_decaying = is_decaying
 
-    def has_new_evidence(self) -> bool:
+    def has_new_evidence(self, count_button_press: bool = True) -> bool:
         """Update decay on actual evidence transitions.
 
         Handles four cases:
@@ -743,13 +743,27 @@ class Entity:
             counts again, False otherwise
 
         """
+        current_state = self.state
+        press_recorded = False
+        if self.type.input_type == InputType.BUTTON:
+            state_changed = current_state != self.previous_state
+            self.previous_state = current_state
+            if state_changed and count_button_press and current_state is not None:
+                pressed_at = dt_util.parse_datetime(str(current_state))
+                if pressed_at is not None:
+                    self.record_press(pressed_at)
+                    press_recorded = True
+            elif state_changed:
+                self.previous_evidence = False
+
         # Pure calculation from current HA state
         current_evidence = self.evidence
 
         # Capture previous evidence and state before updating them
         previous_evidence = self.previous_evidence
         previous_state = self.previous_state
-        self.previous_state = self.state
+        if self.type.input_type != InputType.BUTTON:
+            self.previous_state = current_state
 
         # Handle entity becoming unavailable (evidence was known, now None)
         if current_evidence is None:
@@ -779,7 +793,7 @@ class Entity:
             return bool(current_evidence)
 
         # Fix inconsistent state: if evidence is True but decay is running, stop decay
-        if current_evidence and self.decay.is_decaying:
+        if current_evidence and self.decay.is_decaying and not press_recorded:
             self.decay.stop_decay()
 
         # Check for evidence transitions
@@ -793,7 +807,8 @@ class Entity:
             was_stuck = self.is_stuck
             self.stuck_since = None
             self.last_updated = dt_util.utcnow()
-            if current_evidence:  # FALSE→TRUE transition
+            if current_evidence and not press_recorded:
+                # FALSE→TRUE transition.
                 self.decay.stop_decay()
             elif not was_stuck:  # TRUE→FALSE transition
                 # Evidence lost - start decay (after the PIR timeout, if any)
@@ -1065,13 +1080,6 @@ class EntityFactory:
             last_updated=last_updated,
             previous_evidence=previous_evidence,
             analysis_error=analysis_error,
-            button_pulse_duration=int(
-                getattr(
-                    self.config.sensors,
-                    "button_pulse_duration",
-                    DEFAULT_BUTTON_PULSE_DURATION,
-                )
-            ),
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
@@ -1196,13 +1204,6 @@ class EntityFactory:
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
             analysis_error=analysis_error,
-            button_pulse_duration=int(
-                getattr(
-                    self.config.sensors,
-                    "button_pulse_duration",
-                    DEFAULT_BUTTON_PULSE_DURATION,
-                )
-            ),
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:
@@ -1382,7 +1383,6 @@ class EntityManager:
             new.stuck_since = old.stuck_since
             new.active_state_changed_at = old.active_state_changed_at
             new.previous_state = old.previous_state
-            new.button_pressed_at = old.button_pressed_at
         previous.clear()
         _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
 

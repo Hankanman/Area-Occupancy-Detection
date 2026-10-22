@@ -496,21 +496,43 @@ class TestEntityPropertiesAndMethods:
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
 
-    def test_button_press_is_short_lived_presence_evidence(
+    def test_button_state_change_is_short_lived_presence_evidence(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """A button press contributes evidence only for its configured pulse."""
+        """A state-reported button press uses the fixed presence window."""
         entity = create_test_entity(
             entity_type=EntityType(InputType.BUTTON),
             coordinator=coordinator,
         )
-        entity.button_pulse_duration = 60
 
         assert entity.evidence is False
-        entity.record_button_press()
+        pressed_at = dt_util.utcnow()
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+        assert entity.has_new_evidence() is True
         assert entity.evidence is True
+        assert entity.decay.is_decaying is True
 
-        entity.button_pressed_at = dt_util.utcnow() - timedelta(seconds=61)
+        entity.press_recorded_at = dt_util.utcnow() - timedelta(seconds=6)
+        assert entity.evidence is False
+
+    def test_button_state_change_can_be_ignored_when_area_is_occupied(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An ignored button press must not create presence evidence."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        pressed_at = dt_util.utcnow()
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+
+        assert entity.has_new_evidence(count_button_press=False) is False
         assert entity.evidence is False
 
     def test_has_new_evidence_transitions(

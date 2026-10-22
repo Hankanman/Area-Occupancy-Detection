@@ -154,7 +154,6 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
         },
         "min_prior_override": getattr(config, "min_prior_override", None),
         "motion_timeout": sensors.motion_timeout,
-        "button_pulse_duration": sensors.button_pulse_duration,
         "sensor_counts": sensor_counts,
     }
 

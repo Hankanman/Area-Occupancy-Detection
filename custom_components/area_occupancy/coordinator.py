@@ -11,7 +11,7 @@ from typing import Any
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_CALL_SERVICE, EVENT_HOMEASSISTANT_STOP, STATE_ON
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
@@ -22,7 +22,6 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.event import (
     async_track_point_in_time,
-    async_track_event,
     async_track_state_change_event,
 )
 from homeassistant.helpers.start import async_at_started
@@ -187,7 +186,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Per-area state listeners (area_name -> callback)
         self._area_state_listeners: dict[str, CALLBACK_TYPE] = {}
-        self._button_service_listener: CALLBACK_TYPE | None = None
         self._global_decay_timer: CALLBACK_TYPE | None = None
         self._analysis_timer: CALLBACK_TYPE | None = None
         self._save_timer: CALLBACK_TYPE | None = None
@@ -1533,9 +1531,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
-        if self._button_service_listener is not None:
-            self._button_service_listener()
-            self._button_service_listener = None
 
         # Step 4: Cancel prior update tracker
         if self._global_decay_timer is not None:
@@ -1986,7 +1981,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for listener in self._area_state_listeners.values():
             listener()
         self._area_state_listeners.clear()
-        self._track_button_service_calls()
 
         # Only create listener if we have entities to track
         if entity_ids:
@@ -2005,7 +1999,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except ValueError:
                         # Entity doesn't belong to this area, skip it
                         continue
-                    changed = entity.has_new_evidence()
+                    count_button_press = not (
+                        entity.type.input_type is InputType.BUTTON
+                        and area.probability() >= area.threshold()
+                    )
+                    changed = entity.has_new_evidence(count_button_press)
                     # Take down repairs the change resolved (sensor back
                     # online, no longer stuck) now, not at the next hourly
                     # check. The virtual sensors are never checked.
@@ -2028,115 +2026,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             # Store listener (using a single key since we have one listener for all)
             self._area_state_listeners["_all"] = listener
-
-    def _track_button_service_calls(self) -> None:
-        """Track button.press calls for configured button entities."""
-        if self._button_service_listener is not None:
-            self._button_service_listener()
-            self._button_service_listener = None
-
-        configured_buttons = {
-            entity.entity_id
-            for area in self.areas.values()
-            for entity in area.entities.entities.values()
-            if entity.type.input_type is InputType.BUTTON
-        }
-        if not configured_buttons:
-            return
-
-        async def _handle_button_press(event: Event) -> None:
-            """Record direct button targets from a button.press service call.
-
-            Home Assistant resolves groups and labels before the service event
-            reaches integrations, so those indirect targets are not handled
-            here unless the resulting entity IDs are included in the event.
-            """
-            if (
-                event.data.get("domain") != "button"
-                or event.data.get("service") != "press"
-            ):
-                return
-
-            entity_ids: set[str] = set()
-            for target in (
-                event.data.get("service_data", {}),
-                event.data.get("target", {}),
-            ):
-                if not isinstance(target, dict):
-                    continue
-                entity_ids.update(self._as_id_set(target.get("entity_id")))
-                nested_target = target.get("target")
-                if isinstance(nested_target, dict):
-                    entity_ids.update(self._as_id_set(nested_target.get("entity_id")))
-
-            target_data = event.data.get("target", {})
-            service_data = event.data.get("service_data", {})
-            if isinstance(service_data, dict) and isinstance(
-                service_data.get("target"), dict
-            ):
-                target_data = service_data["target"]
-            if isinstance(target_data, dict):
-                entity_ids.update(
-                    self._button_entity_ids_for_targets(
-                        configured_buttons, target_data
-                    )
-                )
-
-            affected = configured_buttons & entity_ids
-            if not affected:
-                return
-
-            changed = False
-            for area in self.areas.values():
-                for entity_id in affected:
-                    try:
-                        entity = area.entities.get_entity(entity_id)
-                    except ValueError:
-                        continue
-                    entity.record_button_press()
-                    changed = True
-
-            if changed and self.setup_complete:
-                await self.async_refresh()
-
-        self._button_service_listener = async_track_event(
-            self.hass, EVENT_CALL_SERVICE, _handle_button_press
-        )
-
-    @staticmethod
-    def _as_id_set(value: object) -> set[str]:
-        """Normalize a Home Assistant target value to a set of string IDs."""
-        if isinstance(value, str):
-            return {value}
-        if isinstance(value, (list, tuple, set)):
-            return {item for item in value if isinstance(item, str)}
-        return set()
-
-    def _button_entity_ids_for_targets(
-        self, configured_buttons: set[str], target_data: dict[str, object]
-    ) -> set[str]:
-        """Resolve configured buttons targeted by device or area IDs."""
-        target_device_ids = self._as_id_set(target_data.get("device_id"))
-        target_area_ids = self._as_id_set(target_data.get("area_id"))
-        if not target_device_ids and not target_area_ids:
-            return set()
-
-        entity_registry = er.async_get(self.hass)
-        device_registry = dr.async_get(self.hass)
-        affected: set[str] = set()
-        for configured_entity_id in configured_buttons:
-            entry = entity_registry.async_get(configured_entity_id)
-            if entry is None:
-                continue
-            if entry.device_id in target_device_ids or entry.area_id in target_area_ids:
-                affected.add(configured_entity_id)
-                continue
-            if entry.device_id is None:
-                continue
-            device = device_registry.async_get(entry.device_id)
-            if device and device.area_id in target_area_ids:
-                affected.add(configured_entity_id)
-        return affected
 
     # --- Save Timer Handling ---
     def _start_save_timer(self) -> None:

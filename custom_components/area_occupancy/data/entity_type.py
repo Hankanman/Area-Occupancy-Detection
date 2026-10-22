@@ -15,6 +15,8 @@ from homeassistant.const import (
     STATE_STANDBY,
 )
 
+from ..const import DEFAULT_WEIGHT_BUTTON
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -285,7 +287,7 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "strength_multiplier": 2.0,
     },
     InputType.BUTTON: {
-        "weight": 0.7,
+        "weight": DEFAULT_WEIGHT_BUTTON,
         "prob_given_true": 0.8,
         "prob_given_false": 0.01,
         "active_states": [STATE_ON],

@@ -20,7 +20,6 @@ from ..const import (
     CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
-    CONF_BUTTON_PULSE_DURATION,
     CONF_BUTTON_SENSORS,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
@@ -92,7 +91,6 @@ from ..const import (
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_BUTTON_PULSE_DURATION,
     DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -325,7 +323,6 @@ class Sensors:
     media: list[str] = field(default_factory=list)
     appliance: list[str] = field(default_factory=list)
     button: list[str] = field(default_factory=list)
-    button_pulse_duration: int = DEFAULT_BUTTON_PULSE_DURATION
     illuminance: list[str] = field(default_factory=list)
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
@@ -586,9 +583,6 @@ class AreaConfig:
             media=data.get(CONF_MEDIA_DEVICES, []),
             appliance=data.get(CONF_APPLIANCES, []),
             button=data.get(CONF_BUTTON_SENSORS, []),
-            button_pulse_duration=int(
-                data.get(CONF_BUTTON_PULSE_DURATION, DEFAULT_BUTTON_PULSE_DURATION)
-            ),
             illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
             humidity=data.get(CONF_HUMIDITY_SENSORS, []),
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),

@@ -91,7 +91,6 @@ from .const import (
     CONF_AIR_QUALITY_SENSORS,
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
-    CONF_BUTTON_PULSE_DURATION,
     CONF_BUTTON_SENSORS,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
@@ -165,7 +164,6 @@ from .const import (
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
-    DEFAULT_BUTTON_PULSE_DURATION,
     DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -416,7 +414,10 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             if device_class not in appliance_excluded_classes:
                 include_appliance_entities.append(eid)
 
-    include_button_entities = list(hass.states.async_entity_ids(Platform.BUTTON))
+    include_button_entities = [
+        *hass.states.async_entity_ids(Platform.BUTTON),
+        *hass.states.async_entity_ids(Platform.EVENT),
+    ]
 
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
@@ -803,14 +804,6 @@ def _create_appliances_section_schema(
             ): EntitySelector(
                 EntitySelectorConfig(include_entities=button_entities, multiple=True)
             ),
-            vol.Optional(
-                CONF_BUTTON_PULSE_DURATION,
-                default=seconds_to_duration(
-                    defaults.get(
-                        CONF_BUTTON_PULSE_DURATION, DEFAULT_BUTTON_PULSE_DURATION
-                    )
-                ),
-            ): DurationSelector(DurationSelectorConfig(enable_day=False)),
             vol.Optional(
                 CONF_WEIGHT_BUTTON,
                 default=defaults.get(CONF_WEIGHT_BUTTON, DEFAULT_WEIGHT_BUTTON),
@@ -1475,7 +1468,6 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         CONF_APPLIANCE_ACTIVE_STATES,
         CONF_WEIGHT_APPLIANCE,
         CONF_BUTTON_SENSORS,
-        CONF_BUTTON_PULSE_DURATION,
         CONF_WEIGHT_BUTTON,
     ):
         if key in flat_config:

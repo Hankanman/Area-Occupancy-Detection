@@ -152,14 +152,12 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "button_sensors": "Presence Buttons",
-                            "button_pulse_duration": "Button Presence Duration",
+                            "button_sensors": "Presence Buttons and Event Entities",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "button_pulse_duration": "How long a button press remains a presence signal.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
                             "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
@@ -341,14 +339,12 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "button_sensors": "Presence Buttons",
-                            "button_pulse_duration": "Button Presence Duration",
+                            "button_sensors": "Presence Buttons and Event Entities",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "button_pulse_duration": "How long a button press remains a presence signal.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
                             "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
@@ -513,7 +509,6 @@
             "invalid_threshold": "Threshold must be between 1 and 100.",
             "invalid_weight": "Weight must be between 0 and 1.",
             "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
-            "invalid_button_pulse_duration": "Button presence duration must be between 5 seconds and 10 minutes.",
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
@@ -682,14 +677,12 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "button_sensors": "Presence Buttons",
-                            "button_pulse_duration": "Button Presence Duration",
+                            "button_sensors": "Presence Buttons and Event Entities",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "button_pulse_duration": "How long a button press remains a presence signal.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
                             "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
@@ -871,14 +864,12 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "button_sensors": "Presence Buttons",
-                            "button_pulse_duration": "Button Presence Duration",
+                            "button_sensors": "Presence Buttons and Event Entities",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "button_pulse_duration": "How long a button press remains a presence signal.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
                             "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
@@ -1111,7 +1102,6 @@
             "invalid_threshold": "Threshold must be between 1 and 100.",
             "invalid_weight": "Weight must be between 0 and 1.",
             "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
-            "invalid_button_pulse_duration": "Button presence duration must be between 5 seconds and 10 minutes.",
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
@@ -1407,14 +1397,12 @@
                             "data": {
                                 "appliances": "Appliances",
                                 "appliance_active_states": "Appliance Active States",
-                                "button_sensors": "Presence Buttons",
-                                "button_pulse_duration": "Button Presence Duration",
+                                "button_sensors": "Presence Buttons and Event Entities",
                                 "weight_appliance": "Appliance Weight",
                                 "weight_button": "Button Weight"
                             },
                             "data_description": {
                                 "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                                "button_pulse_duration": "How long a button press remains a presence signal.",
                                 "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
                                 "weight_button": "The weight given to button presses in the occupancy calculation."
                             }
@@ -1571,7 +1559,6 @@
                 "invalid_threshold": "Threshold must be between 1 and 100.",
                 "invalid_weight": "Weight must be between 0 and 1.",
                 "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
-                "invalid_button_pulse_duration": "Button presence duration must be between 5 seconds and 10 minutes.",
                 "media_states_required": "Media active states are required when media devices are configured.",
                 "appliance_states_required": "Appliance active states are required when appliances are configured.",
                 "door_state_required": "Door active state is required when door sensors are configured.",
