@@ -33,6 +33,7 @@ The prior combination process:
 4. Combines using weighted average: `combined_logit = area_weight * area_logit + time_weight * time_logit`
 5. Converts back to probability: `combined_prior = 1 / (1 + exp(-combined_logit))`
 6. Applies prior factor (1.05) to slightly increase baseline
+7. Caps the result just under the area's threshold (threshold − 0.01), so a prior alone, with no sensor active, never makes the area occupied
 7. Clamps to valid range [MIN_PROBABILITY, MAX_PROBABILITY]
 
 The default time weight is 0.2, meaning 20% of the prior comes from time-based patterns and 80% from the global area prior.

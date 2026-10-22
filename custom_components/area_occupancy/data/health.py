@@ -1115,10 +1115,11 @@ class HealthMonitor:
     ) -> HealthIssue | None:
         """Flag an area whose learned prior reaches its occupancy threshold.
 
-        A learned prior is measured occupancy, so it stands: an area that is
-        really occupied most Sunday evenings may read occupied then with no
-        sensor active. But the user may not expect that, and a threshold
-        just above the peak keeps the sensors in charge, so suggest it.
+        The live prior is capped just under the threshold, so the area still
+        needs a sensor to read occupied. But a prior that high leaves the
+        sensors almost nothing to decide, and usually means the threshold is
+        too low or something other than people (pets, a stuck sensor) is
+        being learned as occupancy, so suggest a threshold above the peak.
 
         Args:
             peak_prior: The highest learned prior over the week and the slot
