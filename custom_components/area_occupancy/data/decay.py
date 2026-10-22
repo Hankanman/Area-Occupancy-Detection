@@ -222,11 +222,17 @@ class Decay:
 
         return factor
 
-    def start_decay(self) -> None:
-        """Begin decay **only if not already running**."""
+    def start_decay(self, delay: float = 0.0) -> None:
+        """Begin decay **only if not already running**.
+
+        Args:
+            delay: Seconds the evidence still counts in full before it
+                starts to fade (a PIR sensor's motion timeout). Until then
+                ``decay_factor`` is 1.0.
+        """
         if not self.is_decaying:
             self.is_decaying = True
-            self.decay_start = dt_util.utcnow()
+            self.decay_start = dt_util.utcnow() + timedelta(seconds=max(delay, 0.0))
 
     def stop_decay(self) -> None:
         """Stop decay **only if already running**."""

@@ -33,6 +33,7 @@ The prior combination process:
 4. Combines using weighted average: `combined_logit = area_weight * area_logit + time_weight * time_logit`
 5. Converts back to probability: `combined_prior = 1 / (1 + exp(-combined_logit))`
 6. Applies prior factor (1.05) to slightly increase baseline
+7. Caps the result just under the area's threshold (threshold − 0.01), so a prior alone, with no sensor active, never makes the area occupied
 7. Clamps to valid range [MIN_PROBABILITY, MAX_PROBABILITY]
 
 The default time weight is 0.2, meaning 20% of the prior comes from time-based patterns and 80% from the global area prior.
@@ -70,9 +71,12 @@ strength = max(prob_given_true * strength_multiplier,
 ```
 
 - **Floor:** while active, one such sensor at full weight reads at least 75%.
-- **Hold:** once it goes quiet, decay halves its contribution every half-life, so this strength keeps the area at or above its threshold for **one half-life** of the area's purpose. A 2.5%-prior bathroom with a 450 s half-life stays occupied for 450 s after the last motion, rather than the ~170 s the floor alone gave.
+- **Motion timeout:** a PIR-style motion sensor (one whose "on" stretches are typically under two minutes) keeps counting in full for the area's motion timeout (default 90 s) after it turns off. Only then does it start to decay. Sensors that hold "on" while someone is there, such as most mmWave sensors, start decaying at once.
+- **Hold:** once it decays, its strength is exactly the hold, and decay halves it every half-life, so the area stays at or above its threshold for **one half-life** of the area's purpose and then releases, whatever its prior. A 2.5%-prior bathroom with a 450 s half-life stays occupied for 450 s after decay starts, rather than the ~170 s the floor alone gave. A 42%-prior bedroom (threshold 50%) also releases after one half-life, where fading from motion's fixed 2.85 took 3.1 half-lives (about 48 minutes).
 
-Both limits apply at full *configured* weight: the sensor's information gain (how far its `prob_given_false` sits below `prob_given_true`), which otherwise also scales `effective_weight`, is divided back out, so a noisier motion sensor still holds for the full half-life. Rooms whose prior is high enough already hold longer on motion's own strength, so they are unchanged. A 30%-prior room, for example, holds about 1.75 half-lives. A lower configured weight still scales all of this down.
+So a room releases at **motion timeout + one half-life** after the last PIR detection: a hallway with a 45 s half-life after about 2¼ minutes.
+
+Both limits apply at full *configured* weight: the sensor's information gain (how far its `prob_given_false` sits below `prob_given_true`), which otherwise also scales `effective_weight`, is divided back out, so a noisier motion sensor still holds for the full half-life. A lower configured weight still scales all of this down.
 
 ### 4. Final Probability
 

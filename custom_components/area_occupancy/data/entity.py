@@ -158,7 +158,10 @@ class Entity:
     # The state the last ``has_new_evidence`` call saw, to spot those moves.
     previous_state: str | float | bool | None = None
     button_pressed_at: datetime | None = None
-    button_pulse_duration: int = DEFAULT_BUTTON_PULSE_DURATION
+    # Seconds this sensor still counts in full after it turns off before it
+    # starts to decay: the area's motion timeout for a PIR-like motion
+    # sensor (set by the coordinator from the live labeller's call), else 0.
+    decay_delay: float = 0.0
 
     def __post_init__(self) -> None:
         """Validate that either hass or state_provider is provided.
@@ -793,8 +796,8 @@ class Entity:
             if current_evidence:  # FALSE→TRUE transition
                 self.decay.stop_decay()
             elif not was_stuck:  # TRUE→FALSE transition
-                # Evidence lost - start decay
-                self.decay.start_decay()
+                # Evidence lost - start decay (after the PIR timeout, if any)
+                self.decay.start_decay(delay=self.decay_delay)
         elif (
             current_evidence
             and self.active_states

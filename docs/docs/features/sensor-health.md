@@ -13,6 +13,18 @@ During the hourly analysis cycle, the integration checks each sensor for:
 
 When an issue is detected, a repair entry appears in **Settings → System → Repairs** with a description of the problem and actionable troubleshooting steps. Repairs are dismissed automatically as soon as the sensor recovers, without waiting for the next hourly check.
 
+A sensor used in several rooms gets one repair entry and one warning log when
+the problem is first detected. The repair lists the affected rooms. Each room's
+diagnostic health sensor still reports its own findings, using that room's
+thresholds and sensor settings. If those settings produce different problems
+for the same sensor, the repair shows the most urgent one: unavailable, stuck
+active, stuck inactive, then never triggered.
+
+Removing a room or clearing its finding updates the shared repair; it remains
+until no room reports the problem. Ignoring a sensor repair applies to that
+problem across all rooms, including after a restart. Existing per-room repairs
+are consolidated automatically, preserving Ignore choices.
+
 ## Detection Thresholds
 
 Thresholds are tuned per sensor type to avoid false positives:
@@ -143,7 +155,7 @@ New repairs are still raised by the hourly check, since every threshold is an ho
 
 A sensor can't trigger while it is offline, so after an outage of an hour or more its inactivity checks count from when it came back. A sensor that spent five days offline doesn't return to a "hasn't triggered for eight days" repair.
 
-A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. To get alerts for that sensor again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
+A repair you **Ignore** stays ignored, including the next time the same sensor has the same problem, and is not deleted when the sensor recovers. If a different problem replaces it, only the new repair is shown; the earlier Ignore choice is saved separately and restored when that problem returns, including across restarts. Ignoring one problem does not silence a different problem with the same sensor. To get alerts for a currently ignored problem again, un-ignore it from the ignored repairs in **Settings → System → Repairs**.
 
 ## Sensor Health Entity
 
@@ -175,7 +187,7 @@ In addition to per-sensor checks, the same health monitor flags **calculation pi
 | **Insufficient priors** | Area has been running for more than 7 days but no global occupancy prior has been learned. The integration is silently falling back to a minimum baseline for every Bayesian update. | Warning |
 | **Stale intervals cache** | The occupied-intervals cache (rebuilt hourly) is older than 25h, or has never been populated for an area more than 7 days old. Indicates the analysis pipeline has stopped refreshing for this area. | Error |
 | **Slow analysis** | The most recent full analysis cycle took longer than 30 seconds. Usually points to database pressure, very large sensor / area count, or a long-running correlation run. | Warning |
-| **Prior above threshold** | At some hour of the week, the area's learned prior reaches its occupancy threshold, so it reads occupied then with no sensor active. The prior is learned from your own history, so it may be right. The repair names the hour and suggests a threshold 5 points above the peak (or, for a peak above 94%, explains that no threshold leaves that headroom within the 99% limit on probability); ignore it if the behavior is what you want. | Warning |
+| **Prior above threshold** | At some hour of the week, the area's learned prior reaches its occupancy threshold. The prior used live is capped just under the threshold, so the area still needs a sensor to read occupied, but the sensors have little left to decide; it usually means the threshold is too low or pets are setting off motion sensors. The repair names the hour and suggests a threshold 5 points above the peak (or, for a peak above 94%, explains that no threshold leaves that headroom within the 99% limit on probability); ignore it if the behavior is what you want. | Warning |
 | **Correlation failures** | Half or more of the area's correlatable sensors failed correlation analysis on the last cycle (e.g. `too_few_samples`, `no_occupied_intervals`). Without correlations, sensors can't be tuned to your installation's behavior. | Warning |
 
 ### How to read pipeline issues

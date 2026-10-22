@@ -78,6 +78,9 @@ def test_value_property_clamping(
     """
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
+    # Room above every prior tested: the cap below the threshold is
+    # covered by its own tests.
+    prior.config.threshold = 1.0
     prior.global_prior = global_prior
     # Mock time_prior property to return None to avoid database calls
     # This simulates the case where time_prior is not available
@@ -143,6 +146,9 @@ def test_value_property_with_time_prior_combination(
     """Test value property combines global_prior and time_prior correctly."""
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
+    # Room above every prior tested: the cap below the threshold is
+    # covered by its own tests.
+    prior.config.threshold = 1.0
     current_day = prior.day_of_week
     current_slot = prior.time_slot
     slot_key = (current_day, current_slot)
@@ -233,6 +239,9 @@ def test_value_property_complex_clamping(
     """Test complex clamping logic when prior is clamped before PRIOR_FACTOR."""
     area_name = coordinator.get_area_names()[0]
     prior = Prior(coordinator, area_name=area_name)
+    # Room above every prior tested: the cap below the threshold is
+    # covered by its own tests.
+    prior.config.threshold = 1.0
     prior.global_prior = global_prior
 
     # Set up time_prior if needed
@@ -319,6 +328,9 @@ def test_min_prior_override_scenarios(
     area_name = coordinator.get_area_names()[0]
     area = coordinator.get_area(area_name)
     prior = Prior(coordinator, area_name=area_name)
+    # Room above every prior tested: the cap below the threshold is
+    # covered by its own tests.
+    prior.config.threshold = 1.0
 
     # Set min_prior_override
     area.config.min_prior_override = min_override
@@ -679,6 +691,9 @@ def test_purpose_min_prior_does_not_override_higher_value(
     area_name = coordinator.get_area_names()[0]
     area = coordinator.get_area(area_name)
     prior = Prior(coordinator, area_name=area_name)
+    # Room above every prior tested: the cap below the threshold is
+    # covered by its own tests.
+    prior.config.threshold = 1.0
 
     area._purpose = Purpose(purpose=AreaPurpose.PASSAGEWAY)
     prior.global_prior = 0.5
@@ -735,14 +750,14 @@ def test_purpose_min_prior_capped_below_threshold(
     assert result < area.config.threshold
 
 
-def test_learned_prior_above_threshold_passes_through(
+def test_learned_prior_above_threshold_is_capped(
     coordinator: AreaOccupancyCoordinator,
 ):
-    """Learned priors above the threshold are not capped (#435).
+    """A learned prior above the threshold is capped just below it.
 
-    Only floors (purpose min_prior, min_prior_override) are capped.
-    A learned global_prior reflects real historical occupancy and is
-    allowed to exceed the threshold.
+    A prior alone must never make an area occupied: threshold 0.5 caps a
+    learned 0.8 at 0.5 - PRIOR_FLOOR_THRESHOLD_MARGIN = 0.49. The learned
+    value itself is untouched.
     """
     area_name = coordinator.get_area_names()[0]
     area = coordinator.get_area(area_name)
@@ -757,7 +772,44 @@ def test_learned_prior_above_threshold_passes_through(
     ):
         result = prior.value
 
-    assert result == pytest.approx(0.8)
+    assert result == pytest.approx(0.49)
+    assert prior.global_prior == 0.8
+
+
+def test_time_slot_cannot_push_the_prior_over_the_threshold(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """The reported bedroom: global 0.522 and a busy slot stay under 0.5.
+
+    combine_priors(0.522, 0.7) is above 0.5 (logit average weighted 0.4 to
+    the slot); capped, the prior is 0.49 and the area needs evidence.
+    """
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+    area.config.threshold = 0.5
+    area.config.min_prior_override = 0.0
+    prior.global_prior = 0.522
+
+    with patch.object(Prior, "time_prior", new_callable=PropertyMock, return_value=0.7):
+        assert combine_priors(0.522, 0.7) * PRIOR_FACTOR > 0.5
+        assert prior.value == pytest.approx(0.49)
+
+
+def test_learned_prior_below_threshold_is_unchanged(
+    coordinator: AreaOccupancyCoordinator,
+):
+    """The cap only bites at the threshold: 0.3 under 0.5 passes through."""
+    area_name = coordinator.get_area_names()[0]
+    area = coordinator.get_area(area_name)
+    prior = Prior(coordinator, area_name=area_name)
+    area.config.threshold = 0.5
+    area.config.min_prior_override = 0.0
+    prior.global_prior = 0.3
+    with patch.object(
+        Prior, "time_prior", new_callable=PropertyMock, return_value=None
+    ):
+        assert prior.value == pytest.approx(max(MIN_PRIOR, 0.3 * PRIOR_FACTOR))
 
 
 def test_diagnostic_snapshot_contents(coordinator: AreaOccupancyCoordinator):
@@ -796,7 +848,7 @@ def test_diagnostic_snapshot_reports_no_floor_when_learned_dominates(
     area = coordinator.get_area(area_name)
     prior = Prior(coordinator, area_name=area_name)
 
-    area.config.threshold = 0.5
+    area.config.threshold = 0.8
     area.config.min_prior_override = 0.0
     prior.global_prior = 0.7
 
@@ -983,11 +1035,11 @@ class TestUnlearnedPrior:
         area_name = coordinator.get_area_names()[0]
         prior = Prior(coordinator, area_name=area_name)
         prior.global_prior = 0.62
+        prior.config.threshold = 0.8
 
         with patch.object(
             type(prior), "time_prior", new_callable=PropertyMock, return_value=None
         ):
-            # Learned priors are allowed above the threshold; the default is not.
             assert prior.value == pytest.approx(
                 max(MIN_PRIOR, min(MAX_PRIOR, 0.62 * PRIOR_FACTOR))
             )
