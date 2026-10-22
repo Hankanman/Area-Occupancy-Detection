@@ -880,11 +880,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 truth=truth,
             )
         )
-        # Match db.queries.get_occupied_intervals' ground-truth definition
-        # (motion ∪ media ∪ sleep) rather than motion alone, so the online
-        # numerator and the DB-computed prior it's being diffed against
-        # measure the same thing. Motion's timeout extension isn't
-        # replicated here — see module docstring's known approximations.
+        # The live label matches db.queries.get_occupied_intervals' ground
+        # truth (motion ∪ media ∪ sleep, PIR gaps bridged by the motion
+        # timeout), so the online numerator and the DB-computed prior it's
+        # diffed against measure the same thing.
         presence_active = _ground_truth_present(area)
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=truth, now=now

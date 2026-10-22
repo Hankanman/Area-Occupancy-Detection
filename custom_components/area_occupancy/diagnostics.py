@@ -299,6 +299,14 @@ def _area_snapshot(
                     # Recent daily worst-case divergence summaries; the
                     # full 90-day history lives in the Store.
                     "diff_history": estimator.state.diff_history[-14:],
+                    # Each completed day compared on its own (diff is the
+                    # share of the day); partial days don't count.
+                    "daily_days_within_tolerance": (
+                        estimator.daily_days_within_tolerance(
+                            ONLINE_PRIOR_DIFF_TOLERANCE
+                        )
+                    ),
+                    "daily_history": estimator.state.day_diff_history[-14:],
                 }
         likelihood_shadow = coordinator.likelihood_shadow_for(area_name)
         if likelihood_shadow is not None:

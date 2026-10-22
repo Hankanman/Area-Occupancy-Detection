@@ -18,11 +18,18 @@ from custom_components.area_occupancy.coordinator import (
     AreaOccupancyCoordinator,
     OnlinePriorStore,
 )
-from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
+from custom_components.area_occupancy.data.analysis import (
+    _db_occupied_seconds,
+    _run_shadow_metrics,
+)
 from custom_components.area_occupancy.data.entity import ground_truth_signature
-from custom_components.area_occupancy.data.entity_type import InputType
+from custom_components.area_occupancy.data.entity_type import (
+    GROUND_TRUTH_RULE_VERSION,
+    InputType,
+)
 from custom_components.area_occupancy.data.online_prior import (
     MAX_TICK_GAP_SECONDS,
+    MIN_DAY_OBSERVED_FRACTION,
     OnlinePriorEstimator,
     OnlinePriorState,
     is_stale,
@@ -463,7 +470,7 @@ class TestShadowStepResetsStaleState:
         assert fresh is not stale
         assert fresh.state.first_observation is None
         assert fresh.state.config_signature == ground_truth_signature(
-            area.entities.entities
+            area.entities.entities, area.config.sensors.motion_timeout
         )
 
     async def test_current_state_adopts_the_fingerprint(
@@ -483,3 +490,211 @@ class TestShadowStepResetsStaleState:
 
         assert coordinator.online_prior_for(area_name) is estimator
         assert estimator.state.config_signature is not None
+
+
+class TestSignatureCoversTheRule:
+    """What counts as occupied is part of the fingerprint, not just sensors.
+
+    Live (pre1): #604/#625 changed the labelling rule and moved
+    motion_timeout 300 -> 90. The DB recomputed its whole window under the
+    new rule; the online estimator kept 25 days counted under the old one,
+    because the sensor-only fingerprint didn't change. Five areas that had
+    agreed within 0.01 for twelve days jumped to 0.025-0.055 apart.
+    """
+
+    def test_motion_timeout_changes_the_signature(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        entities = coordinator.get_area(coordinator.get_area_names()[0]).entities
+        assert ground_truth_signature(entities.entities, 90) != ground_truth_signature(
+            entities.entities, 300
+        )
+
+    def test_signature_names_the_rule(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        entities = coordinator.get_area(coordinator.get_area_names()[0]).entities
+        signature = ground_truth_signature(entities.entities, 90)
+        assert f"rule={GROUND_TRUTH_RULE_VERSION}|motion_timeout=90" in signature
+
+    async def test_statistics_from_the_old_rule_restart(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A pre-rule fingerprint (sensors only) restarts the estimator."""
+        area_name = coordinator.get_area_names()[0]
+        await coordinator.update()
+        area = coordinator.get_area(area_name)
+        area.prior.global_prior = 0.2
+        old = coordinator.online_prior_for(area_name)
+        sensors_only = ground_truth_signature(
+            area.entities.entities, area.config.sensors.motion_timeout
+        ).split("\n", 1)[1:]
+        old.state.config_signature = "\n".join(sensors_only) or "sensors-only"
+
+        await _run_shadow_metrics(coordinator)
+
+        fresh = coordinator.online_prior_for(area_name)
+        assert fresh is not old
+        assert fresh.state.config_signature == ground_truth_signature(
+            area.entities.entities, area.config.sensors.motion_timeout
+        )
+
+
+@pytest.fixture
+def utc_zone():
+    """Pin local time to UTC so day boundaries are easy to hand-compute."""
+    original_tz = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(dt_util.UTC)
+    yield
+    dt_util.set_default_time_zone(original_tz)
+
+
+DAY = datetime(2026, 7, 6, tzinfo=UTC)
+
+
+def _run_day(est: OnlinePriorEstimator, hours: float, occupied_hours: float) -> None:
+    """Tick every 30 s from DAY 00:00 for ``hours``, occupied for the first part."""
+    steps = int(hours * 120)
+    for i in range(steps + 1):
+        est.observe(
+            motion_active=i < occupied_hours * 120,
+            now=DAY + timedelta(seconds=30 * i),
+        )
+
+
+@pytest.mark.usefixtures("utc_zone")
+class TestDailyParity:
+    """Each completed day compared on its own with the DB."""
+
+    def test_full_day_totals(self) -> None:
+        """Hand-computed: 6 h occupied of 24 h observed on 2026-07-06."""
+        est = OnlinePriorEstimator()
+        _run_day(est, 24, 6)
+        assert est.state.day_occupied_seconds["2026-07-06"] == pytest.approx(21600)
+        assert est.state.day_observed_seconds["2026-07-06"] == pytest.approx(86400)
+
+    def test_day_waits_an_hour_after_it_ends(self) -> None:
+        est = OnlinePriorEstimator()
+        _run_day(est, 24, 6)
+        assert est.days_to_compare(DAY + timedelta(hours=24, minutes=30)) == []
+        assert est.days_to_compare(DAY + timedelta(hours=25, minutes=1)) == [
+            "2026-07-06"
+        ]
+
+    def test_record_day_and_streak(self) -> None:
+        """Online 21600 s vs DB 23328 s: diff = -1728/86400 = -0.02, inside."""
+        est = OnlinePriorEstimator()
+        _run_day(est, 24, 6)
+        entry = est.record_day("2026-07-06", 23328.0, 86400.0)
+        assert entry["diff"] == pytest.approx(-0.02)
+        assert entry["partial"] is False
+        assert est.daily_days_within_tolerance(0.02) == 1
+        assert est.days_to_compare(DAY + timedelta(days=2)) == []
+
+    def test_day_outside_tolerance_breaks_the_streak(self) -> None:
+        est = OnlinePriorEstimator()
+        _run_day(est, 24, 6)
+        est.record_day("2026-07-06", 21600.0 + 0.05 * 86400, 86400.0)
+        assert est.daily_days_within_tolerance(0.02) == 0
+
+    def test_partial_day_neither_counts_nor_breaks(self) -> None:
+        """Observed 12 h of 24 (an outage): flagged partial, skipped."""
+        est = OnlinePriorEstimator()
+        est.state.day_diff_history.append(
+            {"date": "2026-07-05", "diff": 0.001, "partial": False}
+        )
+        _run_day(est, 12, 6)
+        assert est.state.day_observed_seconds["2026-07-06"] < (
+            MIN_DAY_OBSERVED_FRACTION * 86400
+        )
+        entry = est.record_day("2026-07-06", 0.0, 86400.0)
+        assert entry["partial"] is True
+        assert est.daily_days_within_tolerance(0.02) == 1
+
+    def test_only_recent_days_are_kept(self) -> None:
+        est = OnlinePriorEstimator()
+        for day in range(5):
+            est.observe(motion_active=True, now=DAY + timedelta(days=day))
+            est.observe(motion_active=True, now=DAY + timedelta(days=day, seconds=30))
+        assert sorted(est.state.day_observed_seconds) == [
+            "2026-07-08",
+            "2026-07-09",
+            "2026-07-10",
+        ]
+
+    def test_day_fields_round_trip(self) -> None:
+        est = OnlinePriorEstimator()
+        _run_day(est, 24, 6)
+        est.record_day("2026-07-06", 21600.0, 86400.0)
+        restored = OnlinePriorState.from_dict(est.state.to_dict())
+        assert restored.day_occupied_seconds == est.state.day_occupied_seconds
+        assert restored.day_observed_seconds == est.state.day_observed_seconds
+        assert restored.day_diff_history == est.state.day_diff_history
+
+    def test_db_side_clips_and_merges(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Overlaps count once; time outside the day doesn't count.
+
+        23:00 the day before to 01:00 gives 1 h; 06:00-08:00 and 07:00-09:00
+        merge to 3 h; 23:30-00:30 the next day gives 0.5 h. Total 4.5 h.
+        """
+        area_name = coordinator.get_area_names()[0]
+        h = timedelta(hours=1)
+        intervals = [
+            (DAY - h, DAY + h),
+            (DAY + 6 * h, DAY + 8 * h),
+            (DAY + 7 * h, DAY + 9 * h),
+            (DAY + 23.5 * h, DAY + 24.5 * h),
+        ]
+        with patch.object(
+            coordinator.db, "get_occupied_intervals", return_value=intervals
+        ):
+            occupied, length = _db_occupied_seconds(
+                coordinator, area_name, "2026-07-06"
+            )
+        assert occupied == pytest.approx(4.5 * 3600)
+        assert length == 86400
+
+
+def test_db_day_length_follows_dst(coordinator: AreaOccupancyCoordinator) -> None:
+    """Clocks go back on 2026-10-25 in London: that day is 25 h long."""
+    original_tz = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(ZoneInfo("Europe/London"))
+    try:
+        with patch.object(coordinator.db, "get_occupied_intervals", return_value=[]):
+            _, length = _db_occupied_seconds(
+                coordinator, coordinator.get_area_names()[0], "2026-10-25"
+            )
+        assert length == 25 * 3600
+    finally:
+        dt_util.set_default_time_zone(original_tz)
+
+
+async def test_shadow_step_records_completed_days(
+    coordinator: AreaOccupancyCoordinator,
+) -> None:
+    """The hourly step compares yesterday once, through the DB helper."""
+    area_name = coordinator.get_area_names()[0]
+    await coordinator.update()
+    area = coordinator.get_area(area_name)
+    area.prior.global_prior = 0.2
+    estimator = coordinator.online_prior_for(area_name)
+    estimator.state.config_signature = ground_truth_signature(
+        area.entities.entities, area.config.sensors.motion_timeout
+    )
+    yesterday = (dt_util.now() - timedelta(days=1)).date().isoformat()
+    estimator.state.day_observed_seconds[yesterday] = 86400.0
+    estimator.state.day_occupied_seconds[yesterday] = 3600.0
+
+    with patch(
+        "custom_components.area_occupancy.data.analysis._db_occupied_seconds",
+        return_value=(3600.0 + 864.0, 86400.0),
+    ) as db_side:
+        await _run_shadow_metrics(coordinator)
+        await _run_shadow_metrics(coordinator)
+
+    assert db_side.call_count == 1
+    entry = estimator.state.day_diff_history[-1]
+    assert entry["date"] == yesterday
+    assert entry["diff"] == pytest.approx(-0.01)
