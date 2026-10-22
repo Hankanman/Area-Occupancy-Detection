@@ -29,6 +29,7 @@ from custom_components.area_occupancy.db.operations import (
     _create_data_hash,
     _validate_area_data,
     delete_area_data,
+    delete_stale_entities,
     ensure_area_exists,
     load_data,
     prune_old_intervals,
@@ -284,44 +285,110 @@ class TestLoadData:
         # Wall-clock value must be preserved — only tzinfo should change.
         assert reloaded.last_updated == naive_ts.replace(tzinfo=dt_util.UTC)
 
+    @staticmethod
+    def _store_entity_row(db, area, entity_id: str) -> None:
+        """Save an entities row for a sensor the area doesn't have in config."""
+        save_area_data(db, area.area_name)
+        area._entities = SimpleNamespace(
+            entities={entity_id: _create_mock_entity(entity_id)},
+            entity_ids=[entity_id],
+        )
+        db.save_entity_data()
+        area._entities = None
+        assert entity_id not in area.entities.entity_ids
+
+    @staticmethod
+    def _row_count(db, area_name: str, entity_id: str) -> int:
+        with db.get_session() as session:
+            return (
+                session.query(db.Entities)
+                .filter_by(area_name=area_name, entity_id=entity_id)
+                .count()
+            )
+
     @pytest.mark.asyncio
-    async def test_load_data_deletes_stale_entities(
+    async def test_load_data_keeps_unconfigured_entity_rows(
         self, coordinator: AreaOccupancyCoordinator
     ):
-        """Test that load_data deletes stale entities."""
+        """load_data neither deletes nor loads a row missing from config."""
         db = coordinator.db
         area_name = db.coordinator.get_area_names()[0]
         area = db.coordinator.get_area(area_name)
-
-        # Ensure area exists in database first (foreign key requirement)
-        save_area_data(db, area_name)
-
-        # Save entity that's not in current config
-        good = _create_mock_entity("binary_sensor.good")
-        mock_entities_manager = SimpleNamespace(
-            entities={"binary_sensor.good": good},
-            entity_ids=["binary_sensor.good"],
-        )
-        area._entities = mock_entities_manager
-        db.save_entity_data()
-
-        # Reset entities to real manager
-        area._entities = None
-        real_entities = area.entities
-
-        # Verify entity is not in current config
-        assert "binary_sensor.good" not in real_entities.entity_ids
+        self._store_entity_row(db, area, "binary_sensor.gone")
 
         await load_data(db)
 
-        # Verify stale entity was deleted
+        assert self._row_count(db, area_name, "binary_sensor.gone") == 1
+        assert "binary_sensor.gone" not in area.entities.entity_ids
+
+    @pytest.mark.asyncio
+    async def test_delete_stale_entities_removes_unconfigured_rows(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """Rows for sensors no longer in the area are deleted after setup."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+        self._store_entity_row(db, area, "binary_sensor.gone")
+        kept = area.entities.entity_ids[0]
+        db.save_entity_data()
+
+        await delete_stale_entities(db)
+
+        assert self._row_count(db, area_name, "binary_sensor.gone") == 0
+        assert self._row_count(db, area_name, kept) == 1
+
+    @pytest.mark.asyncio
+    async def test_sleep_sensor_row_survives_restart(
+        self, coordinator: AreaOccupancyCoordinator
+    ):
+        """The area's sleep sensor joins after load_data; its row must stay.
+
+        Deleting it at load time left its intervals out of the occupied-time
+        query until the row was saved again, so the bedroom prior halved for
+        the first analysis after every restart.
+        """
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        area = db.coordinator.get_area(area_name)
+        sleep_id = "binary_sensor.test_area_sleeping"
+        self._store_entity_row(db, area, sleep_id)
+        start = dt_util.utcnow() - timedelta(hours=8)
         with db.get_session() as session:
-            count = (
-                session.query(db.Entities)
-                .filter_by(area_name=area_name, entity_id="binary_sensor.good")
-                .count()
+            session.add(
+                db.Intervals(
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_id=sleep_id,
+                    start_time=start,
+                    end_time=start + timedelta(hours=7),
+                    state="on",
+                    duration_seconds=7 * 3600,
+                )
             )
-            assert count == 0
+            session.commit()
+
+        def interval_count() -> int:
+            with db.get_session() as session:
+                return (
+                    session.query(db.Intervals)
+                    .filter_by(area_name=area_name, entity_id=sleep_id)
+                    .count()
+                )
+
+        # The coordinator's setup, before any platform exists.
+        await load_data(db)
+        db.last_entities_save_ts = 0.0
+        db.save_data()
+        assert self._row_count(db, area_name, sleep_id) == 1
+        assert interval_count() == 1
+
+        # What SleepPresenceSensor.async_added_to_hass does during platform setup.
+        area.entities.register_entity(sleep_id, "sleep")
+        await delete_stale_entities(db)
+
+        assert self._row_count(db, area_name, sleep_id) == 1
+        assert interval_count() == 1
 
     @pytest.mark.parametrize("error_class", [SQLAlchemyError, TimeoutError])
     @pytest.mark.asyncio

@@ -204,6 +204,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Setup platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Only now has each area's sleep sensor joined it, so only now can the
+    # database tell a removed sensor from one that isn't set up yet.
+    await coordinator.db.delete_stale_entities()
+
     # Setup services (idempotent - only needs to run once)
     if DOMAIN not in hass.data.get("_services_setup", {}):
         await async_setup_services(hass)
