@@ -28,6 +28,7 @@ from .entity_type import (
     BINARY_INPUT_TYPES,
     DEFAULT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
+    GROUND_TRUTH_RULE_VERSION,
     AnalysisStatus,
     CorrelationType,
     EntityType,
@@ -846,15 +847,20 @@ def entity_signature(entity: Entity) -> str:
     return f"{entity.type.input_type.value}|{states}|{entity.type.active_range}"
 
 
-def ground_truth_signature(entities: dict[str, Entity]) -> str:
-    """Fingerprint an area's ground-truth sensors (motion, media, sleep)."""
-    return "\n".join(
-        sorted(
-            f"{entity_id}|{entity_signature(entity)}"
-            for entity_id, entity in entities.items()
-            if entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
-        )
+def ground_truth_signature(entities: dict[str, Entity], motion_timeout: int) -> str:
+    """Fingerprint an area's ground truth: its sensors and how they're read.
+
+    Covers the motion, media and sleep sensors, the labelling rule and the
+    motion timeout, since a change to any of them changes what counts as
+    occupied.
+    """
+    sensors = sorted(
+        f"{entity_id}|{entity_signature(entity)}"
+        for entity_id, entity in entities.items()
+        if entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
     )
+    rule = f"rule={GROUND_TRUTH_RULE_VERSION}|motion_timeout={motion_timeout}"
+    return "\n".join([rule, *sensors])
 
 
 class EntityFactory:

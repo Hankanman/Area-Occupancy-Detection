@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 import logging
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.lock import LockState
 from homeassistant.const import (
@@ -225,6 +225,11 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
 GROUND_TRUTH_INPUT_TYPES: frozenset[InputType] = frozenset(
     {InputType.MOTION, InputType.MEDIA, InputType.SLEEP}
 )
+
+# Bump when the rule that turns those sensors into an occupied label
+# changes (2: PIR-like motion bridged by the motion timeout, #604/#625).
+# Shadow statistics gathered under another rule are restarted.
+GROUND_TRUTH_RULE_VERSION: Final = 2
 
 BINARY_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
