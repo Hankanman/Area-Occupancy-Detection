@@ -252,12 +252,21 @@ async def _run_health_check_and_prune(coordinator: AreaOccupancyCoordinator) -> 
 async def _run_sensor_health_check(coordinator: AreaOccupancyCoordinator) -> None:
     """Check per-entity sensor health for every area (repairs pipeline)."""
     if not coordinator.integration_config.health_enabled:
+        coordinator.sensor_health_repairs.clear()
         for area in coordinator.areas.values():
             area.health_monitor.clear_all_issues()
             for entity in area.entities.entities.values():
                 entity.stuck_since = None
         return
     away_entity = coordinator.integration_config.away_mode_entity
+    # Know every sensor's rooms before publishing the first finding: an
+    # Ignore saved under a later room's legacy repair ID applies everywhere.
+    for area in coordinator.areas.values():
+        coordinator.sensor_health_repairs.register_area(
+            area.config.area_id or area.area_name,
+            area.area_name,
+            set(area.entities.entity_ids),
+        )
     for area in coordinator.areas.values():
         excluded = set()
         if area.wasp_entity_id:
@@ -523,6 +532,7 @@ async def _run_pipeline_health_check(
     to keep the orchestrator's complexity inside ruff's threshold.
     """
     if not coordinator.integration_config.health_enabled:
+        coordinator.sensor_health_repairs.clear()
         for area in coordinator.areas.values():
             area.health_monitor.clear_all_issues()
         return

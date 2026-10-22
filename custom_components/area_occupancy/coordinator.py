@@ -81,6 +81,7 @@ from .data.entity_type import (
 )
 from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
+from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
@@ -171,6 +172,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Integration-level configuration (global settings for entire integration)
         self.integration_config = IntegrationConfig(self, config_entry)
+        self.sensor_health_repairs = SensorHealthRepairs(hass)
 
         # Multi-area architecture: dict[str, Area] keyed by area name
         self.areas: dict[str, Area] = {}
@@ -629,6 +631,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._validate_areas_configured()
 
+            await self.sensor_health_repairs.async_load()
+
             # Restore online-prior shadow state (#500) for known areas
             stored_priors = await self._online_prior_store.async_load() or {}
             for area_name in self.areas:
@@ -969,12 +973,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif active:
                 other_present = True
         labeler = self._labelers.setdefault(area_name, LiveLabeler())
-        return labeler.observe(
+        timeout = area.config.sensors.motion_timeout
+        label = labeler.observe(
             now=now,
             motion=motion,
             other_present=other_present,
-            timeout_seconds=area.config.sensors.motion_timeout,
+            timeout_seconds=timeout,
         )
+        # The live probability bridges a PIR sensor's gaps the same way:
+        # it counts in full for the motion timeout after it turns off, then
+        # decays. Sensors that hold "on" while someone is there don't.
+        for entity_id in motion:
+            area.entities.entities[entity_id].decay_delay = (
+                float(timeout) if labeler.state.pulse.get(entity_id, True) else 0.0
+            )
+        return label
 
     def _observe_likelihoods(
         self, area_name: str, area: Area, now: datetime, truth: bool
@@ -1535,6 +1548,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._save_timer = None
 
         # Step 7: Clean up all areas (clears caches, entities, and internal references)
+        # Unloading is not area removal: retain shared repairs and their Ignore
+        # choices, including choices archived after a problem changed type.
+        try:
+            await self.sensor_health_repairs.async_shutdown()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning("Failed to save sensor health Ignore choices: %s", err)
         for area in list(self.areas.values()):
             await area.async_cleanup()
 
@@ -1934,13 +1953,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._reconcile_entity_state()
 
         # Re-establish entity state tracking with new entity lists
-        all_entity_ids = []
-        for area in self.areas.values():
-            all_entity_ids.extend(area.entities.entity_ids)
-
-        # Remove duplicates
-        all_entity_ids = list(set(all_entity_ids))
-        await self.track_entity_state_changes(all_entity_ids)
+        await self.async_track_area_entities()
 
         # Rebuild floor-based aggregators for updated areas
         self._build_floor_aggregators()
@@ -1956,6 +1969,18 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.async_request_refresh()
 
     # --- Entity State Tracking ---
+    async def async_track_area_entities(self) -> None:
+        """Track state changes for every area's current inputs."""
+        await self.track_entity_state_changes(
+            sorted(
+                {
+                    eid
+                    for area in self.areas.values()
+                    for eid in area.entities.entity_ids
+                }
+            )
+        )
+
     async def track_entity_state_changes(self, entity_ids: list[str]) -> None:
         """Track state changes for a list of entity_ids across all areas."""
         # Clean up existing listeners

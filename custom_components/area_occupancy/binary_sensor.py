@@ -21,6 +21,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import (
     async_track_point_in_time,
     async_track_state_change_event,
@@ -132,6 +133,17 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         ):
             area.occupancy_entity_id = None
         await super().async_will_remove_from_hass()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the area's record of this sensor's id after a rename (#614)."""
+        _entity_id_changed_base(self, old_entity_id)
+        if (
+            self._handle is not None
+            and (area := self._get_area()) is not None
+            and area.occupancy_entity_id == old_entity_id
+        ):
+            area.occupancy_entity_id = self.entity_id
 
     @property
     def icon(self) -> str:
@@ -324,6 +336,25 @@ class WaspInBoxSensor(RestoreEntity, BinarySensorEntity):
         _LOGGER.debug("Removing Wasp in Box sensor: %s", self.entity_id)
         self._cleanup_all_resources()
         await super().async_will_remove_from_hass()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Move this sensor's id in its area after a rename (#614).
+
+        The area tells the virtual sensor apart by its id, and counts it as a
+        motion input when Wasp in Box feeds the model.
+        """
+        _entity_id_changed_base(self, old_entity_id)
+        area = self._get_area()
+        if area is None or area.wasp_entity_id != old_entity_id:
+            return
+        area.wasp_entity_id = self.entity_id
+        if old_entity_id in area.entities.entity_ids:
+            area.entities.deregister_entity(old_entity_id)
+            area.entities.register_entity(self.entity_id, "motion")
+            self.hass.async_create_task(
+                self._handle.coordinator.async_track_area_entities()
+            )
 
     @property
     def extra_state_attributes(self) -> dict[str, str | int | None | bool]:
@@ -1009,9 +1040,39 @@ class SleepPresenceSensor(RestoreEntity, BinarySensorEntity):
 
         await super().async_will_remove_from_hass()
 
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Move this sensor's input in its area after a rename (#614).
+
+        Without it a renamed sleep sensor stops feeding the area: its input is
+        keyed by the old id.
+        """
+        _entity_id_changed_base(self, old_entity_id)
+        area = self._get_area()
+        if area is None or area.sleep_entity_id != old_entity_id:
+            return
+        area.entities.deregister_entity(old_entity_id)
+        # Set before registering: the "sleep" input factory reads it.
+        area.sleep_entity_id = self.entity_id
+        area.entities.register_entity(self.entity_id, "sleep")
+        self.hass.async_create_task(
+            self._handle.coordinator.async_track_area_entities()
+        )
+
     def _get_area(self) -> Area | None:
         """Return the current Area backing this sensor."""
         return self._handle.resolve()
+
+
+def _entity_id_changed_base(entity: Entity, old_entity_id: str) -> None:
+    """Call Home Assistant's own hook, which only exists from 2026.11 (#614).
+
+    Our minimum is 2026.9, where nothing calls the hook, so the integration's
+    hooks above are inert there.
+    """
+    base = getattr(super(type(entity), entity), "async_entity_id_changed", None)
+    if base is not None:
+        base(old_entity_id)
 
 
 def _area_subentry_id(

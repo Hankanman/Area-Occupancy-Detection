@@ -189,6 +189,7 @@ class Area:
                 area_id,
                 self.coordinator.hass,
                 purpose=self.purpose.purpose,
+                sensor_repairs=self.coordinator.sensor_health_repairs,
             )
         return self._health_monitor
 
@@ -208,6 +209,12 @@ class Area:
         # Clean up health monitor repair issues to prevent orphans
         if self._health_monitor is not None:
             self._health_monitor.cleanup()
+        else:
+            # Options updates can replace an Area before its lazy monitor is
+            # accessed. Withdraw any findings its previous instance reported.
+            self.coordinator.sensor_health_repairs.remove_area(
+                self.config.area_id or self.area_name
+            )
         await self.entities.cleanup()
         self.purpose.cleanup()
 

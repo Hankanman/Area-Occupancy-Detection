@@ -104,11 +104,13 @@ class Prior:
         applying PRIOR_FACTOR boost, and clamping to [MIN_PRIOR, MAX_PRIOR].
 
         Floors (purpose.min_prior, config.min_prior_override) can raise the
-        learned prior, but they are capped strictly below the configured
-        occupancy threshold so that a floor alone cannot hold an area above
-        the threshold with no active evidence (see issue #435). Learned
-        priors — which reflect real historical occupancy — are allowed to
-        exceed the threshold.
+        learned prior. The result, learned prior included, is capped strictly
+        below the configured occupancy threshold: a prior alone, with no
+        active evidence, never makes an area occupied (#435 for the floors;
+        for learned and time-slot priors, a bedroom whose dogs taught it a
+        52% prior read occupied on the hour with nothing active). The
+        learned value itself is kept and reported, and the
+        ``prior_above_threshold`` repair still flags it.
 
         Returns:
             Prior probability in range [MIN_PRIOR, MAX_PRIOR].
@@ -125,11 +127,8 @@ class Prior:
             or ``"none"`` if the learned prior is already at or above every
             floor.
         """
-        # Capped the same way for the unlearned default below as for the
-        # floors: a prior the integration supplied itself must never be able
-        # to hold an area occupied with no active evidence (issue #435).
-        # Only a learned prior, which reflects real observed occupancy, is
-        # allowed above the threshold.
+        # No prior, learned, default or floor, may hold an area occupied
+        # with no active evidence (issue #435), so all are capped here.
         floor_cap = max(MIN_PRIOR, self.config.threshold - PRIOR_FLOOR_THRESHOLD_MARGIN)
 
         if self.global_prior is None:
@@ -157,7 +156,7 @@ class Prior:
                 prior = combine_priors(self.global_prior, self.time_prior)
 
             adjusted_prior = prior * PRIOR_FACTOR
-            learned = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior))
+            learned = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior, floor_cap))
 
         purpose_floor = 0.0
         area = self.coordinator.areas.get(self.area_name)

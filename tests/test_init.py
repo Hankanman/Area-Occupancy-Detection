@@ -26,6 +26,8 @@ from custom_components.area_occupancy.const import (
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
+    SENSOR_HEALTH_IGNORE_STORE_KEY,
+    SENSOR_HEALTH_IGNORE_STORE_VERSION,
     WASP_IN_BOX_DEPRECATION_ISSUE,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
@@ -799,8 +801,26 @@ class TestAsyncRemoveEntry:
         # Simulate no other entries remain (this is the last one)
         hass.config_entries.async_entries = Mock(return_value=[mock_config_entry])
 
+        ignore_store: Store[list[str]] = Store(
+            hass, SENSOR_HEALTH_IGNORE_STORE_VERSION, SENSOR_HEALTH_IGNORE_STORE_KEY
+        )
+        await ignore_store.async_save(
+            ["sensor_health_binary_sensor.shared_stuck_active"]
+        )
+        repair_id = "sensor_health_binary_sensor.shared_unavailable"
+        ir.async_create_issue(
+            hass,
+            DOMAIN_CONST,
+            repair_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="sensor_health_unavailable",
+        )
+
         await async_remove_entry(hass, mock_config_entry)
 
+        assert await ignore_store.async_load() is None
+        assert ir.async_get(hass).async_get_issue(DOMAIN_CONST, repair_id) is None
         assert not _path_exists(isolated_db), (
             "DB file should be removed when the last entry is removed"
         )
