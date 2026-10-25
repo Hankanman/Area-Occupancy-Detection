@@ -85,6 +85,7 @@ CONF_OPTION_PREFIX_AREA: Final = "area_"
 # CONF_NAME removed - use CONF_AREA_ID instead
 CONF_AREA_ID: Final = "area_id"
 CONF_PURPOSE: Final = "purpose"
+CONF_PURPOSE_PROFILES: Final = "purpose_profiles"
 CONF_ADJACENT_AREAS: Final = (
     "adjacent_areas"  # JSON list of adjacent area_ids; consumed by AreaRelationships
 )
@@ -138,6 +139,13 @@ CONF_HEALTH_ENABLED: Final = "health_enabled"
 # Optional boolean entity that is on while the household is away (#485). Set,
 # it replaces person tracking and ``zone.home`` as the source for away mode.
 CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
+
+# Temporary manual occupancy controls. They are stored in HA's storage
+# helper, never in the learned probability database.
+MANUAL_OCCUPANCY_STORE_KEY_PREFIX: Final = f"{DOMAIN}_manual_occupancy"
+MANUAL_OCCUPANCY_STORE_VERSION: Final = 1
+MANUAL_OCCUPANCY_MAX_DURATION_SECONDS: Final = 7 * 24 * 60 * 60
+DEFAULT_MANUAL_OCCUPANCY_DURATION_SECONDS: Final = 60 * 60
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"

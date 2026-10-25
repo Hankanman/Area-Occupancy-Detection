@@ -102,3 +102,37 @@ set_area_option:
       description: Whether the area stays occupied while its doors stay closed after motion.
       selector:
         boolean:
+
+set_manual_occupancy:
+  name: Set Manual Occupancy
+  description: >-
+    Temporarily replace the visible occupancy status for one area without
+    changing the learned probability model. The state returns to automatic
+    detection when the duration expires or when clear is selected.
+  fields:
+    area_id:
+      name: Area
+      description: The Home Assistant area_id to override.
+      required: true
+      selector:
+        area: {}
+    state:
+      name: State
+      description: Occupied, unoccupied, or clear the current override.
+      required: true
+      selector:
+        select:
+          options:
+            - occupied
+            - unoccupied
+            - clear
+    duration:
+      name: Duration
+      description: How long the manual state remains active, up to 7 days.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 604800
+          step: 1
+          unit_of_measurement: seconds

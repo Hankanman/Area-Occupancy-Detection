@@ -90,7 +90,7 @@ from .const import (
     DURATION_FIELDS,
     SUBENTRY_TYPE_AREA,
 )
-from .data.purpose import Purpose
+from .data.purpose import Purpose, normalize_purpose_profiles
 
 # ── Shared bounds ────────────────────────────────────────────────────
 # One definition for the UI selectors, the server-side validator and the
@@ -409,7 +409,7 @@ def validate_person_input(user_input: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_purpose_based_decay_default(
-    flattened_input: dict[str, Any], purpose: str | None
+    flattened_input: dict[str, Any], purpose: str | list[str] | None
 ) -> None:
     """Normalise the decay half-life against the selected purpose.
 
@@ -426,7 +426,10 @@ def apply_purpose_based_decay_default(
         return
 
     user_set_decay = flattened_input.get(CONF_DECAY_HALF_LIFE)
-    if user_set_decay is None or Purpose.is_purpose_half_life(user_set_decay, purpose):
+    profiles = normalize_purpose_profiles(purpose)
+    if user_set_decay is None or any(
+        Purpose.is_purpose_half_life(user_set_decay, profile) for profile in profiles
+    ):
         flattened_input[CONF_DECAY_HALF_LIFE] = 0
 
 

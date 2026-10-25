@@ -31,6 +31,7 @@ from .const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
+    DEFAULT_MANUAL_OCCUPANCY_DURATION_SECONDS,
     DEFAULT_PURPOSE,
     DEVICE_SW_VERSION,
     DOMAIN,
@@ -100,6 +101,17 @@ SET_AREA_OPTION_SCHEMA = vol.Schema(
         },
         _require_at_least_one_option,
     )
+)
+
+SET_MANUAL_OCCUPANCY_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+        vol.Required("state"): vol.In({"occupied", "unoccupied", "clear"}),
+        vol.Optional(
+            "duration",
+            default=DEFAULT_MANUAL_OCCUPANCY_DURATION_SECONDS,
+        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=7 * 24 * 60 * 60)),
+    }
 )
 
 
@@ -597,6 +609,19 @@ async def _set_area_option(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     }
 
 
+async def _set_manual_occupancy(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, object]:
+    """Set or clear a time-limited visible occupancy state."""
+    coordinator = get_coordinator(hass)
+    state = call.data["state"]
+    return await coordinator.async_set_manual_override(
+        call.data[CONF_AREA_ID],
+        None if state == "clear" else state == "occupied",
+        None if state == "clear" else call.data["duration"],
+    )
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -615,6 +640,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_set_area_option(call: ServiceCall) -> dict[str, Any]:
         return await _set_area_option(hass, call)
+
+    async def handle_set_manual_occupancy(call: ServiceCall) -> dict[str, object]:
+        return await _set_manual_occupancy(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -657,6 +685,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.OPTIONAL,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        "set_manual_occupancy",
+        handle_set_manual_occupancy,
+        schema=SET_MANUAL_OCCUPANCY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
 
 def async_unload_services(hass: HomeAssistant) -> None:
     """Remove the domain services.
@@ -670,5 +706,6 @@ def async_unload_services(hass: HomeAssistant) -> None:
         "purge_area_history",
         "get_time_priors",
         "set_area_option",
+        "set_manual_occupancy",
     ):
         hass.services.async_remove(DOMAIN, service)
