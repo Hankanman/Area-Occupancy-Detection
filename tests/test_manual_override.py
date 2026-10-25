@@ -1,6 +1,8 @@
 """Tests for point-in-time manual occupancy references."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from custom_components.area_occupancy.data.manual_override import (
     ManualOccupancyFeedback,
@@ -24,6 +26,70 @@ def test_feedback_without_probability_round_trips() -> None:
     feedback = ManualOccupancyFeedback("id", "living_room", False, now, None)
 
     assert ManualOccupancyFeedback.from_dict(feedback.to_dict()) == feedback
+
+
+def test_feedback_normalizes_ids_and_timestamp_to_utc() -> None:
+    """Identifiers are trimmed and aware timestamps are stored in UTC."""
+    feedback = ManualOccupancyFeedback(
+        "  feedback  ",
+        "  living_room  ",
+        True,
+        datetime(2026, 10, 25, 22, 0, tzinfo=UTC),
+        None,
+    )
+
+    assert feedback.feedback_id == "feedback"
+    assert feedback.area_id == "living_room"
+    assert feedback.recorded_at.tzinfo == UTC
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("feedback_id", 1),
+        ("area_id", 1),
+        ("occupied", 1),
+        ("recorded_at", "2026-10-25T22:00:00+00:00"),
+    ],
+)
+def test_direct_construction_rejects_wrong_types(field: str, value: object) -> None:
+    """Direct callers receive a clear type error for invalid fields."""
+    values: dict[str, object] = {
+        "feedback_id": "id",
+        "area_id": "living_room",
+        "occupied": True,
+        "recorded_at": dt_util.utcnow(),
+        "automatic_probability": None,
+    }
+    values[field] = value
+
+    with pytest.raises(TypeError):
+        ManualOccupancyFeedback(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("probability", ["0.5", True, float("nan"), float("inf")])
+def test_direct_construction_rejects_invalid_probability(
+    probability: object,
+) -> None:
+    """Probabilities must be finite numeric values in the model range."""
+    with pytest.raises(ValueError):
+        ManualOccupancyFeedback(
+            "id",
+            "living_room",
+            True,
+            dt_util.utcnow(),
+            probability,  # type: ignore[arg-type]
+        )
+
+
+def test_naive_timestamp_is_ignored() -> None:
+    """Stored timestamps without a timezone are rejected."""
+    data = ManualOccupancyFeedback(
+        "id", "living_room", True, dt_util.utcnow(), None
+    ).to_dict()
+    data["recorded_at"] = "2026-10-25T22:00:00"
+
+    assert ManualOccupancyFeedback.from_dict(data) is None
 
 
 def test_malformed_feedback_is_ignored() -> None:
