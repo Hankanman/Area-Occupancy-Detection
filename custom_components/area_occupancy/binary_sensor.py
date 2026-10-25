@@ -164,14 +164,14 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         area = self._get_area()
         if area is None:
             return False
-        return self.coordinator.occupied_for(area.area_name)
+        return area.occupied()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose whether the visible state is manual or automatic."""
         if self._all_areas is not None or self._handle is None:
             return {}
-        return self.coordinator.manual_override_attributes(self._handle.area_name)
+        return self.coordinator.manual_feedback_attributes(self._handle.area_name)
 
     def _get_area(self) -> Area | None:
         """Resolve the current Area instance for this entity."""

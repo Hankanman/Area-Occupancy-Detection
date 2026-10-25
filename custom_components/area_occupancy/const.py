@@ -143,9 +143,10 @@ CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
 # Temporary manual occupancy controls. They are stored in HA's storage
 # helper, never in the learned probability database.
 MANUAL_OCCUPANCY_STORE_KEY_PREFIX: Final = f"{DOMAIN}_manual_occupancy"
-MANUAL_OCCUPANCY_STORE_VERSION: Final = 1
-MANUAL_OCCUPANCY_MAX_DURATION_SECONDS: Final = 7 * 24 * 60 * 60
-DEFAULT_MANUAL_OCCUPANCY_DURATION_SECONDS: Final = 60 * 60
+MANUAL_OCCUPANCY_STORE_VERSION: Final = 2
+MANUAL_OCCUPANCY_RETENTION_DAYS: Final = 365
+MANUAL_OCCUPANCY_MAX_RECORDS: Final = 1000
+MANUAL_OCCUPANCY_DEDUPE_SECONDS: Final = 5
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"

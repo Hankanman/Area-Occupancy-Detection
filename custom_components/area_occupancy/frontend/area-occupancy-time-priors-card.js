@@ -493,7 +493,17 @@ class AreaOccupancyDashboardCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!Array.isArray(config.areas) || config.areas.length === 0) {
+    if (
+      !Array.isArray(config.areas) ||
+      config.areas.length === 0 ||
+      config.areas.some(
+        (area) =>
+          !area ||
+          typeof area.area_id !== "string" ||
+          typeof area.occupancy_entity !== "string" ||
+          typeof area.probability_entity !== "string",
+      )
+    ) {
       throw new Error("areas must contain room tile definitions");
     }
     this._config = config;
@@ -520,9 +530,14 @@ class AreaOccupancyDashboardCard extends HTMLElement {
       .map((area) => {
         const occupancy = this._state(area.occupancy_entity);
         const probability = this._state(area.probability_entity);
-        const source = occupancy?.attributes?.state_source === "manual"
-          ? "Manual"
-          : "Automatic";
+        const reference = occupancy?.attributes || {};
+        const referenceText = reference.manual_reference_available
+          ? `Last reference: ${
+              reference.manual_reference_state === "occupied"
+                ? "occupied"
+                : "clear"
+            }`
+          : "No manual reference";
         const probabilityAttributes = probability?.attributes || {};
         const uncertainty = probabilityAttributes.decaying_entities?.length
           ? "Fading evidence"
@@ -532,13 +547,18 @@ class AreaOccupancyDashboardCard extends HTMLElement {
         return `
           <section class="tile ${occupancy?.state === "on" ? "occupied" : ""}">
             <div class="title">${esc(area.name || area.area_id)}</div>
-            <div class="status">${occupancy?.state === "on" ? "Occupied" : "Clear"}</div>
+            <div class="status">${
+              occupancy?.state === "on"
+                ? "Occupied"
+                : occupancy?.state === "off"
+                  ? "Clear"
+                  : "Unavailable"
+            }</div>
             <div class="probability">${esc(probability?.state || "—")}%</div>
-            <div class="meta">${source} · ${uncertainty}</div>
+            <div class="meta">${esc(referenceText)} · ${esc(uncertainty)}</div>
             <div class="actions">
-              <button data-area="${esc(area.area_id)}" data-state="occupied">Occupy 1h</button>
-              <button data-area="${esc(area.area_id)}" data-state="unoccupied">Clear 1h</button>
-              <button data-area="${esc(area.area_id)}" data-state="clear">Automatic</button>
+              <button data-area="${esc(area.area_id)}" data-state="occupied">Now occupied</button>
+              <button data-area="${esc(area.area_id)}" data-state="unoccupied">Now clear</button>
             </div>
           </section>`;
       })
@@ -566,7 +586,9 @@ class AreaOccupancyDashboardCard extends HTMLElement {
         this._hass.callService("area_occupancy", "set_manual_occupancy", {
           area_id: button.dataset.area,
           state,
-          ...(state === "clear" ? {} : { duration: 3600 }),
+        }).catch((error) => {
+          button.title = "Could not record reference";
+          console.error("Could not record occupancy reference", error);
         });
       });
     });

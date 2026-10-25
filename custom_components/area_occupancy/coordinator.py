@@ -8,11 +8,12 @@ import contextlib
 from datetime import datetime, timedelta
 import logging
 from typing import Any
+from uuid import uuid4
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -54,7 +55,9 @@ from .const import (
     GROUND_TRUTH_STORE_VERSION,
     LIKELIHOOD_SHADOW_STORE_KEY_PREFIX,
     LIKELIHOOD_SHADOW_STORE_VERSION,
-    MANUAL_OCCUPANCY_MAX_DURATION_SECONDS,
+    MANUAL_OCCUPANCY_DEDUPE_SECONDS,
+    MANUAL_OCCUPANCY_MAX_RECORDS,
+    MANUAL_OCCUPANCY_RETENTION_DAYS,
     MANUAL_OCCUPANCY_STORE_KEY_PREFIX,
     MANUAL_OCCUPANCY_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
@@ -86,7 +89,7 @@ from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
 from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
-from .data.manual_override import ManualOccupancyOverride
+from .data.manual_override import ManualOccupancyFeedback
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
@@ -155,6 +158,16 @@ class OnlinePriorStore(Store[dict[str, dict]]):
         self, old_version: int, old_data: dict[str, dict]
     ) -> dict[str, dict]:
         return old_data
+
+
+class ManualFeedbackStore(Store[dict[str, list[dict[str, object]]]]):
+    """Store for feedback records, discarding the old override shape."""
+
+    async def _async_migrate_func(
+        self, old_version: int, old_data: dict[str, object]
+    ) -> dict[str, list[dict[str, object]]]:
+        """Do not restore old state-changing overrides as reference data."""
+        return {"feedback": []}
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -319,13 +332,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             FUSION_STORE_VERSION,
             f"{FUSION_STORE_KEY_PREFIX}.{self.entry_id}",
         )
-        self._manual_overrides: dict[str, ManualOccupancyOverride] = {}
-        self._manual_override_store: Store[dict[str, dict]] = Store(
+        self._manual_feedback: list[ManualOccupancyFeedback] = []
+        self._manual_feedback_store: ManualFeedbackStore = ManualFeedbackStore(
             hass,
             MANUAL_OCCUPANCY_STORE_VERSION,
             f"{MANUAL_OCCUPANCY_STORE_KEY_PREFIX}.{self.entry_id}",
         )
-        self._manual_override_timers: dict[str, CALLBACK_TYPE] = {}
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -481,73 +493,40 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Get list of all configured area names."""
         return list(self.areas.keys())
 
-    def manual_override_for(self, area_name: str) -> ManualOccupancyOverride | None:
-        """Return the active manual override for an area, if one exists."""
+    def latest_manual_feedback(self, area_name: str) -> ManualOccupancyFeedback | None:
+        """Return the most recent feedback for a configured area."""
         area = self.get_area(area_name)
-        area_id = area.config.area_id if area is not None else None
-        if area_id is None:
+        if area is None or area.config.area_id is None:
             return None
-        override = self._manual_overrides.get(area_id)
-        if override is None:
-            return None
-        if override.expires_at <= dt_util.utcnow():
-            self._manual_overrides.pop(area_id, None)
-            timer = self._manual_override_timers.pop(area_id, None)
-            if timer is not None:
-                timer()
-            return None
-        return override
-
-    def occupied_for(self, area_name: str) -> bool:
-        """Return visible occupancy, preferring an active manual override."""
-        area = self.get_area(area_name)
-        if area is None:
-            return False
-        override = self.manual_override_for(area_name)
-        return override.occupied if override is not None else area.occupied()
-
-    def manual_override_attributes(self, area_name: str) -> dict[str, object]:
-        """Return attributes that make manual and automatic state explicit."""
-        override = self.manual_override_for(area_name)
-        if override is None:
-            return {"state_source": "automatic", "manual_override": False}
-        return {
-            "state_source": "manual",
-            "manual_override": True,
-            "manual_occupied": override.occupied,
-            "manual_override_set_at": override.set_at.isoformat(),
-            "manual_override_expires_at": override.expires_at.isoformat(),
-        }
-
-    def _schedule_manual_override_expiry(
-        self, area_id: str, override: ManualOccupancyOverride
-    ) -> None:
-        """Schedule the refresh that returns an area to automatic state."""
-        old_timer = self._manual_override_timers.pop(area_id, None)
-        if old_timer is not None:
-            old_timer()
-        self._manual_override_timers[area_id] = async_track_point_in_time(
-            self.hass,
-            lambda _now: self._expire_manual_override(area_id),
-            override.expires_at,
+        return next(
+            (
+                feedback
+                for feedback in reversed(self._manual_feedback)
+                if feedback.area_id == area.config.area_id
+            ),
+            None,
         )
 
-    @callback
-    def _expire_manual_override(self, area_id: str) -> None:
-        """Remove an expired override and notify its entities."""
-        self._manual_override_timers.pop(area_id, None)
-        self._manual_overrides.pop(area_id, None)
-        self.hass.async_create_task(self._save_manual_overrides())
-        self.async_set_updated_data(self.data or {})
+    def manual_feedback_attributes(self, area_name: str) -> dict[str, object]:
+        """Expose the latest reference without changing the live state."""
+        feedback = self.latest_manual_feedback(area_name)
+        if feedback is None:
+            return {"manual_reference_available": False}
+        return {
+            "manual_reference_available": True,
+            "manual_reference_state": "occupied" if feedback.occupied else "unoccupied",
+            "manual_reference_recorded_at": feedback.recorded_at.isoformat(),
+            "manual_reference_automatic_probability": (
+                round(feedback.automatic_probability * 100, 1)
+                if feedback.automatic_probability is not None
+                else None
+            ),
+        }
 
-    async def async_set_manual_override(
-        self, area_id: str, occupied: bool | None, duration_seconds: int | None
+    async def async_record_manual_feedback(
+        self, area_id: str, occupied: bool
     ) -> dict[str, object]:
-        """Set or clear a temporary manual occupancy override.
-
-        ``occupied=None`` clears the override immediately. Overrides never
-        modify learned priors, likelihoods, or recorder input.
-        """
+        """Record a point-in-time reference without affecting occupancy."""
         area_name = next(
             (
                 name
@@ -558,46 +537,53 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if area_name is None:
             raise HomeAssistantError(f"Unknown configured area: {area_id}")
-        if occupied is None:
-            self._manual_overrides.pop(area_id, None)
-            timer = self._manual_override_timers.pop(area_id, None)
-            if timer is not None:
-                timer()
-            await self._save_manual_overrides()
-            self.async_set_updated_data(self.data or {})
-            return {"area_id": area_id, "manual_override": False}
-
-        seconds = duration_seconds or 0
-        if seconds <= 0 or seconds > MANUAL_OCCUPANCY_MAX_DURATION_SECONDS:
-            raise HomeAssistantError(
-                "Manual occupancy duration must be between 1 second and 7 days"
-            )
         now = dt_util.utcnow()
-        override = ManualOccupancyOverride(
+        if any(
+            feedback.area_id == area_id
+            and feedback.occupied == occupied
+            and abs((now - feedback.recorded_at).total_seconds())
+            <= MANUAL_OCCUPANCY_DEDUPE_SECONDS
+            for feedback in self._manual_feedback
+        ):
+            raise HomeAssistantError("Duplicate manual occupancy feedback")
+        try:
+            automatic_probability = self.areas[area_name].probability()
+        except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+            automatic_probability = None
+        feedback = ManualOccupancyFeedback(
+            feedback_id=uuid4().hex,
+            area_id=area_id,
             occupied=occupied,
-            set_at=now,
-            expires_at=now + timedelta(seconds=seconds),
+            recorded_at=now,
+            automatic_probability=automatic_probability,
         )
-        self._manual_overrides[area_id] = override
-        self._schedule_manual_override_expiry(area_id, override)
-        await self._save_manual_overrides()
-        self.async_set_updated_data(self.data or {})
+        previous_feedback = list(self._manual_feedback)
+        self._manual_feedback.append(feedback)
+        try:
+            await self._save_manual_feedback()
+        except (HomeAssistantError, OSError, TypeError, ValueError) as err:
+            self._manual_feedback = previous_feedback
+            raise HomeAssistantError("Could not persist occupancy feedback") from err
         return {
             "area_id": area_id,
-            "manual_override": True,
+            "feedback_id": feedback.feedback_id,
             "occupied": occupied,
-            "expires_at": override.expires_at.isoformat(),
+            "recorded_at": now.isoformat(),
+            "automatic_probability": automatic_probability,
         }
 
-    async def _save_manual_overrides(self) -> None:
-        """Persist active manual overrides and discard expired entries."""
-        active = {
-            area.config.area_id: override.to_dict()
-            for name, area in self.areas.items()
-            if area.config.area_id
-            and (override := self.manual_override_for(name)) is not None
-        }
-        await self._manual_override_store.async_save(active)
+    async def _save_manual_feedback(self) -> None:
+        """Persist retained feedback and discard expired/orphaned records."""
+        cutoff = dt_util.utcnow() - timedelta(days=MANUAL_OCCUPANCY_RETENTION_DAYS)
+        known_ids = {area.config.area_id for area in self.areas.values()}
+        self._manual_feedback = [
+            feedback
+            for feedback in self._manual_feedback
+            if feedback.recorded_at >= cutoff and feedback.area_id in known_ids
+        ][-MANUAL_OCCUPANCY_MAX_RECORDS:]
+        await self._manual_feedback_store.async_save(
+            {"feedback": [feedback.to_dict() for feedback in self._manual_feedback]}
+        )
 
     def find_area_for_entity(self, entity_id: str) -> str | None:
         """Find which area contains a specific entity.
@@ -710,9 +696,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._save_timer is not None:
             self._save_timer()
             self._save_timer = None
-        for area_name, timer in list(self._manual_override_timers.items()):
-            timer()
-            self._manual_override_timers.pop(area_name, None)
 
     # --- Public Methods ---
     def _validate_areas_configured(self) -> None:
@@ -765,23 +748,20 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             await self.sensor_health_repairs.async_load()
 
-            stored_overrides = await self._manual_override_store.async_load() or {}
-            for area_id, raw_override in stored_overrides.items():
-                area_name = next(
-                    (
-                        name
-                        for name, area in self.areas.items()
-                        if area.config.area_id == area_id
-                    ),
-                    None,
-                )
-                if area_name is None or not isinstance(raw_override, dict):
-                    continue
-                override = ManualOccupancyOverride.from_dict(raw_override)
-                if override is not None:
-                    self._manual_overrides[area_id] = override
-                    self._schedule_manual_override_expiry(area_id, override)
-            await self._save_manual_overrides()
+            stored_feedback = await self._manual_feedback_store.async_load() or {}
+            raw_feedback = (
+                stored_feedback.get("feedback", [])
+                if isinstance(stored_feedback, dict)
+                else []
+            )
+            if isinstance(raw_feedback, list):
+                self._manual_feedback = [
+                    feedback
+                    for raw in raw_feedback
+                    if isinstance(raw, dict)
+                    and (feedback := ManualOccupancyFeedback.from_dict(raw)) is not None
+                ]
+            await self._save_manual_feedback()
 
             # Restore online-prior shadow state (#500) for known areas
             stored_priors = await self._online_prior_store.async_load() or {}

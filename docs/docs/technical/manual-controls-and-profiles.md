@@ -1,32 +1,30 @@
-# Manual Controls and Combined Profiles
+# Manual occupancy references and combined purpose profiles
 
-## Manual state
+## Manual reference data
 
-Manual state is stored with Home Assistant's `Store`, keyed by the config
-entry and area name. Each record contains the requested boolean state, the
-set time, and an absolute expiry time. On restore, invalid and expired
-records are ignored.
+Reference data is stored with Home Assistant's `Store`, keyed by config entry.
+Each record contains a generated ID, area ID, UTC recording time, confirmed
+state, and the automatic probability captured at that instant when available.
 
-The coordinator resolves visible occupancy in this order:
+The coordinator never reads a reference into `Area.occupied()` or the
+probability calculation. Binary sensor state, probability, recorder input,
+priors, likelihoods, and online learners therefore remain automatic. Entity
+attributes expose the latest reference separately for quality evaluation.
 
-1. An active manual override, if present.
-2. The normal `Area.occupied()` result.
-
-The normal probability path is never given the manual value. Consequently,
-manual corrections cannot train priors or sensor likelihoods. A scheduled
-expiry refreshes entities and makes the transition back to automatic state
-observable without waiting for a sensor event.
+The store retains 365 days and at most 1,000 records. Unknown-area and
+malformed records are ignored during restore and save. Same-state submissions
+for one area within five seconds are rejected. Version 1 state-changing
+overrides are intentionally discarded during the Store migration rather than
+being reinterpreted as historical reference events.
 
 ## Combined usage profiles
 
 `purpose_profiles` is an additive configuration field. Older configurations
 that only contain `purpose` continue to behave as before. Profiles are
-normalised in input order and duplicate or unknown values are discarded. The
-first profile is retained as the legacy primary purpose for display and
-purpose-specific health rules.
+normalised in input order; duplicate and unknown values are discarded. The
+first profile remains the legacy primary purpose for display and health rules.
 
-When the half-life is set to the purpose default (`0`), the effective default
-is the **maximum** half-life across the selected profiles. This conservative
-rule prevents a room used for a slower activity from releasing early. An
-explicit half-life still wins and remains unchanged. No learned probability
-or historical data is rewritten when profiles change.
+When decay half-life is automatic (`0`), the effective default is the maximum
+half-life across selected profiles. This conservative rule prevents a slower
+room use from releasing early. An explicit half-life wins unchanged. Profile
+changes do not rewrite learned probability or historical data.

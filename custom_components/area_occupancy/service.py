@@ -31,7 +31,6 @@ from .const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WASP_ENABLED,
-    DEFAULT_MANUAL_OCCUPANCY_DURATION_SECONDS,
     DEFAULT_PURPOSE,
     DEVICE_SW_VERSION,
     DOMAIN,
@@ -106,11 +105,7 @@ SET_AREA_OPTION_SCHEMA = vol.Schema(
 SET_MANUAL_OCCUPANCY_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
-        vol.Required("state"): vol.In({"occupied", "unoccupied", "clear"}),
-        vol.Optional(
-            "duration",
-            default=DEFAULT_MANUAL_OCCUPANCY_DURATION_SECONDS,
-        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=7 * 24 * 60 * 60)),
+        vol.Required("state"): vol.In({"occupied", "unoccupied"}),
     }
 )
 
@@ -612,13 +607,12 @@ async def _set_area_option(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
 async def _set_manual_occupancy(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, object]:
-    """Set or clear a time-limited visible occupancy state."""
+    """Record a point-in-time occupancy reference."""
     coordinator = get_coordinator(hass)
     state = call.data["state"]
-    return await coordinator.async_set_manual_override(
+    return await coordinator.async_record_manual_feedback(
         call.data[CONF_AREA_ID],
-        None if state == "clear" else state == "occupied",
-        None if state == "clear" else call.data["duration"],
+        state == "occupied",
     )
 
 

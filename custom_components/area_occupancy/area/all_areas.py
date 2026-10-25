@@ -162,10 +162,7 @@ class AllAreas:
 
     def occupied(self) -> bool:
         """Check if ANY included area is occupied."""
-        return any(
-            self.coordinator.occupied_for(area.area_name)
-            for area in self._included_areas()
-        )
+        return any(area.occupied() for area in self._included_areas())
 
     def area_prior(self) -> float:
         """Prior that anyone is in an included area (#557)."""
@@ -259,10 +256,7 @@ class FloorAreas:
 
     def occupied(self) -> bool:
         """Check if ANY area on this floor is occupied."""
-        return any(
-            self.coordinator.occupied_for(area.area_name)
-            for area in self._floor_areas()
-        )
+        return any(area.occupied() for area in self._floor_areas())
 
     def area_prior(self) -> float:
         """Prior that anyone is on this floor (#557)."""

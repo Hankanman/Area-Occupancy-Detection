@@ -1,33 +1,52 @@
-"""Tests for temporary manual occupancy overrides."""
+"""Tests for point-in-time manual occupancy references."""
 
 from datetime import timedelta
 
 from custom_components.area_occupancy.data.manual_override import (
-    ManualOccupancyOverride,
+    ManualOccupancyFeedback,
 )
 from homeassistant.util import dt as dt_util
 
 
-def test_override_round_trips() -> None:
-    """A valid override survives storage serialization."""
+def test_feedback_round_trips() -> None:
+    """A valid reference survives storage serialization."""
     now = dt_util.utcnow()
-    override = ManualOccupancyOverride(True, now, now + timedelta(hours=1))
+    feedback = ManualOccupancyFeedback("id", "living_room", True, now, 0.75)
 
-    restored = ManualOccupancyOverride.from_dict(override.to_dict())
+    restored = ManualOccupancyFeedback.from_dict(feedback.to_dict())
 
-    assert restored is not None
-    assert restored.occupied is True
-    assert restored.expires_at == override.expires_at
+    assert restored == feedback
 
 
-def test_expired_override_is_not_restored() -> None:
-    """Expired state safely returns to automatic detection after restart."""
+def test_feedback_without_probability_round_trips() -> None:
+    """Unavailable automatic predictions are represented as null."""
     now = dt_util.utcnow()
-    data = ManualOccupancyOverride(False, now - timedelta(hours=2), now).to_dict()
+    feedback = ManualOccupancyFeedback("id", "living_room", False, now, None)
 
-    assert ManualOccupancyOverride.from_dict(data) is None
+    assert ManualOccupancyFeedback.from_dict(feedback.to_dict()) == feedback
 
 
-def test_malformed_override_is_ignored() -> None:
-    """Hand-edited or corrupt storage cannot create a manual state."""
-    assert ManualOccupancyOverride.from_dict({"occupied": True}) is None
+def test_malformed_feedback_is_ignored() -> None:
+    """Hand-edited or corrupt storage cannot create a reference."""
+    assert ManualOccupancyFeedback.from_dict({"occupied": True}) is None
+
+
+def test_invalid_probability_is_ignored() -> None:
+    """A probability outside the model range is rejected."""
+    now = dt_util.utcnow()
+    data = ManualOccupancyFeedback("id", "living_room", True, now, 0.5).to_dict()
+    data["automatic_probability"] = 2
+
+    assert ManualOccupancyFeedback.from_dict(data) is None
+
+
+def test_old_expiry_shape_is_ignored() -> None:
+    """Old state-changing override data is not reinterpreted as feedback."""
+    now = dt_util.utcnow()
+    data = {
+        "occupied": True,
+        "set_at": (now - timedelta(hours=1)).isoformat(),
+        "expires_at": now.isoformat(),
+    }
+
+    assert ManualOccupancyFeedback.from_dict(data) is None

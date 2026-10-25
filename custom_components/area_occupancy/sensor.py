@@ -235,7 +235,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             **snapshot,
             "active_entities": active_entities,
             "decaying_entities": decaying_entities,
-            **self.coordinator.manual_override_attributes(area.area_name),
+            **self.coordinator.manual_feedback_attributes(area.area_name),
             "purpose_profiles": list(
                 getattr(area.config, "purpose_profiles", [area.config.purpose])
             ),
