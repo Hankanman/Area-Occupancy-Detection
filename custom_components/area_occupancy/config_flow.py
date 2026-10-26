@@ -133,6 +133,7 @@ from .const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
+    CONF_PURPOSE_PROFILES,
     CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
@@ -1163,6 +1164,21 @@ def _create_basics_step_schema(
             mode=SelectSelectorMode.DROPDOWN,
         )
     )
+    profiles_default = current.get(CONF_PURPOSE_PROFILES)
+    profiles_marker = (
+        vol.Optional(CONF_PURPOSE_PROFILES, default=profiles_default)
+        if profiles_default
+        else vol.Optional(CONF_PURPOSE_PROFILES)
+    )
+    fields[profiles_marker] = (
+        SelectSelector(
+            SelectSelectorConfig(
+                options=cast("list[SelectOptionDict]", get_purpose_options()),
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
+    )
     if adjacent_options:
         adjacent_default = list(current.get(CONF_ADJACENT_AREAS) or [])
         fields[vol.Optional(CONF_ADJACENT_AREAS, default=adjacent_default)] = (
@@ -1385,6 +1401,8 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         nested[CONF_AREA_ID] = flat_config[CONF_AREA_ID]
     if CONF_PURPOSE in flat_config:
         nested[CONF_PURPOSE] = flat_config[CONF_PURPOSE]
+    if CONF_PURPOSE_PROFILES in flat_config:
+        nested[CONF_PURPOSE_PROFILES] = flat_config[CONF_PURPOSE_PROFILES]
 
     # Motion section
     motion: dict[str, Any] = {}
@@ -2241,10 +2259,16 @@ class BaseOccupancyFlow:
 
             if not errors:
                 if self._editing_single_section:
+                    profiles = user_input.get(CONF_PURPOSE_PROFILES)
+                    if isinstance(profiles, list) and profiles:
+                        user_input[CONF_PURPOSE] = profiles[0]
                     errors, result = await self._complete_section_edit(user_input)
                     if result is not None:
                         return result
                 else:
+                    profiles = user_input.get(CONF_PURPOSE_PROFILES)
+                    if isinstance(profiles, list) and profiles:
+                        user_input[CONF_PURPOSE] = profiles[0]
                     self._area_config_draft.update(user_input)
                     return await self.async_step_area_motion()
 

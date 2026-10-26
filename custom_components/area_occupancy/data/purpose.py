@@ -156,6 +156,37 @@ class Purpose:
         """Clean up the purpose (no-op for compatibility)."""
 
 
+def normalize_purpose_profiles(
+    profiles: object, fallback: str = DEFAULT_PURPOSE
+) -> list[str]:
+    """Return an ordered, unique list of valid purpose values."""
+    values = profiles if isinstance(profiles, list) else [profiles]
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        try:
+            purpose = AreaPurpose(value)
+        except ValueError:
+            continue
+        if purpose.value not in result:
+            result.append(purpose.value)
+    return result or [fallback]
+
+
+def get_combined_decay_half_life(profiles: object) -> float:
+    """Return the deterministic decay default for one or more purposes.
+
+    Profiles use the longest configured half-life so a room with multiple
+    valid uses does not release early for its slower use. The primary profile
+    remains the first item for display and legacy health thresholds.
+    """
+    return max(
+        PURPOSE_DEFINITIONS[AreaPurpose(profile)].half_life
+        for profile in normalize_purpose_profiles(profiles)
+    )
+
+
 # Purpose definitions based on the provided table
 PURPOSE_DEFINITIONS: dict[AreaPurpose, Purpose] = {
     AreaPurpose.PASSAGEWAY: Purpose(

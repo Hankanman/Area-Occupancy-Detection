@@ -8,6 +8,7 @@ import contextlib
 from datetime import datetime, timedelta
 import logging
 from typing import Any
+from uuid import uuid4
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
@@ -54,6 +55,11 @@ from .const import (
     GROUND_TRUTH_STORE_VERSION,
     LIKELIHOOD_SHADOW_STORE_KEY_PREFIX,
     LIKELIHOOD_SHADOW_STORE_VERSION,
+    MANUAL_OCCUPANCY_DEDUPE_SECONDS,
+    MANUAL_OCCUPANCY_MAX_RECORDS,
+    MANUAL_OCCUPANCY_RETENTION_DAYS,
+    MANUAL_OCCUPANCY_STORE_KEY_PREFIX,
+    MANUAL_OCCUPANCY_STORE_VERSION,
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
@@ -83,6 +89,7 @@ from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
 from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
+from .data.manual_override import ManualOccupancyFeedback
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
@@ -151,6 +158,16 @@ class OnlinePriorStore(Store[dict[str, dict]]):
         self, old_version: int, old_data: dict[str, dict]
     ) -> dict[str, dict]:
         return old_data
+
+
+class ManualFeedbackStore(Store[dict[str, list[dict[str, object]]]]):
+    """Store for feedback records, discarding the old override shape."""
+
+    async def _async_migrate_func(
+        self, old_version: int, old_data: dict[str, object]
+    ) -> dict[str, list[dict[str, object]]]:
+        """Do not restore old state-changing overrides as reference data."""
+        return {"feedback": []}
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -315,6 +332,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             FUSION_STORE_VERSION,
             f"{FUSION_STORE_KEY_PREFIX}.{self.entry_id}",
         )
+        self._manual_feedback: list[ManualOccupancyFeedback] = []
+        self._manual_feedback_store: ManualFeedbackStore = ManualFeedbackStore(
+            hass,
+            MANUAL_OCCUPANCY_STORE_VERSION,
+            f"{MANUAL_OCCUPANCY_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
 
     async def async_init_database(self) -> None:
         """Initialize the database asynchronously to avoid blocking the event loop.
@@ -469,6 +492,98 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def get_area_names(self) -> list[str]:
         """Get list of all configured area names."""
         return list(self.areas.keys())
+
+    def latest_manual_feedback(self, area_name: str) -> ManualOccupancyFeedback | None:
+        """Return the most recent feedback for a configured area."""
+        area = self.get_area(area_name)
+        if area is None or area.config.area_id is None:
+            return None
+        return next(
+            (
+                feedback
+                for feedback in reversed(self._manual_feedback)
+                if feedback.area_id == area.config.area_id
+            ),
+            None,
+        )
+
+    def manual_feedback_attributes(self, area_name: str) -> dict[str, object]:
+        """Expose the latest reference without changing the live state."""
+        feedback = self.latest_manual_feedback(area_name)
+        if feedback is None:
+            return {"manual_reference_available": False}
+        return {
+            "manual_reference_available": True,
+            "manual_reference_state": "occupied" if feedback.occupied else "unoccupied",
+            "manual_reference_recorded_at": feedback.recorded_at.isoformat(),
+            "manual_reference_automatic_probability": (
+                round(feedback.automatic_probability * 100, 1)
+                if feedback.automatic_probability is not None
+                else None
+            ),
+        }
+
+    async def async_record_manual_feedback(
+        self, area_id: str, occupied: bool
+    ) -> dict[str, object]:
+        """Record a point-in-time reference without affecting occupancy."""
+        area_name = next(
+            (
+                name
+                for name, area in self.areas.items()
+                if area.config.area_id == area_id
+            ),
+            None,
+        )
+        if area_name is None:
+            raise HomeAssistantError(f"Unknown configured area: {area_id}")
+        now = dt_util.utcnow()
+        if any(
+            feedback.area_id == area_id
+            and feedback.occupied == occupied
+            and abs((now - feedback.recorded_at).total_seconds())
+            <= MANUAL_OCCUPANCY_DEDUPE_SECONDS
+            for feedback in self._manual_feedback
+        ):
+            raise HomeAssistantError("Duplicate manual occupancy feedback")
+        try:
+            automatic_probability = self.areas[area_name].probability()
+        except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+            automatic_probability = None
+        feedback = ManualOccupancyFeedback(
+            feedback_id=uuid4().hex,
+            area_id=area_id,
+            occupied=occupied,
+            recorded_at=now,
+            automatic_probability=automatic_probability,
+        )
+        previous_feedback = list(self._manual_feedback)
+        self._manual_feedback.append(feedback)
+        try:
+            await self._save_manual_feedback()
+        except (HomeAssistantError, OSError, TypeError, ValueError) as err:
+            self._manual_feedback = previous_feedback
+            raise HomeAssistantError("Could not persist occupancy feedback") from err
+        return {
+            "area_id": area_id,
+            "feedback_id": feedback.feedback_id,
+            "occupied": occupied,
+            "recorded_at": now.isoformat(),
+            "automatic_probability": automatic_probability,
+        }
+
+    async def _save_manual_feedback(self) -> None:
+        """Persist retained feedback and discard expired/orphaned records."""
+        cutoff = dt_util.utcnow() - timedelta(days=MANUAL_OCCUPANCY_RETENTION_DAYS)
+        known_ids = {area.config.area_id for area in self.areas.values()}
+        self._manual_feedback = [
+            feedback
+            for feedback in self._manual_feedback
+            if feedback.recorded_at >= cutoff and feedback.area_id in known_ids
+        ][-MANUAL_OCCUPANCY_MAX_RECORDS:]
+        await self._manual_feedback_store.async_save(
+            {"feedback": [feedback.to_dict() for feedback in self._manual_feedback]}
+        )
 
     def find_area_for_entity(self, entity_id: str) -> str | None:
         """Find which area contains a specific entity.
@@ -632,6 +747,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._validate_areas_configured()
 
             await self.sensor_health_repairs.async_load()
+
+            stored_feedback = await self._manual_feedback_store.async_load() or {}
+            raw_feedback = (
+                stored_feedback.get("feedback", [])
+                if isinstance(stored_feedback, dict)
+                else []
+            )
+            if isinstance(raw_feedback, list):
+                self._manual_feedback = [
+                    feedback
+                    for raw in raw_feedback
+                    if isinstance(raw, dict)
+                    and (feedback := ManualOccupancyFeedback.from_dict(raw)) is not None
+                ]
+            await self._save_manual_feedback()
 
             # Restore online-prior shadow state (#500) for known areas
             stored_priors = await self._online_prior_store.async_load() or {}

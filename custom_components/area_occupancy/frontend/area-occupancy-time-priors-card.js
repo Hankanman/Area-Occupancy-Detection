@@ -53,7 +53,10 @@ const RAMP_STOPS = [0, 0.34, 0.64, 1];
 const DAYS = (() => {
   const fmt = new Intl.DateTimeFormat(
     (typeof navigator !== "undefined" && navigator.language) || "en",
-    { weekday: "short" }
+    {
+      weekday: "short",
+      timeZone: "UTC",
+    }
   );
   // 2024-01-01 is a Monday.
   return Array.from({ length: 7 }, (_, d) => fmt.format(new Date(Date.UTC(2024, 0, 1 + d))));
@@ -482,7 +485,121 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
   }
 }
 
+/*
+ * Room tiles use existing HA entities and the set_manual_occupancy service.
+ * The explicit entity IDs keep the card compatible with renamed areas and
+ * avoid guessing Home Assistant's entity-id slugification.
+ */
+class AreaOccupancyDashboardCard extends HTMLElement {
+  static getStubConfig() {
+    return { areas: [] };
+  }
+
+  setConfig(config) {
+    if (
+      !Array.isArray(config.areas) ||
+      config.areas.length === 0 ||
+      config.areas.some(
+        (area) =>
+          !area ||
+          typeof area.area_id !== "string" ||
+          typeof area.occupancy_entity !== "string" ||
+          typeof area.probability_entity !== "string",
+      )
+    ) {
+      throw new Error("areas must contain room tile definitions");
+    }
+    this._config = config;
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  getCardSize() {
+    return Math.max(2, Math.ceil((this._config?.areas?.length || 1) / 2) * 2);
+  }
+
+  _state(entityId) {
+    return entityId && this._hass?.states?.[entityId];
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._config || !this._hass) return;
+    const tiles = this._config.areas
+      .map((area) => {
+        const occupancy = this._state(area.occupancy_entity);
+        const probability = this._state(area.probability_entity);
+        const reference = occupancy?.attributes || {};
+        const referenceText = reference.manual_reference_available
+          ? `Last reference: ${
+              reference.manual_reference_state === "occupied"
+                ? "occupied"
+                : "clear"
+            }`
+          : "No manual reference";
+        const probabilityAttributes = probability?.attributes || {};
+        const uncertainty = probabilityAttributes.decaying_entities?.length
+          ? "Fading evidence"
+          : probabilityAttributes.active_entities?.length
+            ? "Evidence available"
+            : "No active evidence";
+        return `
+          <section class="tile ${occupancy?.state === "on" ? "occupied" : ""}">
+            <div class="title">${esc(area.name || area.area_id)}</div>
+            <div class="status">${
+              occupancy?.state === "on"
+                ? "Occupied"
+                : occupancy?.state === "off"
+                  ? "Clear"
+                  : "Unavailable"
+            }</div>
+            <div class="probability">${esc(probability?.state || "—")}%</div>
+            <div class="meta">${esc(referenceText)} · ${esc(uncertainty)}</div>
+            <div class="actions">
+              <button data-area="${esc(area.area_id)}" data-state="occupied">Now occupied</button>
+              <button data-area="${esc(area.area_id)}" data-state="unoccupied">Now clear</button>
+            </div>
+          </section>`;
+      })
+      .join("");
+    this.shadowRoot.innerHTML = `
+      <style>
+        ha-card { padding: 12px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+        .tile { border: 1px solid var(--divider-color); border-radius: 12px; padding: 14px; }
+        .tile.occupied { border-color: var(--state-binary-sensor-active-color, #03a9f4); }
+        .title { font-weight: 600; font-size: 1.05rem; }
+        .status { color: var(--secondary-text-color); margin-top: 6px; }
+        .probability { font-size: 2rem; line-height: 1.2; margin-top: 10px; }
+        .meta { color: var(--secondary-text-color); font-size: .85rem; min-height: 2.4em; margin-top: 6px; }
+        .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+        button { border: 0; border-radius: 8px; padding: 7px 9px; cursor: pointer;
+          color: var(--primary-text-color); background: var(--secondary-background-color); }
+      </style>
+      <ha-card header="${esc(this._config.title || "Room occupancy")}">
+        <div class="grid">${tiles}</div>
+      </ha-card>`;
+    this.shadowRoot.querySelectorAll("button").forEach((button) => {
+      button.addEventListener("click", () => {
+        const state = button.dataset.state;
+        this._hass.callService("area_occupancy", "set_manual_occupancy", {
+          area_id: button.dataset.area,
+          state,
+        }).catch((error) => {
+          button.title = "Could not record reference";
+          console.error("Could not record occupancy reference", error);
+        });
+      });
+    });
+  }
+}
+
 const CARD_TAG = "area-occupancy-time-priors-card";
+const DASHBOARD_CARD_TAG = "area-occupancy-dashboard-card";
 
 /** Define the card and list it in the card picker, once per registry view.
  *
@@ -492,12 +609,22 @@ const CARD_TAG = "area-occupancy-time-priors-card";
 function registerCard() {
   if (customElements.get(CARD_TAG)) return;
   customElements.define(CARD_TAG, AreaOccupancyTimePriorsCard);
+  if (!customElements.get(DASHBOARD_CARD_TAG)) {
+    customElements.define(DASHBOARD_CARD_TAG, AreaOccupancyDashboardCard);
+  }
   window.customCards = window.customCards || [];
   if (!window.customCards.some((c) => c.type === CARD_TAG)) {
     window.customCards.push({
       type: CARD_TAG,
       name: "Area Occupancy — Time Priors Heatmap",
       description: "Weekly learned-occupancy forecast (168 slots) from get_time_priors.",
+    });
+  }
+  if (!window.customCards.some((c) => c.type === DASHBOARD_CARD_TAG)) {
+    window.customCards.push({
+      type: DASHBOARD_CARD_TAG,
+      name: "Area Occupancy — Room Tiles",
+      description: "Room occupancy, probability, uncertainty, and manual controls.",
     });
   }
   console.info(
