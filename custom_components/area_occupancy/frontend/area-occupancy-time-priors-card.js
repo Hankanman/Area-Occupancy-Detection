@@ -53,7 +53,10 @@ const RAMP_STOPS = [0, 0.34, 0.64, 1];
 const DAYS = (() => {
   const fmt = new Intl.DateTimeFormat(
     (typeof navigator !== "undefined" && navigator.language) || "en",
-    { weekday: "short" }
+    {
+      weekday: "short",
+      timeZone: "UTC",
+    }
   );
   // 2024-01-01 is a Monday.
   return Array.from({ length: 7 }, (_, d) => fmt.format(new Date(Date.UTC(2024, 0, 1 + d))));
