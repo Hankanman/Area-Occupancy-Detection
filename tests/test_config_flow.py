@@ -537,6 +537,33 @@ class TestHelperFunctions:
         assert "input_boolean.yaml_flag" in result["custom_binary"]
         assert "input_boolean.test_showering" not in result["custom_numeric"]
 
+    def test_get_include_entities_excludes_disabled_input_boolean(
+        self, hass, entity_registry
+    ):
+        """Disabled input_boolean helpers must not be offered for selection.
+
+        A disabled helper no longer updates, so it can never give evidence,
+        even if a stale state still exists. Enabled and YAML-only helpers
+        keep showing up.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        entry = entity_registry.async_get_or_create(
+            "input_boolean", "test", "disabled_flag"
+        )
+        entity_registry.async_update_entity(
+            entry.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        hass.states.async_set(entry.entity_id, "off")
+        hass.states.async_set("input_boolean.test_enabled_flag", "off")
+        hass.states.async_set("input_boolean.yaml_flag", "on")
+
+        result = _get_include_entities(hass)
+
+        assert entry.entity_id not in result["custom_binary"]
+        assert "input_boolean.test_enabled_flag" in result["custom_binary"]
+        assert "input_boolean.yaml_flag" in result["custom_binary"]
+
     def test_get_include_entities_window_by_original_device_class(
         self, hass, entity_registry
     ):
