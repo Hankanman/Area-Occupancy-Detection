@@ -517,6 +517,26 @@ class TestHelperFunctions:
         assert "lock.test_disabled_lock" not in result["lock"]
         assert "lock.test_enabled_lock" in result["lock"]
 
+    def test_get_include_entities_custom_binary_input_boolean(
+        self, hass, entity_registry
+    ):
+        """input_boolean helpers are offered as custom binary sensors.
+
+        They are on/off flags (e.g. a "showering" toggle) that live in
+        neither the binary_sensor nor the sensor domain. Discovery runs off
+        ``hass.states`` so YAML helpers without a registry entry show up too,
+        and they are offered only as custom binary inputs, not numeric ones.
+        """
+        entity_registry.async_get_or_create("input_boolean", "test", "showering")
+        hass.states.async_set("input_boolean.test_showering", "off")
+        hass.states.async_set("input_boolean.yaml_flag", "on")
+
+        result = _get_include_entities(hass)
+
+        assert "input_boolean.test_showering" in result["custom_binary"]
+        assert "input_boolean.yaml_flag" in result["custom_binary"]
+        assert "input_boolean.test_showering" not in result["custom_numeric"]
+
     def test_get_include_entities_window_by_original_device_class(
         self, hass, entity_registry
     ):
