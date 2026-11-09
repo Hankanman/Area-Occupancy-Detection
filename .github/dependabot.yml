@@ -3,7 +3,7 @@ version: 2
 updates:
   - package-ecosystem: "devcontainers"
     directory: "/"
-    target-branch: "dev"
+    target-branch: "next"
     schedule:
       interval: "daily"
     groups:
@@ -13,7 +13,7 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "dev"
+    target-branch: "next"
     schedule:
       interval: "daily"
     groups:
@@ -23,7 +23,7 @@ updates:
 
   - package-ecosystem: "pip"
     directory: "/"
-    target-branch: "dev"
+    target-branch: "next"
     schedule:
       interval: "daily"
     groups:
