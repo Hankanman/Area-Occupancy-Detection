@@ -550,6 +550,24 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
                 include_custom_binary_entities.append(entry.entity_id)
                 include_custom_numeric_entities.append(entry.entity_id)
 
+    # input_boolean helpers are on/off flags that a person or an automation
+    # flips (a "showering" or "do not disturb" toggle), so they are natural
+    # custom-binary inputs. They sit in neither the binary_sensor nor the
+    # sensor domain, so the registry loop above never offered them. Discover
+    # them via hass.states, like locks, so YAML-defined helpers without a
+    # registry entry are offered too. Disabled registry entries are skipped:
+    # a disabled helper no longer updates, so it would never give evidence.
+    disabled_input_booleans = {
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.domain == "input_boolean" and entry.disabled
+    }
+    include_custom_binary_entities.extend(
+        entity_id
+        for entity_id in hass.states.async_entity_ids("input_boolean")
+        if entity_id not in disabled_input_booleans
+    )
+
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
         entry.entity_id
