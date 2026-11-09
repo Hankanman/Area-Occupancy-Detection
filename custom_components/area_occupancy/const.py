@@ -38,7 +38,7 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.11.1-pre2"
+DEVICE_SW_VERSION: Final = "2026.11.1-pre3"
 # Oldest Home Assistant this release runs on; keep in step with hacs.json.
 # HACS doesn't always enforce that file, so the migration checks it too.
 MIN_HA_VERSION: Final = "2026.9.0"
