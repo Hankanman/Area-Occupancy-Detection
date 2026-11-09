@@ -39,6 +39,9 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
 DEVICE_SW_VERSION: Final = "2026.11.1-pre2"
+# Oldest Home Assistant this release runs on; keep in step with hacs.json.
+# HACS doesn't always enforce that file, so the migration checks it too.
+MIN_HA_VERSION: Final = "2026.9.0"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
