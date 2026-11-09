@@ -93,6 +93,7 @@ CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
 CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
+CONF_BUTTON_SENSORS: Final = "button_sensors"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
@@ -154,6 +155,7 @@ CONF_WEIGHT_SLEEP: Final = "weight_sleep"
 CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
+CONF_WEIGHT_BUTTON: Final = "weight_button"
 CONF_WEIGHT_DOOR: Final = "weight_door"
 CONF_WEIGHT_LOCK: Final = "weight_lock"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
@@ -215,6 +217,9 @@ DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
+DEFAULT_WEIGHT_BUTTON: Final = 0.7
+# A press counts in full for this short window before the area's normal decay.
+BUTTON_PRESS_WINDOW: Final = 5
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_LOCK: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
@@ -740,6 +745,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
         _SENSOR_TYPE_MAPPING = {
             "air_quality": InputType.AIR_QUALITY,
             "appliance": InputType.APPLIANCE,
+            "button": InputType.BUTTON,
             "co": InputType.CO,
             "co2": InputType.CO2,
             "cover": InputType.COVER,

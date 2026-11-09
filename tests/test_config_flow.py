@@ -449,6 +449,7 @@ class TestHelperFunctions:
         entity_registry.async_get_or_create(
             "binary_sensor", "test", "window_1", original_device_class="window"
         )
+        entity_registry.async_get_or_create("button", "test", "presence_button")
         entity_registry.async_get_or_create("switch", "test", "appliance_1")
 
         # Create states
@@ -458,6 +459,7 @@ class TestHelperFunctions:
         hass.states.async_set(
             "binary_sensor.test_window_1", "off", {"device_class": "window"}
         )
+        hass.states.async_set("button.test_presence_button", "on")
         hass.states.async_set("switch.test_appliance_1", "off")
 
         result = _get_include_entities(hass)
@@ -467,6 +469,9 @@ class TestHelperFunctions:
         assert "appliance" in result
         assert "binary_sensor.test_door_1" in result["door"]
         assert "binary_sensor.test_window_1" in result["window"]
+        assert "button" in result
+        assert "button.test_presence_button" in result["button"]
+        assert "button.test_presence_button" not in result["appliance"]
         assert "switch.test_appliance_1" in result["appliance"]
 
     def test_get_include_entities_lock_domain(self, hass, entity_registry):

@@ -2004,7 +2004,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except ValueError:
                         # Entity doesn't belong to this area, skip it
                         continue
-                    changed = entity.has_new_evidence()
+                    count_button_press = not (
+                        entity.type.input_type is InputType.BUTTON
+                        and area.probability() >= area.threshold()
+                    )
+                    changed = entity.has_new_evidence(count_button_press)
                     # Take down repairs the change resolved (sensor back
                     # online, no longer stuck) now, not at the next hourly
                     # check. The virtual sensors are never checked.
@@ -2109,6 +2113,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
         else:
+            button_expired = False
+            for area in self.areas.values():
+                area_occupied = area.probability() >= area.threshold()
+                for entity in area.entities.entities.values():
+                    if entity.type.input_type is not InputType.BUTTON:
+                        continue
+                    button_expired |= entity.has_new_evidence(
+                        count_button_press=not area_occupied
+                    )
+            if button_expired:
+                await self.async_refresh()
             # Shadow-mode estimators (#499/#500) still need a steady tick
             # cadence even when no area has decay enabled — without this,
             # they'd only observe on evidence-triggered refreshes, whose
