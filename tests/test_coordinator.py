@@ -550,7 +550,7 @@ class TestAreaOccupancyCoordinator:
         second_button = Mock()
         second_button.type.input_type = InputType.BUTTON
         second_button.has_new_evidence.return_value = True
-        area.entities.entities = {
+        area.entities._entities = {
             "button.first": first_button,
             "button.second": second_button,
         }
@@ -564,12 +564,8 @@ class TestAreaOccupancyCoordinator:
         ):
             await coordinator._handle_decay_timer(dt_util.utcnow())
 
-        first_button.has_new_evidence.assert_called_once_with(
-            count_button_press=False
-        )
-        second_button.has_new_evidence.assert_called_once_with(
-            count_button_press=False
-        )
+        first_button.has_new_evidence.assert_called_once_with(count_button_press=False)
+        second_button.has_new_evidence.assert_called_once_with(count_button_press=False)
         mock_refresh.assert_called_once()
 
     async def test_run_analysis(
