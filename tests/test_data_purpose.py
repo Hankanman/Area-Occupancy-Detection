@@ -6,32 +6,12 @@ from custom_components.area_occupancy.data.purpose import (
     PURPOSE_DEFINITIONS,
     AreaPurpose,
     Purpose,
-    get_combined_decay_half_life,
     get_default_decay_half_life,
     get_purpose_options,
-    normalize_purpose_profiles,
 )
 
 # Shared constant for all purpose enums
 ALL_PURPOSES = list(AreaPurpose)
-
-
-def test_profiles_are_ordered_unique_and_backward_compatible() -> None:
-    """Profile selection keeps the first valid purpose as the primary one."""
-    assert normalize_purpose_profiles(["working", "working", "invalid", "social"]) == [
-        "working",
-        "social",
-    ]
-    assert normalize_purpose_profiles("bathroom") == ["bathroom"]
-    assert normalize_purpose_profiles([]) == ["social"]
-
-
-def test_combined_profiles_use_the_longest_default_half_life() -> None:
-    """A slower combined use must not release before its slowest profile."""
-    assert get_combined_decay_half_life(["passageway", "sleeping"]) == max(
-        PURPOSE_DEFINITIONS[AreaPurpose.PASSAGEWAY].half_life,
-        PURPOSE_DEFINITIONS[AreaPurpose.SLEEPING].half_life,
-    )
 
 
 class TestPurpose:

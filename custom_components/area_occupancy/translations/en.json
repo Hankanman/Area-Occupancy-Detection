@@ -258,13 +258,11 @@
                 "data": {
                     "area_id": "Home Assistant Area",
                     "purpose": "Area Purpose",
-                    "purpose_profiles": "Additional Usage Profiles",
                     "adjacent_areas": "Adjacent Areas"
                 },
                 "data_description": {
                     "area_id": "Select the Home Assistant area for this occupancy detection. The area name will be automatically used for the device and entities.",
                     "purpose": "The primary purpose of this area determines decay behavior. Different purposes have different half-life values that affect how quickly occupancy probability decreases over time.",
-                    "purpose_profiles": "Choose one or more purposes when a room has several uses. Profiles are de-duplicated in selection order; the first remains the primary purpose and the longest profile half-life is used when decay follows defaults.",
                     "adjacent_areas": "Other configured areas that physically connect to this one (e.g. a hallway connected to a bedroom). Selections are mutual — adding an area here also adds this one to its neighbour list. The integration learns transition patterns between adjacent areas and uses them to boost a neighbour's probability and slow decay when its usual exits stay quiet."
                 }
             },

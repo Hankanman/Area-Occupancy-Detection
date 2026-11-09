@@ -97,9 +97,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration.
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability.
 - **Purpose-Based Defaults**: Selecting a room purpose (12 options from Passageway to Bedroom) automatically sets sensible decay timing.
-- **Manual Occupancy References**: Record whether a room is occupied right now from an automation or the bundled room-tile dashboard without changing the live detector.
-- **Combined Usage Profiles**: Select multiple room purposes with deterministic, backwards-compatible decay defaults for rooms such as an office/guest room.
-- **Room Tile Dashboard**: Use the bundled `custom:area-occupancy-dashboard-card` to see status, probability, fading evidence, and manual controls in one view.
+- **Manual Occupancy References**: Record whether a room is occupied right now from an automation or the `area_occupancy.set_manual_occupancy` service without changing the live detector.
 
 ## Planned Features
 

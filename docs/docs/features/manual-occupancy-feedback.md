@@ -1,4 +1,4 @@
-# Manual occupancy references and room tiles
+# Manual occupancy references
 
 Area Occupancy can record what you observe in a room at this moment. A
 reference is diagnostic data: it does not replace the live occupancy state and
@@ -17,30 +17,9 @@ change the occupancy binary sensor, probability sensor, recorder data, priors,
 or learned likelihoods. The latest reference is exposed separately through
 `manual_reference_*` attributes.
 
-## Room tiles
-
-The bundled frontend module registers
-`custom:area-occupancy-dashboard-card`:
-
-```yaml
-type: custom:area-occupancy-dashboard-card
-title: Rooms
-areas:
-  - name: Living room
-    area_id: living_room
-    occupancy_entity: binary_sensor.living_room_occupancy_status
-    probability_entity: sensor.living_room_occupancy_probability
-  - name: Kitchen
-    area_id: kitchen
-    occupancy_entity: binary_sensor.kitchen_occupancy_status
-    probability_entity: sensor.kitchen_occupancy_probability
-```
-
-Each tile shows the current automatic state, probability, uncertainty
-indicators, and the latest reference. The `Now occupied` and `Now clear`
-buttons record a point-in-time reference; they do not create a timed override.
-Entity IDs are explicit so renamed areas do not silently control another room.
-Missing entities are shown as unavailable.
+These references are currently kept independent from the existing daily
+accuracy tallies. They provide persisted human-vs-automatic observations for
+later evaluation without changing the live detector or its learning inputs.
 
 ## Retention and failure behavior
 

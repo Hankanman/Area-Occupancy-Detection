@@ -61,7 +61,6 @@ from ..const import (
     CONF_POWER_SENSORS,
     CONF_PRESSURE_SENSORS,
     CONF_PURPOSE,
-    CONF_PURPOSE_PROFILES,
     CONF_SENSOR_PRECISION,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
@@ -131,7 +130,7 @@ from ..const import (
     DEFAULT_WINDOW_ACTIVE_STATE,
     HA_RECORDER_DAYS,
 )
-from .purpose import get_combined_decay_half_life, normalize_purpose_profiles
+from .purpose import get_default_decay_half_life
 
 if TYPE_CHECKING:
     from ..coordinator import AreaOccupancyCoordinator
@@ -531,10 +530,7 @@ class AreaConfig:
 
         # Set all configuration attributes
         # Area name is resolved from area_id when needed (via coordinator)
-        self.purpose_profiles = normalize_purpose_profiles(
-            data.get(CONF_PURPOSE_PROFILES, data.get(CONF_PURPOSE, DEFAULT_PURPOSE))
-        )
-        self.purpose = self.purpose_profiles[0]
+        self.purpose = data.get(CONF_PURPOSE, DEFAULT_PURPOSE)
         # Get area_id from data
         self.area_id = data.get(CONF_AREA_ID)
         # Adjacent area_ids (list of HA area_ids configured as neighbours).
@@ -664,7 +660,7 @@ class AreaConfig:
         # Resolve half-life: if 0 or not set, use purpose-based value
         half_life_value = int(data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE))
         if half_life_value == 0:
-            half_life_value = int(get_combined_decay_half_life(self.purpose_profiles))
+            half_life_value = int(get_default_decay_half_life(self.purpose))
 
         self.decay = DecayConfig(
             half_life=half_life_value,

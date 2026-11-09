@@ -585,6 +585,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {"feedback": [feedback.to_dict() for feedback in self._manual_feedback]}
         )
 
+    async def _async_load_manual_feedback(self) -> None:
+        """Load, validate, and prune persisted occupancy references."""
+        stored_feedback = await self._manual_feedback_store.async_load() or {}
+        raw_feedback = (
+            stored_feedback.get("feedback", [])
+            if isinstance(stored_feedback, dict)
+            else []
+        )
+        if isinstance(raw_feedback, list):
+            self._manual_feedback = [
+                feedback
+                for raw in raw_feedback
+                if isinstance(raw, dict)
+                and (feedback := ManualOccupancyFeedback.from_dict(raw)) is not None
+            ]
+        else:
+            self._manual_feedback = []
+        await self._save_manual_feedback()
+
     def find_area_for_entity(self, entity_id: str) -> str | None:
         """Find which area contains a specific entity.
 
@@ -748,20 +767,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             await self.sensor_health_repairs.async_load()
 
-            stored_feedback = await self._manual_feedback_store.async_load() or {}
-            raw_feedback = (
-                stored_feedback.get("feedback", [])
-                if isinstance(stored_feedback, dict)
-                else []
-            )
-            if isinstance(raw_feedback, list):
-                self._manual_feedback = [
-                    feedback
-                    for raw in raw_feedback
-                    if isinstance(raw, dict)
-                    and (feedback := ManualOccupancyFeedback.from_dict(raw)) is not None
-                ]
-            await self._save_manual_feedback()
+            await self._async_load_manual_feedback()
 
             # Restore online-prior shadow state (#500) for known areas
             stored_priors = await self._online_prior_store.async_load() or {}

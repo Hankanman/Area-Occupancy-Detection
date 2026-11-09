@@ -121,7 +121,7 @@ nav:
       - Sensor Health: features/sensor-health.md
       - Services: features/services.md
       - Time Priors Card: features/time-priors-card.md
-      - Manual Controls and Room Tiles: features/manual-controls-and-room-tiles.md
+      - Manual Occupancy Feedback: features/manual-occupancy-feedback.md
   - Technical:
       - Deep Dive: technical/deep-dive.md
       - Analysis Chain: technical/analysis-chain.md
@@ -139,5 +139,4 @@ nav:
       - Diagnostics: technical/diagnostics.md
       - Debugging: technical/debug.md
       - Test Harness: technical/dev-harness.md
-      - Manual Controls and Profiles: technical/manual-controls-and-profiles.md
   - Simulator: simulator/index.md
