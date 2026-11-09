@@ -546,9 +546,11 @@ class TestAreaOccupancyCoordinator:
 
         first_button = Mock()
         first_button.type.input_type = InputType.BUTTON
+        first_button.weight = 0.0  # keep the shadow tick's fusion row out of it
         first_button.has_new_evidence.return_value = False
         second_button = Mock()
         second_button.type.input_type = InputType.BUTTON
+        second_button.weight = 0.0  # keep the shadow tick's fusion row out of it
         second_button.has_new_evidence.return_value = True
         area.entities._entities = {
             "button.first": first_button,
