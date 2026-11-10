@@ -235,6 +235,7 @@ class ProbabilitySensor(AreaOccupancySensorBase):
             **snapshot,
             "active_entities": active_entities,
             "decaying_entities": decaying_entities,
+            **self.coordinator.manual_feedback_attributes(area.area_name),
         }
 
 

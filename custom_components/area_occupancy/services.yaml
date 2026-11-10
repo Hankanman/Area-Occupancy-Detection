@@ -102,3 +102,26 @@ set_area_option:
       description: Whether the area stays occupied while its doors stay closed after motion.
       selector:
         boolean:
+
+set_manual_occupancy:
+  name: Record Occupancy Reference
+  description: >-
+    Record whether an area is occupied right now. This creates a reference
+    point for evaluating detection quality and never changes the live state or
+    learned model.
+  fields:
+    area_id:
+      name: Area
+      description: The Home Assistant area_id to record.
+      required: true
+      selector:
+        area: {}
+    state:
+      name: State
+      description: The manually confirmed state at the time of this call.
+      required: true
+      selector:
+        select:
+          options:
+            - occupied
+            - unoccupied
