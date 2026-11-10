@@ -16,7 +16,7 @@ This document gives a high level overview of how the `area_occupancy` integratio
 The area occupancy calculation operates in two main phases:
 
 1. **Initialization & Learning Phase**: Sets up the system, loads historical data, and learns prior probabilities and likelihoods from sensor history
-2. **Real-Time Calculation Phase**: Continuously monitors sensor states and calculates current occupancy probability using Bayesian inference
+2. **Real-Time Calculation Phase**: Continuously monitors sensor states and calculates current occupancy probability with a weighted logistic model in log-odds space
 
 For a complete end-to-end explanation of the calculation process, see [Complete Calculation Flow](calculation-flow.md).
 
@@ -51,7 +51,7 @@ For in-depth explanations of specific aspects of the calculation:
 ### Core Calculation Process
 
 - **[Complete Calculation Flow](calculation-flow.md)** - End-to-end process from initialization through real-time updates
-- **[Bayesian Calculation Deep Dive](bayesian-calculation.md)** - Detailed mathematical explanation of the Bayesian probability calculation
+- **[Probability Calculation Deep Dive](bayesian-calculation.md)** - Detailed mathematical explanation of the probability calculation
 - **[Calculation Feature Documentation](../features/calculation.md)** - User-facing documentation with examples
 
 ### Learning Processes
@@ -82,7 +82,7 @@ For in-depth explanations of specific aspects of the calculation:
 
 - **Entity State Change Detection:** Monitors sensor state changes and triggers recalculation
 - **Evidence Transition Detection:** Identifies when entities transition between active and inactive states
-- **Probability Calculation:** Core Bayesian calculation combining evidence with priors
+- **Probability Calculation:** Core calculation combining evidence with priors in log-odds space
 - **Prior Combination:** Combines global and time-based priors in logit space
 
 ### Prior Calculation

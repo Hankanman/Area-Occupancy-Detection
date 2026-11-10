@@ -124,7 +124,7 @@ nav:
   - Technical:
       - Deep Dive: technical/deep-dive.md
       - Analysis Chain: technical/analysis-chain.md
-      - Bayesian Calculation: technical/bayesian-calculation.md
+      - Probability Calculation Deep Dive: technical/bayesian-calculation.md
       - Calculation Flow: technical/calculation-flow.md
       - Data Flow: technical/data-flow.md
       - Global Prior Flow: technical/global-prior-flow.md

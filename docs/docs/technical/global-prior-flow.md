@@ -2,7 +2,7 @@
 
 ## Overview
 
-The global prior represents the baseline probability that an area is occupied, calculated from historical motion sensor data. It serves as the foundation for Bayesian probability calculations, providing a learned estimate of occupancy based on past behavior patterns.
+The global prior represents the baseline probability that an area is occupied, calculated from historical motion sensor data. It serves as the foundation for the probability calculation, providing a learned estimate of occupancy based on past behavior patterns.
 
 **Purpose**: The global prior captures the overall occupancy rate of an area over time, independent of time-of-day patterns. This is combined with time-specific priors (time priors) to create a more accurate baseline probability.
 
@@ -10,7 +10,7 @@ The global prior represents the baseline probability that an area is occupied, c
 
 - **Global Prior**: Overall occupancy probability for an area (e.g., "this room is occupied 30% of the time")
 - **Time Prior**: Time-of-day and day-of-week specific occupancy probability (e.g., "this room is occupied 80% of the time on weekdays at 7 PM")
-- **Combined Prior**: The final prior used in Bayesian calculations, combining global and time priors
+- **Combined Prior**: The final prior used in the probability calculation, combining global and time priors
 
 ## Calculation Algorithm
 
@@ -36,7 +36,7 @@ This approach ensures the prior reflects the actual data available, not an arbit
 
 ### Clamping
 
-The calculated prior is clamped to the range `[0.01, 0.99]` to prevent extreme values that could skew Bayesian calculations:
+The calculated prior is clamped to the range `[0.01, 0.99]` to prevent extreme values that could skew the probability calculation:
 
 ```python
 global_prior = max(0.01, min(0.99, occupied_duration / actual_period_duration))
@@ -154,8 +154,8 @@ global_prior = max(
 
 **Clamping**: Values are clamped to `[0.01, 0.99]` to prevent:
 
-- Zero priors (would make Bayesian calculation impossible)
-- Extreme priors (would dominate Bayesian updates)
+- Zero priors (`logit(0)` is undefined, so the calculation would be impossible)
+- Extreme priors (would dominate the sensor evidence)
 
 #### Step 4: Update In-Memory Prior
 
@@ -319,7 +319,7 @@ def presence_probability(self) -> float:
     )  # Uses combined prior (global + time)
 ```
 
-**Sigmoid/logit update**: Each entity's evidence adds a weighted term in logit space (see [Bayesian Calculation Deep Dive](bayesian-calculation.md)), so the prior shifts additively per sensor rather than through classic Bayes'-theorem odds multiplication.
+**Sigmoid/logit update**: Each entity's evidence adds a weighted term in logit space (see [Probability Calculation Deep Dive](bayesian-calculation.md)), so the prior shifts additively per sensor rather than through classic Bayes'-theorem odds multiplication.
 
 ## Data Flow Diagram
 
@@ -414,4 +414,4 @@ sequenceDiagram
 - [Database Schema](database-schema.md) - Complete database structure
 - [Data Flow](data-flow.md) - Overall data flow through system
 - [Prior Learning](../features/prior-learning.md) - User-facing prior learning documentation
-- [Bayesian Calculation](bayesian-calculation.md) - How priors are used in calculations
+- [Probability Calculation](bayesian-calculation.md) - How priors are used in calculations

@@ -7,7 +7,7 @@ This document provides a comprehensive end-to-end explanation of how area occupa
 The area occupancy calculation process operates in two main phases:
 
 1. **Initialization & Learning Phase**: Sets up the system, loads historical data, and learns prior probabilities and likelihoods from sensor history
-2. **Real-Time Calculation Phase**: Continuously monitors sensor states and calculates current occupancy probability using Bayesian inference
+2. **Real-Time Calculation Phase**: Continuously monitors sensor states and calculates current occupancy probability with a weighted logistic model in log-odds space
 
 ## Phase 1: Initialization & Learning
 
@@ -125,7 +125,7 @@ Process:
    - Adds `effective_weight × evidence × correlation × strength` to the running sum `z`
 4. **Sigmoid**: `probability = clamp(sigmoid(z))` — one pass, no separate normalization step
 
-See [Bayesian Calculation Deep Dive](bayesian-calculation.md) for the full formula, derivation, and a worked example.
+See [Probability Calculation Deep Dive](bayesian-calculation.md) for the full formula, derivation, and a worked example.
 
 ### Final Probability Output
 
@@ -166,7 +166,7 @@ The prior is multiplied by 1.05 before use, slightly increasing the baseline pro
 - [Prior Calculation Deep Dive](../features/prior-learning.md) - Detailed prior learning process
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - Detailed likelihood learning process
 - [Entity Evidence Collection](entity-evidence.md) - How evidence is determined
-- [Bayesian Calculation Deep Dive](bayesian-calculation.md) - Mathematical details
+- [Probability Calculation Deep Dive](bayesian-calculation.md) - Mathematical details
 - [Data Flow Diagrams](data-flow.md) - Visual flow diagrams
 - [Calculation Feature](../features/calculation.md) - User-facing documentation
 - [Prior Learning Feature](../features/prior-learning.md) - Prior learning overview

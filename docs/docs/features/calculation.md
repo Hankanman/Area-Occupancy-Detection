@@ -40,7 +40,7 @@ The default time weight is 0.2, meaning 20% of the prior comes from time-based p
 
 ### 3. Combine Evidence in Logit Space
 
-Rather than adjusting per-entity likelihoods and running a Bayes'-theorem-style update, the integration builds one running total in **logit (log-odds) space**, starting from the prior and adding one weighted term per entity:
+Rather than multiplying per-entity likelihood ratios with Bayes' theorem, the integration builds one running total in **logit (log-odds) space**, starting from the prior and adding one weighted term per entity:
 
 ```
 z = logit(prior)
@@ -133,7 +133,7 @@ The **Occupancy Status** binary sensor compares this probability to the configur
 
 ## Mathematical Foundation
 
-The calculation combines a learned prior with sensor evidence in **logit (log-odds) space**: each entity adds one weighted, additive term to a running sum, and a single `sigmoid()` call converts that sum back to a probability at the end. This is not classic Bayes'-theorem likelihood-ratio multiplication — see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md) for the full formula, derivation, and a worked example.
+The calculation combines a learned prior with sensor evidence in **logit (log-odds) space**: each entity adds one weighted, additive term to a running sum, and a single `sigmoid()` call converts that sum back to a probability at the end. This is not classic Bayes'-theorem likelihood-ratio multiplication — see [Probability Calculation Deep Dive](../technical/bayesian-calculation.md) for the full formula, derivation, and a worked example.
 
 ## Entity Weight Application
 
@@ -160,7 +160,7 @@ Default weights by entity type:
 
 ## Decay Interpolation
 
-When [Probability Decay](../features/decay.md) is active, a decaying entity's evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole logit-space contribution shrinks smoothly toward zero as decay progresses — not an interpolation of the likelihood toward a neutral value. For the mathematical formula, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#decay-interpolation).
+When [Probability Decay](../features/decay.md) is active, a decaying entity's evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole logit-space contribution shrinks smoothly toward zero as decay progresses — not an interpolation of the likelihood toward a neutral value. For the mathematical formula, see [Probability Calculation Deep Dive](../technical/bayesian-calculation.md#decay-interpolation).
 
 ## Edge Case Handling
 
@@ -171,7 +171,7 @@ The calculation handles several edge cases to ensure robust operation:
 - **No Entities**: If no entities are available, the calculation returns the prior probability
 - **Numerical Stability**: The system uses various techniques to prevent numerical overflow and underflow
 
-For detailed technical information about edge case handling, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#numerical-stability-techniques).
+For detailed technical information about edge case handling, see [Probability Calculation Deep Dive](../technical/bayesian-calculation.md#numerical-stability-techniques).
 
 ## Example Calculation
 
@@ -222,7 +222,7 @@ The active, high-reliability motion sensor dominates (`+2.85` in logit space, vs
 ## See Also
 
 - [Complete Calculation Flow](../technical/calculation-flow.md) - End-to-end process explanation
-- [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md) - Detailed mathematical explanation
+- [Probability Calculation Deep Dive](../technical/bayesian-calculation.md) - Detailed mathematical explanation
 - [Prior Learning](../features/prior-learning.md) - How priors are learned from history
 - [Likelihood Learning](../features/likelihood.md) - How likelihoods are learned
 - [Decay Feature](../features/decay.md) - Decay mechanism overview

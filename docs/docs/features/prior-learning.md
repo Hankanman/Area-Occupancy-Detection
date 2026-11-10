@@ -1,6 +1,6 @@
 # Prior Probability Learning
 
-To make the Bayesian calculations more accurate and specific to your environment, the integration automatically learns key probability values from your sensor history. This process adapts the system to how _you_ actually use the space.
+To make the probability calculation more accurate and specific to your environment, the integration automatically learns key probability values from your sensor history. This process adapts the system to how _you_ actually use the space.
 
 ## What is a Prior Probability?
 
@@ -8,7 +8,7 @@ Simply put the prior is the probability that the area is occupied at any given t
 
 Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behavior of your **motion sensors**, reflecting how often that area is typically occupied. This is done by analyzing the history of your sensors over a lookback period (default: 60 days).
 
-In the context of Bayesian probability, the **prior probability** (often denoted as `P(Occupied)` or simply `prior`) represents our initial belief about the likelihood of an event _before_ considering any new evidence. For this integration, it's the baseline probability that the area is occupied, independent of the _current_ state of the sensors.
+In probability terms, the **prior probability** (often denoted as `P(Occupied)` or simply `prior`) represents our initial belief about the likelihood of an event _before_ considering any new evidence. For this integration, it's the baseline probability that the area is occupied, independent of the _current_ state of the sensors.
 
 ## How Priors Are Calculated
 
