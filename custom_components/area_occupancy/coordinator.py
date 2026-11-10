@@ -91,6 +91,7 @@ from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.manual_override import ManualOccupancyFeedback
 from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
+from .data.metrics import AccuracyMetrics, AccuracyTally, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .data.transition_shadow import TransitionShadow, TransitionShadowState
@@ -168,6 +169,18 @@ class ManualFeedbackStore(Store[dict[str, list[dict[str, object]]]]):
     ) -> dict[str, list[dict[str, object]]]:
         """Do not restore old state-changing overrides as reference data."""
         return {"feedback": []}
+class AccuracyStore(Store[dict[str, dict]]):
+    """Store for the daily accuracy tallies.
+
+    v1 kept one rates snapshot a day. Rates can't be pooled into a longer
+    figure, so the upgrade drops them and starts the tallies afresh; the
+    hook must exist, or ``Store.async_load`` raises on the version change.
+    """
+
+    async def _async_migrate_func(
+        self, old_version: int, old_data: dict[str, Any]
+    ) -> dict[str, dict]:
+        return {}
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -257,10 +270,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # refreshed before each prior recalculation; prior learning leaves
         # them out (#574/#584). Empty without an away-mode entity.
         self.away_spans: list[tuple[datetime, datetime]] = []
-        # Daily summaries of the above, persisted so the metric's stability
-        # can be judged across restarts (the tick window is memory-only).
-        self._accuracy_history: dict[str, list[dict[str, Any]]] = {}
-        self._accuracy_store: Store[dict[str, list]] = Store(
+        # The seconds behind the above, one tally per local day, persisted
+        # so a month's accuracy survives restarts (the tick window is
+        # memory-only), and how far each area's ticks have been tallied.
+        self._accuracy_days: dict[str, dict[str, AccuracyTally]] = {}
+        self._accuracy_scored_until: dict[str, datetime] = {}
+        self._accuracy_store: Store[dict[str, dict]] = AccuracyStore(
             hass,
             ACCURACY_STORE_VERSION,
             f"{ACCURACY_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -777,12 +792,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         OnlinePriorState.from_dict(stored_priors[area_name])
                     )
 
-            # Restore the accuracy history (#499) for known areas
+            # Restore the daily accuracy tallies (#499) for known areas
             stored_accuracy = await self._accuracy_store.async_load() or {}
             for area_name in self.areas:
-                history = stored_accuracy.get(area_name)
-                if isinstance(history, list):
-                    self._accuracy_history[area_name] = history
+                stored = stored_accuracy.get(area_name)
+                if not isinstance(stored, dict):
+                    continue
+                days = stored.get("days")
+                if isinstance(days, dict):
+                    self._accuracy_days[area_name] = {
+                        day: AccuracyTally.from_dict(tally)
+                        for day, tally in days.items()
+                        if isinstance(tally, dict)
+                    }
+                scored_until = dt_util.parse_datetime(
+                    str(stored.get("scored_until") or "")
+                )
+                if scored_until is not None:
+                    self._accuracy_scored_until[area_name] = scored_until
 
             # Restore the live ground-truth labellers (#603) for known areas
             stored_labels = await self._ground_truth_store.async_load() or {}
@@ -1014,6 +1041,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 probability=probability,
                 occupied=is_occupied,
                 truth=truth,
+                fading=bool(area.entities.decaying_entities)
+                and not any(
+                    entity.evidence is True for entity in area.entities.active_entities
+                ),
             )
         )
         # The live label matches db.queries.get_occupied_intervals' ground
@@ -1387,28 +1418,53 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._accuracy_metrics.get(area_name)
 
     def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
-        """Cache an area's shadow accuracy snapshot (analysis pipeline).
-
-        Also records it as the day's summary: each hourly run overwrites
-        the day's entry, so a day keeps its latest 24-hour window.
-        """
+        """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
         self._accuracy_metrics[area_name] = metrics
-        day = to_local(dt_util.utcnow()).date().isoformat()
-        record = {"date": day, **accuracy_summary(metrics)}
-        history = self._accuracy_history.setdefault(area_name, [])
-        if history and history[-1].get("date") == day:
-            history[-1] = record
-        else:
-            history.append(record)
-        del history[:-ACCURACY_HISTORY_DAYS]
 
-    def accuracy_history_for(self, area_name: str) -> list[dict[str, Any]]:
-        """Return an area's persisted daily accuracy summaries, oldest first."""
-        return list(self._accuracy_history.get(area_name, ()))
+    def accuracy_scored_until(self, area_name: str) -> datetime | None:
+        """The last tick an area's daily tallies already cover, if any."""
+        return self._accuracy_scored_until.get(area_name)
+
+    def add_accuracy_tallies(
+        self,
+        area_name: str,
+        tallies: dict[str, AccuracyTally],
+        scored_until: datetime,
+    ) -> None:
+        """Fold newly scored ticks into an area's daily tallies.
+
+        Args:
+            area_name: The area.
+            tallies: The new ticks' tallies, keyed by local date.
+            scored_until: The tick they run up to, where the next batch
+                starts.
+        """
+        days = self._accuracy_days.setdefault(area_name, {})
+        for day, tally in tallies.items():
+            days.setdefault(day, AccuracyTally()).add(tally)
+        for day in sorted(days)[:-ACCURACY_HISTORY_DAYS]:
+            del days[day]
+        self._accuracy_scored_until[area_name] = scored_until
+
+    def accuracy_days_for(self, area_name: str) -> dict[str, AccuracyTally]:
+        """Return an area's daily accuracy tallies, keyed by local date."""
+        return dict(sorted(self._accuracy_days.get(area_name, {}).items()))
 
     async def async_save_accuracy_history(self) -> None:
-        """Persist the daily accuracy summaries via the HA storage helper."""
-        await self._accuracy_store.async_save(dict(self._accuracy_history))
+        """Persist the daily accuracy tallies via the HA storage helper."""
+        await self._accuracy_store.async_save(
+            {
+                area_name: {
+                    "scored_until": (
+                        scored.isoformat()
+                        if (scored := self._accuracy_scored_until.get(area_name))
+                        else None
+                    ),
+                    "days": {day: tally.to_dict() for day, tally in days.items()},
+                }
+                for area_name, days in self._accuracy_days.items()
+            }
+        )
 
     # --- Online prior (#500, shadow mode) accessors ---
     def online_prior_for(self, area_name: str) -> OnlinePriorEstimator | None:
@@ -2140,7 +2196,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except ValueError:
                         # Entity doesn't belong to this area, skip it
                         continue
-                    changed = entity.has_new_evidence()
+                    count_button_press = not (
+                        entity.type.input_type is InputType.BUTTON
+                        and area.probability() >= area.threshold()
+                    )
+                    changed = entity.has_new_evidence(count_button_press)
                     # Take down repairs the change resolved (sensor back
                     # online, no longer stuck) now, not at the next hourly
                     # check. The virtual sensors are never checked.
@@ -2245,6 +2305,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
         else:
+            button_expired = False
+            for area in self.areas.values():
+                area_occupied = area.probability() >= area.threshold()
+                for entity in area.entities.entities.values():
+                    if entity.type.input_type is not InputType.BUTTON:
+                        continue
+                    button_expired |= entity.has_new_evidence(
+                        count_button_press=not area_occupied
+                    )
+            if button_expired:
+                await self.async_refresh()
             # Shadow-mode estimators (#499/#500) still need a steady tick
             # cadence even when no area has decay enabled — without this,
             # they'd only observe on evidence-triggered refreshes, whose

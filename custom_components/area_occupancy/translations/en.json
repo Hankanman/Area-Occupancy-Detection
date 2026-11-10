@@ -152,11 +152,14 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
                     },
                     "environmental": {
@@ -336,11 +339,14 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
                     },
                     "environmental": {
@@ -436,7 +442,7 @@
                 "menu_option_descriptions": {
                     "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
                     "edit_sensors_media": "{media_count} configured",
-                    "edit_sensors_appliances": "{appliance_count} configured",
+                    "edit_sensors_appliances": "{appliance_count} appliances · {button_count} buttons configured",
                     "edit_sensors_environmental": "{environmental_count} configured",
                     "edit_sensors_power": "{power_count} configured",
                     "edit_sensors_wifi_clients": "{wifi_count} configured",
@@ -671,11 +677,14 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
                     },
                     "environmental": {
@@ -855,11 +864,14 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation."
                         }
                     },
                     "environmental": {
@@ -955,7 +967,7 @@
                 "menu_option_descriptions": {
                     "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
                     "edit_sensors_media": "{media_count} configured",
-                    "edit_sensors_appliances": "{appliance_count} configured",
+                    "edit_sensors_appliances": "{appliance_count} appliances · {button_count} buttons configured",
                     "edit_sensors_environmental": "{environmental_count} configured",
                     "edit_sensors_power": "{power_count} configured",
                     "edit_sensors_wifi_clients": "{wifi_count} configured",
@@ -1385,11 +1397,14 @@
                             "data": {
                                 "appliances": "Appliances",
                                 "appliance_active_states": "Appliance Active States",
-                                "weight_appliance": "Appliance Weight"
+                                "button_sensors": "Presence Buttons and Event Entities",
+                                "weight_appliance": "Appliance Weight",
+                                "weight_button": "Button Weight"
                             },
                             "data_description": {
                                 "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                                "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                                "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                                "weight_button": "The weight given to button presses in the occupancy calculation."
                             }
                         },
                         "environmental": {
@@ -1485,7 +1500,7 @@
                     "menu_option_descriptions": {
                         "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
                         "edit_sensors_media": "{media_count} configured",
-                        "edit_sensors_appliances": "{appliance_count} configured",
+                        "edit_sensors_appliances": "{appliance_count} appliances · {button_count} buttons configured",
                         "edit_sensors_environmental": "{environmental_count} configured",
                         "edit_sensors_power": "{power_count} configured",
                         "edit_sensors_wifi_clients": "{wifi_count} configured",

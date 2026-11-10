@@ -449,6 +449,7 @@ class TestHelperFunctions:
         entity_registry.async_get_or_create(
             "binary_sensor", "test", "window_1", original_device_class="window"
         )
+        entity_registry.async_get_or_create("button", "test", "presence_button")
         entity_registry.async_get_or_create("switch", "test", "appliance_1")
 
         # Create states
@@ -458,6 +459,7 @@ class TestHelperFunctions:
         hass.states.async_set(
             "binary_sensor.test_window_1", "off", {"device_class": "window"}
         )
+        hass.states.async_set("button.test_presence_button", "on")
         hass.states.async_set("switch.test_appliance_1", "off")
 
         result = _get_include_entities(hass)
@@ -467,6 +469,9 @@ class TestHelperFunctions:
         assert "appliance" in result
         assert "binary_sensor.test_door_1" in result["door"]
         assert "binary_sensor.test_window_1" in result["window"]
+        assert "button" in result
+        assert "button.test_presence_button" in result["button"]
+        assert "button.test_presence_button" not in result["appliance"]
         assert "switch.test_appliance_1" in result["appliance"]
 
     def test_get_include_entities_lock_domain(self, hass, entity_registry):
@@ -516,6 +521,53 @@ class TestHelperFunctions:
 
         assert "lock.test_disabled_lock" not in result["lock"]
         assert "lock.test_enabled_lock" in result["lock"]
+
+    def test_get_include_entities_custom_binary_input_boolean(
+        self, hass, entity_registry
+    ):
+        """input_boolean helpers are offered as custom binary sensors.
+
+        They are on/off flags (e.g. a "showering" toggle) that live in
+        neither the binary_sensor nor the sensor domain. Discovery runs off
+        ``hass.states`` so YAML helpers without a registry entry show up too,
+        and they are offered only as custom binary inputs, not numeric ones.
+        """
+        entity_registry.async_get_or_create("input_boolean", "test", "showering")
+        hass.states.async_set("input_boolean.test_showering", "off")
+        hass.states.async_set("input_boolean.yaml_flag", "on")
+
+        result = _get_include_entities(hass)
+
+        assert "input_boolean.test_showering" in result["custom_binary"]
+        assert "input_boolean.yaml_flag" in result["custom_binary"]
+        assert "input_boolean.test_showering" not in result["custom_numeric"]
+
+    def test_get_include_entities_excludes_disabled_input_boolean(
+        self, hass, entity_registry
+    ):
+        """Disabled input_boolean helpers must not be offered for selection.
+
+        A disabled helper no longer updates, so it can never give evidence,
+        even if a stale state still exists. Enabled and YAML-only helpers
+        keep showing up.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        entry = entity_registry.async_get_or_create(
+            "input_boolean", "test", "disabled_flag"
+        )
+        entity_registry.async_update_entity(
+            entry.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        hass.states.async_set(entry.entity_id, "off")
+        hass.states.async_set("input_boolean.test_enabled_flag", "off")
+        hass.states.async_set("input_boolean.yaml_flag", "on")
+
+        result = _get_include_entities(hass)
+
+        assert entry.entity_id not in result["custom_binary"]
+        assert "input_boolean.test_enabled_flag" in result["custom_binary"]
+        assert "input_boolean.yaml_flag" in result["custom_binary"]
 
     def test_get_include_entities_window_by_original_device_class(
         self, hass, entity_registry

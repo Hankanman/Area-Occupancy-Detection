@@ -22,6 +22,7 @@ from ..const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
+    CONF_BUTTON_SENSORS,
     CONF_CLOSED_DOOR_HOLD,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
@@ -116,6 +117,7 @@ from ..const import (
     DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_BUTTON,
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_CUSTOM_BINARY,
     DEFAULT_WEIGHT_CUSTOM_NUMERIC,
@@ -320,6 +322,7 @@ class Sensors:
     motion_prob_given_false: float = DEFAULT_MOTION_PROB_GIVEN_FALSE
     media: list[str] = field(default_factory=list)
     appliance: list[str] = field(default_factory=list)
+    button: list[str] = field(default_factory=list)
     illuminance: list[str] = field(default_factory=list)
     humidity: list[str] = field(default_factory=list)
     temperature: list[str] = field(default_factory=list)
@@ -439,6 +442,7 @@ class Weights:
     motion: float = DEFAULT_WEIGHT_MOTION
     media: float = DEFAULT_WEIGHT_MEDIA
     appliance: float = DEFAULT_WEIGHT_APPLIANCE
+    button: float = DEFAULT_WEIGHT_BUTTON
     door: float = DEFAULT_WEIGHT_DOOR
     lock: float = DEFAULT_WEIGHT_LOCK
     window: float = DEFAULT_WEIGHT_WINDOW
@@ -578,6 +582,7 @@ class AreaConfig:
             ),
             media=data.get(CONF_MEDIA_DEVICES, []),
             appliance=data.get(CONF_APPLIANCES, []),
+            button=data.get(CONF_BUTTON_SENSORS, []),
             illuminance=data.get(CONF_ILLUMINANCE_SENSORS, []),
             humidity=data.get(CONF_HUMIDITY_SENSORS, []),
             temperature=data.get(CONF_TEMPERATURE_SENSORS, []),
@@ -712,6 +717,7 @@ class AreaConfig:
             *self.sensors.motion,
             *self.sensors.media,
             *self.sensors.appliance,
+            *self.sensors.button,
             *self.sensors.door,
             *self.sensors.lock,
             *self.sensors.window,
@@ -761,6 +767,7 @@ class AreaConfig:
             ("motion", self.sensors.motion),
             ("media", self.sensors.media),
             ("appliance", self.sensors.appliance),
+            ("button", self.sensors.button),
             ("door", self.sensors.door),
             ("lock", self.sensors.lock),
             ("window", self.sensors.window),

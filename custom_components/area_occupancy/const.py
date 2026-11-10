@@ -38,7 +38,10 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.11.1-pre2"
+DEVICE_SW_VERSION: Final = "2026.11.1-pre3"
+# Oldest Home Assistant this release runs on; keep in step with hacs.json.
+# HACS doesn't always enforce that file, so the migration checks it too.
+MIN_HA_VERSION: Final = "2026.9.0"
 # Config entry format. v19 moves each area out of the legacy CONF_AREAS list
 # into its own config subentry (see migrations.py). Bumping this no longer
 # costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
@@ -93,6 +96,7 @@ CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
 CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
+CONF_BUTTON_SENSORS: Final = "button_sensors"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
@@ -162,6 +166,7 @@ CONF_WEIGHT_SLEEP: Final = "weight_sleep"
 CONF_WEIGHT_MOTION: Final = "weight_motion"
 CONF_WEIGHT_MEDIA: Final = "weight_media"
 CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
+CONF_WEIGHT_BUTTON: Final = "weight_button"
 CONF_WEIGHT_DOOR: Final = "weight_door"
 CONF_WEIGHT_LOCK: Final = "weight_lock"
 CONF_WEIGHT_WINDOW: Final = "weight_window"
@@ -223,6 +228,9 @@ DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
 DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
+DEFAULT_WEIGHT_BUTTON: Final = 0.7
+# A press counts in full for this short window before the area's normal decay.
+BUTTON_PRESS_WINDOW: Final = 5
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_LOCK: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
@@ -447,21 +455,24 @@ ONLINE_PRIOR_STORE_VERSION: Final = 2
 ONLINE_PRIOR_STORE_KEY_PREFIX: Final = f"{DOMAIN}.online_prior"
 # The scalar shadow diff a day must stay within to count toward the #500
 # promotion gate's "30 days within tolerance". First-pass value: wider
-# than the issue's ~1e-3 aspiration because the online estimator's known,
-# documented approximations (no motion-timeout extension, tick sampling)
-# bound the expected diff well above that on real homes. Tune from the
+# than the issue's ~1e-3 aspiration because the online estimator samples
+# ticks rather than reading exact intervals, which bounds the expected diff
+# well above that on real homes. Tune from the
 # collected history before the gate is ever evaluated.
 ONLINE_PRIOR_DIFF_TOLERANCE: Final = 0.02
 # How many daily divergence summaries the store retains per area.
 ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
 
 # --- Accuracy history (#499, shadow mode) ---
-# The accuracy window is in memory and restarts with Home Assistant, so a
-# daily summary is persisted to make "stable for a release cycle" checkable
-# across restarts. Same Store lifecycle as the online-prior pair above.
-ACCURACY_STORE_VERSION: Final = 1
+# The tick window is in memory and restarts with Home Assistant, so each
+# hour's ticks are folded into a per-day tally of seconds that is persisted
+# and can be pooled over a month. Same Store lifecycle as the online-prior
+# pair above. v2 (2026.11.1-pre3): tallies replace the daily rate snapshots.
+ACCURACY_STORE_VERSION: Final = 2
 ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
 ACCURACY_HISTORY_DAYS: Final = 90
+# Days pooled into the headline accuracy figure in diagnostics.
+ACCURACY_SUMMARY_DAYS: Final = 30
 
 # --- Live ground truth (#603): the label every learner trains against ---
 GROUND_TRUTH_STORE_VERSION: Final = 1
@@ -748,6 +759,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
         _SENSOR_TYPE_MAPPING = {
             "air_quality": InputType.AIR_QUALITY,
             "appliance": InputType.APPLIANCE,
+            "button": InputType.BUTTON,
             "co": InputType.CO,
             "co2": InputType.CO2,
             "cover": InputType.COVER,
