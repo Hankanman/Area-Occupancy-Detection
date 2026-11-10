@@ -1,11 +1,11 @@
 # Area Occupancy Detection for Home Assistant
 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/validate.yml?style=for-the-badge&branch=main)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?style=for-the-badge&label=tests)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/test.yml?style=for-the-badge&branch=main&label=tests)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Hankanman/Area-Occupancy-Detection/docs.yml?style=for-the-badge&branch=main&label=docs)
 
 [![version](https://shields.io/github/v/release/Hankanman/Area-Occupancy-Detection?style=for-the-badge)](https://github.com/Hankanman/Area-Occupancy-Detection/releases)
-[![Latest Release](https://img.shields.io/badge/dynamic/json?style=for-the-badge&color=41BDF5&logo=home-assistant&label=installs&cacheSeconds=15600&url=https://analytics.home-assistant.io/custom_integrations.json&query=$.area_occupancy.total)](https://analytics.home-assistant.io/custom_integrations.json)
+[![Installs](https://img.shields.io/badge/dynamic/json?style=for-the-badge&color=41BDF5&logo=home-assistant&label=installs&cacheSeconds=15600&url=https://analytics.home-assistant.io/custom_integrations.json&query=$.area_occupancy.total)](https://analytics.home-assistant.io/custom_integrations.json)
 ![GitHub Repo stars](https://img.shields.io/github/stars/Hankanman/Area-Occupancy-Detection?style=for-the-badge)
 
 ![GitHub Sponsors](https://img.shields.io/github/sponsors/Hankanman?style=for-the-badge)
@@ -29,7 +29,7 @@ Have you ever had your lights turn off while you're still in the room? Or watche
 | No Learning                                    | Learns from your history automatically. Gets smarter over time. Knows you're usually in the kitchen Sunday mornings.                          |
 | One sensor fails → wrong answer.               | Combines multiple sensors intelligently. If motion misses you, TV being on maintains occupancy probability → your automations keep lights on. |
 | Needs automation timeouts to keep lights on    | Motion stops → probability gradually decreases → occupancy sensor stays on longer → your automations keep lights on while you sit still.      |
-| No Native Activity Detection                   | Activity detection (what's happening), sleep presence tracking, "Wasp in Box" for bathrooms, whole-home aggregation, purpose-based defaults.  |
+| No Native Activity Detection                   | Activity detection (what's happening), sleep presence tracking, a closed-door hold for rooms with one way in, whole-home aggregation, purpose-based defaults. |
 
 ## Creating Automations with AOD
 
@@ -38,7 +38,7 @@ Here's how AOD fits into your automation workflow:
 ### The Workflow
 
 1. **AOD analyzes your sensors** → Motion, TV, doors, appliances, learned patterns
-2. **AOD calculates probability** → Combines all inputs using Bayesian inference
+2. **AOD calculates probability** → Starts from what's usual for this room at this hour, then adds each active sensor's weighted evidence
 3. **AOD creates occupancy sensors** → Binary occupancy status and probability sensors
 4. **Your automations use these sensors** → Trigger actions based on occupancy state or probability
 5. **AOD learns and adapts** → Gets smarter over time, improving your automations automatically
@@ -57,6 +57,12 @@ AOD creates sensors that your automations can use:
 
 ![Probability Cards](docs/docs/images/exposed_sensors.png)
 
+### Forecast Card
+
+AOD includes a dashboard card that shows each area's learned week: how likely the room is to be occupied for every hour of every day. Drag the comfort threshold to see the hours the room is habitually in use, the hours a predictive automation such as pre-heating would act on. The card is loaded on every dashboard automatically: add **Area Occupancy — Time Priors Heatmap** from the card picker. See the [card documentation](https://hankanman.github.io/Area-Occupancy-Detection/features/time-priors-card/).
+
+![Forecast card](docs/docs/images/forecast_card.png)
+
 ### How You Use It
 
 You create automations that respond to AOD's sensors. For example:
@@ -74,24 +80,26 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 ## Features
 
-- **Bayesian Occupancy Detection**: Combines multiple sensor inputs using Bayesian probability for accurate occupancy detection.
-- **Dual-Model Approach**: Separates presence indicators (motion, media, appliances, doors, windows, covers, power, sleep) from environmental support (temperature, humidity, CO2, etc.). Presence sets the probability; environmental readings adjust it, damped to 20% influence.
+- **Probabilistic Occupancy Detection**: Each area starts from a learned baseline for the current hour and day of the week. Every active sensor then adds weighted evidence in log-odds (a logistic model), and the result is the occupancy probability.
+- **Dual-Model Approach**: Separates presence indicators (motion, media, appliances, buttons, doors, locks, windows, covers, power, Wi-Fi clients, sleep) from environmental support (temperature, humidity, CO2, etc.). Presence sets the probability; environmental readings can only add support, damped to 20% influence.
 - **Multiple Sensor Support**:
-  - **Motion/Occupancy Sensors**: Primary input and ground truth for detecting presence.
+  - **Motion/Occupancy Sensors**: The primary input. Motion, media playing and sleep are the ground truth AOD learns from.
   - **Media Devices**: TV, media players, and similar devices as activity indicators.
   - **Appliances**: Switches or sensors representing devices like fans, PCs, or other appliances.
+  - **Buttons**: A button press counts as presence for a short, adjustable time (5 seconds to 10 minutes).
+  - **Doors, Windows and Locks**: Entry/exit and ventilation patterns.
   - **Cover Sensors**: Blinds, shades, shutters, and garage doors being operated.
-  - **Environmental Sensors**: Temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors contribute subtle occupancy clues.
-  - **Doors and Windows**: Entry/exit and ventilation patterns.
   - **Power Sensors**: Power consumption as an activity indicator.
-- **Custom Sensors**: Add any entity from any integration, binary or numeric, with no domain or device-class filter — for anything the built-in sensor types cannot express.
-- **Activity Detection**: Identifies what activity is happening in a room (showering, cooking, watching TV, working, sleeping, eating, etc.) — constrained by room purpose so "showering" only appears in bathrooms.
-- **Sleep Presence Detection**: Detects when people are sleeping using HA Person entities combined with phone sleep confidence from the Companion App, keeping bedrooms occupied overnight.
+  - **Wi-Fi Clients**: The number of devices connected to an access point or network, such as UniFi's connected-clients sensors.
+  - **Environmental Sensors**: Temperature, humidity, illuminance, CO2, CO, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, and PM10 sensors contribute subtle occupancy clues.
+- **Custom Sensors**: Add any entity from any integration, binary or numeric, including `input_boolean` helpers, with no domain or device-class filter — for anything the built-in sensor types cannot express.
+- **Activity Detection**: Identifies what is happening in a room (showering, bathing, cooking, eating, watching TV, listening to music, working, sleeping) — constrained by room purpose so "showering" only appears in bathrooms.
+- **Sleep Presence Detection**: Detects when people are sleeping using Home Assistant Person entities and sleep sensors, such as the Companion App's sleep confidence, Sleep Focus or an in-bed sensor, keeping bedrooms occupied overnight.
 - **Probability-Based Output**: Provides an occupancy probability (1-99%) and a binary occupancy status based on a configurable threshold.
-- **Time-Based Priors**: Learns occupancy patterns by **day of week** and **time of day**, adjusting probability dynamically based on historical usage.
-- **Adaptive Historical Analysis**: Learns sensor reliability and priors over time, improving accuracy as it gathers data.
+- **Time-Based Priors**: Learns occupancy patterns by **day of week** and **time of day**, shown on the forecast card.
+- **Adaptive Historical Analysis**: Learns from your own history how reliable each sensor is, improving accuracy as it gathers data.
 - **Probability Decay**: Gradually reduces occupancy probability when no new activity occurs, with purpose-based defaults.
-- **Wasp in Box**: Virtual sensor for rooms with a single entry/exit point — maintains occupancy when the door closes after motion.
+- **Closed-Door Hold**: For a room with one way in, keeps it occupied while the door stays shut after motion. It replaces Wasp in Box, which is deprecated and will be removed in the release after 2026.11.1.
 - **Adjacent Areas**: Learns transition patterns between physically-connected rooms, boosting a neighbour's probability when household movement suggests it's next and slowing decay when the only known exit has stayed quiet.
 - **All Areas Aggregation**: Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration.
@@ -99,11 +107,13 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **Button Presence Signals**: Treat a configured Home Assistant button press as a strong, short-lived presence signal with an adjustable pulse duration.
 - **Purpose-Based Defaults**: Selecting a room purpose (12 options from Passageway to Bedroom) automatically sets sensible decay timing.
 - **Manual Occupancy References**: Record whether a room is occupied right now from an automation or the `area_occupancy.set_manual_occupancy` service without changing the live detector.
+- **Purpose-Based Defaults**: Selecting a room purpose (12 options, from Passageway to Sleeping) automatically sets sensible decay timing.
+- **Sensor Health**: Flags sensors that are unavailable, stuck or never trigger, as repairs you can act on.
 
 ## Planned Features
 
-- **Machine Learning Model**: Train a neural network based on history to complement the existing Bayesian approach for improved predictions.
-- **Auto-Adjusting Threshold**: Based on history and predictions, automatically adjust the threshold so the user doesn't need to.
+- **Learned Sensor Weights**: Learn how much each sensor should count from your own history, instead of fixed per-type weights. Being tested in shadow mode.
+- **Auto-Adjusting Threshold**: Based on history and predictions, automatically adjust the threshold so the user doesn't need to. A suggested threshold is being tested in shadow mode.
 - **Location Aware**: Leveraging BLE, WiFi, GPS.
 - **Weather-Aware**: Integrate weather data into priors (cold and rainy → more likely to be indoors).
 - **Occupancy Zone Hierarchies**:
@@ -112,18 +122,30 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 ## Installation
 
-## HACS
+### Home Assistant 2026.11 and newer: Marketplace
+
+HACS is built into Home Assistant 2026.11 as the **Marketplace**.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hankanman&repository=Area-Occupancy-Detection&category=integration)
+
+1. Select the button above, or go to **Settings** > **Marketplace**, search for "Area Occupancy Detection" and install it.
+2. If a repair asks you to restart Home Assistant, accept it.
+
+If you already had it installed through HACS, there's nothing to do: the Marketplace takes it over on the first start after upgrading and keeps it updated.
+
+### Home Assistant 2026.10 and older: HACS
+
+The button above opens Area Occupancy Detection in HACS too.
+
 
 1. **Ensure HACS is installed:** If you don't have the [Home Assistant Community Store (HACS)](https://hacs.xyz/) installed, follow their instructions to set it up first.
 2. **Navigate to HACS:** Open your Home Assistant frontend and go to HACS in the sidebar.
 3. **Search for Area Occupancy Detection:** Search for "Area Occupancy Detection" and select then **Download**.
-4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
+4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance.
 
 When you first create the integration you will be taken straight to configuring the first area.
 
-When adding new areas you will need to navigate to **Integrations** -> **Area Occupancy Detection** -> **Configure (⚙️ Cog icon)**. This will bring up the configuration menu.
+To add more areas later, open **Settings** > **Devices & services** > **Area Occupancy Detection** and select **Add an area**. Each area has its own gear icon for editing it.
 
 There is detailed documentation on the configuration options here: [Configuration](https://hankanman.github.io/Area-Occupancy-Detection/getting-started/configuration/).
 
@@ -133,7 +155,7 @@ For an ideal setup you will need to perform these steps in Home Assistant before
 - Set up Home Assistant Floors, [see here to set up floors](https://www.home-assistant.io/docs/organizing/floors/)
 - Set up Home Assistant People, [see here to set up people](https://www.home-assistant.io/integrations/person/)
 
-Almost every option in the config is optional, sensible defaults are available for eveything. The minimum configuration for an area is:
+Almost every option in the config is optional, sensible defaults are available for everything. The minimum configuration for an area is:
 
 - A Home Assistant Area. Must exist in Home Assistant first, [see here to set up areas](https://www.home-assistant.io/docs/organizing/areas/)
 - A Purpose. What the room is used for, [see more about purposes here](https://hankanman.github.io/Area-Occupancy-Detection/features/purpose/)

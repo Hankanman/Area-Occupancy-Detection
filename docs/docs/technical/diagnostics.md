@@ -83,7 +83,7 @@ One row per configured sensor. The most useful fields when debugging:
 | `entity_id` | The HA entity |
 | `input_type` | `motion`, `media`, `door`, `temperature`, etc. |
 | `weight` | Effective weight applied during calculation |
-| `prob_given_true` / `prob_given_false` | Likelihoods used in the Bayesian update |
+| `prob_given_true` / `prob_given_false` | Likelihoods that set the sensor's strength and information gain |
 | `evidence` | Current state contribution (`true` / `false` / `null` if unavailable) |
 | `previous_evidence` | What it was before the last transition |
 | `last_updated` | When evidence last changed (ISO-8601 UTC) |

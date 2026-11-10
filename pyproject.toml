@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "area-occupancy-detection"
 version = "2026.11.1-pre3"
 license = "Apache-2.0"
-description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
+description = "Home Assistant integration for intelligent room occupancy detection using learned, weighted sensor probability."
 readme = "README.md"  # Assuming you'll have a README.md
 authors = [
   { name = "Hankanman", email = "sebburrell@outlook.com" }, # Add your details

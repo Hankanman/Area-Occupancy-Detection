@@ -1264,7 +1264,7 @@
         },
         "pipeline_health_insufficient_priors": {
             "title": "Priors haven't trained for {area}",
-            "description": "The integration has been running for {duration} in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every Bayesian update falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
+            "description": "The integration has been running for {duration} in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every probability calculation falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
         },
         "pipeline_health_stale_intervals_cache": {
             "title": "Occupancy data hasn't refreshed for {area}",

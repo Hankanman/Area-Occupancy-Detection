@@ -1,6 +1,6 @@
-# Bayesian Calculation Deep Dive
+# Probability Calculation Deep Dive
 
-This document provides a detailed mathematical explanation of the probability calculation used for area occupancy detection: a **sigmoid/logit-space model** that combines a learned prior with per-sensor evidence. "Bayesian" here refers to the general shape of the problem — start from a prior belief, update it with evidence — not to classic Bayes'-theorem odds multiplication. The engine is `sigmoid_probability()` in `custom_components/area_occupancy/utils.py`, reached via `presence_probability()` and `environmental_confidence()`.
+This document provides a detailed mathematical explanation of the probability calculation used for area occupancy detection: a **sigmoid/logit-space model** that combines a learned prior with per-sensor evidence. It starts from a prior belief and updates it with evidence, but it is not Bayes'-theorem odds multiplication. The engine is `sigmoid_probability()` in `custom_components/area_occupancy/utils.py`, reached via `presence_probability()` and `environmental_confidence()`.
 
 !!! note "Not naive Bayes"
 This integration previously shipped a classic log-odds naive-Bayes accumulator (`bayesian_probability()`). It was superseded by the model below in PR #353 (2026.2.1) and removed entirely in PR #529 (2026.8.1) after being confirmed to have zero production call sites. If you're looking at older material (a cached doc, a stale comment) that describes multiplying likelihoods and renormalizing, it's describing the removed function, not current behavior.
@@ -38,7 +38,7 @@ Where, for entity \(i\):
 
 ## Why Logit Space?
 
-Working in logit (log-odds) space instead of raw probability gives the same numerical-stability benefits classic Bayesian log-space combination has, plus a simpler combination rule:
+Working in logit (log-odds) space instead of raw probability gives the same numerical-stability benefits as classic log-space Bayesian combination, plus a simpler combination rule:
 
 - **Purely additive**: each sensor is one term added to a running sum — no renormalization step, no multiplying probabilities together
 - **Order independence**: summation is commutative, so entity iteration order can never change the result
