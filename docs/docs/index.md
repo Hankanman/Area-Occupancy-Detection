@@ -35,7 +35,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 
 ### Installation
 
-- **[Installation Guide](getting-started/installation.md)**: How to install the integration via HACS or manual installation
+- **[Installation Guide](getting-started/installation.md)**: How to install the integration from the Marketplace (Home Assistant 2026.11+), HACS or manually
 
 ### Configuration
 
