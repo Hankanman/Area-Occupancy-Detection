@@ -90,7 +90,6 @@ from .data.ground_truth import LabelerState, LiveLabeler
 from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.manual_override import ManualOccupancyFeedback
-from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
 from .data.metrics import AccuracyMetrics, AccuracyTally, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
@@ -169,6 +168,8 @@ class ManualFeedbackStore(Store[dict[str, list[dict[str, object]]]]):
     ) -> dict[str, list[dict[str, object]]]:
         """Do not restore old state-changing overrides as reference data."""
         return {"feedback": []}
+
+
 class AccuracyStore(Store[dict[str, dict]]):
     """Store for the daily accuracy tallies.
 

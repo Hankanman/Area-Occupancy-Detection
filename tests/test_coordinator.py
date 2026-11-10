@@ -17,10 +17,10 @@ from custom_components.area_occupancy.const import (
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.config import Sensors
+from custom_components.area_occupancy.data.entity_type import InputType
 from custom_components.area_occupancy.data.manual_override import (
     ManualOccupancyFeedback,
 )
-from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import area_registry as ar

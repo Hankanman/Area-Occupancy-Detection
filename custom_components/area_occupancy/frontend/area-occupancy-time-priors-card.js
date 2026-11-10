@@ -122,7 +122,11 @@ class AreaOccupancyTimePriorsCard extends HTMLElement {
 
   _startTimer() {
     this._stopTimer();
-    const mins = Number(this._config?.refresh_minutes) || 3;
+    const configuredMinutes = Number(this._config?.refresh_minutes);
+    const mins =
+      Number.isFinite(configuredMinutes) && configuredMinutes > 0
+        ? configuredMinutes
+        : 3;
     this._timer = window.setInterval(() => this._fetch(), mins * 60000);
   }
 
