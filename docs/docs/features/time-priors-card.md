@@ -9,6 +9,8 @@ occupancy probability, with a **comfort-threshold** slider that highlights the
 slots each area is habitually occupied — a quick way to see when a predictive
 automation (e.g. climate pre-heating) would act.
 
+![Forecast card for a kitchen](../images/forecast_card.png)
+
 ## Requirements
 
 Area Occupancy 2026.9.1 or later, which exposes the

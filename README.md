@@ -61,7 +61,7 @@ AOD creates sensors that your automations can use:
 
 AOD includes a dashboard card that shows each area's learned week: how likely the room is to be occupied for every hour of every day. Drag the comfort threshold to see the hours the room is habitually in use, the hours a predictive automation such as pre-heating would act on. The card is loaded on every dashboard automatically: add **Area Occupancy — Time Priors Heatmap** from the card picker. See the [card documentation](https://hankanman.github.io/Area-Occupancy-Detection/features/time-priors-card/).
 
-![Forecast card](docs/docs/images/forecast-card.png)
+![Forecast card](docs/docs/images/forecast_card.png)
 
 ### How You Use It
 
