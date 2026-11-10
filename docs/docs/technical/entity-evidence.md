@@ -115,7 +115,7 @@ Entities with zero weight are excluded from the calculation. Entities with `weig
 
 ### Likelihood Clamping
 
-`prob_given_true` feeds into the sigmoid model's strength factor (`prob_given_true × strength_multiplier`) rather than a per-hypothesis likelihood ratio, so there's no separate "invalid likelihood" exclusion step. The prior and final probability are clamped to `[MIN_PROBABILITY, MAX_PROBABILITY]` before `logit()` is called on them, which is what actually prevents `log(0)`/`log(1)` errors — see [Bayesian Calculation Deep Dive](bayesian-calculation.md).
+`prob_given_true` feeds into the sigmoid model's strength factor (`prob_given_true × strength_multiplier`) rather than a per-hypothesis likelihood ratio, so there's no separate "invalid likelihood" exclusion step. The prior and final probability are clamped to `[MIN_PROBABILITY, MAX_PROBABILITY]` before `logit()` is called on them, which is what actually prevents `log(0)`/`log(1)` errors — see [Probability Calculation Deep Dive](bayesian-calculation.md).
 
 ### Unavailable Entity Handling
 
@@ -238,6 +238,6 @@ Entities are accessed via:
 ## See Also
 
 - [Complete Calculation Flow](calculation-flow.md) - How evidence is used in calculations
-- [Bayesian Calculation Deep Dive](bayesian-calculation.md) - How evidence affects probability
+- [Probability Calculation Deep Dive](bayesian-calculation.md) - How evidence affects probability
 - [Decay Feature](../features/decay.md) - User-facing decay documentation
 - [Calculation Feature](../features/calculation.md) - User-facing calculation documentation

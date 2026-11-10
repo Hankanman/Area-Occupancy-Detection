@@ -1,13 +1,25 @@
 # Installation
 
-## HACS
+## Home Assistant 2026.11 and newer: Marketplace
+
+HACS is built into Home Assistant 2026.11 as the **Marketplace**.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hankanman&repository=Area-Occupancy-Detection&category=integration)
+
+1. Select the button above, or go to **Settings** > **Marketplace**, search for "Area Occupancy Detection" and install it.
+2. If a repair asks you to restart Home Assistant, accept it.
+
+If you already had it installed through HACS, there's nothing to do: the Marketplace takes it over on the first start after upgrading and keeps it updated.
+
+## Home Assistant 2026.10 and older: HACS
+
+The button above opens Area Occupancy Detection in HACS too.
+
 
 1. **Ensure HACS is installed:** If you don't have the [Home Assistant Community Store (HACS)](https://hacs.xyz/) installed, follow their instructions to set it up first.
 2. **Navigate to HACS:** Open your Home Assistant frontend and go to HACS in the sidebar.
 3. **Search for Area Occupancy Detection:** Search for "Area Occupancy Detection" and select then **Download**.
-4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance
+4. **Restart Home Assistant:** After the download is complete, restart your Home Assistant instance.
 
 ## Initial Setup
 
