@@ -61,6 +61,9 @@ class DoorHoldState:
     last_motion: datetime | None = None
     # The doors' state at the previous observation (None: not seen yet).
     doors_open: bool | None = None
+    # Whether motion was recent when the door opened. A PIR's configured
+    # off-delay must not turn a departure into a new hold.
+    motion_was_recent_when_opened: bool = False
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -69,6 +72,7 @@ class DoorHoldState:
             "fade_from": self.fade_from.isoformat() if self.fade_from else None,
             "last_motion": self.last_motion.isoformat() if self.last_motion else None,
             "doors_open": self.doors_open,
+            "motion_was_recent_when_opened": self.motion_was_recent_when_opened,
         }
 
     @classmethod
@@ -86,6 +90,12 @@ class DoorHoldState:
                 fade_from=_ts("fade_from"),
                 last_motion=_ts("last_motion"),
                 doors_open=None if doors_open is None else bool(doors_open),
+                motion_was_recent_when_opened=bool(
+                    data.get(
+                        "motion_was_recent_when_opened",
+                        data.get("motion_was_on_when_opened", False),
+                    )
+                ),
             )
         except (AttributeError, TypeError, ValueError):
             return cls()
@@ -119,8 +129,8 @@ class DoorHold:
             now: The observation time.
             doors_open: Whether any of the area's doors is open.
             motion_on: Whether any of its motion sensors is active.
-            motion_window: Seconds after motion that closing the doors
-                still arms the hold.
+            motion_window: Configured motion off-delay in seconds. Closing
+                the doors within this window after motion still arms the hold.
             max_hold: Seconds after the last motion the hold lasts; 0 for
                 no limit (as Wasp in Box's maximum duration).
             fade_half_life: Half-life of the fade after ``max_hold``.
@@ -128,6 +138,15 @@ class DoorHold:
         now = ensure_utc_datetime(now)
         state = self.state
         just_closed = state.doors_open is True and not doors_open
+        just_opened = state.doors_open is False and doors_open
+        recent_motion_before_observation = (
+            state.last_motion is not None
+            and (now - state.last_motion).total_seconds() <= motion_window
+        )
+        if just_opened:
+            state.motion_was_recent_when_opened = (
+                motion_on or recent_motion_before_observation
+            )
         state.doors_open = doors_open
         if motion_on:
             state.last_motion = now
@@ -139,7 +158,11 @@ class DoorHold:
             state.last_motion is not None
             and (now - state.last_motion).total_seconds() <= motion_window
         )
-        if motion_on or (just_closed and recent_motion):
+        if motion_on or (
+            just_closed
+            and recent_motion
+            and not state.motion_was_recent_when_opened
+        ):
             state.held_from = now
             state.fade_from = None
         elif (
