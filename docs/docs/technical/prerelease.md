@@ -6,14 +6,13 @@ You can find the available pre-releases on the [releases](https://github.com/Han
 
 ### Home Assistant 2026.11 and newer: Marketplace
 
-The Marketplace offers only stable releases until you turn pre-releases on for a repository.
+The Marketplace offers only stable releases until you include pre-releases for the repository.
 
 **To follow the pre-releases:**
 
-1. Go to **Settings** > **Devices & services** > **Marketplace** and open the **Area Occupancy Detection** device.
-2. Enable the **Pre-release** entity, which is disabled by default.
-3. Turn the **Pre-release** switch on.
-4. New pre-releases now appear under **Settings** > **Updates**. Turn the switch off to go back to stable releases only.
+1. Go to **Settings** > **Marketplace** and open **Area Occupancy Detection**.
+2. Use the three dots menu in the upper right and select **Include pre-releases**. The page then says "Pre-releases included".
+3. New pre-releases now appear under **Settings** > **Updates**. Select **Exclude pre-releases** in the same menu to go back to stable releases only.
 
 **To install one particular version:**
 
