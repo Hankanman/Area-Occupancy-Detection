@@ -108,6 +108,17 @@ class TestArming:
         _observe(hold, 10, doors_open=False, motion_on=False)
         assert not hold.held
 
+    def test_recent_motion_guard_survives_closed_observation(self) -> None:
+        """An opening guard is not cleared by an unrelated closed tick."""
+        hold = DoorHold(
+            DoorHoldState(
+                doors_open=False,
+                motion_was_recent_when_opened=True,
+            )
+        )
+        _observe(hold, 10, doors_open=False, motion_on=False)
+        assert hold.state.motion_was_recent_when_opened
+
     def test_opening_releases(self) -> None:
         hold = DoorHold()
         _observe(hold, 0, doors_open=False, motion_on=True)
