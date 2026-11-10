@@ -1,6 +1,6 @@
 # Area Occupancy Detection Documentation
 
-Area Occupancy Detection aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, and historical data. It uses Bayesian probability to calculate the likelihood of an area being occupied based on multiple sensor inputs and learned patterns.
+Area Occupancy Detection aims to improve occupancy accuracy beyond single motion detectors by considering various environmental factors, device states, and historical data. It starts from what is usual for each area at that hour, learned from your history, and adds weighted evidence from each active sensor to calculate the probability that the area is occupied.
 
 ![Probability Cards](images/probability-cards.png)
 
@@ -8,7 +8,7 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 
 ### Core Features
 
-- **[Bayesian Probability Calculation](features/calculation.md)**: Uses learned sensor reliability to calculate occupancy probability
+- **[Probability Calculation](features/calculation.md)**: Combines the learned prior with weighted sensor evidence in log-odds to calculate occupancy probability
 - **[Dual-Model Approach](features/calculation.md#dual-model-approach-presence-environmental)**: Presence indicators set the probability; environmental support adjusts it at 20% influence
 - **[Historical Learning](features/prior-learning.md)**: Automatically learns from your sensor history to improve accuracy
 - **[Probability Decay](features/decay.md)**: Gradually reduces probability when no activity is detected
@@ -44,14 +44,16 @@ Area Occupancy Detection aims to improve occupancy accuracy beyond single motion
 
 ## Key Concepts
 
-### Bayesian Probability
+### Probability
 
-The integration uses Bayes' theorem to update occupancy probability based on sensor evidence:
+The integration combines four things into one occupancy probability:
 
-1. **Prior Belief**: Baseline probability of occupancy (learned from history)
-2. **Sensor Evidence**: Current state of configured sensors
-3. **Likelihood**: How reliable each sensor is (learned from history)
-4. **Posterior**: Updated probability after considering new evidence
+1. **Prior**: Baseline probability of occupancy for this hour and day of the week (learned from history)
+2. **Sensor Evidence**: Which configured sensors are active, or fading after being active
+3. **Sensor Strength**: How reliable each sensor is (learned from history) and its type's weight
+4. **Result**: The prior and each sensor's weighted contribution are added in log-odds (a logistic model), then converted back to a probability. Inactive sensors add nothing rather than counting against occupancy.
+
+See [Probability Calculation](features/calculation.md) for the formula and a worked example.
 
 ### Sensor Types
 
@@ -97,7 +99,7 @@ The integration supports multiple sensor types with different default weights:
 
 ## How Area Occupancy Detection Helps
 
-This integration provides enhanced room occupancy detection for Home Assistant by intelligently combining data from multiple sensor inputs. Unlike simple motion sensors, it leverages Bayesian probability calculations to factor in various environmental cues and device states, leading to more accurate and resilient occupancy detection.
+This integration provides enhanced room occupancy detection for Home Assistant by intelligently combining data from multiple sensor inputs. Unlike simple motion sensors, it combines a learned baseline with weighted evidence from environmental cues and device states, leading to more accurate and resilient occupancy detection.
 
 - **Increased Accuracy:** By fusing data from multiple sensor types (motion, doors, media, etc.), the system gains a much richer understanding of the area's status.
 - **Probabilistic Approach:** Instead of a simple ON/OFF state, it calculates an _occupancy probability_. You decide how certain the system must be before declaring occupancy.
@@ -107,7 +109,7 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 ## Key Features
 
 - **Multi-Sensor Fusion:** Combines inputs from motion/occupancy sensors, media players, doors, windows, covers, appliances, power sensors, sleep presence, and environmental sensors (temperature, humidity, illuminance, CO2, sound pressure, atmospheric pressure, air quality, VOC, PM2.5, PM10).
-- **Bayesian Inference:** Calculates the probability of occupancy based on the current state of configured sensors and their individual learned likelihoods.
+- **Probabilistic Model:** Calculates the probability of occupancy from the learned prior and the current state of configured sensors, weighted by their learned reliability.
 - **Prior Probability Learning:** Automatically learns how sensor states relate to actual occupancy (using motion sensors as ground truth) over a configurable history period.
 - **Configurable Weights:** Assign weights to different sensor _types_ to influence their impact on the overall probability.
 - **Probability Decay:** Gradually decreases the occupancy probability when sensors indicate inactivity, providing a natural transition to "unoccupied".
@@ -137,8 +139,8 @@ This integration provides enhanced room occupancy detection for Home Assistant b
    - **P(Sensor Active | Area Not Occupied):** How likely is a sensor to be active when the area is _not_ occupied?
    - **P(Area Occupied):** The baseline (prior) probability of the area being occupied, derived from motion sensor history.
      These learned probabilities (or defaults if history is insufficient) are stored and used in calculations.
-3. **Real-time Calculation:** As your sensor states change, the integration uses Bayes' theorem. For each _active_ sensor, it updates the probability of occupancy based on its learned likelihoods and the overall prior probability.
-4. **Weighted Combination:** The contributions from individual active sensors are combined in log space and weighted by sensor type.
+3. **Real-time Calculation:** As your sensor states change, the integration starts from the prior in log-odds and adds one term for each _active_ sensor, sized by its learned reliability and its type's weight.
+4. **Weighted Combination:** The sum is converted back to a probability with a sigmoid. Environmental sensors add a smaller, damped adjustment on top.
 5. **Output:** The final calculated probability is exposed. If it crosses the configured threshold, the Occupancy Status sensor turns "on".
 6. **Decay:** If the probability starts decreasing (fewer active sensors), an exponential decay function gradually lowers the probability over a configured time window, unless new sensor activity pushes it back up.
 

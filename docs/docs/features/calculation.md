@@ -1,6 +1,6 @@
-# Bayesian Probability Calculation
+# Probability Calculation
 
-This integration uses Bayesian probability to determine the likelihood of an area being occupied based on the current states of configured sensors.
+This integration calculates the probability of an area being occupied from a learned prior and the current states of configured sensors, using a weighted logistic model in log-odds space.
 
 ## Core Concept
 

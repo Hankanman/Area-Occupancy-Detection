@@ -108,7 +108,7 @@ nav:
   - Features:
       - Purpose: features/purpose.md
       - Sensors: features/sensors.md
-      - Bayesian Calculation: features/calculation.md
+      - Probability Calculation: features/calculation.md
       - Prior Learning: features/prior-learning.md
       - Sensor Likelihoods: features/likelihood.md
       - Sensor Correlation: features/sensor-correlation.md
