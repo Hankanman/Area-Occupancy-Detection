@@ -154,14 +154,13 @@ class DoorHold:
             state.held_from = None
             state.fade_from = None
             return
+        motion_was_recent_when_opened = state.motion_was_recent_when_opened
         recent_motion = (
             state.last_motion is not None
             and (now - state.last_motion).total_seconds() <= motion_window
         )
-        if motion_on or (
-            just_closed
-            and recent_motion
-            and not state.motion_was_recent_when_opened
+        if not motion_was_recent_when_opened and (
+            motion_on or (just_closed and recent_motion)
         ):
             state.held_from = now
             state.fade_from = None
@@ -173,6 +172,7 @@ class DoorHold:
             # Fade from the moment the hold ran out, not from this tick.
             state.fade_from = state.held_from + timedelta(seconds=max_hold)
             state.held_from = None
+        state.motion_was_recent_when_opened = False
         if (
             state.fade_from is not None
             and (now - state.fade_from).total_seconds()
