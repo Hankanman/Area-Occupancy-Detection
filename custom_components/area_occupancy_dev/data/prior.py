@@ -1,0 +1,484 @@
+"""Area baseline prior (P(room occupied) *before* current evidence).
+
+The class learns from recent recorder history, but also falls back to a
+defensive default when data are sparse or sensors are being re-configured.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+import logging
+from typing import TYPE_CHECKING
+
+from homeassistant.util import dt as dt_util
+
+from ..const import (
+    DEFAULT_AREA_PRIOR,
+    DEFAULT_TIME_PRIOR,
+    MAX_PRIOR,
+    MIN_PRIOR,
+    PRIOR_FLOOR_THRESHOLD_MARGIN,
+    TIME_PRIOR_MAX_BOUND,
+    TIME_PRIOR_MIN_BOUND,
+)
+from ..time_utils import to_local
+from ..utils import clamp_probability, combine_priors
+from .forecast import forecast_prior, shrink_slot_prior
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
+    from .config import AreaConfig
+
+_LOGGER = logging.getLogger(__name__)
+
+# Sentinel distinguishing "caller didn't pass calculation_date" (fresh
+# calculation just completed -> default to now) from "caller explicitly
+# passed calculation_date=None" (loaded a legacy DB row with no recorded
+# timestamp -> must stay None, not silently become now). `None` itself
+# can't serve as the "not passed" default since it's also the valid explicit
+# value for the legacy case.
+_CALCULATION_DATE_UNSET = object()
+
+# Prior calculation constants
+PRIOR_FACTOR = 1.0
+DEFAULT_PRIOR = 0.5
+SIGNIFICANT_CHANGE_THRESHOLD = 0.1
+
+# Time slot constants
+DEFAULT_SLOT_MINUTES = 60
+
+
+class Prior:
+    """Compute the baseline probability for an Area entity."""
+
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str | None = None,
+        config: AreaConfig | None = None,
+    ) -> None:
+        """Initialize the Prior class.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Optional area name for multi-area support
+            config: Area configuration (preferred). Falls back to coordinator lookup.
+        """
+        self.coordinator = coordinator
+        self.db = coordinator.db
+        self.area_name = area_name
+        if config is not None:
+            self.config = config
+        else:
+            area = coordinator.get_area(area_name)
+            if area is None:
+                raise ValueError(
+                    f"Area '{self.area_name}' not found in coordinator and no config provided"
+                )
+            self.config = area.config
+        self.sensor_ids = self.config.sensors.motion
+        self.media_sensor_ids = self.config.sensors.media
+        self.appliance_sensor_ids = self.config.sensors.appliance
+        self.hass = coordinator.hass
+        self.global_prior: float | None = None
+        self._last_updated: datetime | None = None
+        # Timestamp of the most recent *successful* global-prior calculation
+        # (set by ``set_global_prior``), as opposed to an analysis cycle that
+        # skipped the update entirely because no ground-truth data exists
+        # yet (#520 Bug A). Loaded from ``GlobalPriors.calculation_date`` on
+        # startup so staleness detection survives a restart; see
+        # ``data.health.HealthMonitor._check_insufficient_priors``.
+        self.last_calculation_at: datetime | None = None
+        # Cache for all 168 time priors: (day_of_week, time_slot) -> prior_value
+        self._cached_time_priors: dict[tuple[int, int], float] | None = None
+        # Sample counts for the same slots: (day_of_week, time_slot) -> weeks
+        # of data behind the value. 0 means the slot was never learned and the
+        # cached value is the neutral fallback, not an observation.
+        self._cached_time_prior_points: dict[tuple[int, int], int] | None = None
+
+    @property
+    def value(self) -> float:
+        """Return the current prior value or minimum if not calculated.
+
+        The prior is calculated by combining global_prior and time_prior,
+        applying PRIOR_FACTOR boost, and clamping to [MIN_PRIOR, MAX_PRIOR].
+
+        Floors (purpose.min_prior, config.min_prior_override) can raise the
+        learned prior. The result, learned prior included, is capped strictly
+        below the configured occupancy threshold: a prior alone, with no
+        active evidence, never makes an area occupied (#435 for the floors;
+        for learned and time-slot priors, a bedroom whose dogs taught it a
+        52% prior read occupied on the hour with nothing active). The
+        learned value itself is kept and reported, and the
+        ``prior_above_threshold`` repair still flags it.
+
+        Returns:
+            Prior probability in range [MIN_PRIOR, MAX_PRIOR].
+        """
+        return self._compute_value_and_floor()[0]
+
+    def _compute_value_and_floor(self) -> tuple[float, str]:
+        """Compute prior.value and report which floor (if any) applied.
+
+        Returns:
+            Tuple of (prior value, floor label). Floor label is one of
+            ``"none"``, ``"purpose"``, ``"override"``. The label reflects the
+            floor responsible for raising the value above the learned prior,
+            or ``"none"`` if the learned prior is already at or above every
+            floor.
+        """
+        # No prior, learned, default or floor, may hold an area occupied
+        # with no active evidence (issue #435), so all are capped here.
+        floor_cap = max(MIN_PRIOR, self.config.threshold - PRIOR_FLOOR_THRESHOLD_MARGIN)
+
+        if self.global_prior is None:
+            # Nothing learned yet -- a fresh install, or an area whose
+            # sensors have no recorder history to analyse. This used to fall
+            # to MIN_PRIOR (0.01), which is not "no information", it is
+            # "almost certainly empty": from a 0.01 prior a single active
+            # motion sensor only reaches ~14%, so a brand-new area could not
+            # report occupied at all until the first analysis cycle found
+            # enough history to compute a global prior. DEFAULT_AREA_PRIOR is
+            # the shipped no-data baseline, and from it the same sensor
+            # reaches ~74%.
+            #
+            # Note the consequence of the cap: an area with nothing learned
+            # and a threshold below DEFAULT_AREA_PRIOR rests just under its
+            # own threshold, so its prior moves when the threshold does. That
+            # is deliberate -- the alternative is an area that reads occupied
+            # with every sensor off -- and it lasts only until the first
+            # analysis cycle computes a real global prior.
+            learned = min(DEFAULT_AREA_PRIOR, floor_cap)
+        else:
+            if self.time_prior is None:
+                prior = self.global_prior
+            else:
+                prior = combine_priors(self.global_prior, self.time_prior)
+
+            adjusted_prior = prior * PRIOR_FACTOR
+            learned = max(MIN_PRIOR, min(MAX_PRIOR, adjusted_prior, floor_cap))
+
+        purpose_floor = 0.0
+        area = self.coordinator.areas.get(self.area_name)
+        if area is not None and area.purpose.min_prior > 0.0:
+            purpose_floor = area.purpose.min_prior
+
+        override_floor = 0.0
+        if self.config.min_prior_override > 0.0:
+            override_floor = self.config.min_prior_override
+
+        capped_purpose = min(purpose_floor, floor_cap)
+        capped_override = min(override_floor, floor_cap)
+
+        result = learned
+        applied = "none"
+        if capped_purpose > result:
+            result = capped_purpose
+            applied = "purpose"
+        if capped_override > result:
+            result = capped_override
+            applied = "override"
+
+        return result, applied
+
+    def diagnostic_snapshot(self) -> dict[str, float | str | None]:
+        """Return a snapshot of the prior's current inputs and output.
+
+        Exposed to users via the probability sensor's extra_state_attributes
+        so they can see which term is driving the prior — especially useful
+        when an area appears "stuck" occupied with no active evidence.
+
+        Returns:
+            Dict with learned components, the floor that was applied (if
+            any), the effective prior value, and the configured threshold.
+        """
+        value, applied = self._compute_value_and_floor()
+        return {
+            "prior_value": value,
+            "global_prior": self.global_prior,
+            "time_prior": self.time_prior,
+            "min_prior_floor_applied": applied,
+            "threshold": self.config.threshold,
+        }
+
+    @property
+    def time_prior(self) -> float:
+        """Return the cached time prior for the current day and hour slot.
+
+        Never reads the database, since every probability calculation on the
+        event loop calls this. ``load_time_priors()`` fills the cache in the
+        executor; until it has, this returns :attr:`unlearned_slot_prior`
+        (the area's own global prior — the value an unlearned slot gets,
+        per #536's fallback semantics). A failed load leaves the cache
+        unset, so this also serves as the per-call fallback that lets the
+        next executor load retry.
+        """
+        # Read the cache once into a local: the executor can replace it
+        # concurrently.
+        time_priors = self._cached_time_priors
+        points = self._cached_time_prior_points
+        if time_priors is None:
+            return self.unlearned_slot_prior
+
+        current_day = self.day_of_week
+        current_slot = self.time_slot
+        slot_key = (current_day, current_slot)
+
+        # A slot with a week or two behind it is pulled toward the global
+        # prior, so one busy (or stuck-on) afternoon cannot push the live
+        # prior across the threshold on its own.
+        return shrink_slot_prior(
+            time_priors.get(slot_key, self.unlearned_slot_prior),
+            points.get(slot_key, 0) if points is not None else 0,
+            self.global_prior,
+        )
+
+    @property
+    def day_of_week(self) -> int:
+        """Return the current day of week (0=Monday, 6=Sunday)."""
+        return to_local(dt_util.utcnow()).weekday()
+
+    @property
+    def time_slot(self) -> int:
+        """Return the current time slot based on DEFAULT_SLOT_MINUTES."""
+        now = to_local(dt_util.utcnow())
+        return (now.hour * 60 + now.minute) // DEFAULT_SLOT_MINUTES
+
+    def all_time_priors(self) -> dict[tuple[int, int], float]:
+        """Return a copy of all learned weekly time priors.
+
+        The cache is loaded from the database on first access. Values are the
+        raw per-slot time priors, bounds-clamped to
+        ``[TIME_PRIOR_MIN_BOUND, TIME_PRIOR_MAX_BOUND]`` (see
+        :meth:`load_time_priors`). Keys are ``(day_of_week, time_slot)``
+        with ``day_of_week`` 0=Monday…6=Sunday and ``time_slot`` in
+        ``[0, 1440 // DEFAULT_SLOT_MINUTES)``.
+
+        Unlike :attr:`time_prior`, which is locked to the current wall-clock
+        slot, this exposes the full weekly matrix so a consumer can read
+        occupancy priors for *arbitrary* (including future) slots.
+
+        Returns:
+            Mapping of ``(day_of_week, time_slot) -> raw time prior``.
+        """
+        if self._cached_time_priors is None:
+            self.load_time_priors()
+        if self._cached_time_priors is None:
+            # DB read failed: serve an uncached fallback grid so the shape
+            # stays a full week and the next access retries the load.
+            return self._unlearned_grid()[0]
+        return dict(self._cached_time_priors)
+
+    def all_time_prior_points(self) -> dict[tuple[int, int], int]:
+        """Return the sample count behind each weekly slot.
+
+        Keys match :meth:`all_time_priors`. A value of ``0`` means the slot has
+        never been learned and its prior is the neutral fallback rather than an
+        observation — consumers should render or weight it differently instead
+        of treating it as a real probability.
+
+        Returns:
+            Dict mapping ``(day_of_week, time_slot)`` to the number of distinct
+            weeks of data behind that slot.
+        """
+        if self._cached_time_prior_points is None:
+            self.load_time_priors()
+        if self._cached_time_prior_points is None:
+            return self._unlearned_grid()[1]
+        return dict(self._cached_time_prior_points)
+
+    def prior_for(self, day_of_week: int, time_slot: int) -> float:
+        """Return the learned occupancy-probability forecast for a given slot.
+
+        Unlike :attr:`time_prior` (locked to the current slot) and
+        :attr:`value` (evaluated for "now" and subject to configuration
+        floors), this computes the forecast for any weekly slot so a
+        consumer can build a forward-looking occupancy profile — for
+        example to pre-heat a room before its habitual occupancy.
+
+        The value combines the learned ``global_prior`` with the slot's
+        learned time prior and clamps to ``[MIN_PRIOR, MAX_PRIOR]``, mirroring
+        the learned term of :attr:`value`. Configuration floors
+        (``purpose.min_prior``, ``min_prior_override``) are intentionally
+        *not* applied: they are threshold-relative safety nets for the live
+        estimate and are not meaningful to project onto arbitrary future
+        slots. When ``global_prior`` has not been learned yet, the slot's
+        raw (bounds-clamped) time prior is returned as a best-effort fallback.
+
+        Args:
+            day_of_week: 0=Monday … 6=Sunday.
+            time_slot: Slot index ``(hour * 60 + minute) // DEFAULT_SLOT_MINUTES``.
+
+        Returns:
+            Forecast occupancy probability in ``[MIN_PRIOR, MAX_PRIOR]``.
+        """
+        if self._cached_time_priors is None:
+            self.load_time_priors()
+        weeks = 0
+        if self._cached_time_priors is None:
+            slot_time_prior = self.unlearned_slot_prior
+        else:
+            slot_time_prior = self._cached_time_priors.get(
+                (day_of_week, time_slot), self.unlearned_slot_prior
+            )
+            if self._cached_time_prior_points is not None:
+                weeks = self._cached_time_prior_points.get((day_of_week, time_slot), 0)
+        return forecast_prior(
+            self.global_prior, slot_time_prior, prior_factor=PRIOR_FACTOR, weeks=weeks
+        )
+
+    def set_global_prior(
+        self,
+        prior: float,
+        *,
+        calculation_date: datetime | None = _CALCULATION_DATE_UNSET,  # type: ignore[assignment]
+    ) -> None:
+        """Set the global prior value.
+
+        The prior is clamped to [MIN_PROBABILITY, MAX_PROBABILITY] to ensure
+        valid probability bounds even when loading from database or external sources.
+
+        Args:
+            prior: The prior probability value (will be clamped to valid bounds)
+            calculation_date: When this value was actually computed. Omitting
+                this argument defaults to now (the normal case: a fresh
+                calculation just completed). The data-load path passes the
+                persisted ``GlobalPriors.calculation_date`` instead, so
+                ``last_calculation_at`` reflects when the prior was last
+                *recomputed*, not when it was last *loaded* — otherwise a
+                restart would reset the staleness clock and mask a frozen
+                prior (#520 Bug A) until another full grace period elapsed.
+                An explicit ``None`` (a legacy DB row with no recorded
+                timestamp) is preserved as ``None`` rather than defaulting to
+                now — coercing it would make the legacy case indistinguishable
+                from a fresh calculation and defeat the staleness check
+                entirely.
+        """
+        self.global_prior = clamp_probability(prior)
+        # The time-prior cache is left alone: time priors live in their own
+        # table, and the prior analysis reloads them after saving new ones,
+        # so the current snapshot stays in use until its replacement is ready.
+        now = dt_util.utcnow()
+        self._last_updated = now
+        self.last_calculation_at = (
+            now if calculation_date is _CALCULATION_DATE_UNSET else calculation_date
+        )
+
+    def clear_cache(self) -> None:
+        """Clear all cached data to release memory.
+
+        This should be called when the area is being removed or cleaned up
+        to prevent memory leaks from cached data holding references.
+        """
+        _LOGGER.debug("Clearing all caches for area: %s", self.area_name)
+        self._invalidate_time_prior_cache()
+        # Also clear global_prior and last_updated to release references
+        self.global_prior = None
+        self._last_updated = None
+        self.last_calculation_at = None
+
+    def invalidate_time_prior_cache(self) -> None:
+        """Drop the cached weekly priors so the next read reloads from the DB.
+
+        Public because the analysis pipeline must invalidate *after* it writes
+        new priors, not only when the global prior changes.
+        """
+        self._invalidate_time_prior_cache()
+
+    def _invalidate_time_prior_cache(self) -> None:
+        """Invalidate the time_prior cache."""
+        self._cached_time_priors = None
+        self._cached_time_prior_points = None
+
+    @property
+    def unlearned_slot_prior(self) -> float:
+        """Return the value to use for a slot that was never learned.
+
+        A slot with no stored row means "no observation", which is *not* the
+        same as "empty". Filling it with :data:`DEFAULT_TIME_PRIOR` (0.5) makes
+        the unknown outrank every genuinely low-occupancy slot and silently
+        inflates the live prior — an area with ``global_prior = 0.04`` was
+        being pushed to ~0.12 purely by unlearned slots.
+
+        The area's own ``global_prior`` is the neutral choice: it is the
+        identity of :func:`combine_priors` (combining a prior with itself
+        returns it unchanged), so an unlearned slot contributes no opinion in
+        either direction. It is clamped to the time-prior bounds like every
+        slot, so the identity holds only inside [``TIME_PRIOR_MIN_BOUND``,
+        ``TIME_PRIOR_MAX_BOUND``]; a global prior outside them gets the bound,
+        a slight tilt toward it. Before any global prior exists there is
+        nothing neutral to fall back to, so the historical default is kept.
+
+        Returns:
+            The fallback time prior for unlearned slots.
+        """
+        if self.global_prior is None:
+            return DEFAULT_TIME_PRIOR
+        return max(TIME_PRIOR_MIN_BOUND, min(TIME_PRIOR_MAX_BOUND, self.global_prior))
+
+    def _unlearned_grid(
+        self,
+    ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], int]]:
+        """Return a full weekly grid of fallback priors and zero sample counts.
+
+        Used only when the database read behind :meth:`load_time_priors`
+        failed: callers get a complete, correctly-shaped week without the
+        poisoned values being cached.
+        """
+        fallback = self.unlearned_slot_prior
+        slots_per_day = 1440 // DEFAULT_SLOT_MINUTES
+        keys = [(d, t) for d in range(7) for t in range(slots_per_day)]
+        return (
+            dict.fromkeys(keys, fallback),
+            dict.fromkeys(keys, 0),
+        )
+
+    def load_time_priors(self) -> dict[tuple[int, int], float] | None:
+        """Load all 168 time priors from database into cache.
+
+        Reads the stored slots in a single query and fills the rest of the
+        weekly grid with :attr:`unlearned_slot_prior`, keeping a parallel map
+        of sample counts so callers can tell learned slots from filled ones.
+
+        Blocking I/O, so it runs in the executor: ``load_data`` calls it when
+        an area's data is loaded, and ``start_prior_analysis`` after new time
+        priors are saved. ``time_prior`` never loads on its own. Both maps
+        are built fully before being published, since the event loop reads
+        the cache while this runs.
+
+        On a failed database read (``get_stored_time_priors`` returns
+        ``None``) both caches are left untouched — a previously published
+        grid keeps serving and the next load retries — rather than pinning
+        a fallback-only grid that would misreport every slot as unobserved
+        until the next cache invalidation.
+
+        Returns:
+            The newly cached mapping of (day_of_week, time_slot) to prior,
+            or ``None`` when the read failed.
+        """
+        stored = self.db.get_stored_time_priors(area_name=self.area_name)
+        if stored is None:
+            return None
+        fallback = self.unlearned_slot_prior
+
+        priors: dict[tuple[int, int], float] = {}
+        points: dict[tuple[int, int], int] = {}
+        slots_per_day = 1440 // DEFAULT_SLOT_MINUTES
+        for day_of_week in range(7):
+            for time_slot in range(slots_per_day):
+                slot_key = (day_of_week, time_slot)
+                record = stored.get(slot_key)
+                if record is None:
+                    priors[slot_key] = fallback
+                    points[slot_key] = 0
+                    continue
+                prior_value, data_points = record
+                priors[slot_key] = max(
+                    TIME_PRIOR_MIN_BOUND,
+                    min(TIME_PRIOR_MAX_BOUND, prior_value),
+                )
+                points[slot_key] = data_points
+
+        self._cached_time_priors = priors
+        self._cached_time_prior_points = points
+        return priors

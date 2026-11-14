@@ -1,0 +1,1414 @@
+"""Entity model."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import datetime
+import logging
+import math
+from typing import TYPE_CHECKING, Any
+
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
+
+from ..const import (
+    BUTTON_PRESS_WINDOW,
+    MAX_WEIGHT,
+    MIN_WEIGHT,
+    SLEEP_PRESENCE_HALF_LIFE,
+    get_sensor_type_mapping,
+)
+from ..time_utils import to_utc
+from ..utils import map_binary_state_to_semantic
+from .decay import Decay
+from .entity_type import (
+    BINARY_INPUT_TYPES,
+    DEFAULT_TYPES,
+    GROUND_TRUTH_INPUT_TYPES,
+    GROUND_TRUTH_RULE_VERSION,
+    AnalysisStatus,
+    CorrelationType,
+    EntityType,
+    InputType,
+)
+from .purpose import AreaPurpose, get_default_decay_half_life
+from .types import GaussianParams
+
+if TYPE_CHECKING:
+    from ..coordinator import AreaOccupancyCoordinator
+    from ..db import AreaOccupancyDB as DB
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class SleepOverrideProvider:
+    """Live reader of an area's own Sleep Presence sensor for decay switching.
+
+    Used by ``Decay`` to pick the Sleeping purpose's asleep or awake
+    half-life. Three-valued: sensor ``on`` -> ``True`` (asleep), ``off`` ->
+    ``False`` (awake, at any hour), anything else -> ``None`` so ``Decay``
+    falls back to the Sleep Start/End clock window. "Anything else" is: no
+    sleep sensor on the area (``area.sleep_entity_id is None``, e.g. no
+    people assigned), entity missing from the state machine, or state
+    ``unknown``/``unavailable``.
+
+    Both the area and its ``sleep_entity_id`` are looked up at CALL time,
+    never captured at construction:
+
+    * ``SleepPresenceSensor.async_added_to_hass`` sets
+      ``area.sleep_entity_id`` after the EntityManager (and so the factory
+      that builds this provider) has already run.
+    * ``coordinator.areas[area_name]`` is resolved per call so the provider
+      keeps working if the Area object is replaced, instead of holding a
+      stale reference.
+
+    One instance is shared by all entities of an area (see
+    ``EntityFactory._create_sleep_override_provider``), so a warning is
+    logged once per area per transition into the degraded state (a sleep
+    sensor exists but is missing/unknown/unavailable); repeat calls from
+    any of the area's entities log at DEBUG so the ~10s decay tick does not spam the log. No sleep
+    sensor at all is a normal configuration and is not logged.
+    """
+
+    def __init__(self, coordinator: AreaOccupancyCoordinator, area_name: str) -> None:
+        """Initialize the provider.
+
+        Args:
+            coordinator: Coordinator, used to reach hass and the live Area.
+            area_name: Name of the area whose sleep sensor drives the decay.
+        """
+        self._coordinator = coordinator
+        self._area_name = area_name
+        self._was_degraded = False
+
+    def __call__(self) -> bool | None:
+        """Return True (asleep), False (awake) or None (use the clock window)."""
+        area = self._coordinator.areas.get(self._area_name)
+        entity_id = getattr(area, "sleep_entity_id", None)
+        if not entity_id:
+            self._was_degraded = False
+            return None
+
+        state = self._coordinator.hass.states.get(entity_id)
+        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
+            reason = "missing" if state is None else (state.state or "empty")
+            log = _LOGGER.debug if self._was_degraded else _LOGGER.warning
+            log(
+                "Sleep presence sensor %s is %s; using the clock-based sleep "
+                "window for area %s",
+                entity_id,
+                reason,
+                self._area_name,
+            )
+            self._was_degraded = True
+            return None
+
+        self._was_degraded = False
+        return state.state == STATE_ON
+
+
+# Environmental sensor sub-types share a single configurable weight
+# ("environmental") rather than having individual weight fields. This map
+# translates each sub-type's InputType to the Weights attribute name.
+_WEIGHT_KEY_FOR_INPUT_TYPE: dict[InputType, str] = {
+    InputType.TEMPERATURE: "environmental",
+    InputType.HUMIDITY: "environmental",
+    InputType.ILLUMINANCE: "environmental",
+    InputType.CO2: "environmental",
+    InputType.CO: "environmental",
+    InputType.SOUND_PRESSURE: "environmental",
+    InputType.PRESSURE: "environmental",
+    InputType.AIR_QUALITY: "environmental",
+    InputType.VOC: "environmental",
+    InputType.PM25: "environmental",
+    InputType.PM10: "environmental",
+}
+
+
+@dataclass
+class Entity:
+    """Type for sensor state information."""
+
+    # --- Core Data ---
+    entity_id: str
+    type: EntityType
+    prob_given_true: float
+    prob_given_false: float
+    decay: Decay
+    hass: HomeAssistant | None = None
+    state_provider: Callable[[str], Any] | None = None
+    last_updated: datetime | None = None
+    previous_evidence: bool | None = None
+    learned_active_range: tuple[float, float] | None = None
+    learned_gaussian_params: GaussianParams | None = None
+    analysis_error: str | None = None
+    correlation_type: str | None = None
+    correlation_coefficient: float | None = None
+    # Set by the health check when this sensor is flagged stuck active and
+    # the user hasn't ignored the repair: the start of the stuck stretch.
+    # While set, the sensor contributes no evidence (see ``is_stuck``).
+    stuck_since: datetime | None = None
+    # When the sensor last moved between two of its active states, such as a
+    # media player going from paused to playing. ``last_updated`` only moves
+    # when the evidence flips, so it misses these. In memory only: after a
+    # restart the stuck clock falls back to ``last_updated``.
+    active_state_changed_at: datetime | None = None
+    # The state the last ``has_new_evidence`` call saw, to spot those moves.
+    previous_state: str | float | bool | None = None
+    press_recorded_at: datetime | None = None
+    # Seconds this sensor still counts in full after it turns off before it
+    # starts to decay: the area's motion timeout for a PIR-like motion
+    # sensor (set by the coordinator from the live labeller's call), else 0.
+    decay_delay: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Validate that either hass or state_provider is provided.
+
+        Either hass or state_provider must be provided, and they are mutually
+        exclusive. This ensures proper state retrieval behavior:
+
+        - **HA-backed instances**: Provide `hass` to use Home Assistant's state
+          registry for entity state retrieval. This is the standard usage pattern
+          for entities managed within a Home Assistant integration.
+
+        - **State-provider-only instances**: Provide `state_provider` (a callable
+          that takes an entity_id and returns state) for testing or external state
+          management scenarios where Home Assistant is not available.
+
+        Raises:
+            ValueError: If neither hass nor state_provider is provided, or if both
+                are provided simultaneously.
+        """
+        if self.hass is None and self.state_provider is None:
+            raise ValueError("Either hass or state_provider must be provided")
+        if self.hass is not None and self.state_provider is not None:
+            raise ValueError("Cannot provide both hass and state_provider")
+        self.last_updated = (
+            to_utc(self.last_updated)
+            if self.last_updated is not None
+            else dt_util.utcnow()
+        )
+
+        # Store the static probability values in protected attributes
+        # These are used as fallbacks when Gaussian calculation is not available
+        self._prob_given_true = self.prob_given_true
+        self._prob_given_false = self.prob_given_false
+
+    @property
+    def active_since(self) -> datetime | None:
+        """When an active sensor entered the state it is in now.
+
+        The later of its last evidence change and its last move between two
+        active states. Only meaningful while the sensor is active.
+        """
+        if self.active_state_changed_at is None or self.last_updated is None:
+            return self.last_updated
+        return max(self.last_updated, self.active_state_changed_at)
+
+    @property
+    def is_stuck(self) -> bool:
+        """Whether this sensor is flagged stuck and still in that same state.
+
+        Only the stretch the health check flagged counts: the moment the
+        sensor changes state ``active_since`` moves past ``stuck_since`` and
+        it counts again, without waiting for the next hourly check.
+        """
+        active_since = self.active_since
+        return (
+            self.stuck_since is not None
+            and active_since is not None
+            and active_since <= self.stuck_since
+        )
+
+    def _calculate_gaussian_density(
+        self, value: float, mean: float, std: float
+    ) -> float:
+        """Calculate Gaussian probability density function.
+
+        Args:
+            value: The current sensor value
+            mean: The mean of the distribution
+            std: The standard deviation of the distribution
+
+        Returns:
+            The probability density at the given value
+        """
+        if std <= 0:
+            return 0.0
+        exponent = -0.5 * ((value - mean) / std) ** 2
+        return (1.0 / (std * math.sqrt(2 * math.pi))) * math.exp(exponent)
+
+    def get_likelihoods(self) -> tuple[float, float]:
+        """Get dynamic likelihoods based on current state.
+
+        Motion sensors: Always use configured prob_given_true/prob_given_false.
+        Binary sensors: Use static probabilities if learned from analysis, otherwise EntityType defaults.
+        Numeric sensors: Use Gaussian PDF if available, otherwise EntityType defaults.
+
+        Returns:
+            Tuple of (prob_given_true, prob_given_false)
+        """
+        # Motion sensors: Always use configured values (not fallback)
+        if self.type.input_type == InputType.MOTION:
+            return (self.prob_given_true, self.prob_given_false)
+
+        # Binary sensors: Use static probabilities if learned, otherwise EntityType defaults
+        if self.type.input_type in BINARY_INPUT_TYPES:
+            # If analysis has been run (not "not_analyzed"), use learned probabilities
+            # Otherwise fall back to EntityType defaults
+            if self.analysis_error != AnalysisStatus.NOT_ANALYZED:
+                # Analysis has been run - use stored probabilities
+                return (self.prob_given_true, self.prob_given_false)
+            # Not analyzed yet - use EntityType defaults
+            return (self.type.prob_given_true, self.type.prob_given_false)
+
+        # Numeric sensors: Use Gaussian PDF if available
+        if self.learned_gaussian_params:
+            # Validate mean values first
+            mean_occupied = self.learned_gaussian_params.mean_occupied
+            mean_unoccupied = self.learned_gaussian_params.mean_unoccupied
+
+            # Check for NaN/inf in mean values
+            if math.isnan(mean_occupied) or math.isinf(mean_occupied):
+                _LOGGER.warning(
+                    "Invalid mean_occupied value (NaN/inf) for %s, using EntityType defaults",
+                    self.entity_id,
+                )
+                return (self.type.prob_given_true, self.type.prob_given_false)
+
+            if math.isnan(mean_unoccupied) or math.isinf(mean_unoccupied):
+                _LOGGER.warning(
+                    "Invalid mean_unoccupied value (NaN/inf) for %s, using EntityType defaults",
+                    self.entity_id,
+                )
+                return (self.type.prob_given_true, self.type.prob_given_false)
+
+            # Try to get current state value, fall back to mean if unavailable
+            val = None
+            if self.state is not None:
+                with suppress(ValueError, TypeError):
+                    # State is not a valid number (e.g., "unknown", "unavailable")
+                    val = float(self.state)
+                    # Validate state value for NaN/inf
+                    if math.isnan(val) or math.isinf(val):
+                        _LOGGER.warning(
+                            "Invalid state value (NaN/inf) for %s, using mean of means",
+                            self.entity_id,
+                        )
+                        val = None
+
+            # If state is unavailable or invalid, use mean of occupied and unoccupied as representative value
+            if val is None:
+                # Use average of means as representative value (means are already validated)
+                val = (mean_occupied + mean_unoccupied) / 2.0
+
+            try:
+                # Clamp std dev to minimum 0.05 to prevent numerical issues (division by zero)
+                # We do NOT clamp maximum as numeric sensors (e.g. CO2) can have large variance
+                std_occupied = max(0.05, self.learned_gaussian_params.std_occupied)
+                std_unoccupied = max(0.05, self.learned_gaussian_params.std_unoccupied)
+
+                # Calculate density for occupied state
+                p_true = self._calculate_gaussian_density(
+                    val,
+                    mean_occupied,
+                    std_occupied,
+                )
+
+                # Calculate density for unoccupied state
+                p_false = self._calculate_gaussian_density(
+                    val,
+                    mean_unoccupied,
+                    std_unoccupied,
+                )
+
+                # Validate calculated densities for NaN/inf
+                if math.isnan(p_true) or math.isinf(p_true):
+                    _LOGGER.warning(
+                        "Invalid p_true density (NaN/inf) for %s, using EntityType defaults",
+                        self.entity_id,
+                    )
+                    return (self.type.prob_given_true, self.type.prob_given_false)
+
+                if math.isnan(p_false) or math.isinf(p_false):
+                    _LOGGER.warning(
+                        "Invalid p_false density (NaN/inf) for %s, using EntityType defaults",
+                        self.entity_id,
+                    )
+                    return (self.type.prob_given_true, self.type.prob_given_false)
+
+            except (ValueError, TypeError) as err:
+                _LOGGER.warning(
+                    f"Gaussian likelihood calculation failed for {self.entity_id}: {err}",  # noqa: G004
+                )
+            else:
+                return (p_true, p_false)
+
+        # Fallback: Use EntityType defaults (not stored prob_given_true/false)
+        return (self.type.prob_given_true, self.type.prob_given_false)
+
+    @property
+    def is_continuous_likelihood(self) -> bool:
+        """Check if entity uses continuous likelihood calculation."""
+        return self.learned_gaussian_params is not None
+
+    @property
+    def name(self) -> str | None:
+        """Get the entity name from Home Assistant state or state provider."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "name"):
+                return state_obj.name
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
+        return ha_state.name if ha_state else None
+
+    @property
+    def ha_device_class(self) -> str | None:
+        """Get the entity device_class from HA attributes."""
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj and hasattr(state_obj, "attributes"):
+                return state_obj.attributes.get("device_class")
+            return None
+        if self.hass is None:
+            return None
+        ha_state = self.hass.states.get(self.entity_id)
+        if ha_state is None:
+            return None
+        return ha_state.attributes.get("device_class")
+
+    @property
+    def media_is_tv_source(self) -> bool:
+        """Detect a speaker media_player that is relaying TV audio.
+
+        Some media_players (e.g. a Sonos soundbar/playbar on ARC or optical
+        passthrough) always report ``device_class: speaker``, even while
+        their sole purpose in the moment is relaying audio from a TV rather
+        than playing music. HA has no separate device_class for this, so we
+        infer it from the entity's own ``source`` / ``media_content_id``
+        attributes: selecting the TV input is a deliberate, distinguishing
+        signal that does not overlap with any other source (a playlist,
+        radio preset, etc.), so it can be trusted on its own without
+        needing to cross-check a separate TV entity's state.
+        """
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            attrs = getattr(state_obj, "attributes", None) if state_obj else None
+        elif self.hass is not None:
+            ha_state = self.hass.states.get(self.entity_id)
+            attrs = ha_state.attributes if ha_state is not None else None
+        else:
+            attrs = None
+
+        if not attrs:
+            return False
+
+        source = str(attrs.get("source") or "").strip().lower()
+        content_id = str(attrs.get("media_content_id") or "").lower()
+
+        if source == "tv":
+            return True
+        # Sonos ARC/optical TV passthrough content-id scheme.
+        return "htastream" in content_id
+
+    @property
+    def available(self) -> bool:
+        """Get the entity availability."""
+        return self.state is not None
+
+    @property
+    def offline(self) -> bool:
+        """Whether the sensor is offline: gone from Home Assistant or ``unavailable``.
+
+        Narrower than ``not available``: ``unknown`` means the device is
+        reachable but has not reported a value yet, which is not offline.
+        """
+        state_value = self._raw_state()
+        return state_value is None or state_value == STATE_UNAVAILABLE
+
+    def _raw_state(self) -> Any:
+        """The state as Home Assistant or the state provider reports it.
+
+        ``None`` when the entity does not exist.
+        """
+        if self.state_provider:
+            state_obj = self.state_provider(self.entity_id)
+            if state_obj is None:
+                return None
+            # Handle both object with .state attribute and direct value
+            return state_obj.state if hasattr(state_obj, "state") else state_obj
+        ha_state = self.hass.states.get(self.entity_id)
+        return ha_state.state if ha_state is not None else None
+
+    @property
+    def state(self) -> str | float | bool | None:
+        """Get the entity state from Home Assistant or state provider."""
+        state_value = self._raw_state()
+
+        # Check if state is valid
+        if state_value in [
+            "unknown",
+            "unavailable",
+            None,
+            "",
+            "NaN",
+            "nan",
+        ]:
+            return None
+        return state_value
+
+    @property
+    def weight(self) -> float:
+        """Get the entity weight."""
+        return self.type.weight
+
+    @property
+    def information_gain(self) -> float:
+        """Measure how informative this sensor is (0.0 = uninformative, 1.0 = highly informative).
+
+        Sensors where prob_given_true ≈ prob_given_false provide no discriminative
+        information for occupancy detection. This metric quantifies the gap.
+
+        Additionally, sensors with analysis errors (e.g., no_correlation, insufficient_data)
+        are clamped to a low value since correlation analysis couldn't establish their value.
+        """
+        # Sensors with analysis failures get a low information gain.
+        if self.analysis_error is not None and self.analysis_error not in (
+            AnalysisStatus.NOT_ANALYZED,
+            AnalysisStatus.MOTION_EXCLUDED,
+        ):
+            return 0.1
+
+        pgt, pgf = self.get_likelihoods()
+        denominator = max(pgt, pgf, 0.01)
+        return min(1.0, abs(pgt - pgf) / denominator)
+
+    @property
+    def effective_weight(self) -> float:
+        """Weight scaled by information gain — uninformative sensors contribute less."""
+        return self.weight * self.information_gain
+
+    @property
+    def evidence(self) -> bool | None:
+        """Determine if entity is active.
+
+        Returns:
+            bool | None: True if entity is active, False if inactive, None if state unknown
+
+        """
+        if self.type.input_type == InputType.BUTTON:
+            if self.press_recorded_at is None:
+                return False
+            age = (dt_util.utcnow() - self.press_recorded_at).total_seconds()
+            return 0 <= age <= BUTTON_PRESS_WINDOW
+
+        if self.state is None:
+            return None
+
+        if self.active_states:
+            mapped_state = map_binary_state_to_semantic(
+                str(self.state), self.active_states
+            )
+            return mapped_state in self.active_states
+        if self.active_range:
+            min_val, max_val = self.active_range
+            try:
+                return min_val <= float(self.state) <= max_val
+            except (ValueError, TypeError):
+                return False
+
+        return None
+
+    def record_press(self, pressed_at: datetime) -> None:
+        """Record a state-reported press as a short-lived presence signal."""
+        self.press_recorded_at = to_utc(pressed_at)
+        self.last_updated = self.press_recorded_at
+        self.previous_evidence = False
+        self.decay.start_decay(delay=BUTTON_PRESS_WINDOW)
+
+    @property
+    def active(self) -> bool:
+        """Get the entity active status."""
+        return bool(self.evidence) or self.decay.is_decaying
+
+    @property
+    def active_states(self) -> list[str] | None:
+        """Get the active states for the entity."""
+        return self.type.active_states
+
+    @property
+    def active_range(self) -> tuple[float, float] | None:
+        """Get the active range for the entity."""
+        if self.learned_active_range is not None:
+            return self.learned_active_range
+        return self.type.active_range
+
+    @property
+    def decay_factor(self) -> float:
+        """Get decay factor that considers current evidence state.
+
+        Returns 1.0 if evidence is currently True, otherwise returns the normal decay factor.
+        This prevents inconsistent states where evidence is True but decay is being applied.
+        """
+        if self.evidence is True:
+            return 1.0
+        return self.decay.decay_factor
+
+    def update_correlation(self, correlation_data: dict[str, Any]) -> None:
+        """Update the learned active range based on correlation data."""
+        if not correlation_data:
+            return
+
+        # Get correlation details
+        confidence = correlation_data.get("confidence", 0.0)
+        correlation_type = correlation_data.get("correlation_type")
+        mean_unoccupied = correlation_data.get("mean_value_when_unoccupied")
+        std_unoccupied = correlation_data.get("std_dev_when_unoccupied")
+
+        # Store analysis error (None means no error, analysis succeeded)
+        # This will be None if analysis succeeded, or a string error reason if it failed
+        self.analysis_error = correlation_data.get("analysis_error")
+        # Store correlation type for reporting
+        self.correlation_type = correlation_type
+        # The Pearson coefficient itself, for the shadow likelihood
+        # comparison (#603); not used by the probability path.
+        self.correlation_coefficient = correlation_data.get("correlation_coefficient")
+
+        # Get occupied stats
+        mean_occupied = correlation_data.get("mean_value_when_occupied")
+        std_occupied = correlation_data.get("std_dev_when_occupied")
+
+        # If any required data is missing or type is none, reset learned range
+        if (
+            mean_unoccupied is None
+            or std_unoccupied is None
+            or correlation_type == CorrelationType.NONE
+        ):
+            self.learned_active_range = None
+            self.learned_gaussian_params = None
+            return
+
+        # Store Gaussian parameters if available
+        if mean_occupied is not None and std_occupied is not None:
+            self.learned_gaussian_params = GaussianParams(
+                mean_occupied=mean_occupied,
+                std_occupied=std_occupied,
+                mean_unoccupied=mean_unoccupied,
+                std_unoccupied=std_unoccupied,
+            )
+            # When using Gaussian params, we don't update static likelihoods
+            # because they are calculated dynamically
+        else:
+            self.learned_gaussian_params = None
+
+        # Only set learned_active_range for numeric sensors
+        if self.type.input_type in BINARY_INPUT_TYPES:
+            # Binary sensors: don't set learned_active_range
+            self.learned_active_range = None
+        else:
+            # Numeric sensors: calculate thresholds (mean ± 2σ)
+            k_factor = 2.0
+
+            if correlation_type in (
+                CorrelationType.STRONG_POSITIVE,
+                CorrelationType.POSITIVE,
+            ):
+                # Active > mean_unoccupied + K*std_unoccupied
+                # Same logic for both strong and weak positive correlations
+                lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
+
+                # Try to determine upper bound from occupied stats
+                if mean_occupied is not None and std_occupied is not None:
+                    # Cap at mean_occupied + K*std_occupied
+                    upper_bound = mean_occupied + (k_factor * std_occupied)
+                    # Ensure logical consistency (upper > lower)
+                    if upper_bound <= lower_bound:
+                        # Fallback to open-ended if stats overlap significantly
+                        upper_bound = float("inf")
+                else:
+                    upper_bound = float("inf")
+
+                self.learned_active_range = (lower_bound, upper_bound)
+
+            elif correlation_type in (
+                CorrelationType.STRONG_NEGATIVE,
+                CorrelationType.NEGATIVE,
+            ):
+                # Active < mean_unoccupied - K*std_unoccupied
+                # Same logic for both strong and weak negative correlations
+                upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
+
+                # Try to determine lower bound from occupied stats
+                if mean_occupied is not None and std_occupied is not None:
+                    # Floor at mean_occupied - K*std_occupied
+                    lower_bound = mean_occupied - (k_factor * std_occupied)
+                    # Ensure logical consistency (lower < upper)
+                    if lower_bound >= upper_bound:
+                        # Fallback to open-ended if stats overlap significantly
+                        lower_bound = float("-inf")
+                else:
+                    lower_bound = float("-inf")
+
+                self.learned_active_range = (lower_bound, upper_bound)
+            else:
+                self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated learned active range for %s: %s (type=%s, conf=%.2f, p_true=%.2f, p_false=%.2f)",
+            self.entity_id,
+            self.learned_active_range,
+            correlation_type,
+            confidence,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
+
+    def update_binary_likelihoods(self, likelihood_data: dict[str, Any]) -> None:
+        """Update binary sensor likelihoods from duration-based analysis.
+
+        Binary sensors use static probabilities calculated from interval overlap
+        durations, not Gaussian PDFs.
+
+        Args:
+            likelihood_data: Dictionary with prob_given_true, prob_given_false,
+                and analysis_error
+        """
+        if not likelihood_data:
+            return
+
+        # Store analysis error (None means no error, analysis succeeded)
+        self.analysis_error = likelihood_data.get("analysis_error")
+        # Store correlation type for reporting (binary likelihoods have type "binary_likelihood")
+        self.correlation_type = likelihood_data.get("correlation_type")
+
+        # Get probability values
+        prob_given_true = likelihood_data.get("prob_given_true")
+        prob_given_false = likelihood_data.get("prob_given_false")
+
+        # If analysis failed or data is missing, reset to defaults
+        if (
+            self.analysis_error is not None
+            or prob_given_true is None
+            or prob_given_false is None
+        ):
+            # Reset to EntityType defaults
+            self.prob_given_true = self.type.prob_given_true
+            self.prob_given_false = self.type.prob_given_false
+            self.learned_gaussian_params = None
+            self.learned_active_range = None
+            _LOGGER.debug(
+                "Binary likelihood analysis failed for %s: %s, using defaults",
+                self.entity_id,
+                self.analysis_error or "missing data",
+            )
+            return
+
+        # Update static probabilities
+        self.prob_given_true = float(prob_given_true)
+        self.prob_given_false = float(prob_given_false)
+
+        # Binary sensors don't use Gaussian params or active ranges
+        self.learned_gaussian_params = None
+        self.learned_active_range = None
+
+        _LOGGER.debug(
+            "Updated binary likelihoods for %s: prob_given_true=%.3f, prob_given_false=%.3f",
+            self.entity_id,
+            self.prob_given_true,
+            self.prob_given_false,
+        )
+
+    def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
+        """Update the decay of the entity."""
+        self.decay.decay_start = (
+            to_utc(decay_start) if decay_start is not None else decay_start
+        )
+        self.decay.is_decaying = is_decaying
+
+    def has_new_evidence(self, count_button_press: bool = True) -> bool:
+        """Update decay on actual evidence transitions.
+
+        Handles four cases:
+        1. Normal transitions (True→False, False→True)
+        2. Entity becoming unavailable (True/False→None)
+        3. Entity becoming available (None→True/False)
+        4. A move between two active states (paused→playing), which ends a
+           stuck stretch without changing the evidence
+
+        Returns:
+            bool: True if evidence transition occurred, or a stuck sensor
+            counts again, False otherwise
+
+        """
+        current_state = self.state
+        press_recorded = False
+        if self.type.input_type == InputType.BUTTON:
+            state_changed = current_state != self.previous_state
+            self.previous_state = current_state
+            if state_changed and count_button_press and current_state is not None:
+                pressed_at = dt_util.parse_datetime(str(current_state))
+                if (
+                    pressed_at is not None
+                    and 0
+                    <= (dt_util.utcnow() - to_utc(pressed_at)).total_seconds()
+                    <= BUTTON_PRESS_WINDOW
+                ):
+                    self.record_press(pressed_at)
+                    press_recorded = True
+                else:
+                    self.previous_evidence = False
+            elif state_changed:
+                self.previous_evidence = False
+
+        # Pure calculation from current HA state
+        current_evidence = self.evidence
+
+        # Capture previous evidence and state before updating them
+        previous_evidence = self.previous_evidence
+        previous_state = self.previous_state
+        if self.type.input_type != InputType.BUTTON:
+            self.previous_state = current_state
+
+        # Handle entity becoming unavailable (evidence was known, now None)
+        if current_evidence is None:
+            if previous_evidence is True:
+                # Entity had evidence and became unavailable - treat as evidence lost
+                # Start decay since we lost positive evidence, unless that
+                # evidence was a stuck stretch that never counted.
+                if not self.is_stuck:
+                    self.decay.start_decay()
+                self.stuck_since = None
+                self.last_updated = dt_util.utcnow()
+            # Update previous evidence to track the unavailable state
+            self.previous_evidence = current_evidence
+            return False  # No "new evidence" but decay state updated
+
+        # Handle entity becoming available (previous was None, now has evidence)
+        if previous_evidence is None:
+            # Entity just became available - stop any lingering decay if active
+            if current_evidence:
+                self.decay.stop_decay()
+                self.last_updated = dt_util.utcnow()
+            self.previous_evidence = current_evidence
+            # If entity became available with positive evidence (e.g. unknown→occupied
+            # during startup), we must trigger a refresh so the coordinator recalculates
+            # probability. Without this, sensors that go directly from unknown to active
+            # (common when Z2M loads after AOD) would be silently ignored.
+            return bool(current_evidence)
+
+        # Fix inconsistent state: if evidence is True but decay is running, stop decay
+        if current_evidence and self.decay.is_decaying and not press_recorded:
+            self.decay.stop_decay()
+
+        # Check for evidence transitions
+        transition_occurred = current_evidence != previous_evidence
+
+        # Handle evidence transitions
+        released = False
+        if transition_occurred:
+            # A stuck stretch contributed nothing, so its end must not start
+            # a decay that would count it after all.
+            was_stuck = self.is_stuck
+            self.stuck_since = None
+            self.last_updated = dt_util.utcnow()
+            if current_evidence and not press_recorded:
+                # FALSE→TRUE transition.
+                self.decay.stop_decay()
+            elif not was_stuck:  # TRUE→FALSE transition
+                # Evidence lost - start decay (after the PIR timeout, if any)
+                self.decay.start_decay(delay=self.decay_delay)
+        elif (
+            current_evidence
+            and self.active_states
+            and previous_state is not None
+            and self.previous_state != previous_state
+        ):
+            # Still active, but in another active state: someone resumed a
+            # paused TV. The evidence holds, so last_updated stays, but the
+            # sensor is not stuck, and a stuck one counts again.
+            released = self.is_stuck
+            self.stuck_since = None
+            self.active_state_changed_at = dt_util.utcnow()
+
+        # Update previous evidence for next comparison
+        self.previous_evidence = current_evidence
+        return transition_occurred or released
+
+
+def entity_signature(entity: Entity) -> str:
+    """Fingerprint what an entity's evidence means: type and active states.
+
+    Shadow learners key their stored statistics to it, so a sensor whose
+    meaning changes (``paused`` dropped from a media player's active
+    states) stops being judged by what it learned under the old meaning.
+    """
+    states = ",".join(sorted(entity.type.active_states or ()))
+    return f"{entity.type.input_type.value}|{states}|{entity.type.active_range}"
+
+
+def ground_truth_signature(entities: dict[str, Entity], motion_timeout: int) -> str:
+    """Fingerprint an area's ground truth: its sensors and how they're read.
+
+    Covers the motion, media and sleep sensors, the labelling rule and the
+    motion timeout, since a change to any of them changes what counts as
+    occupied.
+    """
+    sensors = sorted(
+        f"{entity_id}|{entity_signature(entity)}"
+        for entity_id, entity in entities.items()
+        if entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
+    )
+    rule = f"rule={GROUND_TRUTH_RULE_VERSION}|motion_timeout={motion_timeout}"
+    return "\n".join([rule, *sensors])
+
+
+class EntityFactory:
+    """Factory for creating entities from various sources."""
+
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str,
+    ) -> None:
+        """Initialize the factory.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Area name for multi-area support
+        """
+        self.coordinator = coordinator
+        self.area_name = area_name
+        # Validate area_name exists and retrieve config from coordinator.areas
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
+            raise ValueError(
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available or '(none)'}"
+            )
+        self.config = coordinator.areas[area_name].config
+        # Shared per-area sleep provider, created lazily (see
+        # _create_sleep_override_provider).
+        self._sleep_override_provider: SleepOverrideProvider | None = None
+
+    def _create_sleep_override_provider(self) -> SleepOverrideProvider:
+        """Build the live sleep-state provider for this factory's area.
+
+        One provider is shared by every entity of the area (the factory is
+        per area), so the "sensor degraded" warning is rate-limited per
+        area rather than once per entity, and that state survives the
+        entity rebuild of a settings edit. It captures only the coordinator
+        and the area NAME: the area's sleep sensor entity_id is registered
+        after this factory runs and must be resolved on each call (see
+        ``SleepOverrideProvider``).
+        """
+        if self._sleep_override_provider is None:
+            self._sleep_override_provider = SleepOverrideProvider(
+                self.coordinator, self.area_name
+            )
+        return self._sleep_override_provider
+
+    def create_from_db(self, entity_obj: DB.Entities) -> Entity:
+        """Create entity from storage data.
+
+        Args:
+            entity_obj: SQLAlchemy Entities object from database
+
+        Returns:
+            Entity: Properly constructed Entity object with Python types
+
+        Raises:
+            ValueError: If required fields are missing or invalid
+            TypeError: If type conversion fails
+        """
+        # Convert SQLAlchemy objects to Python types using to_dict()
+        # This ensures we get proper Python types rather than SQLAlchemy Column objects
+        entity_data = entity_obj.to_dict()
+
+        # Extract and validate required string fields
+        entity_id = str(entity_data["entity_id"])
+        entity_type_str = str(entity_data["entity_type"])
+
+        if not entity_id:
+            raise ValueError("Entity ID cannot be empty")
+        if not entity_type_str:
+            raise ValueError("Entity type cannot be empty")
+
+        # Convert numeric fields with validation
+        try:
+            db_weight = float(entity_data["weight"])
+            prob_given_true = float(entity_data["prob_given_true"])
+            prob_given_false = float(entity_data["prob_given_false"])
+        except (TypeError, ValueError) as e:
+            raise TypeError(f"Failed to convert numeric fields: {e}") from e
+
+        # Convert boolean field
+        is_decaying = bool(entity_data["is_decaying"])
+
+        # Handle datetime fields - ensure they're proper Python datetime objects
+        decay_start = entity_data["decay_start"]
+        last_updated = entity_data["last_updated"]
+
+        # Validate datetime objects are timezone-aware
+        if decay_start is not None:
+            decay_start = to_utc(decay_start)
+
+        if last_updated is not None:
+            last_updated = to_utc(last_updated)
+
+        # Convert evidence field - handle None case
+        previous_evidence = entity_data["evidence"]
+        if previous_evidence is not None:
+            previous_evidence = bool(previous_evidence)
+
+        # Create the entity type directly
+        input_type = InputType(entity_type_str)
+
+        # Extract overrides from config
+        config_weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(input_type, input_type.value)
+            weight_attr = getattr(weights, weight_key, None)
+            if weight_attr is not None:
+                config_weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type,
+            weight=config_weight,
+            active_states=active_states,
+            active_range=active_range,
+        )
+
+        # DB weight should take priority over configured default
+        try:
+            if MIN_WEIGHT <= db_weight <= MAX_WEIGHT:
+                entity_type.weight = db_weight
+        except (TypeError, ValueError):
+            # Weight is invalid, keep the default from EntityType initialization
+            pass
+
+        # Motion sensors use configured likelihoods (user-configurable per area)
+        # Do not use learned likelihoods from database for motion sensors
+        if input_type == InputType.MOTION:
+            # Get configured values from area config, fall back to defaults if not configured
+            motion_prob_given_true = getattr(
+                self.config.sensors,
+                "motion_prob_given_true",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_true"],
+            )
+            motion_prob_given_false = getattr(
+                self.config.sensors,
+                "motion_prob_given_false",
+                DEFAULT_TYPES[InputType.MOTION]["prob_given_false"],
+            )
+            prob_given_true = float(motion_prob_given_true)
+            prob_given_false = float(motion_prob_given_false)
+            _LOGGER.debug(
+                "Using configured likelihoods for motion sensor %s: prob_given_true=%.2f, prob_given_false=%.2f",
+                entity_id,
+                prob_given_true,
+                prob_given_false,
+            )
+
+        # Create decay object
+        # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        # Sleep sensors use a very long half-life (persistent presence)
+        half_life = self.config.decay.half_life
+        # If half_life is 0, resolve from purpose
+        if half_life == 0:
+            half_life = get_default_decay_half_life(self.config.purpose)
+
+        area = self.coordinator.areas.get(self.area_name)
+        is_wasp = area and area.wasp_entity_id == entity_id
+        is_sleep = area and area.sleep_entity_id == entity_id
+        if is_wasp:
+            half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+        elif is_sleep:
+            half_life = SLEEP_PRESENCE_HALF_LIFE
+
+        # Get sleep settings from integration config
+        # For WASP/SLEEP entities, bypass sleeping semantics
+        if is_wasp or is_sleep:
+            purpose_for_decay = None
+            sleep_start = None
+            sleep_end = None
+            sleep_override_provider = None
+        else:
+            sleep_start = getattr(
+                self.coordinator.integration_config, "sleep_start", None
+            )
+            sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
+            purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas consult the sleep sensor (Decay
+            # returns early for any purpose without an awake_half_life).
+            sleep_override_provider = (
+                self._create_sleep_override_provider()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
+
+        decay = Decay(
+            half_life=half_life,
+            is_decaying=is_decaying,
+            decay_start=decay_start,
+            purpose=purpose_for_decay,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+            sleep_override_provider=sleep_override_provider,
+        )
+
+        # Set default analysis_error based on entity type
+        # Motion and Sleep sensors are excluded from correlation analysis
+        analysis_error = (
+            AnalysisStatus.MOTION_EXCLUDED
+            if input_type in (InputType.MOTION, InputType.SLEEP)
+            else AnalysisStatus.NOT_ANALYZED
+        )
+
+        return Entity(
+            entity_id=entity_id,
+            type=entity_type,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
+            decay=decay,
+            hass=self.coordinator.hass,
+            last_updated=last_updated,
+            previous_evidence=previous_evidence,
+            analysis_error=analysis_error,
+        )
+
+    def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
+        """Create entity from configuration specification."""
+        # Create the entity type directly
+        input_type_enum = InputType(input_type)
+
+        # Extract overrides from config
+        weight = None
+        active_states = None
+        active_range = None
+
+        weights = getattr(self.config, "weights", None)
+        if weights:
+            # Look up weight by input type, falling back to the shared
+            # "environmental" weight for environmental sensor sub-types
+            weight_key = _WEIGHT_KEY_FOR_INPUT_TYPE.get(
+                input_type_enum, input_type_enum.value
+            )
+            weight_attr = getattr(weights, weight_key, None)
+            if weight_attr is not None:
+                weight = weight_attr
+
+        sensor_states = getattr(self.config, "sensor_states", None)
+        if sensor_states:
+            states_attr = getattr(sensor_states, input_type_enum.value, None)
+            if states_attr is not None:
+                active_states = states_attr
+
+        range_config_attr = f"{input_type_enum.value}_active_range"
+        range_attr = getattr(self.config, range_config_attr, None)
+        if range_attr is not None:
+            active_range = range_attr
+
+        entity_type = EntityType(
+            input_type_enum,
+            weight=weight,
+            active_states=active_states,
+            active_range=active_range,
+        )
+
+        # Wasp-in-Box sensors should not have decay (immediate vacancy)
+        # Sleep sensors use a very long half-life (persistent presence)
+        half_life = self.config.decay.half_life
+        # If half_life is 0, resolve from purpose
+        if half_life == 0:
+            half_life = get_default_decay_half_life(self.config.purpose)
+
+        area = self.coordinator.areas.get(self.area_name)
+        is_wasp = area and area.wasp_entity_id == entity_id
+        is_sleep = area and area.sleep_entity_id == entity_id
+        if is_wasp:
+            half_life = 0.1  # Effectively zero decay (clears in <0.5s)
+        elif is_sleep:
+            half_life = SLEEP_PRESENCE_HALF_LIFE
+
+        # Get sleep settings from integration config
+        # For WASP/SLEEP entities, bypass sleeping semantics
+        if is_wasp or is_sleep:
+            purpose_for_decay = None
+            sleep_start = None
+            sleep_end = None
+            sleep_override_provider = None
+        else:
+            sleep_start = getattr(
+                self.coordinator.integration_config, "sleep_start", None
+            )
+            sleep_end = getattr(self.coordinator.integration_config, "sleep_end", None)
+            purpose_for_decay = getattr(self.config, "purpose", None)
+            # Only Sleeping-purpose areas consult the sleep sensor (Decay
+            # returns early for any purpose without an awake_half_life).
+            sleep_override_provider = (
+                self._create_sleep_override_provider()
+                if purpose_for_decay == AreaPurpose.SLEEPING
+                else None
+            )
+
+        decay = Decay(
+            half_life=half_life,
+            is_decaying=False,
+            decay_start=dt_util.utcnow(),
+            purpose=purpose_for_decay,
+            sleep_start=sleep_start,
+            sleep_end=sleep_end,
+            sleep_override_provider=sleep_override_provider,
+        )
+
+        # Motion sensors use configured likelihoods (user-configurable per area)
+        # Other sensors use defaults from EntityType
+        if input_type_enum == InputType.MOTION:
+            motion_prob_given_true = getattr(
+                self.config.sensors,
+                "motion_prob_given_true",
+                entity_type.prob_given_true,
+            )
+            motion_prob_given_false = getattr(
+                self.config.sensors,
+                "motion_prob_given_false",
+                entity_type.prob_given_false,
+            )
+            prob_given_true = float(motion_prob_given_true)
+            prob_given_false = float(motion_prob_given_false)
+        else:
+            prob_given_true = entity_type.prob_given_true
+            prob_given_false = entity_type.prob_given_false
+
+        # Set default analysis_error based on entity type
+        # Motion and Sleep sensors are excluded from correlation analysis
+        analysis_error = (
+            AnalysisStatus.MOTION_EXCLUDED
+            if input_type_enum in (InputType.MOTION, InputType.SLEEP)
+            else AnalysisStatus.NOT_ANALYZED
+        )
+
+        return Entity(
+            entity_id=entity_id,
+            type=entity_type,
+            prob_given_true=prob_given_true,
+            prob_given_false=prob_given_false,
+            decay=decay,
+            hass=self.coordinator.hass,
+            last_updated=dt_util.utcnow(),
+            previous_evidence=None,
+            analysis_error=analysis_error,
+        )
+
+    def create_all_from_config(self) -> dict[str, Entity]:
+        """Create all entities from current configuration."""
+        entity_type_mapping = self.get_entity_type_mapping()
+        entities = {}
+
+        for entity_id, input_type in entity_type_mapping.items():
+            _LOGGER.debug("Creating entity %s with type %s", entity_id, input_type)
+            entities[entity_id] = self.create_from_config_spec(entity_id, input_type)
+
+        return entities
+
+    def get_entity_type_mapping(self) -> dict[str, str]:
+        """Get entity type mapping for all configured entities.
+
+        Returns a mapping of entity_id -> input_type string that can be used
+        directly for entity creation.
+        """
+        specs = {}
+
+        # Process each sensor type using the mapping
+        for sensor_type, input_type in get_sensor_type_mapping().items():
+            # Skip sleep — handled separately below (virtual sensor like wasp)
+            if sensor_type == "sleep":
+                continue
+
+            sensor_list = getattr(self.config.sensors, sensor_type, [])
+
+            # Special handling for motion sensors (includes wasp)
+            if sensor_type == "motion":
+                sensor_list = self.config.sensors.get_motion_sensors(self.coordinator)
+
+            for entity_id in sensor_list:
+                specs[entity_id] = input_type.value
+
+        # Add sleep presence sensor if registered for this area
+        sleep_sensors = self.config.sensors.get_sleep_sensors(self.coordinator)
+        for entity_id in sleep_sensors:
+            specs[entity_id] = InputType.SLEEP.value
+
+        return specs
+
+
+class EntityManager:
+    """Manages entities with simplified creation and storage logic."""
+
+    def __init__(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        area_name: str | None = None,
+    ) -> None:
+        """Initialize the entity manager.
+
+        Args:
+            coordinator: The coordinator instance
+            area_name: Required area name for multi-area support. Used to look up
+                the area configuration from coordinator.areas.
+        """
+        self.coordinator = coordinator
+        self.area_name = area_name
+        # Validate area_name and retrieve config from coordinator.areas
+        if not area_name:
+            raise ValueError("Area name is required in multi-area architecture")
+        if area_name not in coordinator.areas:
+            available = list(coordinator.areas.keys())
+            raise ValueError(
+                f"Area '{area_name}' not found. "
+                f"Available areas: {available or '(none)'}"
+            )
+        self.config = coordinator.areas[area_name].config
+        self.hass = coordinator.hass
+        self._factory = EntityFactory(coordinator, area_name=area_name)
+        self._entities: dict[str, Entity] = self._factory.create_all_from_config()
+
+    @property
+    def entities(self) -> dict[str, Entity]:
+        """Get the entities."""
+        return self._entities
+
+    def get_entities_by_input_type(self, input_type: InputType) -> dict[str, Entity]:
+        """Get entities filtered by InputType."""
+        return {
+            entity_id: entity
+            for entity_id, entity in self._entities.items()
+            if entity.type.input_type == input_type
+        }
+
+    @property
+    def entity_ids(self) -> list[str]:
+        """Get the entity IDs."""
+        return list(self._entities.keys())
+
+    @property
+    def active_entities(self) -> list[Entity]:
+        """Get the active entities."""
+        return [
+            entity
+            for entity in self._entities.values()
+            if (entity.evidence or entity.decay.is_decaying)
+            and getattr(entity, "is_stuck", False) is not True
+        ]
+
+    @property
+    def inactive_entities(self) -> list[Entity]:
+        """Get the inactive entities (evidence is explicitly False, not unavailable)."""
+        return [
+            entity
+            for entity in self._entities.values()
+            if entity.evidence is False and not entity.decay.is_decaying
+        ]
+
+    @property
+    def decaying_entities(self) -> list[Entity]:
+        """Get the decaying entities."""
+        return [
+            entity for entity in self._entities.values() if entity.decay.is_decaying
+        ]
+
+    def get_entity(self, entity_id: str) -> Entity:
+        """Get the entity from an entity ID."""
+        if entity_id not in self._entities:
+            raise ValueError(f"Entity not found for entity: {entity_id}")
+        return self._entities[entity_id]
+
+    def add_entity(self, entity: Entity) -> None:
+        """Add an entity to the manager."""
+        self._entities[entity.entity_id] = entity
+
+    def register_entity(self, entity_id: str, input_type: str) -> None:
+        """Create and register an entity from a config spec if not already tracked."""
+        if entity_id not in self._entities:
+            entity = self._factory.create_from_config_spec(entity_id, input_type)
+            self._entities[entity_id] = entity
+
+    def deregister_entity(self, entity_id: str) -> None:
+        """Remove an entity from the manager if it exists."""
+        self._entities.pop(entity_id, None)
+
+    def refresh_from_config(self) -> None:
+        """Rebuild the entities from config, keeping what is still true.
+
+        A settings edit (a threshold, a weight, one sensor added or removed)
+        must not make the area forget. Rebuilding bare entities reset every
+        sensor's learned likelihoods to type defaults until the next hourly
+        analysis, and its decay and evidence state to "fresh", so an occupied
+        area could blink empty on an unrelated edit.
+
+        A sensor keeps its learned likelihoods and live state when it is the
+        same kind of sensor with the same meaning: same input type, active
+        states and active range. Anything else starts fresh, as it must: a
+        media player whose active states changed has learned what the old
+        states meant. Motion and sleep likelihoods come from config and are
+        never carried. Weights always come from config.
+        """
+        previous = self._entities
+        self._entities = self._factory.create_all_from_config()
+        for entity_id, new in self._entities.items():
+            old = previous.get(entity_id)
+            if (
+                old is None
+                or old.type.input_type != new.type.input_type
+                or old.type.active_states != new.type.active_states
+                or old.type.active_range != new.type.active_range
+            ):
+                continue
+            if new.type.input_type not in (InputType.MOTION, InputType.SLEEP):
+                new.prob_given_true = old.prob_given_true
+                new.prob_given_false = old.prob_given_false
+                new.analysis_error = old.analysis_error
+                new.correlation_type = old.correlation_type
+                new.learned_gaussian_params = old.learned_gaussian_params
+                new.learned_active_range = old.learned_active_range
+            new.update_decay(old.decay.decay_start, old.decay.is_decaying)
+            new.previous_evidence = old.previous_evidence
+            new.last_updated = old.last_updated
+            new.stuck_since = old.stuck_since
+            new.active_state_changed_at = old.active_state_changed_at
+            new.previous_state = old.previous_state
+        previous.clear()
+        _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
+
+    async def cleanup(self) -> None:
+        """Clean up resources and recreate from config.
+
+        This method clears all entity references to release memory
+        and prevent leaks when areas are removed or reconfigured.
+        """
+        _LOGGER.debug("Cleaning up EntityManager for area: %s", self.area_name)
+        # Clear all entity references to release memory
+        # This ensures entities and their internal state (decay, etc.) are released
+        self._entities.clear()
+        # Recreate entities from config (needed for reconfiguration scenarios)
+        self._entities = self._factory.create_all_from_config()
+        _LOGGER.debug("EntityManager cleanup completed for area: %s", self.area_name)

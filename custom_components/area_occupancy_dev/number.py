@@ -1,0 +1,137 @@
+"""Number platform for Area Occupancy Detection integration."""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.components.sensor import SensorStateClass
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .area import AreaDeviceHandle
+from .config_helpers import THRESHOLD_MAX, THRESHOLD_MIN, validate_threshold
+from .const import CONF_THRESHOLD
+from .coordinator import AreaOccupancyCoordinator
+from .utils import assign_device_to_ha_area, generate_entity_unique_id
+
+if TYPE_CHECKING:
+    from .area import Area
+
+_LOGGER = logging.getLogger(__name__)
+
+NAME_THRESHOLD_NUMBER = "Occupancy Threshold"
+
+
+class Threshold(CoordinatorEntity, NumberEntity):
+    """Number entity for adjusting occupancy threshold."""
+
+    def __init__(
+        self,
+        area_handle: AreaDeviceHandle,
+    ) -> None:
+        """Initialize the threshold entity.
+
+        Args:
+            area_handle: Stable reference to the parent Area.
+        """
+        super().__init__(area_handle.coordinator)
+        self._area_name = area_handle.area_name
+        self._area_handle = area_handle
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "threshold"
+        # Unique ID: use entry_id, device_id, and entity_name
+        self._attr_unique_id = generate_entity_unique_id(
+            area_handle.coordinator.entry_id,
+            area_handle.device_info(),
+            NAME_THRESHOLD_NUMBER,
+        )
+        self._attr_native_min_value = float(THRESHOLD_MIN)
+        self._attr_native_max_value = float(THRESHOLD_MAX)
+        self._attr_native_step = 1.0
+        self._attr_mode = NumberMode.BOX
+        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_entity_category = EntityCategory.CONFIG
+        # Get device_info directly from Area
+        self._attr_device_info = area_handle.device_info()
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        # Assign device to Home Assistant area if area_id is configured
+        area = self._get_area()
+        if area is not None:
+            assign_device_to_ha_area(
+                self.hass,
+                self.device_info,
+                area.config.area_id,
+                self.coordinator.entry_id,
+            )
+
+    @property
+    def native_value(self) -> float:
+        """Return the current threshold value as a percentage."""
+        area = self._get_area()
+        if area is None:
+            return 0.0
+        return area.threshold() * 100.0
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new threshold value (already in percentage)."""
+        # Same rule as the config flow (config_helpers.validate_threshold), so
+        # every threshold writer agrees on the accepted range.
+        if validate_threshold(value) is not None:
+            raise ServiceValidationError(
+                f"Threshold value must be between {THRESHOLD_MIN} and {THRESHOLD_MAX}"
+            )
+        # Update the area's config threshold, guarding against a missing area
+        area = self._get_area()
+        if area is None:
+            _LOGGER.warning(
+                "Threshold update requested for unknown area '%s'; ignoring",
+                self._area_name,
+            )
+            return
+        # Store percentage directly; _load_config will convert to 0.0–1.0 for internal use
+        await area.config.update_config({CONF_THRESHOLD: value})
+
+    def _get_area(self) -> Area | None:
+        """Resolve the current Area instance for this entity."""
+        return self._area_handle.resolve()
+
+
+def _area_subentry_id(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> str | None:
+    """Config subentry an area's entities belong to, if it has one.
+
+    Registering entities under the area's subentry is what makes the
+    integration page group each area's device and entities beneath it.
+    Aggregate entities ("All Areas", floors) span areas and stay on the entry.
+    """
+    area = coordinator.get_area(area_name)
+    return area.config.subentry_id if area else None
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """Set up Area Occupancy threshold number based on a config entry."""
+    coordinator: AreaOccupancyCoordinator = entry.runtime_data
+
+    # Create threshold number entities for each area
+    for area_name in coordinator.get_area_names():
+        _LOGGER.debug("Creating threshold number entity for area: %s", area_name)
+        handle = coordinator.get_area_handle(area_name)
+
+        async_add_entities(
+            [Threshold(area_handle=handle)],
+            update_before_add=False,
+            config_subentry_id=_area_subentry_id(coordinator, area_name),
+        )
