@@ -462,11 +462,25 @@ The sensor provides these diagnostic attributes to help understand its current s
 | `last_door_time`       | ISO 8601 timestamp of the last door state change                    | `2025-01-15T10:30:45.123Z` |
 | `motion_state`         | Aggregate state of motion sensors: "on" (detected) or "off" (clear) | `on`                       |
 | `last_motion_time`     | ISO 8601 timestamp of the last motion detection                     | `2025-01-15T10:29:30.456Z` |
-| `motion_timeout`       | Current motion timeout setting in seconds                           | `300`                      |
+| `motion_timeout`       | Current motion timeout setting in seconds                           | `90`                       |
 | `max_duration`         | Maximum occupancy duration in seconds (0 = disabled)                | `3600`                     |
 | `last_occupied_time`   | ISO 8601 timestamp when the space was last marked as occupied       | `2025-01-15T10:30:00.789Z` |
 | `verification_delay`   | Configured verification delay in seconds (0 = disabled)             | `30`                       |
 | `verification_pending` | Whether a verification check is currently scheduled                 | `true` / `false`           |
+
+For the newer **closed-door hold**, `motion_timeout` is also the per-area
+window in which closing a monitored door after motion can arm the hold. Set it
+to at least the physical off-delay of the motion sensor (for example, 45
+seconds for a PIR that stays on for 45 seconds). A shorter value reduces false
+holds when leaving, while a value that is too short can miss a genuine entry
+where the door is closed slowly.
+
+The integration does not learn this value automatically. Recorder history
+cannot reliably tell whether motion came from a person entering or leaving;
+learning it automatically would therefore risk creating false occupied states.
+The door-hold state does use the observed sequence: motion before a door opens
+is treated as a possible departure and does not re-arm merely because the PIR
+is still on during its off-delay.
 
 These attributes are useful for:
 

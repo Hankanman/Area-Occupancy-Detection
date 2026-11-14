@@ -44,7 +44,7 @@
  *
  * Requires the Area Occupancy build that exposes get_time_priors
  * (SupportsResponse.ONLY).
- */
+ */ 
 
 const RAMP = ["#2c3f5e", "#3f8aa0", "#e0a63a", "#d1491f"]; // thermal: empty → occupied
 const RAMP_STOPS = [0, 0.34, 0.64, 1];

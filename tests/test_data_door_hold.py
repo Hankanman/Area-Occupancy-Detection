@@ -21,13 +21,18 @@ HALF_LIFE = 450.0
 
 
 def _observe(
-    hold: DoorHold, seconds: float, *, doors_open: bool, motion_on: bool
+    hold: DoorHold,
+    seconds: float,
+    *,
+    doors_open: bool,
+    motion_on: bool,
+    motion_window: float = WINDOW,
 ) -> None:
     hold.observe(
         T0 + timedelta(seconds=seconds),
         doors_open=doors_open,
         motion_on=motion_on,
-        motion_window=WINDOW,
+        motion_window=motion_window,
         max_hold=MAX_HOLD,
         fade_half_life=HALF_LIFE,
     )
@@ -68,6 +73,29 @@ class TestArming:
         assert not hold.held
         assert _floor(hold, 400) is None
 
+    def test_door_closing_after_departure_does_not_rearm(self) -> None:
+        """A PIR off-delay must not make leaving look like entering."""
+        hold = DoorHold()
+        _observe(hold, 0, doors_open=False, motion_on=True)
+        _observe(hold, 10, doors_open=True, motion_on=True)
+        _observe(hold, 20, doors_open=False, motion_on=True)
+        assert not hold.held
+
+    def test_departure_after_motion_ends_before_door_open_does_not_rearm(
+        self,
+    ) -> None:
+        hold = DoorHold()
+        _observe(hold, 0, doors_open=False, motion_on=True)
+        _observe(hold, 10, doors_open=True, motion_on=False)
+        _observe(hold, 20, doors_open=False, motion_on=False)
+        assert not hold.held
+
+    def test_configured_motion_timeout_limits_entry_window(self) -> None:
+        hold = DoorHold()
+        _observe(hold, 0, doors_open=True, motion_on=True, motion_window=45)
+        _observe(hold, 46, doors_open=False, motion_on=False, motion_window=45)
+        assert not hold.held
+
     def test_closed_door_without_motion_does_not_hold(self) -> None:
         hold = DoorHold()
         _observe(hold, 0, doors_open=False, motion_on=False)
@@ -79,6 +107,17 @@ class TestArming:
         hold = DoorHold(DoorHoldState(last_motion=T0))
         _observe(hold, 10, doors_open=False, motion_on=False)
         assert not hold.held
+
+    def test_recent_motion_guard_survives_closed_observation(self) -> None:
+        """An opening guard is not cleared by an unrelated closed tick."""
+        hold = DoorHold(
+            DoorHoldState(
+                doors_open=False,
+                motion_was_recent_when_opened=True,
+            )
+        )
+        _observe(hold, 10, doors_open=False, motion_on=False)
+        assert hold.state.motion_was_recent_when_opened
 
     def test_opening_releases(self) -> None:
         hold = DoorHold()
