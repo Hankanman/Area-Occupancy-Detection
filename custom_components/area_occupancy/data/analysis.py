@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 from collections.abc import Awaitable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -42,7 +42,7 @@ from ..time_utils import ensure_utc_datetime, to_local, to_utc
 from ..utils import format_area_names
 from .entity import entity_signature, ground_truth_signature
 from .entity_type import BINARY_INPUT_TYPES, NUMERIC_INPUT_TYPES
-from .online_prior import is_stale
+from .online_prior import OnlinePriorEstimator, is_stale
 from .prior import DEFAULT_SLOT_MINUTES, Prior
 from .types import ZonePriors
 
@@ -317,6 +317,53 @@ async def _run_transition_learning(coordinator: AreaOccupancyCoordinator) -> Non
     )
 
 
+def _db_occupied_seconds(
+    coordinator: AreaOccupancyCoordinator, area_name: str, day: str
+) -> tuple[float, float]:
+    """Return the DB's occupied seconds within a local day, and its length."""
+    start = to_utc(dt_util.start_of_local_day(date.fromisoformat(day)))
+    end = to_utc(
+        dt_util.start_of_local_day(date.fromisoformat(day) + timedelta(days=1))
+    )
+    intervals = coordinator.db.get_occupied_intervals(
+        area_name=area_name, start_time=start
+    )
+    occupied = intersect_intervals(
+        merge_overlapping_intervals(
+            [(ensure_utc_datetime(a), ensure_utc_datetime(b)) for a, b in intervals]
+        ),
+        [(start, end)],
+    )
+    return (
+        sum((b - a).total_seconds() for a, b in occupied),
+        (end - start).total_seconds(),
+    )
+
+
+async def _compare_online_days(
+    coordinator: AreaOccupancyCoordinator,
+    area_name: str,
+    estimator: OnlinePriorEstimator,
+    now: datetime,
+) -> None:
+    """Compare each completed day's live occupied time with the DB's."""
+    for day in estimator.days_to_compare(now):
+        db_seconds, day_seconds = await coordinator.hass.async_add_executor_job(
+            _db_occupied_seconds, coordinator, area_name, day
+        )
+        entry = estimator.record_day(day, db_seconds, day_seconds)
+        _LOGGER.debug(
+            "Online prior (shadow) for area %s, %s: online=%ds db=%ds "
+            "diff=%+.4f partial=%s",
+            area_name,
+            day,
+            entry["online_seconds"],
+            entry["db_seconds"],
+            entry["diff"],
+            entry["partial"],
+        )
+
+
 async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
     """Score each area's probability stream against ground truth (#499).
 
@@ -329,27 +376,43 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
     from .metrics import (  # noqa: PLC0415
         ACCURACY_MIN_CLASS_SECONDS,
         compute_accuracy_metrics,
+        tally_by_day,
     )
 
     now = dt_util.utcnow()
     window_start = now - timedelta(hours=ACCURACY_WINDOW_HOURS)
     for area_name in coordinator.areas:
-        samples = [
-            s
-            for s in coordinator.accuracy_samples_for(area_name)
-            if s.timestamp >= window_start
-        ]
+        buffered = coordinator.accuracy_samples_for(area_name)
+        samples = [s for s in buffered if s.timestamp >= window_start]
         if not samples:
             continue
+        # Ticks not yet in the daily tallies: those since the last batch
+        # ended (it ends on a tick it doesn't score, which starts this one).
+        scored_until = coordinator.accuracy_scored_until(area_name)
+        unscored = [
+            s for s in buffered if scored_until is None or s.timestamp >= scored_until
+        ]
+        since = min(window_start, unscored[0].timestamp) if unscored else window_start
         intervals = await coordinator.hass.async_add_executor_job(
-            lambda name=area_name: coordinator.db.get_occupied_intervals(
-                area_name=name, start_time=window_start
+            lambda name=area_name, since=since: coordinator.db.get_occupied_intervals(
+                area_name=name, start_time=since
             )
         )
         metrics = compute_accuracy_metrics(
             samples, intervals, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS
         )
         coordinator.set_accuracy_metrics(area_name, metrics)
+        if len(unscored) >= 2:
+            coordinator.add_accuracy_tallies(
+                area_name,
+                tally_by_day(
+                    unscored,
+                    intervals,
+                    lambda ts: to_local(ts).date().isoformat(),
+                    score_last=False,
+                ),
+                scored_until=unscored[-1].timestamp,
+            )
 
         # Learned-fusion shadow update (#501): one gradient pass over the
         # same window's fusion ticks against the SAME ground-truth
@@ -423,7 +486,9 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
             continue
         # Statistics gathered under another sensor set (or before a DB
         # reset) would never line up with the DB again: start them over.
-        signature = ground_truth_signature(area.entities.entities)
+        signature = ground_truth_signature(
+            area.entities.entities, area.config.sensors.motion_timeout
+        )
         db_first_seen = None
         if estimator.state.config_signature is None:
             db_first_seen = await coordinator.hass.async_add_executor_job(
@@ -438,6 +503,7 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
             coordinator.reset_online_prior(area_name, signature)
             continue
         estimator.state.config_signature = signature
+        await _compare_online_days(coordinator, area_name, estimator, now)
         online = estimator.prior(now)
         if online is None:
             continue

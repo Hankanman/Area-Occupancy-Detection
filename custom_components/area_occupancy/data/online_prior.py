@@ -26,10 +26,9 @@ diff; see #500 step 2 for how the diff is judged):
   perfectly uniform — see ``coordinator._record_shadow_tick`` and
   ``_handle_decay_timer`` for how a steady cadence is maintained even
   when decay is disabled for every area.
-* **No motion-timeout extension**: the DB path extends each motion
-  interval by the area's motion timeout during merging; the online
-  numerator does not, so it reads slightly low on areas with sparse
-  motion.
+* **Motion timeout**: both paths bridge a PIR-like sensor's gaps by the
+  area's motion timeout. The DB path does it while merging intervals; the
+  online numerator gets it from the live labeller (``data.ground_truth``).
 * **Retention**: the DB period re-anchors as old intervals are pruned
   (365-day retention); the online period anchor is fixed at first
   observation. Irrelevant inside the 30-day shadow window.
@@ -38,13 +37,20 @@ The numerator's presence definition mirrors
 ``db.queries.get_occupied_intervals``'s ground truth — motion ∪ media ∪
 sleep evidence, not motion alone (see the ``observe`` caller in
 ``coordinator.py``) — so the two paths are measuring the same thing
-modulo the two approximations above.
+modulo the approximations above.
+
+Daily parity: the scalar compares a running total since the estimator
+started with the DB's whole lookback window, so after a restart of the
+statistics the two cover different periods and differ for weeks even
+when both are right. Each completed local day is therefore also compared
+on its own: occupied seconds counted live against the DB's occupied
+intervals clipped to the same day (``record_day``).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from ..const import (
     MAX_PRIOR,
@@ -67,6 +73,15 @@ MAX_TICK_GAP_SECONDS = 60.0
 # (weekday, hour) slot means roughly one week of uptime covering it once —
 # below that the ratio is a coin toss dressed up as a probability.
 MIN_SLOT_OBSERVATION_SECONDS = 3600.0
+
+# A day counts toward daily parity only if the estimator was ticking for
+# at least this share of it; a longer outage leaves the live side short
+# for time the DB may still cover, so that day says nothing either way.
+MIN_DAY_OBSERVED_FRACTION = 0.98
+
+# Live per-day totals kept, newest last: enough to finish yesterday after
+# a late or missed hourly run.
+DAY_TOTALS_KEPT = 3
 
 # 168 hour-of-week buckets: to_local(t).weekday() * 24 + to_local(t).hour,
 # the same convention the DB time priors and AreaTransitions use.
@@ -103,6 +118,14 @@ class OnlinePriorState:
     # different set (sensors swapped, "paused" no longer active, another
     # house) don't describe the area any more; see ``is_stale``.
     config_signature: str | None = None
+    # Live occupied and observed seconds per local day ("YYYY-MM-DD"),
+    # the last DAY_TOTALS_KEPT days.
+    day_occupied_seconds: dict[str, float] = field(default_factory=dict)
+    day_observed_seconds: dict[str, float] = field(default_factory=dict)
+    # One entry per completed day compared with the DB, oldest first:
+    # {"date", "online_seconds", "db_seconds", "day_seconds",
+    #  "diff" (online - db as a share of the day), "partial"}.
+    day_diff_history: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -122,6 +145,9 @@ class OnlinePriorState:
             },
             "diff_history": list(self.diff_history),
             "config_signature": self.config_signature,
+            "day_occupied_seconds": dict(self.day_occupied_seconds),
+            "day_observed_seconds": dict(self.day_observed_seconds),
+            "day_diff_history": list(self.day_diff_history),
         }
 
     @classmethod
@@ -162,6 +188,19 @@ class OnlinePriorState:
                     if data.get("config_signature")
                     else None
                 ),
+                day_occupied_seconds={
+                    str(k): float(v)
+                    for k, v in (data.get("day_occupied_seconds") or {}).items()
+                },
+                day_observed_seconds={
+                    str(k): float(v)
+                    for k, v in (data.get("day_observed_seconds") or {}).items()
+                },
+                day_diff_history=[
+                    dict(entry)
+                    for entry in (data.get("day_diff_history") or [])
+                    if isinstance(entry, dict)
+                ],
             )
         except (KeyError, TypeError, ValueError):
             return cls()
@@ -233,16 +272,84 @@ class OnlinePriorEstimator:
             if 0.0 < elapsed <= MAX_TICK_GAP_SECONDS:
                 span_start_local = to_local(self.state.last_tick)
                 slot = span_start_local.weekday() * 24 + span_start_local.hour
+                day = span_start_local.date().isoformat()
                 self.state.slot_total_seconds[slot] = (
                     self.state.slot_total_seconds.get(slot, 0.0) + elapsed
                 )
+                self._add_day(self.state.day_observed_seconds, day, elapsed)
                 if self.state.last_motion_active:
                     self.state.occupied_seconds += elapsed
                     self.state.slot_occupied_seconds[slot] = (
                         self.state.slot_occupied_seconds.get(slot, 0.0) + elapsed
                     )
+                    self._add_day(self.state.day_occupied_seconds, day, elapsed)
         self.state.last_tick = now
         self.state.last_motion_active = motion_active
+
+    @staticmethod
+    def _add_day(totals: dict[str, float], day: str, seconds: float) -> None:
+        totals[day] = totals.get(day, 0.0) + seconds
+        for old in sorted(totals)[:-DAY_TOTALS_KEPT]:
+            del totals[old]
+
+    def days_to_compare(self, now: datetime) -> list[str]:
+        """Return the completed local days not yet compared with the DB.
+
+        A day is complete an hour after it ends, so the DB has synced it.
+        """
+        compared = {entry.get("date") for entry in self.state.day_diff_history}
+        cutoff = (to_local(ensure_utc_datetime(now)) - timedelta(hours=1)).date()
+        return [
+            day
+            for day in sorted(self.state.day_observed_seconds)
+            if day not in compared and date.fromisoformat(day) < cutoff
+        ]
+
+    def record_day(self, day: str, db_seconds: float, day_seconds: float) -> dict:
+        """Compare one completed day's live occupied time with the DB's.
+
+        Args:
+            day: The local date, ``YYYY-MM-DD``.
+            db_seconds: The DB's occupied seconds within that day.
+            day_seconds: The day's length (23 or 25 hours across DST).
+
+        Returns:
+            The history entry recorded.
+        """
+        online = self.state.day_occupied_seconds.get(day, 0.0)
+        observed = self.state.day_observed_seconds.get(day, 0.0)
+        entry = {
+            "date": day,
+            "online_seconds": round(online),
+            "db_seconds": round(db_seconds),
+            "day_seconds": round(day_seconds),
+            "diff": round((online - db_seconds) / day_seconds, 4),
+            "partial": observed < MIN_DAY_OBSERVED_FRACTION * day_seconds,
+        }
+        history = self.state.day_diff_history
+        history.append(entry)
+        history.sort(key=lambda e: str(e.get("date")))
+        del history[:-ONLINE_PRIOR_DIFF_HISTORY_DAYS]
+        return entry
+
+    def daily_days_within_tolerance(self, tolerance: float) -> int:
+        """Return the trailing streak of compared days within tolerance.
+
+        Partial days (the estimator was down for part of them) neither
+        count nor break the streak.
+        """
+        streak = 0
+        for entry in reversed(self.state.day_diff_history):
+            if entry.get("partial"):
+                continue
+            try:
+                if abs(float(entry["diff"])) <= tolerance:
+                    streak += 1
+                else:
+                    break
+            except (KeyError, TypeError, ValueError):
+                break
+        return streak
 
     def prior(self, now: datetime) -> float | None:
         """Return the current online prior, or None before any observation."""

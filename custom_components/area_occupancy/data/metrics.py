@@ -24,6 +24,10 @@ This module deliberately has no coordinator or DB dependencies —
 callers gather inputs and pass them in, mirroring ``data/adjacency.py``,
 so the math stays testable without SQLite or Home Assistant.
 
+Each window is first reduced to an ``AccuracyTally``: the seconds behind
+every rate. Tallies add, so an hour's ticks fold into the day's tally and
+thirty days pool into one honest monthly figure, which daily rates can't.
+
 Shadow-mode contract: nothing here feeds back into probability,
 thresholds, or decay. Metrics are computed, cached, logged, and exported
 in diagnostics only. Promotion to a user-facing sensor or auto-threshold
@@ -32,8 +36,10 @@ routes through the change-control gates (see issue #499's phases).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 DEFAULT_CALIBRATION_BINS = 10
 
@@ -49,6 +55,10 @@ class TickSample:
     # set it is the truth this sample is scored against; ``None`` falls
     # back to the occupied intervals passed in.
     truth: bool | None = None
+    # A sensor is decaying and none is active: the area is fading out after
+    # its motion timeout. With the label off, such a tick is the configured
+    # hold, neither right nor wrong, and is left unscored.
+    fading: bool = False
 
 
 @dataclass
@@ -88,6 +98,8 @@ class AccuracyMetrics:
     # Time-weighted share of labelled ticks where the live ground truth
     # matched the database's occupied history (None without live labels).
     truth_agreement_with_db: float | None = None
+    # Seconds left unscored because the area was fading with the label off.
+    fade_seconds: float = 0.0
 
 
 def _is_occupied_at(ts: datetime, intervals: list[tuple[datetime, datetime]]) -> bool:
@@ -129,58 +141,122 @@ def _tick_weights(samples: list[TickSample]) -> list[float]:
     return weights
 
 
-def compute_accuracy_metrics(
-    samples: list[TickSample],
-    occupied_intervals: list[tuple[datetime, datetime]],
-    *,
-    bins: int = DEFAULT_CALIBRATION_BINS,
-    min_class_seconds: float = 0.0,
-) -> AccuracyMetrics:
-    """Score an area's probability stream against motion-confirmed truth.
+@dataclass
+class AccuracyTally:
+    """The seconds behind an area's accuracy rates over some stretch of time.
 
-    A false-on (false-off) rate is only reported when the window holds at
-    least ``min_class_seconds`` of empty (occupied) time; the analysis
-    passes ``ACCURACY_MIN_CLASS_SECONDS``.
-
-    Args:
-        samples: Tick observations ordered oldest-first. Samples outside
-            the intervals' coverage are still scored (truth = not
-            occupied), matching how the prior denominator treats
-            quiet time (#483 lesson: unobserved-quiet counts). Every
-            metric is time-weighted (see ``_tick_weights``), not
-            sample-weighted, since ticks land at an irregular cadence.
-        occupied_intervals: Motion-confirmed ``(start, end)`` ground
-            truth, same source the prior learning uses.
-        bins: Number of equal-width probability bands for calibration.
-        min_class_seconds: Seconds of empty (occupied) time below which
-            the false-on (false-off) rate is left unreported.
-
-    Returns:
-        ``AccuracyMetrics``; with no samples, a zeroed snapshot whose
-        rate fields stay ``None`` (unknown, not zero).
+    Rates can't be combined (a day's 90% and another's 60% say nothing
+    about the pair without the time behind each); these seconds can, so a
+    tally is what the daily history keeps and what a 30-day figure pools.
     """
-    out = AccuracyMetrics()
-    if not samples:
+
+    samples: int = 0
+    true_on: float = 0.0
+    true_off: float = 0.0
+    false_on: float = 0.0
+    false_off: float = 0.0
+    # Label off while the area faded out: the configured hold, unscored.
+    fade: float = 0.0
+    decision_transitions: int = 0
+    truth_transitions: int = 0
+    # Seconds with a live label, and those where it matched the database.
+    labelled: float = 0.0
+    labelled_agree: float = 0.0
+    # Per probability band: ticks, seconds, Σ probability·seconds, and the
+    # seconds the label was occupied.
+    bin_count: list[int] = field(default_factory=lambda: [0] * DEFAULT_CALIBRATION_BINS)
+    bin_weight: list[float] = field(
+        default_factory=lambda: [0.0] * DEFAULT_CALIBRATION_BINS
+    )
+    bin_prob: list[float] = field(
+        default_factory=lambda: [0.0] * DEFAULT_CALIBRATION_BINS
+    )
+    bin_hit: list[float] = field(
+        default_factory=lambda: [0.0] * DEFAULT_CALIBRATION_BINS
+    )
+
+    _SCALARS = (
+        "samples",
+        "true_on",
+        "true_off",
+        "false_on",
+        "false_off",
+        "fade",
+        "decision_transitions",
+        "truth_transitions",
+        "labelled",
+        "labelled_agree",
+    )
+    _BINS = ("bin_count", "bin_weight", "bin_prob", "bin_hit")
+
+    def add(self, other: AccuracyTally) -> None:
+        """Fold another tally into this one."""
+        for name in self._SCALARS:
+            setattr(self, name, getattr(self, name) + getattr(other, name))
+        for name in self._BINS:
+            mine, theirs = getattr(self, name), getattr(other, name)
+            for i, value in enumerate(theirs):
+                mine[i] += value
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe form for the HA store."""
+        out: dict[str, Any] = {name: getattr(self, name) for name in self._SCALARS}
+        for name in self._BINS:
+            out[name] = list(getattr(self, name))
         return out
 
-    out.sample_count = len(samples)
-    out.window_start = samples[0].timestamp
-    out.window_end = samples[-1].timestamp
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AccuracyTally:
+        """Rebuild from ``to_dict`` output; unknown or bad fields are dropped."""
+        tally = cls()
+        for name in cls._SCALARS:
+            value = data.get(name)
+            if isinstance(value, int | float):
+                setattr(tally, name, type(getattr(tally, name))(value))
+        for name in cls._BINS:
+            values = data.get(name)
+            if isinstance(values, list) and len(values) == DEFAULT_CALIBRATION_BINS:
+                kind = type(getattr(tally, name)[0])
+                setattr(tally, name, [kind(v) for v in values])
+        return tally
 
-    weights = _tick_weights(samples)
-    total_weight = sum(weights)
 
-    bin_count = [0] * bins
-    bin_weight = [0.0] * bins
-    bin_prob_weight_sum = [0.0] * bins
-    bin_hit_weight = [0.0] * bins
+def tally_by_day(
+    samples: list[TickSample],
+    occupied_intervals: list[tuple[datetime, datetime]],
+    day_of: Callable[[datetime], str],
+    *,
+    score_last: bool = True,
+) -> dict[str, AccuracyTally]:
+    """Score ticks against ground truth, one tally per day.
 
-    true_on = true_off = false_on = false_off = 0.0
-    prev_decision: bool | None = None
-    prev_truth: bool | None = None
+    Each tick is weighted by the seconds to the next one (see
+    ``_tick_weights``). With ``score_last`` off, the last tick only closes
+    the one before it and is not scored itself, so consecutive batches
+    split at a shared tick neither overlap nor leave a gap.
 
-    agree_weight = labelled_weight = 0.0
-    for sample, weight in zip(samples, weights, strict=True):
+    Args:
+        samples: Tick observations ordered oldest-first.
+        occupied_intervals: The database's occupied ``(start, end)`` spans:
+            the truth for ticks without a live label, and the parity check
+            for ticks with one.
+        day_of: The day a tick belongs to (the caller's local date).
+        score_last: Score the last tick too, with the preceding gap as its
+            weight, for a one-off window.
+
+    Returns:
+        Tallies keyed by day.
+    """
+    tallies: dict[str, AccuracyTally] = {}
+    scored = samples if score_last else samples[:-1]
+    if not scored:
+        return tallies
+    weights = _tick_weights(samples)[: len(scored)]
+    prev: dict[str, tuple[bool, bool]] = {}
+    for sample, weight in zip(scored, weights, strict=True):
+        day = day_of(sample.timestamp)
+        tally = tallies.setdefault(day, AccuracyTally())
+        tally.samples += 1
         db_truth = _is_occupied_at(sample.timestamp, occupied_intervals)
         if sample.truth is None:
             truth = db_truth
@@ -188,73 +264,132 @@ def compute_accuracy_metrics(
             truth = sample.truth
             # Parity of the live label with the database's history, the
             # evidence that retiring the database keeps the same truth.
-            labelled_weight += weight
-            if sample.truth == db_truth:
-                agree_weight += weight
+            tally.labelled += weight
+            if truth == db_truth:
+                tally.labelled_agree += weight
 
-        # Calibration accumulation. ``bin_count`` stays a raw sample
-        # count for diagnostics readability; the reliability stats below
-        # (mean_probability, observed_rate, ECE) use the time-weighted
-        # sum so an evidence-triggered burst of ticks doesn't outweigh a
-        # single quiet-hour decay tick that spans the same wall-clock time.
+        # Flip counting: events, not time.
+        if day in prev:
+            last_decision, last_truth = prev[day]
+            tally.decision_transitions += sample.occupied != last_decision
+            tally.truth_transitions += truth != last_truth
+        prev[day] = (sample.occupied, truth)
+
+        if sample.fading and not truth:
+            tally.fade += weight
+            continue
+
         p = min(max(sample.probability, 0.0), 1.0)
-        idx = min(int(p * bins), bins - 1)
-        bin_count[idx] += 1
-        bin_weight[idx] += weight
-        bin_prob_weight_sum[idx] += p * weight
+        idx = min(int(p * DEFAULT_CALIBRATION_BINS), DEFAULT_CALIBRATION_BINS - 1)
+        tally.bin_count[idx] += 1
+        tally.bin_weight[idx] += weight
+        tally.bin_prob[idx] += p * weight
         if truth:
-            bin_hit_weight[idx] += weight
+            tally.bin_hit[idx] += weight
 
-        # Confusion accumulation
         if sample.occupied and truth:
-            true_on += weight
-        elif sample.occupied and not truth:
-            false_on += weight
-        elif not sample.occupied and truth:
-            false_off += weight
+            tally.true_on += weight
+        elif sample.occupied:
+            tally.false_on += weight
+        elif truth:
+            tally.false_off += weight
         else:
-            true_off += weight
+            tally.true_off += weight
+    return tallies
 
-        # Flip counting — event counts, not time-weighted: each flip is a
-        # discrete occurrence regardless of how long the tick before it
-        # lasted.
-        if prev_decision is not None and sample.occupied != prev_decision:
-            out.decision_transitions += 1
-        if prev_truth is not None and truth != prev_truth:
-            out.truth_transitions += 1
-        prev_decision = sample.occupied
-        prev_truth = truth
 
-    # Reliability rows + ECE
+def metrics_from_tally(
+    tally: AccuracyTally,
+    *,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+    min_class_seconds: float = 0.0,
+) -> AccuracyMetrics:
+    """The calibration and decision rates a tally adds up to.
+
+    A false-on (false-off) rate is only reported when the tally holds at
+    least ``min_class_seconds`` of empty (occupied) time; the analysis
+    passes ``ACCURACY_MIN_CLASS_SECONDS``.
+    """
+    out = AccuracyMetrics(
+        sample_count=tally.samples,
+        window_start=window_start,
+        window_end=window_end,
+        decision_transitions=tally.decision_transitions,
+        truth_transitions=tally.truth_transitions,
+        min_class_seconds=min_class_seconds,
+        fade_seconds=tally.fade,
+    )
+    total_weight = sum(tally.bin_weight)
+    if not tally.samples:
+        return out
+    if tally.labelled:
+        out.truth_agreement_with_db = tally.labelled_agree / tally.labelled
+    if not total_weight:
+        return out
+
+    # Reliability rows + ECE. ``count`` stays a raw tick count for
+    # readability; the stats use seconds, so a burst of evidence ticks
+    # doesn't outweigh a quiet decay tick spanning the same time.
     ece = 0.0
+    bins = len(tally.bin_weight)
     for i in range(bins):
         row = CalibrationBin(lower=i / bins, upper=(i + 1) / bins)
-        row.count = bin_count[i]
-        row.weight = bin_weight[i]
-        if bin_count[i] and bin_weight[i]:
-            row.mean_probability = bin_prob_weight_sum[i] / bin_weight[i]
-            row.observed_rate = bin_hit_weight[i] / bin_weight[i]
-            ece += (bin_weight[i] / total_weight) * abs(
+        row.count = tally.bin_count[i]
+        row.weight = tally.bin_weight[i]
+        if row.count and row.weight:
+            row.mean_probability = tally.bin_prob[i] / row.weight
+            row.observed_rate = tally.bin_hit[i] / row.weight
+            ece += (row.weight / total_weight) * abs(
                 row.mean_probability - row.observed_rate
             )
         out.bins.append(row)
     out.expected_calibration_error = ece
 
-    truth_off_total = true_off + false_on
-    truth_on_total = true_on + false_off
+    truth_off_total = tally.true_off + tally.false_on
+    truth_on_total = tally.true_on + tally.false_off
     # A rate over a few minutes of one truth class is noise: a bedroom
     # occupied all night has seconds of "empty", and two mis-scored ticks
     # there read as a 100% false-on rate.
     if truth_off_total and truth_off_total >= min_class_seconds:
-        out.false_on_rate = false_on / truth_off_total
+        out.false_on_rate = tally.false_on / truth_off_total
     if truth_on_total and truth_on_total >= min_class_seconds:
-        out.false_off_rate = false_off / truth_on_total
-    out.agreement = (true_on + true_off) / total_weight
-    if labelled_weight:
-        out.truth_agreement_with_db = agree_weight / labelled_weight
-    out.min_class_seconds = min_class_seconds
-
+        out.false_off_rate = tally.false_off / truth_on_total
+    out.agreement = (tally.true_on + tally.true_off) / total_weight
     return out
+
+
+def compute_accuracy_metrics(
+    samples: list[TickSample],
+    occupied_intervals: list[tuple[datetime, datetime]],
+    *,
+    min_class_seconds: float = 0.0,
+) -> AccuracyMetrics:
+    """Score an area's probability stream against ground truth.
+
+    Args:
+        samples: Tick observations ordered oldest-first. Samples outside
+            the intervals' coverage are still scored (truth = not
+            occupied), matching how the prior denominator treats quiet
+            time (#483 lesson: unobserved-quiet counts).
+        occupied_intervals: Motion-confirmed ``(start, end)`` ground
+            truth, same source the prior learning uses.
+        min_class_seconds: Seconds of empty (occupied) time below which
+            the false-on (false-off) rate is left unreported.
+
+    Returns:
+        ``AccuracyMetrics``; with no samples, a zeroed snapshot whose rate
+        fields stay ``None`` (unknown, not zero).
+    """
+    tally = AccuracyTally()
+    for day_tally in tally_by_day(samples, occupied_intervals, lambda _ts: "").values():
+        tally.add(day_tally)
+    return metrics_from_tally(
+        tally,
+        window_start=samples[0].timestamp if samples else None,
+        window_end=samples[-1].timestamp if samples else None,
+        min_class_seconds=min_class_seconds,
+    )
 
 
 # Below this many tick samples in the window, suggest_threshold returns
@@ -346,6 +481,7 @@ def accuracy_summary(metrics: AccuracyMetrics) -> dict:
         "false_off_rate": metrics.false_off_rate,
         "suggested_threshold": suggest_threshold(metrics),
         "truth_agreement_with_db": metrics.truth_agreement_with_db,
+        "fade_seconds": round(metrics.fade_seconds),
     }
 
 

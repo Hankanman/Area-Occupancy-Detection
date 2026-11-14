@@ -12,12 +12,14 @@ from custom_components.area_occupancy.data.analysis import _run_shadow_metrics
 from custom_components.area_occupancy.data.metrics import (
     SUGGEST_THRESHOLD_MIN_SAMPLES,
     AccuracyMetrics,
+    AccuracyTally,
     CalibrationBin,
     TickSample,
     accuracy_summary,
     compute_accuracy_metrics,
     metrics_to_diagnostics,
     suggest_threshold,
+    tally_by_day,
 )
 from custom_components.area_occupancy.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -423,25 +425,151 @@ class TestMinClassSeconds:
 
 
 class TestAccuracyHistory:
-    """Daily summaries survive restarts so stability can be judged (#499)."""
+    """Daily tallies survive restarts and pool into a month (#499)."""
 
-    def test_one_entry_per_day_capped(
-        self, coordinator: AreaOccupancyCoordinator, freezer
+    def test_tallies_add_per_day_and_cap(
+        self, coordinator: AreaOccupancyCoordinator
     ) -> None:
         area = coordinator.get_area_names()[0]
-        freezer.move_to("2026-10-06 10:00:00+00:00")
-        coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=1))
-        coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=2))
-        assert [h["samples"] for h in coordinator.accuracy_history_for(area)] == [2]
-
-        freezer.move_to("2026-10-07 10:00:00+00:00")
-        coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=3))
-        assert [h["samples"] for h in coordinator.accuracy_history_for(area)] == [2, 3]
+        coordinator.add_accuracy_tallies(
+            area, {"2026-10-06": AccuracyTally(samples=1, true_on=10.0)}, T0
+        )
+        coordinator.add_accuracy_tallies(
+            area, {"2026-10-06": AccuracyTally(samples=2, true_on=5.0)}, T0
+        )
+        days = coordinator.accuracy_days_for(area)
+        assert list(days) == ["2026-10-06"]
+        assert days["2026-10-06"].samples == 3
+        assert days["2026-10-06"].true_on == 15.0
 
         for day in range(100):
-            freezer.move_to(datetime(2026, 11, 1, tzinfo=UTC) + timedelta(days=day))
-            coordinator.set_accuracy_metrics(area, AccuracyMetrics(sample_count=day))
-        assert len(coordinator.accuracy_history_for(area)) == ACCURACY_HISTORY_DAYS
+            date = (datetime(2026, 11, 1) + timedelta(days=day)).date().isoformat()
+            coordinator.add_accuracy_tallies(area, {date: AccuracyTally(samples=1)}, T0)
+        days = coordinator.accuracy_days_for(area)
+        assert len(days) == ACCURACY_HISTORY_DAYS
+        assert min(days) == "2026-11-11"  # the oldest days went first
+        assert coordinator.accuracy_scored_until(area) == T0
+
+    def test_tally_round_trips_through_the_store_format(self) -> None:
+        tally = AccuracyTally(samples=4, true_on=1.5, fade=3.0)
+        tally.bin_weight[7] = 2.5
+        tally.bin_count[7] = 2
+        back = AccuracyTally.from_dict(json.loads(json.dumps(tally.to_dict())))
+        assert back == tally
+        assert isinstance(back.bin_count[7], int)
+
+    async def test_store_round_trip_and_v1_dropped(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        area = coordinator.get_area_names()[0]
+        coordinator.add_accuracy_tallies(
+            area, {"2026-10-06": AccuracyTally(samples=7, true_off=70.0)}, T0
+        )
+        await coordinator.async_save_accuracy_history()
+        store = coordinator._accuracy_store  # noqa: SLF001
+        saved = await store.async_load()
+        assert saved[area]["scored_until"] == T0.isoformat()
+        assert saved[area]["days"]["2026-10-06"]["samples"] == 7
+        # The v1 daily rate snapshots can't be pooled: dropped on upgrade.
+        v1 = {area: [{"date": "2026-10-06", "agreement": 0.9}]}
+        assert await store._async_migrate_func(1, v1) == {}  # noqa: SLF001
+
+    def test_batches_split_at_a_shared_tick_neither_overlap_nor_gap(self) -> None:
+        samples = _samples([(0.9, True)] * 7)  # ticks 10 s apart over 60 s
+        truth = [(T0, T0 + timedelta(hours=1))]
+        first = tally_by_day(samples[:4], truth, lambda _ts: "d", score_last=False)
+        second = tally_by_day(samples[3:], truth, lambda _ts: "d", score_last=False)
+        whole = tally_by_day(samples, truth, lambda _ts: "d", score_last=False)
+        first["d"].add(second["d"])
+        assert first["d"].true_on == whole["d"].true_on == pytest.approx(60.0)
+        assert first["d"].samples == whole["d"].samples == 6
+
+    def test_ticks_split_by_day(self) -> None:
+        start = datetime(2026, 10, 6, 23, 59, 40, tzinfo=UTC)
+        samples = [
+            TickSample(
+                timestamp=start + timedelta(seconds=10 * i),
+                probability=0.2,
+                occupied=False,
+            )
+            for i in range(5)
+        ]
+        tallies = tally_by_day(
+            samples, [], lambda ts: ts.date().isoformat(), score_last=False
+        )
+        assert tallies["2026-10-06"].true_off == pytest.approx(20.0)
+        assert tallies["2026-10-07"].true_off == pytest.approx(20.0)
+
+    async def test_diagnostics_pool_the_month(
+        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """The 30-day figure pools seconds; averaging daily rates would not.
+
+        Day 1: 1 h right, 0 h wrong (agreement 1.0). Day 2: 1 h right, 3 h
+        false-on (agreement 0.25). Pooled: 2 h right of 5 h = 0.4, where the
+        mean of the daily rates would claim 0.625.
+        """
+        area_name = coordinator.get_area_names()[0]
+        entry = coordinator.config_entry
+        entry.runtime_data = coordinator
+        day1 = AccuracyTally(samples=360, true_off=3600.0)
+        day1.bin_weight[1], day1.bin_count[1] = 3600.0, 360
+        day2 = AccuracyTally(samples=1440, true_off=3600.0, false_on=10800.0)
+        day2.bin_weight[1], day2.bin_count[1] = 3600.0, 360
+        day2.bin_weight[9], day2.bin_count[9] = 10800.0, 1080
+        coordinator.add_accuracy_tallies(
+            area_name, {"2026-10-06": day1, "2026-10-07": day2}, T0
+        )
+        coordinator.set_accuracy_metrics(area_name, AccuracyMetrics(sample_count=1))
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+        area = next(a for a in result["areas"] if a["area_name"] == area_name)
+        accuracy = area["current"]["accuracy"]
+        assert [h["date"] for h in accuracy["history"]] == ["2026-10-06", "2026-10-07"]
+        month = accuracy["last_30_days"]
+        assert month["days"] == 2
+        assert month["first_day"] == "2026-10-06"
+        assert month["agreement"] == pytest.approx(0.4)
+        json.dumps(result)
+
+
+class TestFade:
+    """Fading out with the label off is the configured hold, not an error."""
+
+    def test_fade_left_unscored(self) -> None:
+        samples = [
+            TickSample(
+                timestamp=T0 + timedelta(seconds=10 * i),
+                probability=0.7,
+                occupied=True,
+                truth=False,
+                fading=i < 6,  # 60 s of fade, then 40 s of phantom "occupied"
+            )
+            for i in range(10)
+        ]
+        metrics = compute_accuracy_metrics(samples, [])
+        assert metrics.fade_seconds == pytest.approx(60.0)
+        assert metrics.false_on_rate == pytest.approx(1.0)
+        # Only the 4 non-fading ticks are scored: 40 s, all false-on.
+        assert sum(b.weight for b in metrics.bins) == pytest.approx(40.0)
+        assert metrics.agreement == pytest.approx(0.0)
+
+    def test_fade_with_the_label_on_is_scored(self) -> None:
+        """Still within the motion timeout (label on), a fading tick counts."""
+        samples = [
+            TickSample(
+                timestamp=T0 + timedelta(seconds=10 * i),
+                probability=0.7,
+                occupied=True,
+                truth=True,
+                fading=True,
+            )
+            for i in range(4)
+        ]
+        metrics = compute_accuracy_metrics(samples, [])
+        assert metrics.fade_seconds == 0.0
+        assert metrics.agreement == pytest.approx(1.0)
 
 
 class TestLiveTruth:

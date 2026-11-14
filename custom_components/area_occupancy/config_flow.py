@@ -93,6 +93,7 @@ from .const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
+    CONF_BUTTON_SENSORS,
     CONF_CLOSED_DOOR_HOLD,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
@@ -147,6 +148,7 @@ from .const import (
     CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_BUTTON,
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_CUSTOM_BINARY,
     CONF_WEIGHT_CUSTOM_NUMERIC,
@@ -186,6 +188,7 @@ from .const import (
     DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_BUTTON,
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_CUSTOM_BINARY,
     DEFAULT_WEIGHT_CUSTOM_NUMERIC,
@@ -356,6 +359,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     """Get lists of entities to include for specific selectors."""
     registry = er.async_get(hass)
     include_appliance_entities = []
+    include_button_entities = []
     include_window_entities = []
     include_door_entities = []
     include_temperature_entities = []
@@ -392,7 +396,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         *door_window_classes,
     ]
 
-    # Check binary_sensor, switch, fan, light for potential appliances
+    # Check binary_sensor, switch, fan, and light for potential appliances.
     domains_to_check = [
         Platform.BINARY_SENSOR,
         Platform.SWITCH,
@@ -409,6 +413,11 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             device_class = state.attributes.get("device_class")
             if device_class not in appliance_excluded_classes:
                 include_appliance_entities.append(eid)
+
+    include_button_entities = [
+        *hass.states.async_entity_ids(Platform.BUTTON),
+        *hass.states.async_entity_ids(Platform.EVENT),
+    ]
 
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
@@ -541,6 +550,24 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
                 include_custom_binary_entities.append(entry.entity_id)
                 include_custom_numeric_entities.append(entry.entity_id)
 
+    # input_boolean helpers are on/off flags that a person or an automation
+    # flips (a "showering" or "do not disturb" toggle), so they are natural
+    # custom-binary inputs. They sit in neither the binary_sensor nor the
+    # sensor domain, so the registry loop above never offered them. Discover
+    # them via hass.states, like locks, so YAML-defined helpers without a
+    # registry entry are offered too. Disabled registry entries are skipped:
+    # a disabled helper no longer updates, so it would never give evidence.
+    disabled_input_booleans = {
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.domain == "input_boolean" and entry.disabled
+    }
+    include_custom_binary_entities.extend(
+        entity_id
+        for entity_id in hass.states.async_entity_ids("input_boolean")
+        if entity_id not in disabled_input_booleans
+    )
+
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
         entry.entity_id
@@ -568,6 +595,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
 
     return {
         "appliance": include_appliance_entities,
+        "button": include_button_entities,
         "window": include_window_entities,
         "door": include_door_entities,
         "lock": include_lock_entities,
@@ -754,6 +782,7 @@ def _create_media_section_schema(
 def _create_appliances_section_schema(
     defaults: dict[str, Any],
     include_entities: list[str],
+    button_entities: list[str],
     state_options: list[SelectOptionDict],
 ) -> vol.Schema:
     """Create schema for the appliances section."""
@@ -780,6 +809,22 @@ def _create_appliances_section_schema(
             vol.Optional(
                 CONF_WEIGHT_APPLIANCE,
                 default=defaults.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_BUTTON_SENSORS, default=defaults.get(CONF_BUTTON_SENSORS, [])
+            ): EntitySelector(
+                EntitySelectorConfig(include_entities=button_entities, multiple=True)
+            ),
+            vol.Optional(
+                CONF_WEIGHT_BUTTON,
+                default=defaults.get(CONF_WEIGHT_BUTTON, DEFAULT_WEIGHT_BUTTON),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -1278,6 +1323,7 @@ def _create_sensors_step_schema(
         "appliances": lambda: _create_appliances_section_schema(
             defaults,
             include_entities["appliance"],
+            include_entities["button"],
             cast("list[SelectOptionDict]", appliance_state_options),
         ),
         "environmental": lambda: _create_environmental_section_schema(
@@ -1435,7 +1481,13 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
 
     # Appliances section
     appliances: dict[str, Any] = {}
-    for key in (CONF_APPLIANCES, CONF_APPLIANCE_ACTIVE_STATES, CONF_WEIGHT_APPLIANCE):
+    for key in (
+        CONF_APPLIANCES,
+        CONF_APPLIANCE_ACTIVE_STATES,
+        CONF_WEIGHT_APPLIANCE,
+        CONF_BUTTON_SENSORS,
+        CONF_WEIGHT_BUTTON,
+    ):
         if key in flat_config:
             appliances[key] = flat_config[key]
     if appliances:
@@ -1667,6 +1719,7 @@ def _build_area_description_placeholders(
         "window_count": _count(CONF_WINDOW_SENSORS),
         "cover_count": _count(CONF_COVER_SENSORS),
         "appliance_count": _count(CONF_APPLIANCES),
+        "button_count": _count(CONF_BUTTON_SENSORS),
         "environmental_count": str(environmental_count),
         "power_count": _count(CONF_POWER_SENSORS),
         "wifi_count": _count(CONF_WIFI_CLIENTS_SENSORS),

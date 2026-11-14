@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import CONF_SLEEP_END, CONF_SLEEP_START
+from custom_components.area_occupancy.const import (
+    BUTTON_PRESS_WINDOW,
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
@@ -495,6 +499,64 @@ class TestEntityPropertiesAndMethods:
             assert entity.evidence is expected_evidence
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_button_state_change_is_short_lived_presence_evidence(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A state-reported button press uses the fixed presence window."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+
+        assert entity.evidence is False
+        pressed_at = dt_util.utcnow()
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+        assert entity.has_new_evidence() is True
+        assert entity.evidence is True
+        assert entity.decay.is_decaying is True
+
+        entity.press_recorded_at = dt_util.utcnow() - timedelta(seconds=6)
+        assert entity.evidence is False
+
+    def test_button_state_change_can_be_ignored_when_area_is_occupied(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An ignored button press must not create presence evidence."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        pressed_at = dt_util.utcnow()
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+
+        assert entity.has_new_evidence(count_button_press=False) is False
+        assert entity.evidence is False
+
+    def test_stale_button_state_change_does_not_start_decay(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A restored old button timestamp must not count as a new press."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        pressed_at = dt_util.utcnow() - timedelta(seconds=BUTTON_PRESS_WINDOW + 1)
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+
+        assert entity.has_new_evidence() is False
+        assert entity.press_recorded_at is None
+        assert entity.evidence is False
+        assert entity.decay.is_decaying is False
 
     def test_has_new_evidence_transitions(
         self, coordinator: AreaOccupancyCoordinator

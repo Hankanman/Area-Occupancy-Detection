@@ -6,6 +6,15 @@ This document explains how the system collects and processes evidence from senso
 
 Evidence collection is the process of determining whether each configured sensor entity currently provides evidence of occupancy. The system tracks entity states, determines activity, and integrates decay to provide a complete picture of current evidence.
 
+### Button Evidence
+
+Buttons are event-based rather than state-based entities. When Home Assistant
+fires a `button.press` service event for a configured button, the coordinator
+records the press time on that entity. The entity reports positive evidence
+until its configured button pulse duration expires. This keeps a button press
+as a short-lived but direct presence signal without treating the button as
+continuous occupancy evidence.
+
 ## Entity State Tracking
 
 Each entity tracks its current state and evidence.
@@ -232,4 +241,3 @@ Entities are accessed via:
 - [Bayesian Calculation Deep Dive](bayesian-calculation.md) - How evidence affects probability
 - [Decay Feature](../features/decay.md) - User-facing decay documentation
 - [Calculation Feature](../features/calculation.md) - User-facing calculation documentation
-

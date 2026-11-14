@@ -226,23 +226,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                             stale_entity_ids.append(entity_obj.entity_id)
         return area, entities, stale_entity_ids, correlations
 
-    def _delete_stale_operation(area_name: str, stale_ids: list[str]) -> None:
-        """Delete stale entities from database.
-
-        SQLite's built-in locking handles concurrency for this operation.
-        """
-        with db.get_session() as session:
-            for entity_id in stale_ids:
-                _LOGGER.info(
-                    "Deleting stale entity %s from database for area %s (not in current config)",
-                    entity_id,
-                    area_name,
-                )
-                session.query(db.Entities).filter_by(
-                    area_name=area_name, entity_id=entity_id
-                ).delete()
-            session.commit()
-
     try:
         # Load data for each configured area
         for area_name in db.coordinator.get_area_names():
@@ -279,7 +262,8 @@ async def load_data(db: AreaOccupancyDB) -> None:
             if entities:
                 for entity_obj in entities:
                     if entity_obj.entity_id in stale_ids:
-                        # Skip stale entities, will be deleted in phase 2
+                        # Not configured, or not set up yet (the sleep
+                        # sensor): delete_stale_entities decides after setup.
                         continue
 
                     # Try to get existing entity from coordinator
@@ -303,12 +287,6 @@ async def load_data(db: AreaOccupancyDB) -> None:
                             _apply_correlation_data(new_entity, corr_data)
                         area_data.entities.add_entity(new_entity)
 
-            # Phase 2: Only lock if cleanup needed (rare)
-            if stale_ids:
-                await db.hass.async_add_executor_job(
-                    _delete_stale_operation, area_name, stale_ids
-                )
-
     except (
         sa.exc.SQLAlchemyError,
         HomeAssistantError,
@@ -318,6 +296,20 @@ async def load_data(db: AreaOccupancyDB) -> None:
     ) as err:
         _LOGGER.error("Failed to load area occupancy data: %s", err)
         raise
+
+
+async def delete_stale_entities(db: AreaOccupancyDB) -> None:
+    """Delete sensors no longer in their area, once the platforms are set up.
+
+    An area's own sleep sensor only joins the area when HA adds it, so before
+    that it looks removed. Cleaning up earlier deleted its row at every
+    restart, which left its intervals out of the occupied-time query and
+    dropped the area's prior until the row was saved again.
+    """
+    db.area_entities_ready = True
+    cleaned = await db.hass.async_add_executor_job(_cleanup_orphaned_entities, db)
+    if cleaned > 0:
+        _LOGGER.info("Cleaned up %d orphaned entities after setup", cleaned)
 
 
 def save_area_data(db: AreaOccupancyDB, area_name: str | None = None) -> None:
@@ -565,9 +557,12 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
                     raise
                 time.sleep(delay)
 
-        # Clean up any orphaned entities after saving current ones
+        # Clean up any orphaned entities after saving current ones. Not
+        # before the platforms are set up: see delete_stale_entities.
         try:
-            cleaned_count = _cleanup_orphaned_entities(db)
+            cleaned_count = (
+                _cleanup_orphaned_entities(db) if db.area_entities_ready else 0
+            )
             if cleaned_count > 0:
                 _LOGGER.info(
                     "Cleaned up %d orphaned entities after saving", cleaned_count
@@ -696,6 +691,8 @@ def _cleanup_orphaned_entities(db: AreaOccupancyDB) -> int:
     try:
         for area_name in db.coordinator.get_area_names():
             area_data = db.coordinator.get_area(area_name)
+            if area_data is None:
+                continue
             result = _cleanup_area_orphans(db, area_name, area_data)
             total_cleaned += result
 
