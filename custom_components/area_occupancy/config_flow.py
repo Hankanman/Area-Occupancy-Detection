@@ -109,6 +109,12 @@ from .const import (
     CONF_DOOR_ACTIVE_STATE,
     CONF_DOOR_SENSORS,
     CONF_EXCLUDE_FROM_ALL_AREAS,
+    CONF_GLOBAL_ACTIVITY_ENTITY,
+    CONF_GLOBAL_GUEST_MODE_ENTITY,
+    CONF_GLOBAL_NETWORK_ENTITY,
+    CONF_GLOBAL_POWER_ENTITY,
+    CONF_GLOBAL_WATER_ENTITY,
+    CONF_GLOBAL_WEATHER_ENTITY,
     CONF_HEALTH_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_ILLUMINANCE_SENSORS,
@@ -1899,6 +1905,20 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): EntitySelector(
                 EntitySelectorConfig(domain=list(AWAY_MODE_ENTITY_DOMAINS))
             ),
+            **{
+                vol.Optional(
+                    key,
+                    description={"suggested_value": defaults.get(key)},
+                ): EntitySelector()
+                for key in (
+                    CONF_GLOBAL_WEATHER_ENTITY,
+                    CONF_GLOBAL_POWER_ENTITY,
+                    CONF_GLOBAL_WATER_ENTITY,
+                    CONF_GLOBAL_NETWORK_ENTITY,
+                    CONF_GLOBAL_GUEST_MODE_ENTITY,
+                    CONF_GLOBAL_ACTIVITY_ENTITY,
+                )
+            },
         }
     )
 
@@ -3261,6 +3281,16 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             # cannot remove a key, so the old value would come back.
             if CONF_AWAY_MODE_ENTITY not in user_input:
                 new_options.pop(CONF_AWAY_MODE_ENTITY, None)
+            for key in (
+                CONF_GLOBAL_WEATHER_ENTITY,
+                CONF_GLOBAL_POWER_ENTITY,
+                CONF_GLOBAL_WATER_ENTITY,
+                CONF_GLOBAL_NETWORK_ENTITY,
+                CONF_GLOBAL_GUEST_MODE_ENTITY,
+                CONF_GLOBAL_ACTIVITY_ENTITY,
+            ):
+                if key not in user_input:
+                    new_options.pop(key, None)
 
             return self.async_create_entry(title="", data=new_options)
 
@@ -3279,6 +3309,24 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
                 CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
             ),
             CONF_AWAY_MODE_ENTITY: self.config_entry.options.get(CONF_AWAY_MODE_ENTITY),
+            CONF_GLOBAL_WEATHER_ENTITY: self.config_entry.options.get(
+                CONF_GLOBAL_WEATHER_ENTITY
+            ),
+            CONF_GLOBAL_POWER_ENTITY: self.config_entry.options.get(
+                CONF_GLOBAL_POWER_ENTITY
+            ),
+            CONF_GLOBAL_WATER_ENTITY: self.config_entry.options.get(
+                CONF_GLOBAL_WATER_ENTITY
+            ),
+            CONF_GLOBAL_NETWORK_ENTITY: self.config_entry.options.get(
+                CONF_GLOBAL_NETWORK_ENTITY
+            ),
+            CONF_GLOBAL_GUEST_MODE_ENTITY: self.config_entry.options.get(
+                CONF_GLOBAL_GUEST_MODE_ENTITY
+            ),
+            CONF_GLOBAL_ACTIVITY_ENTITY: self.config_entry.options.get(
+                CONF_GLOBAL_ACTIVITY_ENTITY
+            ),
         }
 
         return self.async_show_form(

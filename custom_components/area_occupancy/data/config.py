@@ -130,6 +130,7 @@ from ..const import (
     DEFAULT_WEIGHT_WIFI_CLIENTS,
     DEFAULT_WEIGHT_WINDOW,
     DEFAULT_WINDOW_ACTIVE_STATE,
+    GLOBAL_CONTEXT_ENTITY_OPTIONS,
     HA_RECORDER_DAYS,
 )
 from .purpose import get_default_decay_half_life
@@ -235,6 +236,16 @@ class IntegrationConfig:
         if not isinstance(entity_id, str):
             return None
         return entity_id.strip() or None
+
+    @property
+    def global_context_entities(self) -> dict[str, str]:
+        """Return configured optional house-wide context entities."""
+        result: dict[str, str] = {}
+        for role, option_key in GLOBAL_CONTEXT_ENTITY_OPTIONS.items():
+            entity_id = self.config_entry.options.get(option_key)
+            if isinstance(entity_id, str) and entity_id.strip():
+                result[role] = entity_id.strip()
+        return result
 
     @property
     def sensor_precision(self) -> int:
