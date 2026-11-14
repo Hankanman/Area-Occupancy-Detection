@@ -21,11 +21,12 @@ jobs:
         run: |
           set -euo pipefail
           MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('custom_components/area_occupancy_dev/manifest.json'))['version'])")
-          if [ "$MANIFEST_VERSION" != "$TAG" ]; then
-            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release tag ($TAG)"
+          RELEASE_VERSION="${TAG#v}"
+          if [ "$MANIFEST_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release version ($RELEASE_VERSION)"
             exit 1
           fi
-          echo "Version $MANIFEST_VERSION matches tag $TAG"
+          echo "Version $MANIFEST_VERSION matches release tag $TAG"
 
       - name: Build release zip
         run: |
