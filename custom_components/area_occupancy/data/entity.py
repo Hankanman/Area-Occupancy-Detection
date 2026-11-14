@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..const import (
-    BUTTON_PRESS_WINDOW,
+    DEFAULT_BUTTON_PULSE_DURATION,
     MAX_WEIGHT,
     MIN_WEIGHT,
     SLEEP_PRESENCE_HALF_LIFE,
@@ -159,6 +159,7 @@ class Entity:
     # The state the last ``has_new_evidence`` call saw, to spot those moves.
     previous_state: str | float | bool | None = None
     press_recorded_at: datetime | None = None
+    button_pulse_duration: int = DEFAULT_BUTTON_PULSE_DURATION
     # Seconds this sensor still counts in full after it turns off before it
     # starts to decay: the area's motion timeout for a PIR-like motion
     # sensor (set by the coordinator from the live labeller's call), else 0.
@@ -504,7 +505,7 @@ class Entity:
             if self.press_recorded_at is None:
                 return False
             age = (dt_util.utcnow() - self.press_recorded_at).total_seconds()
-            return 0 <= age <= BUTTON_PRESS_WINDOW
+            return 0 <= age <= self.button_pulse_duration
 
         if self.state is None:
             return None
@@ -528,7 +529,7 @@ class Entity:
         self.press_recorded_at = to_utc(pressed_at)
         self.last_updated = self.press_recorded_at
         self.previous_evidence = False
-        self.decay.start_decay(delay=BUTTON_PRESS_WINDOW)
+        self.decay.start_decay(delay=self.button_pulse_duration)
 
     @property
     def active(self) -> bool:
@@ -755,7 +756,7 @@ class Entity:
                     pressed_at is not None
                     and 0
                     <= (dt_util.utcnow() - to_utc(pressed_at)).total_seconds()
-                    <= BUTTON_PRESS_WINDOW
+                    <= self.button_pulse_duration
                 ):
                     self.record_press(pressed_at)
                     press_recorded = True
@@ -1093,6 +1094,11 @@ class EntityFactory:
             last_updated=last_updated,
             previous_evidence=previous_evidence,
             analysis_error=analysis_error,
+            button_pulse_duration=getattr(
+                self.config.sensors,
+                "button_pulse_duration",
+                DEFAULT_BUTTON_PULSE_DURATION,
+            ),
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
@@ -1217,6 +1223,11 @@ class EntityFactory:
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
             analysis_error=analysis_error,
+            button_pulse_duration=getattr(
+                self.config.sensors,
+                "button_pulse_duration",
+                DEFAULT_BUTTON_PULSE_DURATION,
+            ),
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:
@@ -1396,6 +1407,7 @@ class EntityManager:
             new.stuck_since = old.stuck_since
             new.active_state_changed_at = old.active_state_changed_at
             new.previous_state = old.previous_state
+            new.press_recorded_at = old.press_recorded_at
         previous.clear()
         _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
 

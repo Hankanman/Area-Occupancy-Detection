@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from custom_components.area_occupancy.const import (
-    BUTTON_PRESS_WINDOW,
     CONF_SLEEP_END,
     CONF_SLEEP_START,
+    DEFAULT_BUTTON_PULSE_DURATION,
 )
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
@@ -503,7 +503,7 @@ class TestEntityPropertiesAndMethods:
     def test_button_state_change_is_short_lived_presence_evidence(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:
-        """A state-reported button press uses the fixed presence window."""
+        """A state-reported button press uses the configured presence window."""
         entity = create_test_entity(
             entity_type=EntityType(InputType.BUTTON),
             coordinator=coordinator,
@@ -519,7 +519,9 @@ class TestEntityPropertiesAndMethods:
         assert entity.evidence is True
         assert entity.decay.is_decaying is True
 
-        entity.press_recorded_at = dt_util.utcnow() - timedelta(seconds=6)
+        entity.press_recorded_at = dt_util.utcnow() - timedelta(
+            seconds=DEFAULT_BUTTON_PULSE_DURATION + 1
+        )
         assert entity.evidence is False
 
     def test_button_state_change_can_be_ignored_when_area_is_occupied(
@@ -547,7 +549,9 @@ class TestEntityPropertiesAndMethods:
             entity_type=EntityType(InputType.BUTTON),
             coordinator=coordinator,
         )
-        pressed_at = dt_util.utcnow() - timedelta(seconds=BUTTON_PRESS_WINDOW + 1)
+        pressed_at = dt_util.utcnow() - timedelta(
+            seconds=DEFAULT_BUTTON_PULSE_DURATION + 1
+        )
         _set_states_get(
             coordinator.hass,
             lambda _: Mock(state=pressed_at.isoformat()),

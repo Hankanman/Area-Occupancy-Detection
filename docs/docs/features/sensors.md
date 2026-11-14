@@ -12,7 +12,7 @@ You will be prompted to select entities for various categories. You only need to
 | Window Sensors               | `binary_sensor`                     | Relevant window sensors.                                             | `Open`               |
 | Media Devices                | `media_player`                      | Relevant media players.                                              | `playing`, `paused`  |
 | Appliances                   | `switch`, `binary_sensor`, `sensor` | Relevant switch or sensor entities representing appliances.          | `on`, `standby`      |
-| Presence Buttons             | `button`                           | Buttons whose press is treated as a short, direct presence signal.    | 60-second pulse       |
+| Presence Buttons             | `button`                           | Buttons whose press is treated as a short, direct presence signal.    | 5-second pulse        |
 | Illuminance Sensors          | `sensor`                            | Illuminance sensors measuring light levels (lux)                     | `30.0 - 100000.0`    |
 | Temperature Sensors          | `sensor`                            | Temperature sensors measuring temperature                            | `18.0 - 24.0`        |
 | Humidity Sensors             | `sensor`                            | Humidity sensors measuring humidity                                  | `70.0 - 100.0`       |
@@ -39,7 +39,7 @@ You will be prompted to select entities for various categories. You only need to
 !!! note
     A button press is recorded when Home Assistant calls `button.press` for
     the configured entity. It contributes presence evidence for the configured
-    button pulse duration (5 seconds to 10 minutes, default 60 seconds), then
+    button pulse duration (5 seconds to 10 minutes, default 5 seconds), then
     expires automatically. A button is therefore a strong indication that
     someone was present recently, not a permanent occupancy state.
 
