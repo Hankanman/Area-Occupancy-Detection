@@ -376,27 +376,43 @@ async def _run_shadow_metrics(coordinator: AreaOccupancyCoordinator) -> None:
     from .metrics import (  # noqa: PLC0415
         ACCURACY_MIN_CLASS_SECONDS,
         compute_accuracy_metrics,
+        tally_by_day,
     )
 
     now = dt_util.utcnow()
     window_start = now - timedelta(hours=ACCURACY_WINDOW_HOURS)
     for area_name in coordinator.areas:
-        samples = [
-            s
-            for s in coordinator.accuracy_samples_for(area_name)
-            if s.timestamp >= window_start
-        ]
+        buffered = coordinator.accuracy_samples_for(area_name)
+        samples = [s for s in buffered if s.timestamp >= window_start]
         if not samples:
             continue
+        # Ticks not yet in the daily tallies: those since the last batch
+        # ended (it ends on a tick it doesn't score, which starts this one).
+        scored_until = coordinator.accuracy_scored_until(area_name)
+        unscored = [
+            s for s in buffered if scored_until is None or s.timestamp >= scored_until
+        ]
+        since = min(window_start, unscored[0].timestamp) if unscored else window_start
         intervals = await coordinator.hass.async_add_executor_job(
-            lambda name=area_name: coordinator.db.get_occupied_intervals(
-                area_name=name, start_time=window_start
+            lambda name=area_name, since=since: coordinator.db.get_occupied_intervals(
+                area_name=name, start_time=since
             )
         )
         metrics = compute_accuracy_metrics(
             samples, intervals, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS
         )
         coordinator.set_accuracy_metrics(area_name, metrics)
+        if len(unscored) >= 2:
+            coordinator.add_accuracy_tallies(
+                area_name,
+                tally_by_day(
+                    unscored,
+                    intervals,
+                    lambda ts: to_local(ts).date().isoformat(),
+                    score_last=False,
+                ),
+                scored_until=unscored[-1].timestamp,
+            )
 
         # Learned-fusion shadow update (#501): one gradient pass over the
         # same window's fusion ticks against the SAME ground-truth

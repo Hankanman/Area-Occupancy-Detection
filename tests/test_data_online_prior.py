@@ -216,6 +216,7 @@ class TestCoordinatorShadowWiring:
             evidence=True,
             weight=0,
             type=SimpleNamespace(input_type=input_type),
+            decay=SimpleNamespace(is_decaying=False),
         )
 
         # way to stub one evidence-bearing entity without a full config.

@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ACCURACY_SUMMARY_DAYS,
     CONF_VERSION,
     CONF_VERSION_MINOR,
     DEVICE_SW_VERSION,
@@ -28,7 +29,13 @@ from .const import (
     ONLINE_PRIOR_DIFF_TOLERANCE,
     TRANSITION_DIFF_TOLERANCE,
 )
-from .data.metrics import metrics_to_diagnostics
+from .data.metrics import (
+    ACCURACY_MIN_CLASS_SECONDS,
+    AccuracyTally,
+    accuracy_summary,
+    metrics_from_tally,
+    metrics_to_diagnostics,
+)
 from .db import queries
 
 if TYPE_CHECKING:
@@ -186,6 +193,41 @@ def _health_snapshot(area: Area) -> dict[str, Any]:
     }
 
 
+def _accuracy_days(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> dict[str, Any]:
+    """An area's accuracy by day (last two weeks) and over the last month.
+
+    Both come from the persisted tallies, so unlike the 24-hour window
+    they survive restarts. The month figure pools the seconds, not the
+    daily rates.
+    """
+    days = coordinator.accuracy_days_for(area_name)
+    history = [
+        {
+            "date": day,
+            **accuracy_summary(
+                metrics_from_tally(tally, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS)
+            ),
+        }
+        for day, tally in list(days.items())[-14:]
+    ]
+    recent = list(days.items())[-ACCURACY_SUMMARY_DAYS:]
+    pooled = AccuracyTally()
+    for _day, tally in recent:
+        pooled.add(tally)
+    return {
+        "history": history,
+        "last_30_days": {
+            "days": len(recent),
+            "first_day": recent[0][0] if recent else None,
+            **accuracy_summary(
+                metrics_from_tally(pooled, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS)
+            ),
+        },
+    }
+
+
 def _adjacency_snapshot(
     coordinator: AreaOccupancyCoordinator, area_name: str
 ) -> dict[str, Any]:
@@ -274,10 +316,7 @@ def _area_snapshot(
         accuracy = coordinator.accuracy_metrics_for(area_name)
         if accuracy is not None:
             current["accuracy"] = metrics_to_diagnostics(accuracy)
-            # Daily summaries survive restarts; the last two weeks here.
-            current["accuracy"]["history"] = coordinator.accuracy_history_for(
-                area_name
-            )[-14:]
+            current["accuracy"].update(_accuracy_days(coordinator, area_name))
         estimator = coordinator.online_prior_for(area_name)
         if estimator is not None:
             now = dt_util.utcnow()

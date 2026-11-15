@@ -80,7 +80,7 @@ sequenceDiagram
     participant Entity as Entity Object
     participant Area as Area
     participant Prior as Prior
-    participant Bayes as Sigmoid Calc
+    participant Calc as Sigmoid Calc
     participant Output as Output Sensors
 
     Sensor->>HA: State Change Event
@@ -101,11 +101,11 @@ sequenceDiagram
         Prior->>Prior: Get Time Prior
         Prior->>Prior: combine_priors()
         Prior-->>Area: Combined Prior
-        Area->>Bayes: presence_probability() / environmental_confidence()
-        Bayes->>Entity: Get Evidence & Likelihoods
-        Entity-->>Bayes: Evidence Data
-        Bayes->>Bayes: Combine in Logit Space (sigmoid_probability)
-        Bayes-->>Area: Final Probability
+        Area->>Calc: presence_probability() / environmental_confidence()
+        Calc->>Entity: Get Evidence & Likelihoods
+        Entity-->>Calc: Evidence Data
+        Calc->>Calc: Combine in Logit Space (sigmoid_probability)
+        Calc-->>Area: Final Probability
         Area->>Output: Update Probability Sensor
         Area->>Output: Update Status Binary
         Area->>Output: Update Other Sensors
@@ -348,5 +348,5 @@ flowchart TD
 - [Global Prior Flow](global-prior-flow.md) - Complete global prior calculation flow
 - [Time Prior Flow](time-prior-flow.md) - Complete time prior feature documentation
 - [Likelihood Calculation Deep Dive](likelihood-calculation.md) - Likelihood learning details
-- [Bayesian Calculation Deep Dive](bayesian-calculation.md) - Calculation details
+- [Probability Calculation Deep Dive](bayesian-calculation.md) - Calculation details
 - [Entity Evidence Collection](entity-evidence.md) - Evidence collection details

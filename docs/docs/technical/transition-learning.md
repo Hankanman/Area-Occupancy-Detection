@@ -1,6 +1,6 @@
 # Transition Learning
 
-Technical reference for the adjacent-areas feature (discussion [#431](https://github.com/Hankanman/Area-Occupancy-Detection/discussions/431), PR [#454](https://github.com/Hankanman/Area-Occupancy-Detection/pull/454)). Covers how transitions between adjacent areas are detected, stored, and looked up, and how the result feeds into the Bayesian probability and decay calculations. For the user-facing behaviour, see [Adjacent Areas](../features/adjacent-areas.md).
+Technical reference for the adjacent-areas feature (discussion [#431](https://github.com/Hankanman/Area-Occupancy-Detection/discussions/431), PR [#454](https://github.com/Hankanman/Area-Occupancy-Detection/pull/454)). Covers how transitions between adjacent areas are detected, stored, and looked up, and how the result feeds into the probability and decay calculations. For the user-facing behaviour, see [Adjacent Areas](../features/adjacent-areas.md).
 
 ## Storage: the `AreaTransitions` table
 
@@ -69,7 +69,7 @@ A departure is an area's ground-truth sensors (motion, media, sleep) going quiet
 
 ### Boost — `compute_adjacency_boost()` (`data/adjacency.py`)
 
-Applied in `Area.probability()`, **after** the sensor-only Bayesian probability and any activity boost, via `apply_logit_boost()` (`clamp → logit → add → sigmoid → clamp`, in logit space):
+Applied in `Area.probability()`, **after** the sensor-only probability and any activity boost, via `apply_logit_boost()` (`clamp → logit → add → sigmoid → clamp`, in logit space):
 
 ```
 logit_contribution = gain × max(0, logit(P(target_area | trajectory, hour)))

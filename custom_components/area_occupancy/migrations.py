@@ -9,7 +9,10 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from awesomeversion import AwesomeVersion
+
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import (
     area_registry as ar,
@@ -28,6 +31,7 @@ from .const import (
     DEFAULT_MOTION_TIMEOUT,
     DOMAIN,
     LEGACY_DEFAULT_MOTION_TIMEOUT,
+    MIN_HA_VERSION,
     SUBENTRY_TYPE_AREA,
 )
 from .db import DB_NAME
@@ -661,6 +665,21 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     Returns:
         True if migration succeeded, False otherwise
     """
+    # On an older Home Assistant the migration fails part way, after it has
+    # already rewritten some entries (#623). Refuse before touching anything,
+    # so updating Home Assistant and restarting lets it run cleanly.
+    if config_entry.version < CONF_VERSION and AwesomeVersion(
+        HA_VERSION
+    ) < AwesomeVersion(MIN_HA_VERSION):
+        _LOGGER.error(
+            "Area Occupancy Detection needs Home Assistant %s or newer, this is "
+            "%s. Your configuration has not been changed: update Home "
+            "Assistant and restart to finish the upgrade",
+            MIN_HA_VERSION,
+            HA_VERSION,
+        )
+        return False
+
     # Acquire async lock to prevent concurrent migration attempts
     async with _migration_lock:
         # Handle v13 breaking change: reset database if needed for older versions
