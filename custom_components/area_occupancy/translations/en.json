@@ -153,13 +153,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -340,13 +342,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -678,13 +682,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -865,13 +871,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -1398,13 +1406,15 @@
                                 "appliances": "Appliances",
                                 "appliance_active_states": "Appliance Active States",
                                 "button_sensors": "Presence Buttons and Event Entities",
+                                "button_pulse_duration": "Button Pulse Duration",
                                 "weight_appliance": "Appliance Weight",
                                 "weight_button": "Button Weight"
                             },
                             "data_description": {
                                 "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                                 "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                                "weight_button": "The weight given to button presses in the occupancy calculation."
+                                "weight_button": "The weight given to button presses in the occupancy calculation.",
+                                "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                             }
                         },
                         "environmental": {
