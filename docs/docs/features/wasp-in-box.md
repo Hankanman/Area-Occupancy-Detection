@@ -34,9 +34,11 @@ in, such as a bathroom. It needs at least one door sensor in the area.
 
 While it is on:
 
-- The area is **held** when motion is seen while all its doors are closed, or
-  when the doors close within the Wasp in Box motion timeout (5 minutes by
-  default) of motion: someone went in and shut the door.
+- The area is **held** when a fresh motion rising edge occurs while the door is
+  open, or when a door was opened for less than 3 seconds while the area was
+  already occupied. A longer opening with only a trailing PIR signal enters a
+  safety mode instead of creating a ghost hold; the PIR must clear and detect
+  fresh motion again, unless a presence/mmWave sensor confirms occupancy.
 - While held, the area's probability is kept at **75%** at least (or just above
   its threshold, if that is higher), so it reads as occupied even when motion
   loses someone keeping still. The sensors' own evidence still counts on top.
@@ -59,8 +61,10 @@ Differences from Wasp in Box:
 - Doors are read as open or closed directly, whatever their active state is
   set to.
 
-Existing areas follow their Wasp in Box setting. New areas with the bathroom
-purpose start with the hold on.
+Existing areas follow their Wasp in Box setting. During migration, the legacy
+Wasp-in-Box motion timeout remains 300 seconds. New areas use the area motion
+timeout default of 90 seconds for PIR history; the legacy Wasp setting is kept
+separate for compatibility.
 
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 

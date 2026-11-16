@@ -64,6 +64,14 @@ class DoorHoldState:
     # Whether motion was recent when the door opened. A PIR's configured
     # off-delay must not turn a departure into a new hold.
     motion_was_recent_when_opened: bool = False
+    door_opened_at: datetime | None = None
+    door_open_duration: float | None = None
+    motion_rising_edge_while_open: bool = False
+    was_occupied_before_open: bool = False
+    awaiting_pir_clearance: bool = False
+    pir_cleared_after_open: bool = False
+    motion_on_previous: bool | None = None
+    motion_rising_at: datetime | None = None
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -73,6 +81,18 @@ class DoorHoldState:
             "last_motion": self.last_motion.isoformat() if self.last_motion else None,
             "doors_open": self.doors_open,
             "motion_was_recent_when_opened": self.motion_was_recent_when_opened,
+            "door_opened_at": (
+                self.door_opened_at.isoformat() if self.door_opened_at else None
+            ),
+            "door_open_duration": self.door_open_duration,
+            "motion_rising_edge_while_open": self.motion_rising_edge_while_open,
+            "was_occupied_before_open": self.was_occupied_before_open,
+            "awaiting_pir_clearance": self.awaiting_pir_clearance,
+            "pir_cleared_after_open": self.pir_cleared_after_open,
+            "motion_on_previous": self.motion_on_previous,
+            "motion_rising_at": (
+                self.motion_rising_at.isoformat() if self.motion_rising_at else None
+            ),
         }
 
     @classmethod
@@ -96,6 +116,26 @@ class DoorHoldState:
                         data.get("motion_was_on_when_opened", False),
                     )
                 ),
+                door_opened_at=_ts("door_opened_at"),
+                door_open_duration=(
+                    float(data["door_open_duration"])
+                    if data.get("door_open_duration") is not None
+                    else None
+                ),
+                motion_rising_edge_while_open=bool(
+                    data.get("motion_rising_edge_while_open", False)
+                ),
+                was_occupied_before_open=bool(
+                    data.get("was_occupied_before_open", False)
+                ),
+                awaiting_pir_clearance=bool(data.get("awaiting_pir_clearance", False)),
+                pir_cleared_after_open=bool(data.get("pir_cleared_after_open", False)),
+                motion_on_previous=(
+                    None
+                    if data.get("motion_on_previous") is None
+                    else bool(data["motion_on_previous"])
+                ),
+                motion_rising_at=_ts("motion_rising_at"),
             )
         except (AttributeError, TypeError, ValueError):
             return cls()
@@ -122,6 +162,8 @@ class DoorHold:
         motion_window: float,
         max_hold: float,
         fade_half_life: float,
+        was_occupied_before_open: bool = False,
+        presence_on: bool = False,
     ) -> None:
         """Update the hold from the area's doors and motion at ``now``.
 
@@ -134,37 +176,76 @@ class DoorHold:
             max_hold: Seconds after the last motion the hold lasts; 0 for
                 no limit (as Wasp in Box's maximum duration).
             fade_half_life: Half-life of the fade after ``max_hold``.
+            was_occupied_before_open: Whether the area was occupied before
+                the door opened.
+            presence_on: Whether a presence or mmWave sensor currently
+                confirms someone is still in the area.
         """
         now = ensure_utc_datetime(now)
         state = self.state
         just_closed = state.doors_open is True and not doors_open
-        just_opened = state.doors_open is False and doors_open
+        just_opened = state.doors_open is not True and doors_open
+        motion_rising = motion_on and state.motion_on_previous is not True
+        if motion_rising:
+            state.motion_rising_at = now
         recent_motion_before_observation = (
             state.last_motion is not None
             and (now - state.last_motion).total_seconds() <= motion_window
         )
         if just_opened:
+            state.door_opened_at = now
+            state.door_open_duration = None
+            state.motion_rising_edge_while_open = motion_rising
+            state.was_occupied_before_open = was_occupied_before_open or self.held
+            state.awaiting_pir_clearance = False
+            state.pir_cleared_after_open = False
             state.motion_was_recent_when_opened = (
                 motion_on or recent_motion_before_observation
             )
+        elif doors_open and motion_rising:
+            state.motion_rising_edge_while_open = True
         state.doors_open = doors_open
         if motion_on:
             state.last_motion = now
         if doors_open:
             state.held_from = None
             state.fade_from = None
+            state.motion_on_previous = motion_on
             return
-        motion_was_recent_when_opened = state.motion_was_recent_when_opened
-        recent_motion = (
-            state.last_motion is not None
-            and (now - state.last_motion).total_seconds() <= motion_window
-        )
+        if state.awaiting_pir_clearance and not motion_on:
+            state.pir_cleared_after_open = True
         hold_ended = False
-        if not motion_was_recent_when_opened and (
-            motion_on or (just_closed and recent_motion)
-        ):
+        should_arm = False
+        if just_closed:
+            state.door_open_duration = (
+                (now - state.door_opened_at).total_seconds()
+                if state.door_opened_at is not None
+                else None
+            )
+            short_occupied_cycle = (
+                state.door_open_duration is not None
+                and state.door_open_duration < 3.0
+                and state.was_occupied_before_open
+            )
+            if state.motion_rising_edge_while_open or short_occupied_cycle:
+                edge_is_recent = (
+                    state.motion_rising_at is not None
+                    and (now - state.motion_rising_at).total_seconds() <= motion_window
+                )
+                should_arm = short_occupied_cycle or edge_is_recent
+            elif presence_on:
+                should_arm = True
+            elif motion_on:
+                state.awaiting_pir_clearance = True
+                state.pir_cleared_after_open = False
+        elif state.awaiting_pir_clearance:
+            should_arm = (state.pir_cleared_after_open and motion_rising) or presence_on
+        elif motion_on:
+            should_arm = True
+        if should_arm:
             state.held_from = now
             state.fade_from = None
+            state.awaiting_pir_clearance = False
         elif (
             state.held_from is not None
             and max_hold > 0
@@ -176,12 +257,17 @@ class DoorHold:
             hold_ended = True
         if just_closed or hold_ended:
             state.motion_was_recent_when_opened = False
+            state.motion_rising_edge_while_open = False
+            state.was_occupied_before_open = False
+            state.door_opened_at = None
+            state.pir_cleared_after_open = False
         if (
             state.fade_from is not None
             and (now - state.fade_from).total_seconds()
             >= FADE_HALF_LIVES * fade_half_life
         ):
             state.fade_from = None
+        state.motion_on_previous = motion_on
 
     def floor_logit(
         self,

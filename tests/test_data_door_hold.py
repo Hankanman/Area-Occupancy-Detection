@@ -27,6 +27,8 @@ def _observe(
     doors_open: bool,
     motion_on: bool,
     motion_window: float = WINDOW,
+    was_occupied_before_open: bool = False,
+    presence_on: bool = False,
 ) -> None:
     hold.observe(
         T0 + timedelta(seconds=seconds),
@@ -35,7 +37,46 @@ def _observe(
         motion_window=motion_window,
         max_hold=MAX_HOLD,
         fade_half_life=HALF_LIFE,
+        was_occupied_before_open=was_occupied_before_open,
+        presence_on=presence_on,
     )
+
+
+class TestContextualDoorCycles:
+    """Door holds must distinguish entry, departure, and brief openings."""
+
+    def test_departure_does_not_arm_after_ninety_seconds_of_pir_tail(self) -> None:
+        hold = DoorHold()
+        _observe(hold, 0, doors_open=False, motion_on=True)
+        _observe(hold, 1, doors_open=True, motion_on=True)
+        _observe(hold, 10, doors_open=False, motion_on=True)
+        for seconds in range(20, 93, 10):
+            _observe(hold, seconds, doors_open=False, motion_on=True)
+        assert not hold.held
+        assert hold.state.awaiting_pir_clearance
+
+    def test_short_bathroom_opening_keeps_occupied_room_held(self) -> None:
+        hold = DoorHold()
+        _observe(hold, 0, doors_open=False, motion_on=True)
+        _observe(hold, 10, doors_open=True, motion_on=True)
+        _observe(
+            hold,
+            12.5,
+            doors_open=False,
+            motion_on=True,
+            was_occupied_before_open=True,
+        )
+        for seconds in range(22, 93, 10):
+            _observe(hold, seconds, doors_open=False, motion_on=False)
+        assert hold.held
+
+    def test_fresh_motion_during_open_arms_on_close(self) -> None:
+        hold = DoorHold()
+        _observe(hold, 0, doors_open=False, motion_on=False)
+        _observe(hold, 10, doors_open=True, motion_on=False)
+        _observe(hold, 20, doors_open=True, motion_on=True)
+        _observe(hold, 21, doors_open=False, motion_on=False)
+        assert hold.held
 
 
 def _floor(hold: DoorHold, seconds: float, *, prior: float = 0.028) -> float | None:

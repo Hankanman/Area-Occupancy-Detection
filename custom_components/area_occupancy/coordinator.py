@@ -1107,7 +1107,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._door_holds.pop(area_name, None)
             return
         decay = area.config.decay
-        self._door_holds.setdefault(area_name, DoorHold()).observe(
+        door_hold = self._door_holds.setdefault(area_name, DoorHold())
+        door_hold.observe(
             now,
             doors_open=any(str(door.state) in ("on", "open") for door in doors),
             motion_on=any(
@@ -1117,6 +1118,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and getattr(entity, "is_stuck", False) is not True
                 for entity in area.entities.entities.values()
             ),
+            presence_on=any(
+                entity.evidence is True
+                and entity.type.input_type == InputType.MOTION
+                and entity.ha_device_class == "presence"
+                and getattr(entity, "is_stuck", False) is not True
+                for entity in area.entities.entities.values()
+            ),
+            was_occupied_before_open=area.occupied() or door_hold.held,
             # Use the area's motion timeout: it represents the configured
             # sensor off-delay. Wasp's timeout is its separate entry
             # verification window and must not control door-hold arming.
