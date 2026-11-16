@@ -18,6 +18,8 @@ class ManualOccupancyFeedback:
     occupied: bool
     recorded_at: datetime
     automatic_probability: float | None
+    automatic_occupied: bool | None = None
+    sensor_states: dict[str, bool] | None = None
 
     def __post_init__(self) -> None:
         """Validate and normalize feedback created directly or restored."""
@@ -37,6 +39,19 @@ class ManualOccupancyFeedback:
 
         if not isinstance(self.occupied, bool):
             raise TypeError("occupied must be a boolean")
+
+        if self.automatic_occupied is not None and not isinstance(
+            self.automatic_occupied, bool
+        ):
+            raise TypeError("automatic_occupied must be a boolean or None")
+        if self.sensor_states is not None and (
+            not isinstance(self.sensor_states, dict)
+            or any(
+                not isinstance(entity_id, str) or not isinstance(active, bool)
+                for entity_id, active in self.sensor_states.items()
+            )
+        ):
+            raise TypeError("sensor_states must map entity IDs to booleans or None")
 
         recorded_at = self.recorded_at
         if not isinstance(recorded_at, datetime):
@@ -81,6 +96,8 @@ class ManualOccupancyFeedback:
             occupied = data["occupied"]
             raw_timestamp = data["recorded_at"]
             probability = data.get("automatic_probability")
+            automatic_occupied = data.get("automatic_occupied")
+            sensor_states = data.get("sensor_states")
 
             if (
                 not isinstance(feedback_id, str)
@@ -109,6 +126,18 @@ class ManualOccupancyFeedback:
                 or not 0.0 <= probability <= 1.0
             ):
                 return None
+            if automatic_occupied is not None and not isinstance(
+                automatic_occupied, bool
+            ):
+                return None
+            if sensor_states is not None and (
+                not isinstance(sensor_states, dict)
+                or any(
+                    not isinstance(entity_id, str) or not isinstance(active, bool)
+                    for entity_id, active in sensor_states.items()
+                )
+            ):
+                return None
 
             return cls(
                 feedback_id=feedback_id,
@@ -118,6 +147,10 @@ class ManualOccupancyFeedback:
                 automatic_probability=(
                     float(probability) if probability is not None else None
                 ),
+                automatic_occupied=automatic_occupied,
+                sensor_states=dict(sensor_states)
+                if sensor_states is not None
+                else None,
             )
 
         except (KeyError, TypeError, ValueError, OverflowError):
@@ -131,4 +164,6 @@ class ManualOccupancyFeedback:
             "occupied": self.occupied,
             "recorded_at": self.recorded_at.isoformat(),
             "automatic_probability": self.automatic_probability,
+            "automatic_occupied": self.automatic_occupied,
+            "sensor_states": self.sensor_states,
         }

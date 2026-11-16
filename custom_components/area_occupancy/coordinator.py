@@ -89,6 +89,7 @@ from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
 from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
+from .data.manual_calibration import ManualCalibrationShadow, ManualCalibrationState
 from .data.manual_override import ManualOccupancyFeedback
 from .data.metrics import AccuracyMetrics, AccuracyTally, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
@@ -160,14 +161,8 @@ class OnlinePriorStore(Store[dict[str, dict]]):
         return old_data
 
 
-class ManualFeedbackStore(Store[dict[str, list[dict[str, object]]]]):
-    """Store for feedback records, discarding the old override shape."""
-
-    async def _async_migrate_func(
-        self, old_version: int, old_data: dict[str, object]
-    ) -> dict[str, list[dict[str, object]]]:
-        """Do not restore old state-changing overrides as reference data."""
-        return {"feedback": []}
+class ManualFeedbackStore(Store[dict[str, object]]):
+    """Store for point-in-time manual occupancy references."""
 
 
 class AccuracyStore(Store[dict[str, dict]]):
@@ -349,7 +344,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"{FUSION_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         self._manual_feedback: list[ManualOccupancyFeedback] = []
-        self._manual_feedback_store: ManualFeedbackStore = ManualFeedbackStore(
+        self._manual_calibration: dict[str, ManualCalibrationShadow] = {}
+        self._manual_feedback_store = ManualFeedbackStore(
             hass,
             MANUAL_OCCUPANCY_STORE_VERSION,
             f"{MANUAL_OCCUPANCY_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -524,12 +520,53 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     def manual_feedback_attributes(self, area_name: str) -> dict[str, object]:
-        """Expose the latest reference without changing the live state."""
-        feedback = self.latest_manual_feedback(area_name)
-        if feedback is None:
+        """Expose references and their agreement metrics without changing state."""
+        area = self.get_area(area_name)
+        if area is None or area.config.area_id is None:
             return {"manual_reference_available": False}
+        area_feedback = [
+            feedback
+            for feedback in self._manual_feedback
+            if feedback.area_id == area.config.area_id
+        ]
+        scored_feedback = [
+            feedback
+            for feedback in area_feedback
+            if feedback.automatic_occupied is not None
+        ]
+        agreement_count = sum(
+            feedback.occupied == feedback.automatic_occupied
+            for feedback in scored_feedback
+        )
+        feedback = self.latest_manual_feedback(area_name)
+        calibration = self._manual_calibration.get(area_name)
+        calibrated_probability = (
+            calibration.calibrated_probability(feedback.automatic_probability)
+            if feedback is not None and calibration is not None
+            else None
+        )
+        sensor_trust = self._manual_sensor_trust(area_feedback)
+        if feedback is None:
+            return {
+                "manual_reference_available": False,
+                "manual_reference_count": 0,
+                "manual_reference_scored_count": 0,
+                "manual_reference_agreement_count": 0,
+                "manual_reference_agreement_rate": None,
+                "manual_calibration_samples": (
+                    calibration.state.samples if calibration else 0
+                ),
+                "manual_calibration_shadow_probability": None,
+                "manual_sensor_trust_shadow": sensor_trust,
+            }
         return {
             "manual_reference_available": True,
+            "manual_reference_count": len(area_feedback),
+            "manual_reference_scored_count": len(scored_feedback),
+            "manual_reference_agreement_count": agreement_count,
+            "manual_reference_agreement_rate": (
+                agreement_count / len(scored_feedback) if scored_feedback else None
+            ),
             "manual_reference_state": "occupied" if feedback.occupied else "unoccupied",
             "manual_reference_recorded_at": feedback.recorded_at.isoformat(),
             "manual_reference_automatic_probability": (
@@ -537,7 +574,56 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if feedback.automatic_probability is not None
                 else None
             ),
+            "manual_reference_automatic_occupied": feedback.automatic_occupied,
+            "manual_calibration_samples": calibration.state.samples
+            if calibration
+            else 0,
+            "manual_calibration_shadow_slope": (
+                calibration.state.slope if calibration else 1.0
+            ),
+            "manual_calibration_shadow_intercept": (
+                calibration.state.intercept if calibration else 0.0
+            ),
+            "manual_calibration_shadow_probability": calibrated_probability,
+            "manual_sensor_trust_shadow": sensor_trust,
         }
+
+    @staticmethod
+    def _manual_sensor_trust(
+        feedback: list[ManualOccupancyFeedback],
+    ) -> dict[str, dict[str, float | int]]:
+        """Return balanced sensor agreement scores from manual references."""
+        sensor_rows: dict[str, list[int]] = {}
+        for row in feedback:
+            if row.sensor_states is None:
+                continue
+            for entity_id, active in row.sensor_states.items():
+                counts = sensor_rows.setdefault(entity_id, [0, 0, 0, 0])
+                if active and row.occupied:
+                    counts[0] += 1
+                elif active:
+                    counts[1] += 1
+                elif row.occupied:
+                    counts[2] += 1
+                else:
+                    counts[3] += 1
+        result: dict[str, dict[str, float | int]] = {}
+        for entity_id, (
+            true_positive,
+            false_positive,
+            false_negative,
+            true_negative,
+        ) in sensor_rows.items():
+            sensitivity = (true_positive + 1) / (true_positive + false_negative + 2)
+            specificity = (true_negative + 1) / (true_negative + false_positive + 2)
+            result[entity_id] = {
+                "samples": true_positive
+                + false_positive
+                + false_negative
+                + true_negative,
+                "balanced_accuracy": (sensitivity + specificity) / 2,
+            }
+        return result
 
     async def async_record_manual_feedback(
         self, area_id: str, occupied: bool
@@ -572,13 +658,36 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             occupied=occupied,
             recorded_at=now,
             automatic_probability=automatic_probability,
+            automatic_occupied=(
+                automatic_probability >= self.areas[area_name].threshold()
+                if automatic_probability is not None
+                else None
+            ),
+            sensor_states={
+                entity_id: entity.active
+                for entity_id, entity in self.areas[area_name].entities.entities.items()
+            },
         )
         previous_feedback = list(self._manual_feedback)
+        previous_calibration = self._manual_calibration.get(area_name)
+        previous_calibration_state = (
+            ManualCalibrationState.from_dict(previous_calibration.state.to_dict())
+            if previous_calibration is not None
+            else None
+        )
+        calibration = self._manual_calibration.setdefault(
+            area_name, ManualCalibrationShadow()
+        )
         self._manual_feedback.append(feedback)
+        calibration.observe(automatic_probability, occupied)
         try:
             await self._save_manual_feedback()
         except (HomeAssistantError, OSError, TypeError, ValueError) as err:
             self._manual_feedback = previous_feedback
+            if previous_calibration is None:
+                self._manual_calibration.pop(area_name, None)
+            elif previous_calibration_state is not None:
+                previous_calibration.state = previous_calibration_state
             raise HomeAssistantError("Could not persist occupancy feedback") from err
         return {
             "area_id": area_id,
@@ -598,7 +707,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if feedback.recorded_at >= cutoff and feedback.area_id in known_ids
         ][-MANUAL_OCCUPANCY_MAX_RECORDS:]
         await self._manual_feedback_store.async_save(
-            {"feedback": [feedback.to_dict() for feedback in self._manual_feedback]}
+            {
+                "feedback": [feedback.to_dict() for feedback in self._manual_feedback],
+                "calibration": {
+                    area_name: shadow.state.to_dict()
+                    for area_name, shadow in self._manual_calibration.items()
+                },
+            }
         )
 
     async def _async_load_manual_feedback(self) -> None:
@@ -618,6 +733,48 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ]
         else:
             self._manual_feedback = []
+        cutoff = dt_util.utcnow() - timedelta(days=MANUAL_OCCUPANCY_RETENTION_DAYS)
+        known_ids = {area.config.area_id for area in self.areas.values()}
+        self._manual_feedback = [
+            feedback
+            for feedback in self._manual_feedback
+            if feedback.recorded_at >= cutoff and feedback.area_id in known_ids
+        ][-MANUAL_OCCUPANCY_MAX_RECORDS:]
+        raw_calibration = (
+            stored_feedback.get("calibration", {})
+            if isinstance(stored_feedback, dict)
+            else {}
+        )
+        self._manual_calibration = (
+            {
+                area_name: ManualCalibrationShadow(
+                    ManualCalibrationState.from_dict(data)
+                )
+                for area_name, data in raw_calibration.items()
+                if isinstance(area_name, str)
+            }
+            if isinstance(raw_calibration, dict)
+            else {}
+        )
+        saved_calibration_areas = set(self._manual_calibration)
+        for feedback in self._manual_feedback:
+            area_name = next(
+                (
+                    name
+                    for name, area in self.areas.items()
+                    if area.config.area_id == feedback.area_id
+                ),
+                None,
+            )
+            if (
+                area_name is not None
+                and area_name not in saved_calibration_areas
+                and feedback.automatic_probability is not None
+            ):
+                calibration = self._manual_calibration.setdefault(
+                    area_name, ManualCalibrationShadow()
+                )
+                calibration.observe(feedback.automatic_probability, feedback.occupied)
         await self._save_manual_feedback()
 
     def find_area_for_entity(self, entity_id: str) -> str | None:

@@ -83,7 +83,16 @@ class TestAreaOccupancyCoordinator:
 
         assert coordinator._manual_feedback == [valid]
         coordinator._manual_feedback_store.async_save.assert_awaited_once_with(
-            {"feedback": [valid.to_dict()]}
+            {
+                "feedback": [valid.to_dict()],
+                "calibration": {
+                    "Testing": {
+                        "slope": pytest.approx(1.0083177661667193),
+                        "intercept": pytest.approx(0.006),
+                        "samples": 1,
+                    }
+                },
+            }
         )
 
     async def test_manual_feedback_save_retains_latest_1000_records(
@@ -112,6 +121,39 @@ class TestAreaOccupancyCoordinator:
         coordinator._manual_feedback_store.async_save.assert_awaited_once()
         saved = coordinator._manual_feedback_store.async_save.await_args.args[0]
         assert len(saved["feedback"]) == 1000
+
+    def test_manual_feedback_attributes_include_agreement_metrics(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Expose human-vs-automatic agreement separately from live accuracy."""
+        area = coordinator.get_area()
+        assert area is not None
+        area_id = area.config.area_id
+        assert area_id is not None
+        now = dt_util.utcnow()
+        coordinator._manual_feedback = [
+            ManualOccupancyFeedback(
+                "match", area_id, True, now, 0.9, True, {"sensor.a": True}
+            ),
+            ManualOccupancyFeedback(
+                "miss", area_id, False, now, 0.8, True, {"sensor.a": True}
+            ),
+            ManualOccupancyFeedback(
+                "unscored", area_id, True, now, None, None, {"sensor.a": False}
+            ),
+        ]
+
+        attributes = coordinator.manual_feedback_attributes(area.area_name)
+
+        assert attributes["manual_reference_count"] == 3
+        assert attributes["manual_reference_scored_count"] == 2
+        assert attributes["manual_reference_agreement_count"] == 1
+        assert attributes["manual_reference_agreement_rate"] == 0.5
+        assert attributes["manual_reference_automatic_occupied"] is None
+        assert attributes["manual_sensor_trust_shadow"]["sensor.a"]["samples"] == 3
+        assert attributes["manual_sensor_trust_shadow"]["sensor.a"][
+            "balanced_accuracy"
+        ] == pytest.approx(0.4166666667)
 
     def test_initialization(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock

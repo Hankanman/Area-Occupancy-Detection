@@ -14,12 +14,25 @@ Call `area_occupancy.set_manual_occupancy` with:
 The service stores the UTC timestamp, area ID, confirmed state, and the
 automatic probability captured at that moment when available. It does not
 change the occupancy binary sensor, probability sensor, recorder data, priors,
-or learned likelihoods. The latest reference is exposed separately through
-`manual_reference_*` attributes.
+or learned likelihoods. The latest reference is exposed separately through `manual_reference_*`
+attributes. The same attributes include the number of references with a
+captured automatic classification, the number of agreements, and the
+agreement rate for that area. Once 20 usable references exist, a
+calibration-only shadow probability is also exposed. It does not replace the
+live probability.
 
-These references are currently kept independent from the existing daily
-accuracy tallies. They provide persisted human-vs-automatic observations for
-later evaluation without changing the live detector or its learning inputs.
+These references are kept independent from the existing daily accuracy
+tallies. They provide persisted human-vs-automatic observations for evaluating
+the detector, priors, sensor evidence, and shadow models without changing the
+live detector or its learning inputs. References without an automatic
+probability are retained but are not included in calibration or the agreement
+rate.
+
+The feedback also snapshots each configured entity's active state. This
+produces per-sensor balanced-accuracy values in
+`manual_sensor_trust_shadow`, with Laplace smoothing. These values are
+diagnostic candidates for future sensor-weight learning; they do not change
+sensor weights yet.
 
 ## Retention and failure behavior
 

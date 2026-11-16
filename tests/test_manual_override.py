@@ -1,6 +1,6 @@
 """Tests for point-in-time manual occupancy references."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
@@ -106,13 +106,16 @@ def test_invalid_probability_is_ignored() -> None:
     assert ManualOccupancyFeedback.from_dict(data) is None
 
 
-def test_old_expiry_shape_is_ignored() -> None:
-    """Old state-changing override data is not reinterpreted as feedback."""
-    now = dt_util.utcnow()
-    data = {
-        "occupied": True,
-        "set_at": (now - timedelta(hours=1)).isoformat(),
-        "expires_at": now.isoformat(),
-    }
+def test_automatic_occupied_round_trips() -> None:
+    """The classification used for agreement scoring is persisted."""
+    feedback = ManualOccupancyFeedback(
+        "id",
+        "living_room",
+        True,
+        dt_util.utcnow(),
+        0.75,
+        True,
+        {"binary_sensor.motion": True},
+    )
 
-    assert ManualOccupancyFeedback.from_dict(data) is None
+    assert ManualOccupancyFeedback.from_dict(feedback.to_dict()) == feedback

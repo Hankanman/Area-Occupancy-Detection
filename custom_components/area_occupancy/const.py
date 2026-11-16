@@ -145,8 +145,8 @@ CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
 
 # Manual occupancy references are stored in HA's storage helper, never in the
 # learned probability database.
-MANUAL_OCCUPANCY_STORE_KEY_PREFIX: Final = f"{DOMAIN}_manual_occupancy"
-MANUAL_OCCUPANCY_STORE_VERSION: Final = 2
+MANUAL_OCCUPANCY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.manual_occupancy"
+MANUAL_OCCUPANCY_STORE_VERSION: Final = 1
 MANUAL_OCCUPANCY_RETENTION_DAYS: Final = 365
 MANUAL_OCCUPANCY_MAX_RECORDS: Final = 1000
 MANUAL_OCCUPANCY_DEDUPE_SECONDS: Final = 5
