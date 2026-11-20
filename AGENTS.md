@@ -4,11 +4,22 @@ This file provides guidance to coding agents (Claude Code, Cursor, Codex, and ot
 
 ## Project Overview
 
-Area Occupancy Detection is a Home Assistant custom integration that uses Bayesian probability to intelligently detect room occupancy. It combines multiple sensor inputs (motion, media devices, appliances, environmental sensors) with learned historical patterns to provide probabilistic occupancy detection.
+Area Occupancy Detection is a Home Assistant custom integration that intelligently detects room occupancy. It starts from a learned prior for the room and the hour, then adds each active sensor's weighted evidence in log-odds (a logistic model, not Bayes' theorem), so it combines multiple sensor inputs (motion, media devices, appliances, environmental sensors) with learned historical patterns to provide probabilistic occupancy detection.
 
 The integration learns from your patterns over time, uses decay functions to handle stationary occupancy, and provides both binary occupancy status and probability sensors that automations can use.
 
 ## Development Commands
+
+### Tools: prefer the file tools over the terminal
+
+Use the editor's own tools for files and keep the terminal for running programs. Shell edits are opaque to review, and every unmatched shell command stops to ask the user for approval.
+
+- **Read** files with the Read tool (use its offset and limit for a range), not `cat`, `head`, `tail` or `sed -n`.
+- **Search** with the Grep and Glob tools where you have them, not `grep`, `find` or `rg` in the terminal.
+- **Change** files with Edit (an exact replacement) or Write (a new file), not `sed -i`, `awk`, `echo >`, or `cat <<EOF` and `python - <<EOF` scripts. A script is only for a genuinely bulk mechanical change across many files, and say so when you use one.
+- **Run** things in the terminal: `uv run ...`, `scripts/...`, `git` and `gh`.
+- **One plain command per call.** Don't `cd` (the shell already starts at the repo root and a `cd` persists), don't chain with `&&` or `;`, and don't pipe through `tail` or `grep` to trim output. Allow-lists match a call as a whole, so a compound command prompts even when each part is allowed. Use the tool's own flags instead (for example `uv run basedpyright --level error`), or read the full output.
+- **Scratch files** (diffs, JSON dumps, drafts of comments or release notes) go in the session's scratchpad directory, never in the repo.
 
 ### Environment Setup
 
