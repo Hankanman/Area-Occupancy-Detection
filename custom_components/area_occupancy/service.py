@@ -252,6 +252,8 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         all_areas_data = {}
         for area_name_item in coordinator.get_area_names():
             area = coordinator.get_area(area_name_item)
+            if area is None:
+                continue
             all_areas_data[area_name_item] = _build_analysis_data(
                 hass, area, area_name_item
             )

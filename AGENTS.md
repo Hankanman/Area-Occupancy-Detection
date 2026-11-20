@@ -25,7 +25,7 @@ scripts/bootstrap
 ### Code Quality
 
 ```bash
-# Lint and format code (runs ruff format and ruff check --fix)
+# Lint, format and type-check (ruff format, ruff check --fix, basedpyright)
 scripts/lint
 
 # Manual linting
@@ -252,6 +252,7 @@ Pre-commit runs ruff formatting and linting automatically. If it fails:
 ### Code Style
 
 - Use ruff for formatting and linting (matches Home Assistant core standards)
+- basedpyright type-checks `custom_components/area_occupancy` (config in `pyproject.toml`, recommended mode, `db/` excluded because it goes in 2026.12.1). Findings that existed when it was added are in `.basedpyright/baseline.json`, so only new ones fail. Fix some and shrink the baseline with `uv run basedpyright --writebaseline`; don't add suppressions to hide new findings. `Any` is allowed, as in Home Assistant's own APIs.
 - Full type annotations required
 - The dev/test environment runs Python 3.14 (`.python-version`, required by the pinned `homeassistant` test dependency), but shipped integration code must stay importable on Python 3.13 — the runtime of older supported HA installs. `[tool.ruff] target-version = "py313"` guards this; do not raise it without raising the minimum supported HA version
 - Google-style docstrings for public APIs

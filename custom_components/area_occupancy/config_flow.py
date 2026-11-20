@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import voluptuous as vol
 
@@ -1914,12 +1914,30 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-class BaseOccupancyFlow:
+if TYPE_CHECKING:
+    from homeassistant.data_entry_flow import FlowHandler
+
+    # The mixin below is only ever used next to one of Home Assistant's flow
+    # classes. Giving the type checker that base lets it see ``hass``,
+    # ``async_show_form`` and the rest; at run time the base stays ``object``.
+    _FlowBase = FlowHandler[Any, Any, Any]
+else:
+    _FlowBase = object
+
+
+class BaseOccupancyFlow(_FlowBase):
     """Base class for config and options flow.
 
     This class provides shared validation logic used by both the config flow
     and options flow. It ensures consistent validation across both flows.
     """
+
+    if TYPE_CHECKING:
+
+        async def async_step_area_action(
+            self, user_input: dict[str, Any] | None = None
+        ) -> Any:
+            """The hub menu, defined by the flows that use this mixin."""
 
     def _validate_duplicate_area_id(
         self,

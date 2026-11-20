@@ -364,6 +364,8 @@ class Entity:
             if state_obj and hasattr(state_obj, "name"):
                 return state_obj.name
             return None
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
@@ -442,6 +444,8 @@ class Entity:
                 return None
             # Handle both object with .state attribute and direct value
             return state_obj.state if hasattr(state_obj, "state") else state_obj
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.state if ha_state is not None else None
 

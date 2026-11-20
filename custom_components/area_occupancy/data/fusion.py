@@ -54,6 +54,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import pairwise
+from typing import Any
 
 from ..const import FUSION_L2, FUSION_LEARNING_RATE, FUSION_MIN_SAMPLES, MAX_WEIGHT
 from ..time_utils import to_local
@@ -121,7 +122,7 @@ class CalibrationTally:
         self.false_off += other.false_off
         self.true_off += other.true_off
 
-    def summary(self) -> dict:
+    def summary(self) -> dict[str, Any]:
         """ECE, agreement and the two error rates (None where unknown)."""
         total = sum(self.bin_weight)
         if total <= 0:
@@ -145,12 +146,12 @@ class CalibrationTally:
             else None,
         }
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize (JSON-safe)."""
         return vars(self).copy()
 
     @classmethod
-    def from_dict(cls, data: dict) -> CalibrationTally:
+    def from_dict(cls, data: dict[str, Any]) -> CalibrationTally:
         """Restore; raises on malformed data (callers fall back to empty)."""
         tally = cls(**{k: data[k] for k in data if k in cls.__dataclass_fields__})
         for name in ("bin_weight", "bin_probability", "bin_hits"):
@@ -204,7 +205,7 @@ class FusionState:
     # probability and the one with learned weights scored that day.
     score_days: dict[str, dict[str, CalibrationTally]] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "weights": dict(self.weights),
@@ -221,7 +222,7 @@ class FusionState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> FusionState:
+    def from_dict(cls, data: dict[str, Any]) -> FusionState:
         """Restore from storage; malformed payloads fall back to empty."""
         try:
             return cls(
@@ -413,7 +414,7 @@ class FusionLearner:
             del self.state.score_days[day]
         return len(ticks)
 
-    def calibration(self) -> dict | None:
+    def calibration(self) -> dict[str, Any] | None:
         """Live vs learned scores, pooled over the latest days (diagnostics)."""
         days = sorted(self.state.score_days)[-SCORE_WINDOW_DAYS:]
         if not days:
@@ -470,14 +471,14 @@ class FusionLearner:
         }
         return sorted(dropped)
 
-    def snapshot(self, defaults: dict[str, float]) -> dict:
+    def snapshot(self, defaults: dict[str, float]) -> dict[str, Any]:
         """Return the JSON-safe diagnostics block for this area.
 
         Below the sample gate only the counters are reported — a weight
         learned from an hour of data is noise wearing a number's
         clothes.
         """
-        block: dict = {
+        block: dict[str, Any] = {
             "shadow_mode": True,
             "engaged": False,
             "samples": self.state.samples,

@@ -20,6 +20,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import math
+from typing import Any
 
 from ..const import (
     ADJACENCY_RECENCY_HALF_LIFE_DAYS,
@@ -50,9 +51,9 @@ class TransitionShadowState:
     occupied: dict[str, bool] = field(default_factory=dict)
     recent_ends: list[tuple[str, datetime]] = field(default_factory=list)
     # Daily worst gap to the database's next-room shares, oldest first.
-    diff_history: list[dict] = field(default_factory=list)
+    diff_history: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "counts": {
@@ -66,7 +67,7 @@ class TransitionShadowState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> TransitionShadowState:
+    def from_dict(cls, data: dict[str, Any]) -> TransitionShadowState:
         """Restore from storage; malformed payloads fall back to empty."""
         try:
             return cls(
@@ -189,7 +190,7 @@ class TransitionShadow:
                 shares[chain] = {t: n / total for t, n in totals.items()}
         return shares
 
-    def compare(self, db_counts: Counts) -> dict:
+    def compare(self, db_counts: Counts) -> dict[str, Any]:
         """Compare next-room shares with the database's.
 
         Returns:
@@ -198,10 +199,10 @@ class TransitionShadow:
         """
         live = self._shares(self.state.counts)
         db = self._shares(db_counts)
-        chains: dict[str, dict] = {}
+        chains: dict[str, dict[str, Any]] = {}
         diffs: list[float] = []
         for chain in sorted(set(live) | set(db)):
-            row: dict = {"live": live.get(chain), "db": db.get(chain)}
+            row: dict[str, Any] = {"live": live.get(chain), "db": db.get(chain)}
             if chain in live and chain in db:
                 gap = max(
                     abs(live[chain].get(t, 0.0) - db[chain].get(t, 0.0))

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceInfo
 
 from .const import (
     DOMAIN,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def assign_device_to_ha_area(
     hass: HomeAssistant,
-    device_info: DeviceInfo | None,
+    device_info: DeviceInfo | ChildDeviceInfo | None,
     area_id: str | None,
     config_entry_id: str,
 ) -> None:
@@ -527,7 +527,9 @@ def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
     return coordinator
 
 
-def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str | None:
+def extract_device_identifier_from_device_info(
+    device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any],
+) -> str | None:
     """Extract device identifier from DeviceInfo identifiers.
 
     Args:
@@ -551,7 +553,7 @@ def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str |
 
 def generate_entity_unique_id(
     entry_id: str,
-    device_info: DeviceInfo | dict[str, Any] | None,
+    device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any] | None,
     entity_name: str,
 ) -> str:
     """Generate consistent unique_id for platform entities.
