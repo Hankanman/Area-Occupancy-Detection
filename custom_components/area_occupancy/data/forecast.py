@@ -315,7 +315,7 @@ def build_aggregate_time_priors(
         zone_slot = (
             empirical.time_priors.get((day, slot)) if empirical is not None else None
         )
-        if zone_slot is not None:
+        if empirical is not None and zone_slot is not None:
             baseline = forecast_prior(
                 empirical.global_prior,
                 zone_slot,
@@ -339,7 +339,7 @@ def build_aggregate_time_priors(
         slots[key] = round(
             max(MIN_PRIOR, min(MAX_PRIOR, live)), FORECAST_RESPONSE_PRECISION
         )
-        if zone_slot is not None:
+        if empirical is not None and zone_slot is not None:
             slots_raw[key] = round(zone_slot, FORECAST_RESPONSE_PRECISION)
             data_points[key] = empirical.data_points.get((day, slot), 0)
         else:

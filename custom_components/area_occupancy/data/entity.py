@@ -364,6 +364,8 @@ class Entity:
             if state_obj and hasattr(state_obj, "name"):
                 return state_obj.name
             return None
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
@@ -442,6 +444,8 @@ class Entity:
                 return None
             # Handle both object with .state attribute and direct value
             return state_obj.state if hasattr(state_obj, "state") else state_obj
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.state if ha_state is not None else None
 
@@ -725,8 +729,10 @@ class Entity:
 
     def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
+        # A missing start defaults to now, as in ``Decay.__init__``: a ``None``
+        # here would break the age maths the next time the decay is read.
         self.decay.decay_start = (
-            to_utc(decay_start) if decay_start is not None else decay_start
+            to_utc(decay_start) if decay_start is not None else dt_util.utcnow()
         )
         self.decay.is_decaying = is_decaying
 
