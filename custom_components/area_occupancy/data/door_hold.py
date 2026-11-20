@@ -7,15 +7,26 @@ they can't have left. This is what Wasp in Box did, as a virtual motion
 sensor; here it is a floor on the area's probability instead, so it isn't
 learned from as if it were real motion and isn't capped by a weight.
 
-The rules are Wasp in Box's, so areas migrated from it behave as before:
+A closed door says nothing about *who* is behind it, so the hold only arms
+on evidence that someone is there, and prefers a lost hold to a false one:
 
-* **Arm** while every door is closed and motion is on, or when the doors
-  close within the motion window of motion (someone went in and shut the
-  door behind them).
+* **Arm** when the door closes after motion started *while it was open*
+  (someone came in and shut it behind them: the PIR only sees them once they
+  are inside), or while a stronger current signal confirms someone is in the
+  room (an mmWave presence sensor, media, an appliance, power draw...). Motion
+  while the door is already shut arms it as well.
+* **Do not arm** when the PIR was already on before the door opened and is
+  merely still on after it closes: that is as likely to be someone leaving,
+  trailing off over the sensor's off-delay. It arms later only if the PIR
+  clears and then fires again (someone is moving about inside) or a stronger
+  signal confirms.
 * **Release** as soon as any door opens.
 * **Expire** ``max_hold`` after the last motion seen behind the closed
-  door (0: never, as Wasp in Box's maximum duration); the floor then fades towards the prior over the area's half-life
-  instead of snapping off.
+  door (0: never, as Wasp in Box's maximum duration); the floor then fades
+  towards the prior over the area's half-life instead of snapping off.
+
+``motion_window`` is the area's motion timeout: how recent the motion that
+started while the door was open must be when the door closes.
 
 While held the probability is floored at ``GROUND_TRUTH_ACTIVE_FLOOR``
 (75%, the motion floor), or just above the area's threshold if that is
@@ -33,7 +44,25 @@ from datetime import datetime, timedelta
 from ..const import GROUND_TRUTH_ACTIVE_FLOOR
 from ..time_utils import ensure_utc_datetime
 from ..utils import clamp_probability, logit
+from .entity_type import InputType
 
+# Input types that, while active, say more about someone being in the room
+# right now than a PIR that has gone quiet: they can confirm a hold on their
+# own. Environmental readings (humidity, temperature, CO2...) are left out:
+# they lag, so they can't tell someone leaving a steamy room from someone
+# staying in it. An mmWave presence sensor is a motion-type entity with the
+# ``presence`` device class and is added alongside these by the coordinator.
+DOOR_HOLD_CONFIRMING_TYPES: frozenset[InputType] = frozenset(
+    {
+        InputType.MEDIA,
+        InputType.APPLIANCE,
+        InputType.POWER,
+        InputType.WIFI_CLIENTS,
+        InputType.BUTTON,
+        InputType.CUSTOM_BINARY,
+        InputType.CUSTOM_NUMERIC,
+    }
+)
 # Logits above the threshold the hold sits at when the threshold is above
 # the 75% floor (so floating point can't land it a hair under).
 HOLD_THRESHOLD_MARGIN = 0.05
@@ -58,41 +87,29 @@ class DoorHoldState:
     held_from: datetime | None = None
     # Set while fading after ``max_hold``: when the fade began.
     fade_from: datetime | None = None
-    last_motion: datetime | None = None
     # The doors' state at the previous observation (None: not seen yet).
     doors_open: bool | None = None
-    # Whether motion was recent when the door opened. A PIR's configured
-    # off-delay must not turn a departure into a new hold.
-    motion_was_recent_when_opened: bool = False
-    door_opened_at: datetime | None = None
-    door_open_duration: float | None = None
-    motion_rising_edge_while_open: bool = False
-    was_occupied_before_open: bool = False
-    awaiting_pir_clearance: bool = False
-    pir_cleared_after_open: bool = False
+    # Whether motion was on at the previous observation (for rising edges).
     motion_on_previous: bool | None = None
+    # When motion last started while a door was open (cleared on opening and
+    # on closing): someone arriving through the door.
     motion_rising_at: datetime | None = None
+    # After a door closed with the PIR already on and no arrival seen:
+    # ``"trailing"`` while it is still on, ``"cleared"`` once it has gone off
+    # (fresh motion then arms). None otherwise.
+    awaiting: str | None = None
 
     def to_dict(self) -> dict:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "held_from": self.held_from.isoformat() if self.held_from else None,
             "fade_from": self.fade_from.isoformat() if self.fade_from else None,
-            "last_motion": self.last_motion.isoformat() if self.last_motion else None,
             "doors_open": self.doors_open,
-            "motion_was_recent_when_opened": self.motion_was_recent_when_opened,
-            "door_opened_at": (
-                self.door_opened_at.isoformat() if self.door_opened_at else None
-            ),
-            "door_open_duration": self.door_open_duration,
-            "motion_rising_edge_while_open": self.motion_rising_edge_while_open,
-            "was_occupied_before_open": self.was_occupied_before_open,
-            "awaiting_pir_clearance": self.awaiting_pir_clearance,
-            "pir_cleared_after_open": self.pir_cleared_after_open,
             "motion_on_previous": self.motion_on_previous,
             "motion_rising_at": (
                 self.motion_rising_at.isoformat() if self.motion_rising_at else None
             ),
+            "awaiting": self.awaiting,
         }
 
     @classmethod
@@ -105,37 +122,15 @@ class DoorHoldState:
 
         try:
             doors_open = data.get("doors_open")
+            motion_on = data.get("motion_on_previous")
+            awaiting = data.get("awaiting")
             return cls(
                 held_from=_ts("held_from"),
                 fade_from=_ts("fade_from"),
-                last_motion=_ts("last_motion"),
                 doors_open=None if doors_open is None else bool(doors_open),
-                motion_was_recent_when_opened=bool(
-                    data.get(
-                        "motion_was_recent_when_opened",
-                        data.get("motion_was_on_when_opened", False),
-                    )
-                ),
-                door_opened_at=_ts("door_opened_at"),
-                door_open_duration=(
-                    float(data["door_open_duration"])
-                    if data.get("door_open_duration") is not None
-                    else None
-                ),
-                motion_rising_edge_while_open=bool(
-                    data.get("motion_rising_edge_while_open", False)
-                ),
-                was_occupied_before_open=bool(
-                    data.get("was_occupied_before_open", False)
-                ),
-                awaiting_pir_clearance=bool(data.get("awaiting_pir_clearance", False)),
-                pir_cleared_after_open=bool(data.get("pir_cleared_after_open", False)),
-                motion_on_previous=(
-                    None
-                    if data.get("motion_on_previous") is None
-                    else bool(data["motion_on_previous"])
-                ),
+                motion_on_previous=None if motion_on is None else bool(motion_on),
                 motion_rising_at=_ts("motion_rising_at"),
+                awaiting=awaiting if awaiting in ("trailing", "cleared") else None,
             )
         except (AttributeError, TypeError, ValueError):
             return cls()
@@ -162,7 +157,6 @@ class DoorHold:
         motion_window: float,
         max_hold: float,
         fade_half_life: float,
-        was_occupied_before_open: bool = False,
         presence_on: bool = False,
     ) -> None:
         """Update the hold from the area's doors and motion at ``now``.
@@ -171,81 +165,57 @@ class DoorHold:
             now: The observation time.
             doors_open: Whether any of the area's doors is open.
             motion_on: Whether any of its motion sensors is active.
-            motion_window: Configured motion off-delay in seconds. Closing
-                the doors within this window after motion still arms the hold.
+            motion_window: The area's motion timeout in seconds: motion that
+                started while the door was open counts as an arrival if it
+                began within this long of the door closing.
             max_hold: Seconds after the last motion the hold lasts; 0 for
                 no limit (as Wasp in Box's maximum duration).
             fade_half_life: Half-life of the fade after ``max_hold``.
-            was_occupied_before_open: Whether the area was occupied before
-                the door opened.
-            presence_on: Whether a presence or mmWave sensor currently
-                confirms someone is still in the area.
+            presence_on: Whether a stronger current signal than the PIR (an
+                mmWave presence sensor, media, an appliance, power...)
+                confirms someone is in the area.
         """
         now = ensure_utc_datetime(now)
         state = self.state
         just_closed = state.doors_open is True and not doors_open
         just_opened = state.doors_open is not True and doors_open
         motion_rising = motion_on and state.motion_on_previous is not True
-        if motion_rising:
-            state.motion_rising_at = now
-        recent_motion_before_observation = (
-            state.last_motion is not None
-            and (now - state.last_motion).total_seconds() <= motion_window
-        )
-        if just_opened:
-            state.door_opened_at = now
-            state.door_open_duration = None
-            state.motion_rising_edge_while_open = motion_rising
-            state.was_occupied_before_open = was_occupied_before_open or self.held
-            state.awaiting_pir_clearance = False
-            state.pir_cleared_after_open = False
-            state.motion_was_recent_when_opened = (
-                motion_on or recent_motion_before_observation
-            )
-        elif doors_open and motion_rising:
-            state.motion_rising_edge_while_open = True
         state.doors_open = doors_open
-        if motion_on:
-            state.last_motion = now
+        state.motion_on_previous = motion_on
+        if just_opened:
+            state.motion_rising_at = None
+            state.awaiting = None
         if doors_open:
+            if motion_rising:
+                state.motion_rising_at = now
             state.held_from = None
             state.fade_from = None
-            state.motion_on_previous = motion_on
             return
-        if state.awaiting_pir_clearance and not motion_on:
-            state.pir_cleared_after_open = True
-        hold_ended = False
-        should_arm = False
+        arm = False
         if just_closed:
-            state.door_open_duration = (
-                (now - state.door_opened_at).total_seconds()
-                if state.door_opened_at is not None
-                else None
+            arrived = (
+                state.motion_rising_at is not None
+                and (now - state.motion_rising_at).total_seconds() <= motion_window
             )
-            short_occupied_cycle = (
-                state.door_open_duration is not None
-                and state.door_open_duration < 3.0
-                and state.was_occupied_before_open
-            )
-            if state.motion_rising_edge_while_open or short_occupied_cycle:
-                edge_is_recent = (
-                    state.motion_rising_at is not None
-                    and (now - state.motion_rising_at).total_seconds() <= motion_window
-                )
-                should_arm = short_occupied_cycle or edge_is_recent
-            elif presence_on:
-                should_arm = True
+            state.motion_rising_at = None
+            if arrived or presence_on:
+                arm = True
+                state.awaiting = None
             elif motion_on:
-                state.awaiting_pir_clearance = True
-                state.pir_cleared_after_open = False
-        elif state.awaiting_pir_clearance:
-            should_arm = (state.pir_cleared_after_open and motion_rising) or presence_on
+                state.awaiting = "trailing"
+        elif state.awaiting == "trailing":
+            if presence_on:
+                arm = True
+            elif not motion_on:
+                state.awaiting = "cleared"
+        elif state.awaiting == "cleared":
+            arm = presence_on or motion_rising
         elif motion_on:
-            should_arm = True
-        if should_arm:
+            arm = True
+        if arm:
             state.held_from = now
             state.fade_from = None
-            state.awaiting_pir_clearance = False
+            state.awaiting = None
         elif (
             state.held_from is not None
             and max_hold > 0
@@ -254,20 +224,12 @@ class DoorHold:
             # Fade from the moment the hold ran out, not from this tick.
             state.fade_from = state.held_from + timedelta(seconds=max_hold)
             state.held_from = None
-            hold_ended = True
-        if just_closed or hold_ended:
-            state.motion_was_recent_when_opened = False
-            state.motion_rising_edge_while_open = False
-            state.was_occupied_before_open = False
-            state.door_opened_at = None
-            state.pir_cleared_after_open = False
         if (
             state.fade_from is not None
             and (now - state.fade_from).total_seconds()
             >= FADE_HALF_LIVES * fade_half_life
         ):
             state.fade_from = None
-        state.motion_on_previous = motion_on
 
     def floor_logit(
         self,

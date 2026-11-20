@@ -27,7 +27,6 @@ def _observe(
     doors_open: bool,
     motion_on: bool,
     motion_window: float = WINDOW,
-    was_occupied_before_open: bool = False,
     presence_on: bool = False,
 ) -> None:
     hold.observe(
@@ -37,46 +36,146 @@ def _observe(
         motion_window=motion_window,
         max_hold=MAX_HOLD,
         fade_half_life=HALF_LIFE,
-        was_occupied_before_open=was_occupied_before_open,
         presence_on=presence_on,
     )
 
 
-class TestContextualDoorCycles:
-    """Door holds must distinguish entry, departure, and brief openings."""
+# Each sequence: (name, steps, trace). A step is (seconds, door_open, motion_on)
+# or (seconds, door_open, motion_on, presence_on); the trace is one character per
+# step, ``H`` where the area is held after that observation and ``-`` where not.
+# Motion window 90 s (the area's motion timeout). A closed door says nothing
+# about who is behind it, so the hold arms on an arrival or a stronger signal
+# and prefers a lost hold to a false one.
+DOOR_SEQUENCES = [
+    (
+        "leave: PIR still on after the door shuts does not arm",
+        [
+            (0, 0, 1),
+            (10, 1, 1),
+            (20, 0, 1),
+            (30, 0, 1),
+            (40, 0, 1),
+            (50, 0, 1),
+            (60, 0, 0),
+            (70, 0, 0),
+        ],
+        "H-------",
+    ),
+    (
+        "arrive: motion starts while the door is open, then it shuts",
+        [
+            (0, 0, 0),
+            (10, 1, 0),
+            (20, 1, 1),
+            (30, 0, 1),
+            (40, 0, 1),
+            (50, 0, 0),
+            (200, 0, 0),
+        ],
+        "---HHHH",
+    ),
+    (
+        "arrive and sit still after shutting the door",
+        [(0, 0, 0), (10, 1, 0), (20, 1, 1), (25, 0, 1), (30, 0, 0), (200, 0, 0)],
+        "---HHH",
+    ),
+    (
+        "short peek from inside, then still: a lost hold, not a false one",
+        [(0, 0, 1), (10, 1, 1), (12, 0, 1), (20, 0, 0), (200, 0, 0)],
+        "H----",
+    ),
+    (
+        "longer reopen from inside, then still: lost as well",
+        [(0, 0, 1), (10, 1, 1), (20, 0, 1), (30, 0, 0), (200, 0, 0)],
+        "H----",
+    ),
+    (
+        "quick exit with the PIR trailing: not held",
+        [
+            (0, 0, 1),
+            (10, 1, 1),
+            (12, 0, 1),
+            (22, 0, 1),
+            (32, 0, 1),
+            (42, 0, 0),
+            (52, 0, 0),
+        ],
+        "H------",
+    ),
+    (
+        "a stronger signal (mmWave, media...) confirms: held",
+        [
+            (0, 0, 1),
+            (10, 1, 1),
+            (20, 0, 1, 1),
+            (30, 0, 1, 1),
+            (40, 0, 0, 1),
+            (200, 0, 0, 1),
+        ],
+        "H-HHHH",
+    ),
+    (
+        "door cycles after the PIR lost everyone: nothing to hold",
+        [(0, 0, 1), (5, 0, 0), (35, 1, 0), (45, 0, 0), (55, 0, 0)],
+        "HH---",
+    ),
+    (
+        "door open at start-up, walk in and shut it behind: held",
+        [(0, 1, 0), (10, 1, 1), (20, 0, 1), (30, 0, 1), (60, 0, 0), (200, 0, 0)],
+        "--HHHH",
+    ),
+    (
+        "ambiguous close, PIR clears, then fires again inside: held",
+        [
+            (0, 0, 1),
+            (10, 1, 1),
+            (20, 0, 1),
+            (30, 0, 1),
+            (60, 0, 0),
+            (100, 0, 0),
+            (120, 0, 1),
+            (130, 0, 0),
+        ],
+        "H-----HH",
+    ),
+    (
+        "motion started more than a timeout before the door shuts: not an arrival",
+        [(0, 0, 0), (10, 1, 0), (20, 1, 1), (30, 1, 0), (200, 0, 0), (210, 0, 0)],
+        "------",
+    ),
+]
 
-    def test_departure_does_not_arm_after_ninety_seconds_of_pir_tail(self) -> None:
-        hold = DoorHold()
-        _observe(hold, 0, doors_open=False, motion_on=True)
-        _observe(hold, 1, doors_open=True, motion_on=True)
-        _observe(hold, 10, doors_open=False, motion_on=True)
-        for seconds in range(20, 93, 10):
-            _observe(hold, seconds, doors_open=False, motion_on=True)
-        assert not hold.held
-        assert hold.state.awaiting_pir_clearance
 
-    def test_short_bathroom_opening_keeps_occupied_room_held(self) -> None:
-        hold = DoorHold()
-        _observe(hold, 0, doors_open=False, motion_on=True)
-        _observe(hold, 10, doors_open=True, motion_on=True)
-        _observe(
-            hold,
-            12.5,
-            doors_open=False,
-            motion_on=True,
-            was_occupied_before_open=True,
-        )
-        for seconds in range(22, 93, 10):
-            _observe(hold, seconds, doors_open=False, motion_on=False)
-        assert hold.held
+class TestDoorCycles:
+    """The hold tells arrivals from departures using only what it can see."""
 
-    def test_fresh_motion_during_open_arms_on_close(self) -> None:
+    @pytest.mark.parametrize(
+        ("steps", "trace"),
+        [pytest.param(steps, trace, id=name) for name, steps, trace in DOOR_SEQUENCES],
+    )
+    def test_sequence(self, steps: list[tuple], trace: str) -> None:
         hold = DoorHold()
-        _observe(hold, 0, doors_open=False, motion_on=False)
-        _observe(hold, 10, doors_open=True, motion_on=False)
-        _observe(hold, 20, doors_open=True, motion_on=True)
-        _observe(hold, 21, doors_open=False, motion_on=False)
-        assert hold.held
+        seen = ""
+        for seconds, door_open, motion, *rest in steps:
+            _observe(
+                hold,
+                seconds,
+                doors_open=bool(door_open),
+                motion_on=bool(motion),
+                motion_window=90.0,
+                presence_on=bool(rest[0]) if rest else False,
+            )
+            seen += "H" if hold.held else "-"
+        assert seen == trace
+
+    def test_motion_window_is_the_areas_timeout(self) -> None:
+        """Motion that began 46 s before the door shut is an arrival at 90 s only."""
+        for window, held in ((90.0, True), (45.0, False)):
+            hold = DoorHold()
+            _observe(hold, 0, doors_open=True, motion_on=False, motion_window=window)
+            _observe(hold, 10, doors_open=True, motion_on=True, motion_window=window)
+            _observe(hold, 56, doors_open=False, motion_on=False, motion_window=window)
+            assert hold.held is held
 
 
 def _floor(hold: DoorHold, seconds: float, *, prior: float = 0.028) -> float | None:
@@ -89,7 +188,7 @@ def _floor(hold: DoorHold, seconds: float, *, prior: float = 0.028) -> float | N
 
 
 class TestArming:
-    """Wasp in Box's rules, so migrated areas behave as before."""
+    """Basic arming and release."""
 
     def test_motion_behind_closed_door_holds_at_75(self) -> None:
         hold = DoorHold()
@@ -114,29 +213,6 @@ class TestArming:
         assert not hold.held
         assert _floor(hold, 400) is None
 
-    def test_door_closing_after_departure_does_not_rearm(self) -> None:
-        """A PIR off-delay must not make leaving look like entering."""
-        hold = DoorHold()
-        _observe(hold, 0, doors_open=False, motion_on=True)
-        _observe(hold, 10, doors_open=True, motion_on=True)
-        _observe(hold, 20, doors_open=False, motion_on=True)
-        assert not hold.held
-
-    def test_departure_after_motion_ends_before_door_open_does_not_rearm(
-        self,
-    ) -> None:
-        hold = DoorHold()
-        _observe(hold, 0, doors_open=False, motion_on=True)
-        _observe(hold, 10, doors_open=True, motion_on=False)
-        _observe(hold, 20, doors_open=False, motion_on=False)
-        assert not hold.held
-
-    def test_configured_motion_timeout_limits_entry_window(self) -> None:
-        hold = DoorHold()
-        _observe(hold, 0, doors_open=True, motion_on=True, motion_window=45)
-        _observe(hold, 46, doors_open=False, motion_on=False, motion_window=45)
-        assert not hold.held
-
     def test_closed_door_without_motion_does_not_hold(self) -> None:
         hold = DoorHold()
         _observe(hold, 0, doors_open=False, motion_on=False)
@@ -145,20 +221,9 @@ class TestArming:
 
     def test_first_observation_closed_is_not_a_closing(self) -> None:
         """After a restart with no state, a shut door isn't 'just closed'."""
-        hold = DoorHold(DoorHoldState(last_motion=T0))
+        hold = DoorHold(DoorHoldState())
         _observe(hold, 10, doors_open=False, motion_on=False)
         assert not hold.held
-
-    def test_recent_motion_guard_survives_closed_observation(self) -> None:
-        """An opening guard is not cleared by an unrelated closed tick."""
-        hold = DoorHold(
-            DoorHoldState(
-                doors_open=False,
-                motion_was_recent_when_opened=True,
-            )
-        )
-        _observe(hold, 10, doors_open=False, motion_on=False)
-        assert hold.state.motion_was_recent_when_opened
 
     def test_opening_releases(self) -> None:
         hold = DoorHold()

@@ -34,11 +34,19 @@ in, such as a bathroom. It needs at least one door sensor in the area.
 
 While it is on:
 
-- The area is **held** when a fresh motion rising edge occurs while the door is
-  open, or when a door was opened for less than 3 seconds while the area was
-  already occupied. A longer opening with only a trailing PIR signal enters a
-  safety mode instead of creating a ghost hold; the PIR must clear and detect
-  fresh motion again, unless a presence/mmWave sensor confirms occupancy.
+- The area is **held** when the door closes after motion started *while it was
+  open* (someone came in and shut it behind them), or while a stronger signal
+  confirms someone is there: an mmWave presence sensor, or an active media
+  player, appliance, power, Wi-Fi client, button or custom sensor. Motion while
+  the door is already shut holds it too.
+- It is **not** held when the motion sensor was already on before the door opened
+  and is simply still on after it shuts. That looks the same as someone leaving
+  and the sensor trailing off over its off-delay, and a closed door says nothing
+  about who is behind it. The hold arms later only if the sensor goes quiet and
+  then fires again (someone is moving about inside) or a stronger signal
+  confirms. The cost is that someone who opens the door from inside, shuts it
+  again and then keeps still is no longer held; a motion sensor that can see
+  stationary people (mmWave) avoids that.
 - While held, the area's probability is kept at **75%** at least (or just above
   its threshold, if that is higher), so it reads as occupied even when motion
   loses someone keeping still. The sensors' own evidence still counts on top.
@@ -61,10 +69,12 @@ Differences from Wasp in Box:
 - Doors are read as open or closed directly, whatever their active state is
   set to.
 
-Existing areas follow their Wasp in Box setting. During migration, the legacy
-Wasp-in-Box motion timeout remains 300 seconds. New areas use the area motion
-timeout default of 90 seconds for PIR history; the legacy Wasp setting is kept
-separate for compatibility.
+Existing areas follow their Wasp in Box setting. The hold uses the **area's
+motion timeout** (90 seconds by default) as the window in which motion that began
+while the door was open still counts as an arrival, for every area; the Wasp in
+Box motion timeout no longer feeds it. Humidity, temperature and other
+environmental readings don't confirm a hold: they lag, so they can't tell someone
+leaving a steamy room from someone staying in it.
 
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 
@@ -466,25 +476,14 @@ The sensor provides these diagnostic attributes to help understand its current s
 | `last_door_time`       | ISO 8601 timestamp of the last door state change                    | `2025-01-15T10:30:45.123Z` |
 | `motion_state`         | Aggregate state of motion sensors: "on" (detected) or "off" (clear) | `on`                       |
 | `last_motion_time`     | ISO 8601 timestamp of the last motion detection                     | `2025-01-15T10:29:30.456Z` |
-| `motion_timeout`       | Current motion timeout setting in seconds                           | `90`                       |
+| `motion_timeout`       | Current motion timeout setting in seconds                           | `300`                      |
 | `max_duration`         | Maximum occupancy duration in seconds (0 = disabled)                | `3600`                     |
 | `last_occupied_time`   | ISO 8601 timestamp when the space was last marked as occupied       | `2025-01-15T10:30:00.789Z` |
 | `verification_delay`   | Configured verification delay in seconds (0 = disabled)             | `30`                       |
 | `verification_pending` | Whether a verification check is currently scheduled                 | `true` / `false`           |
 
-For the newer **closed-door hold**, `motion_timeout` is also the per-area
-window in which closing a monitored door after motion can arm the hold. Set it
-to at least the physical off-delay of the motion sensor (for example, 45
-seconds for a PIR that stays on for 45 seconds). A shorter value reduces false
-holds when leaving, while a value that is too short can miss a genuine entry
-where the door is closed slowly.
-
-The integration does not learn this value automatically. Recorder history
-cannot reliably tell whether motion came from a person entering or leaving;
-learning it automatically would therefore risk creating false occupied states.
-The door-hold state does use the observed sequence: motion before a door opens
-is treated as a possible departure and does not re-arm merely because the PIR
-is still on during its off-delay.
+For the newer **closed-door hold**, the table's `motion_timeout` is not used:
+the hold takes the area's own motion timeout (see above).
 
 These attributes are useful for:
 
