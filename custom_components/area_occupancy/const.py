@@ -739,16 +739,16 @@ def get_default_state(platform_type: str) -> str:
 
 # Sensor type string -> InputType mapping (alphabetized).
 # Lazy-loaded to avoid circular imports with data.entity_type.
-_SENSOR_TYPE_MAPPING: dict[str, Any] | None = None
+_sensor_type_mapping: dict[str, Any] | None = None
 
 
 def get_sensor_type_mapping() -> dict[str, Any]:
     """Get sensor type mapping, building lazily to avoid circular imports."""
-    global _SENSOR_TYPE_MAPPING  # noqa: PLW0603
-    if _SENSOR_TYPE_MAPPING is None:
+    global _sensor_type_mapping  # noqa: PLW0603
+    if _sensor_type_mapping is None:
         from .data.entity_type import InputType  # noqa: PLC0415
 
-        _SENSOR_TYPE_MAPPING = {
+        _sensor_type_mapping = {
             "air_quality": InputType.AIR_QUALITY,
             "appliance": InputType.APPLIANCE,
             "button": InputType.BUTTON,
@@ -774,7 +774,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "wifi_clients": InputType.WIFI_CLIENTS,
             "window": InputType.WINDOW,
         }
-    return _SENSOR_TYPE_MAPPING
+    return _sensor_type_mapping
 
 
 # Fields that use DurationSelector and need conversion.

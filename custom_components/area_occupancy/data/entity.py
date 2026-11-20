@@ -729,8 +729,10 @@ class Entity:
 
     def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
+        # A missing start defaults to now, as in ``Decay.__init__``: a ``None``
+        # here would break the age maths the next time the decay is read.
         self.decay.decay_start = (
-            to_utc(decay_start) if decay_start is not None else decay_start
+            to_utc(decay_start) if decay_start is not None else dt_util.utcnow()
         )
         self.decay.is_decaying = is_decaying
 

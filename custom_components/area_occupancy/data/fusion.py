@@ -393,7 +393,11 @@ class FusionLearner:
                 if tick.truth is not None
                 else _is_occupied_at(tick.timestamp, occupied_intervals)
             )
+            # Both were filtered above; the checker can't follow that.
+            probability = tick.probability
             z = tick.fixed_logit
+            if probability is None or z is None:
+                continue
             for entity_id, x in tick.features.items():
                 z += weights.get(entity_id, defaults.get(entity_id, 0.0)) * x
             learned = clamp_probability(sigmoid(z))
@@ -402,8 +406,8 @@ class FusionLearner:
                 day, {"live": CalibrationTally(), "learned": CalibrationTally()}
             )
             tallies["live"].add(
-                tick.probability,
-                on=tick.probability >= threshold,
+                probability,
+                on=probability >= threshold,
                 truth=truth,
                 seconds=seconds,
             )
@@ -423,7 +427,7 @@ class FusionLearner:
         daily = []
         for day in days:
             tallies = self.state.score_days[day]
-            row = {"date": day}
+            row: dict[str, Any] = {"date": day}
             for model, tally in pooled.items():
                 if model in tallies:
                     tally.merge(tallies[model])

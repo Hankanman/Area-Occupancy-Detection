@@ -7,12 +7,12 @@ from collections import deque
 import contextlib
 from datetime import datetime, timedelta
 import logging
-from typing import Any
+from typing import Any, cast
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -1037,6 +1037,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if input_type in BINARY_INPUT_TYPES:
                 binary[entity_id] = entity.evidence is True
             elif input_type in NUMERIC_INPUT_TYPES:
+                if entity.state is None:
+                    continue
                 try:
                     numeric[entity_id] = float(entity.state)
                 except (TypeError, ValueError):
@@ -1278,8 +1280,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Could not read away-mode history: %s", err)
             self.away_spans = []
             return
+        # ``minimal_response=False`` returns full State objects.
         states = sorted(
-            (history or {}).get(entity_id, []), key=lambda st: st.last_changed
+            cast("list[State]", (history or {}).get(entity_id, [])),
+            key=lambda st: st.last_changed,
         )
         spans: list[tuple[datetime, datetime]] = []
         for current, following in zip(states, [*states[1:], None], strict=True):
@@ -2073,7 +2077,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if entity_ids:
 
             async def _refresh_on_state_change(event: Any) -> None:
-                entity_id = event.data.get("entity_id")
+                entity_id = cast("str | None", event.data.get("entity_id"))
                 if not entity_id:
                     return
 

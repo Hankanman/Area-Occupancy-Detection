@@ -163,7 +163,7 @@ def _collect_likelihood_data(area: Area) -> dict[str, dict[str, Any]]:
                 # Handle case where iteration fails (e.g. non-iterable Mock)
                 active_range_val = None
 
-        raw_data = {
+        raw_data: dict[str, Any] = {
             "type": entity.type.input_type.value,
             "weight": entity.type.weight,
             "prob_given_true": prob_given_true,  # Runtime calculated value

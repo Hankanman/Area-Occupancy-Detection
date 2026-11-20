@@ -207,12 +207,14 @@ class ContinuityShadow:
         counters["episodes"] += 1
         counters[outcome] += 1
         live = episode.live_cleared
-        continuity = None if live is None else live * episode.half_life_ratio
         if outcome == "unexplained":
-            if continuity is not None and continuity > live:
-                counters["false_holds"] += 1
-                counters["false_hold_seconds"] += continuity - live
+            if live is not None:
+                continuity = live * episode.half_life_ratio
+                if continuity > live:
+                    counters["false_holds"] += 1
+                    counters["false_hold_seconds"] += continuity - live
         elif live is not None:
+            continuity = live * episode.half_life_ratio
             # Time continuity kept the room occupied past today's clear,
             # up to the resume or exit, while the person was still there.
             counters["recovered_seconds"] += max(min(continuity, elapsed) - live, 0.0)
@@ -229,7 +231,7 @@ class ContinuityShadow:
         days = sorted(self.state.days)[-WINDOW_DAYS:]
         if not days:
             return None
-        total = dict.fromkeys(_COUNTERS, 0.0)
+        total: dict[str, float] = dict.fromkeys(_COUNTERS, 0.0)
         for day in days:
             for key in _COUNTERS:
                 total[key] += self.state.days[day].get(key, 0.0)
