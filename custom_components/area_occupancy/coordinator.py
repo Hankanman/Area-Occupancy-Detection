@@ -80,6 +80,7 @@ from .data.entity_type import (
     InputType,
 )
 from .data.fusion import FusionLearner, FusionState, FusionTick
+from .data.global_context import GlobalContext, GlobalContextProvider
 from .data.ground_truth import LabelerState, LiveLabeler
 from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
@@ -186,6 +187,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Integration-level configuration (global settings for entire integration)
         self.integration_config = IntegrationConfig(self, config_entry)
+        self.global_context_provider = GlobalContextProvider(
+            hass, self.integration_config
+        )
+        self.global_context = GlobalContext(dt_util.utcnow(), {})
         self.sensor_health_repairs = SensorHealthRepairs(hass)
 
         # Multi-area architecture: dict[str, Area] keyed by area name
@@ -824,6 +829,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         now = dt_util.utcnow()
+        self.global_context = self.global_context_provider.snapshot(now)
         # Record departures before this tick's boosts are computed. An area
         # is left when its ground-truth sensors go quiet, which is the event
         # the transition learner records. Its probability dropping below the

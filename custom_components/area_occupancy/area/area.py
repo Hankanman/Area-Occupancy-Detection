@@ -304,6 +304,12 @@ class Area:
                 base, activity.occupancy_boost, activity.confidence
             )
 
+        result = sigmoid(
+            logit(result)
+            + self.coordinator.global_context.activity_boost(
+                self.coordinator.household_away()
+            )
+        )
         boost = self.coordinator.adjacency_boost_for(self.area_name)
         if boost is not None:
             result = apply_logit_boost(result, boost)
