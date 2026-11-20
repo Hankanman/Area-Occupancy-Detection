@@ -71,7 +71,7 @@ from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.continuity_shadow import ContinuityShadow, ContinuityState, half_life_ratio
-from .data.door_hold import DoorHold, DoorHoldState
+from .data.door_hold import DOOR_HOLD_CONFIRMING_TYPES, DoorHold, DoorHoldState
 from .data.entity_type import (
     BINARY_INPUT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
@@ -1107,7 +1107,6 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._door_holds.pop(area_name, None)
             return
         decay = area.config.decay
-        wasp = area.config.wasp_in_box
         self._door_holds.setdefault(area_name, DoorHold()).observe(
             now,
             doors_open=any(str(door.state) in ("on", "open") for door in doors),
@@ -1118,8 +1117,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and getattr(entity, "is_stuck", False) is not True
                 for entity in area.entities.entities.values()
             ),
-            motion_window=wasp.motion_timeout,
-            max_hold=wasp.max_duration,
+            presence_on=any(
+                entity.evidence is True
+                and getattr(entity, "is_stuck", False) is not True
+                and entity.entity_id != area.wasp_entity_id
+                and (
+                    entity.type.input_type in DOOR_HOLD_CONFIRMING_TYPES
+                    or (
+                        entity.type.input_type == InputType.MOTION
+                        and entity.ha_device_class == "presence"
+                    )
+                )
+                for entity in area.entities.entities.values()
+            ),
+            # The area's motion timeout, for every area (the Wasp in Box
+            # timeout no longer feeds the hold).
+            motion_window=float(area.config.sensors.motion_timeout),
+            max_hold=float(area.config.wasp_in_box.max_duration),
             fade_half_life=decay.half_life,
         )
 

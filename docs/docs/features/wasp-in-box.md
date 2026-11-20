@@ -34,9 +34,19 @@ in, such as a bathroom. It needs at least one door sensor in the area.
 
 While it is on:
 
-- The area is **held** when motion is seen while all its doors are closed, or
-  when the doors close within the Wasp in Box motion timeout (5 minutes by
-  default) of motion: someone went in and shut the door.
+- The area is **held** when the door closes after motion started *while it was
+  open* (someone came in and shut it behind them), or while a stronger signal
+  confirms someone is there: an mmWave presence sensor, or an active media
+  player, appliance, power, Wi-Fi client, button or custom sensor. Motion while
+  the door is already shut holds it too.
+- It is **not** held when the motion sensor was already on before the door opened
+  and is simply still on after it shuts. That looks the same as someone leaving
+  and the sensor trailing off over its off-delay, and a closed door says nothing
+  about who is behind it. The hold arms later only if the sensor goes quiet and
+  then fires again (someone is moving about inside) or a stronger signal
+  confirms. The cost is that someone who opens the door from inside, shuts it
+  again and then keeps still is no longer held; a motion sensor that can see
+  stationary people (mmWave) avoids that.
 - While held, the area's probability is kept at **75%** at least (or just above
   its threshold, if that is higher), so it reads as occupied even when motion
   loses someone keeping still. The sensors' own evidence still counts on top.
@@ -59,8 +69,12 @@ Differences from Wasp in Box:
 - Doors are read as open or closed directly, whatever their active state is
   set to.
 
-Existing areas follow their Wasp in Box setting. New areas with the bathroom
-purpose start with the hold on.
+Existing areas follow their Wasp in Box setting. The hold uses the **area's
+motion timeout** (90 seconds by default) as the window in which motion that began
+while the door was open still counts as an arrival, for every area; the Wasp in
+Box motion timeout no longer feeds it. Humidity, temperature and other
+environmental readings don't confirm a hold: they lag, so they can't tell someone
+leaving a steamy room from someone staying in it.
 
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 
@@ -467,6 +481,9 @@ The sensor provides these diagnostic attributes to help understand its current s
 | `last_occupied_time`   | ISO 8601 timestamp when the space was last marked as occupied       | `2025-01-15T10:30:00.789Z` |
 | `verification_delay`   | Configured verification delay in seconds (0 = disabled)             | `30`                       |
 | `verification_pending` | Whether a verification check is currently scheduled                 | `true` / `false`           |
+
+For the newer **closed-door hold**, the table's `motion_timeout` is not used:
+the hold takes the area's own motion timeout (see above).
 
 These attributes are useful for:
 
