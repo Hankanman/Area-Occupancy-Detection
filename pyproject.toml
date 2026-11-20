@@ -43,8 +43,6 @@ dependencies = [
   "gazetteer-matcher==1.1.0",
   "mutagen==1.47.0",
   "ha-ffmpeg==3.2.2",
-  "pymicro-vad==2.0.1",
-  "pyspeex-noise==2.0.0",
   "PyTurboJPEG"
 ]
 

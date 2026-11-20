@@ -104,7 +104,7 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 - **All Areas Aggregation**: Automatically creates aggregated entities across all configured areas for whole-home occupancy detection.
 - **Real-Time Threshold Adjustment**: Modify the occupancy threshold without reconfiguration.
 - **Weighted Sensor Contributions**: Fine-tune how much each sensor type influences the final probability.
-- **Purpose-Based Defaults**: Selecting a room purpose (12 options, from Passageway to Sleeping) automatically sets sensible decay timing.
+- **Manual Occupancy References**: Record human-confirmed room state and expose shadow calibration and sensor-trust feedback without changing the live detector.
 - **Sensor Health**: Flags sensors that are unavailable, stuck or never trigger, as repairs you can act on.
 
 ## Planned Features

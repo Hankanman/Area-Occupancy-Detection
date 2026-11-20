@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14.2"
 
 [[package]]
@@ -257,8 +257,6 @@ dependencies = [
     { name = "homeassistant" },
     { name = "infrared-protocols" },
     { name = "mutagen" },
-    { name = "pymicro-vad" },
-    { name = "pyspeex-noise" },
     { name = "pyturbojpeg" },
     { name = "rf-protocols" },
     { name = "unicode-rbnf" },
@@ -294,8 +292,6 @@ requires-dist = [
     { name = "mutagen", specifier = "==1.47.0" },
     { name = "playwright", marker = "extra == 'shots'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pymicro-vad", specifier = "==2.0.1" },
-    { name = "pyspeex-noise", specifier = "==2.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-homeassistant-custom-component", marker = "extra == 'test'", specifier = "==0.13.363" },
     { name = "pyturbojpeg" },
@@ -2196,16 +2192,6 @@ crypto = [
 ]
 
 [[package]]
-name = "pymicro-vad"
-version = "2.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c0/ac/fe480b37a6b3f6af5c0953aee980162a1ed27b8052bc2447aaffafa7f70f/pymicro_vad-2.0.1.tar.gz", hash = "sha256:51d188b3d02e5612a72f1c2a190d0c183daaeaf4bb012b83e1e458b9d104db8c", size = 137330, upload-time = "2025-12-16T22:42:50.349Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/c0/128e859c5fcdf2a1ff18df5ebfc3850d482e9157ec824b50e834d3916b15/pymicro_vad-2.0.1-cp39-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b9fc2876936d797c12942cb0ad53dad1fdbf3dd9ffbd747ff5abc52ef4572ee6", size = 324526, upload-time = "2025-12-16T22:42:47.607Z" },
-    { url = "https://files.pythonhosted.org/packages/67/f6/978aa8034b4d0b70faf0e518228357af897ffb588a894f78f7d82599d08f/pymicro_vad-2.0.1-cp39-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5f143eb8ced8606dcab6ac4fad96b2b51c66517a446261e092b59c792d747d67", size = 326501, upload-time = "2025-12-16T22:42:48.816Z" },
-]
-
-[[package]]
 name = "pynacl"
 version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2334,16 +2320,6 @@ name = "pyric"
 version = "0.1.6.3"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/08/64/a99f27d3b4347486c7bfc0aa516016c46dc4c0f380ffccbd742a61af1eda/PyRIC-0.1.6.3.tar.gz", hash = "sha256:b539b01cafebd2406c00097f94525ea0f8ecd1dd92f7731f43eac0ef16c2ccc9", size = 870401, upload-time = "2016-12-04T07:54:48.374Z" }
-
-[[package]]
-name = "pyspeex-noise"
-version = "2.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/39/aa/f257019e3159fccd34091e0acd66fd7527666417c28a3efaae40129007c5/pyspeex_noise-2.0.0.tar.gz", hash = "sha256:6fdb16e59d7a353690661c71e35e2c91972419bfd79dfe37db66ead0e95e7827", size = 49242, upload-time = "2025-10-07T21:47:26.148Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/8c/929d47f8ad20507cd7c6bdaa8470a7afbae286a9ca59a976917868d7d644/pyspeex_noise-2.0.0-cp39-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:34928605513a0e48bbe35eec8e532c864fd4691ab03639eb5dcb53af7033b21f", size = 137916, upload-time = "2025-10-07T21:47:23.273Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/35/b02df058b780346e5d6a0b1cebe624e872ae5beb6ada4ffec27cefb1efe0/pyspeex_noise-2.0.0-cp39-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e26882383f81d474b31158185d88fcf91775b9c7978413a55e46b2d2ac6d41ee", size = 145644, upload-time = "2025-10-07T21:47:24.623Z" },
-]
 
 [[package]]
 name = "pytest"

@@ -102,6 +102,13 @@ SET_AREA_OPTION_SCHEMA = vol.Schema(
     )
 )
 
+SET_MANUAL_OCCUPANCY_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+        vol.Required("state"): vol.In({"occupied", "unoccupied"}),
+    }
+)
+
 
 def _collect_entity_states(hass: HomeAssistant, area: Area) -> dict[str, str]:
     """Collect current states for all entities in an area.
@@ -597,6 +604,18 @@ async def _set_area_option(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     }
 
 
+async def _set_manual_occupancy(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, object]:
+    """Record a point-in-time occupancy reference."""
+    coordinator = get_coordinator(hass)
+    state = call.data["state"]
+    return await coordinator.async_record_manual_feedback(
+        call.data[CONF_AREA_ID],
+        state == "occupied",
+    )
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register custom services for area occupancy."""
 
@@ -615,6 +634,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_set_area_option(call: ServiceCall) -> dict[str, Any]:
         return await _set_area_option(hass, call)
+
+    async def handle_set_manual_occupancy(call: ServiceCall) -> dict[str, object]:
+        return await _set_manual_occupancy(hass, call)
 
     # Register service with async wrapper function
     hass.services.async_register(
@@ -657,6 +679,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.OPTIONAL,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        "set_manual_occupancy",
+        handle_set_manual_occupancy,
+        schema=SET_MANUAL_OCCUPANCY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
 
 def async_unload_services(hass: HomeAssistant) -> None:
     """Remove the domain services.
@@ -670,5 +700,6 @@ def async_unload_services(hass: HomeAssistant) -> None:
         "purge_area_history",
         "get_time_priors",
         "set_area_option",
+        "set_manual_occupancy",
     ):
         hass.services.async_remove(DOMAIN, service)
