@@ -9,6 +9,11 @@ This integration creates several entities in Home Assistant to expose the calcul
     *   **Description:** This is the main occupancy output. It turns `on` if the **Occupancy Probability** is greater than or equal to the **Occupancy Threshold**, and `off` otherwise.
     *   **Icon:** Changes based on state (`mdi:home-account` for `on`, `mdi:home-outline` for `off`).
     *   **Device Class:** `occupancy`
+    *   **Attributes:**
+        *   `occupied_since`: When the area last became occupied (ISO 8601, UTC); `null` while the area is clear.
+        *   `vacant_since`: When the area last became clear (ISO 8601, UTC); `null` while the area is occupied.
+
+        Home Assistant resets `last_changed` of every entity on restart, so "occupied for 3 hours" would read "occupied for 2 minutes" afterwards. These attributes survive a restart when the state is the same before and after it, so use them instead of `last_changed` for durations, e.g. `{{ now() - as_datetime(state_attr('binary_sensor.area_occupancy_status_kitchen', 'occupied_since')) }}`.
 
 *   **`sensor.area_occupancy_probability_<area_name>` (Occupancy Probability)**
     *   **State:** Numeric value (0.0 to 100.0)
@@ -156,6 +161,7 @@ The "All Areas" device creates the following entities (using `all_areas` instead
     *   **Description:** Aggregated occupancy status using **OR logic**: turns `on` if **any** area is occupied, `off` only when **all** areas are unoccupied.
     *   **Icon:** Changes based on state (`mdi:home-account` for `on`, `mdi:home-outline` for `off`).
     *   **Device Class:** `occupancy`
+    *   **Attributes:** `occupied_since` / `vacant_since`, as for the per-area sensor: when anyone was last first detected at home, or when the whole home last became clear.
     *   **Use Case:** Perfect for whole-home automations like "turn off all lights when no one is home" or "enable away mode when all areas are clear".
 
 *   **`sensor.area_occupancy_probability_all_areas` (All Areas Occupancy Probability)**

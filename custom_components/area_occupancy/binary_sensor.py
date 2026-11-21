@@ -40,6 +40,7 @@ from .const import (
     ATTR_MAX_DURATION,
     ATTR_MOTION_STATE,
     ATTR_MOTION_TIMEOUT,
+    ATTR_OCCUPIED_SINCE,
     ATTR_PEOPLE_DETAILS,
     ATTR_PEOPLE_SLEEPING,
     ATTR_PERSON_NAME,
@@ -47,6 +48,7 @@ from .const import (
     ATTR_PERSON_STATE,
     ATTR_SLEEP_SENSORS,
     ATTR_SLEEP_THRESHOLD,
+    ATTR_VACANT_SINCE,
     ATTR_VERIFICATION_DELAY,
     ATTR_VERIFICATION_PENDING,
     NAME_SLEEP_PRESENCE,
@@ -68,8 +70,26 @@ DOOR_OPEN = STATE_ON
 DOOR_CLOSED = STATE_OFF
 
 
-class Occupancy(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor for the occupancy status."""
+class Occupancy(CoordinatorEntity, RestoreEntity, BinarySensorEntity):
+    """Binary sensor for the occupancy status.
+
+    Home Assistant resets ``last_changed`` of every entity on restart, so
+    "occupied for 3 hours" reads "occupied for 2 minutes" afterwards even
+    though the area never changed. The sensor keeps its own timestamp of
+    the last real transition, restores it when the state survives the
+    restart, and exposes it as ``occupied_since`` / ``vacant_since``.
+
+    Attributes:
+        _handle: Handle of the area this sensor reports on; None for the
+            All Areas and floor aggregates.
+        _all_areas: The aggregate (All Areas or a floor) this sensor reports
+            on; None for a per-area sensor.
+        _area_name: Area name, ``floor_<id>`` or the All Areas identifier.
+        _tracked_is_on: State the timestamp refers to; None until the entity
+            is added to Home Assistant.
+        _state_since: UTC time of the last real transition into
+            ``_tracked_is_on``; None until the entity is added.
+    """
 
     def __init__(
         self,
@@ -90,6 +110,8 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         else:
             self._area_name = ALL_AREAS_IDENTIFIER
         self._attr_has_entity_name = True
+        self._tracked_is_on: bool | None = None
+        self._state_since: datetime | None = None
 
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
@@ -122,6 +144,39 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
                 area.config.area_id,
                 self.coordinator.entry_id,
             )
+        await self._restore_state_since()
+
+    async def _restore_state_since(self) -> None:
+        """Take the transition time from before the restart if the state held.
+
+        A state that differs from the stored one is a real transition, so
+        its timestamp is now; so is a first start with nothing stored.
+        """
+        self._tracked_is_on = self.is_on
+        self._state_since = dt_util.utcnow()
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state not in (STATE_ON, STATE_OFF):
+            return
+        if (last_state.state == STATE_ON) != self._tracked_is_on:
+            return
+        stored_attribute = (
+            ATTR_OCCUPIED_SINCE if self._tracked_is_on else ATTR_VACANT_SINCE
+        )
+        stored_since = last_state.attributes.get(stored_attribute)
+        if stored_since is None:
+            return
+        parsed_since = dt_util.parse_datetime(str(stored_since))
+        if parsed_since is not None:
+            self._state_since = dt_util.as_utc(parsed_since)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Stamp a real transition before the new state is written."""
+        current_is_on = self.is_on
+        if self._tracked_is_on is not None and current_is_on != self._tracked_is_on:
+            self._state_since = dt_util.utcnow()
+        self._tracked_is_on = current_is_on
+        super()._handle_coordinator_update()
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
@@ -165,6 +220,20 @@ class Occupancy(CoordinatorEntity, BinarySensorEntity):
         if area is None:
             return False
         return area.occupied()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return when the current state began, surviving HA restarts.
+
+        Only the attribute matching the state carries a time; the other is
+        None, so templates can read either without checking the state.
+        """
+        since = self._state_since.isoformat() if self._state_since is not None else None
+        occupied = self._tracked_is_on is True
+        return {
+            ATTR_OCCUPIED_SINCE: since if occupied else None,
+            ATTR_VACANT_SINCE: None if occupied else since,
+        }
 
     def _get_area(self) -> Area | None:
         """Resolve the current Area instance for this entity."""
