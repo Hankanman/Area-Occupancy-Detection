@@ -365,6 +365,9 @@ def _area_snapshot(
                 "diff_history": likelihood_shadow.state.diff_history[-14:],
                 "sensors": comparison["sensors"],
             }
+        auxiliary_shadow = coordinator.auxiliary_shadow_for(area_name)
+        if auxiliary_shadow is not None:
+            current["auxiliary_shadow"] = auxiliary_shadow.snapshot()
         away_shadow = coordinator.away_shadow_for(area_name)
         if away_shadow is not None:
             current["away"] = away_shadow.snapshot()
