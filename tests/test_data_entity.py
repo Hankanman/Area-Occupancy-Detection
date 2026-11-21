@@ -3442,3 +3442,75 @@ class TestOffline:
             entity.state_provider = lambda _eid: None  # gone from HA
 
         assert entity.offline is offline
+
+
+class TestEntityDeviceId:
+    """``Entity.device_id`` names the physical device a channel belongs to."""
+
+    def test_reads_the_device_from_the_entity_registry(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Two channels of one device resolve to the same device id."""
+        from pytest_homeassistant_custom_component.common import (  # noqa: PLC0415
+            MockConfigEntry,
+        )
+
+        from homeassistant.helpers import (  # noqa: PLC0415
+            device_registry as dr,
+            entity_registry as er,
+        )
+
+        hass = coordinator.hass
+        device_owner = MockConfigEntry(domain="test")
+        device_owner.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=device_owner.entry_id,
+            identifiers={("test", "presence_sensor")},
+        )
+        entity_registry = er.async_get(hass)
+        movement = entity_registry.async_get_or_create(
+            "binary_sensor", "test", "presence_movement", device_id=device.id
+        )
+        occupancy = entity_registry.async_get_or_create(
+            "binary_sensor", "test", "presence_occupancy", device_id=device.id
+        )
+
+        assert (
+            create_test_entity(
+                entity_id=movement.entity_id, coordinator=coordinator
+            ).device_id
+            == device.id
+        )
+        assert (
+            create_test_entity(
+                entity_id=occupancy.entity_id, coordinator=coordinator
+            ).device_id
+            == device.id
+        )
+
+    def test_none_without_a_registry_entry(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An entity the registry doesn't know has no device."""
+        entity = create_test_entity(
+            entity_id="binary_sensor.not_registered", coordinator=coordinator
+        )
+        assert entity.device_id is None
+
+    def test_none_for_state_provider_instances(self) -> None:
+        """Without hass there is no registry to read."""
+        entity = Entity(
+            entity_id="binary_sensor.provided",
+            type=EntityType(
+                input_type=InputType.MOTION,
+                weight=1.0,
+                prob_given_true=0.95,
+                prob_given_false=0.005,
+                active_states=[STATE_ON],
+            ),
+            prob_given_true=0.95,
+            prob_given_false=0.005,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda _entity_id: None,
+        )
+        assert entity.device_id is None

@@ -208,6 +208,10 @@ def sigmoid_probability(
     is exactly that hold, so the area releases then rather than crawling
     towards a prior close to the threshold.
 
+    Ground-truth channels of one physical device (same ``device_id``) count
+    once, at the strongest of them: they report the same presence, and
+    summing them would double the hold.
+
     Args:
         entities: Dict of Entity objects
         prior: Learned prior probability for this area (0.0-1.0)
@@ -244,6 +248,12 @@ def sigmoid_probability(
 
     # Sum weighted contributions from all entities
     z = bias
+    # Channels of one physical device (a combined PIR and mmWave sensor's
+    # motion and occupancy entities) see the same person. Summed, two of them
+    # doubled the hold and the area released after two half-lives, not one.
+    # Each device's ground-truth channels count once, at their strongest;
+    # a channel with no device counts on its own, as before.
+    device_contributions: dict[str, float] = {}
 
     for entity_id, entity in entities.items():
         if entity.weight <= 0:
@@ -287,8 +297,19 @@ def sigmoid_probability(
             else:
                 signal = max(signal, ground_truth_floor / gain)
         contribution = ew * evidence * correlation * signal
-        z += contribution
+        device_id = (
+            getattr(entity, "device_id", None)
+            if entity.type.input_type in (InputType.MOTION, InputType.SLEEP)
+            else None
+        )
+        if isinstance(device_id, str):
+            device_contributions[device_id] = max(
+                device_contributions.get(device_id, 0.0), contribution
+            )
+        else:
+            z += contribution
 
+    z += sum(device_contributions.values())
     return clamp_probability(sigmoid(z))
 
 

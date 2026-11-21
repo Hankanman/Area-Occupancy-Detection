@@ -84,6 +84,8 @@ strength = hold
 
 So a room releases at **motion timeout + one half-life** after the last PIR detection: a hallway with a 45 s half-life after about 2¼ minutes.
 
+- **One device counts once:** a combined sensor often exposes two entities for the same detection, such as a PIR "motion" and an mmWave "occupancy" entity on one device. Motion and sleep entities that share a device count once, at the stronger of the two, so the room still releases after one half-life rather than two. Sensors on separate devices each add their own contribution.
+
 Both limits apply at full *configured* weight: the sensor's information gain (how far its `prob_given_false` sits below `prob_given_true`), which otherwise also scales `effective_weight`, is divided back out, so a noisier motion sensor still holds for the full half-life. A lower configured weight still scales all of this down.
 
 ### 4. Final Probability
