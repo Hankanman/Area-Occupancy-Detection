@@ -495,6 +495,10 @@ TRANSITION_DIFF_TOLERANCE: Final = 0.1
 AWAY_SHADOW_STORE_VERSION: Final = 1
 AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
 
+# --- Bounded auxiliary/environmental evidence (#aux-shadow) ---
+AUXILIARY_SHADOW_STORE_VERSION: Final = 1
+AUXILIARY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.auxiliary_shadow"
+
 # --- Learned sensor fusion (#501, shadow mode) ---
 # Store version and key prefix for the per-entry learned-weight state,
 # shared between the coordinator (persistence) and __init__.py (removal

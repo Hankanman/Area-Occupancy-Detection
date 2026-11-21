@@ -38,6 +38,8 @@ from .const import (
     ACCURACY_STORE_VERSION,
     ACCURACY_TICK_BUFFER_MAXLEN,
     ADJACENCY_TRANSITION_WINDOW_S,
+    AUXILIARY_SHADOW_STORE_KEY_PREFIX,
+    AUXILIARY_SHADOW_STORE_VERSION,
     AWAY_SHADOW_STORE_KEY_PREFIX,
     AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
@@ -68,12 +70,18 @@ from .data.adjacency import (
     compute_decay_modifier,
 )
 from .data.analysis import run_full_analysis
+from .data.auxiliary_shadow import (
+    AuxiliaryReading,
+    AuxiliaryShadow,
+    AuxiliaryShadowState,
+)
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.continuity_shadow import ContinuityShadow, ContinuityState, half_life_ratio
 from .data.door_hold import DOOR_HOLD_CONFIRMING_TYPES, DoorHold, DoorHoldState
 from .data.entity_type import (
     BINARY_INPUT_TYPES,
+    ENVIRONMENTAL_INPUT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
     NUMERIC_INPUT_TYPES,
     PRESENCE_INPUT_TYPES,
@@ -89,7 +97,7 @@ from .data.trajectory import TrajectoryTracker
 from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
 from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
-from .time_utils import to_local
+from .time_utils import ensure_utc_datetime, to_local
 from .utils import clamp_probability, evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
@@ -320,6 +328,15 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             AWAY_SHADOW_STORE_VERSION,
             f"{AWAY_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Bounded auxiliary/environmental sensor evidence. This is shadow-only:
+        # it is persisted and audited in diagnostics, but never added to the
+        # live log-odds calculation until explicitly promoted.
+        self._auxiliary_shadows: dict[str, AuxiliaryShadow] = {}
+        self._auxiliary_shadow_store: Store[dict[str, dict]] = Store(
+            hass,
+            AUXILIARY_SHADOW_STORE_VERSION,
+            f"{AUXILIARY_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Learned-fusion shadow state (#501): per-area training ticks
         # (sparse per-entity features) and per-area learners, persisted
@@ -709,6 +726,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         AwayShadowState.from_dict(stored_away[area_name])
                     )
 
+            # Restore bounded auxiliary/environmental shadow state.
+            await self._restore_auxiliary_shadows()
+
             # Restore learned-fusion shadow state (#501) for known areas
             stored_fusion = await self._fusion_store.async_load() or {}
             for area_name in self.areas:
@@ -891,6 +911,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         truth = self._label_ground_truth(area_name, area, now)
         self._observe_likelihoods(area_name, area, now, truth)
+        self._observe_auxiliary(area_name, area, now, truth)
         self._latest_labels[area_name] = truth
         self._transition_shadow.observe(
             now=now,
@@ -1039,6 +1060,70 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             now=now, label=truth, binary=binary, numeric=numeric
         )
 
+    def _observe_auxiliary(
+        self, area_name: str, area: Area, now: datetime, truth: bool
+    ) -> None:
+        """Update bounded auxiliary/environmental evidence in shadow mode."""
+        readings: dict[str, AuxiliaryReading] = {}
+        active_auxiliary_ids: set[str] = set()
+        lux_suppressed = self._recent_lighting_change(area)
+
+        for entity_id, entity in area.entities.entities.items():
+            input_type = entity.type.input_type
+            if (
+                input_type not in ENVIRONMENTAL_INPUT_TYPES
+                and input_type != InputType.POWER
+            ):
+                continue
+            active_auxiliary_ids.add(entity_id)
+            try:
+                value = float(entity.state)
+            except (TypeError, ValueError):
+                continue
+
+            ha_state = self.hass.states.get(entity_id)
+            timestamp = (
+                ensure_utc_datetime(ha_state.last_updated)
+                if ha_state is not None
+                else None
+            )
+            readings[entity_id] = AuxiliaryReading(
+                value=value,
+                input_type=input_type,
+                confidently_unoccupied=not truth,
+                stuck=bool(getattr(entity, "is_stuck", False)),
+                timestamp=timestamp,
+                lux_suppressed=lux_suppressed,
+            )
+
+        shadow = self._auxiliary_shadows.setdefault(
+            area_name,
+            AuxiliaryShadow(
+                purpose=getattr(area.config, "purpose", None),
+            ),
+        )
+        shadow.prune(active_auxiliary_ids)
+        shadow.observe(
+            now,
+            readings=readings,
+            confidently_unoccupied_by_area=not truth,
+        )
+
+    def _recent_lighting_change(self, area: Area) -> bool:
+        """Return whether a light in this HA area changed in the last minute."""
+        now = dt_util.utcnow()
+        area_id = area.config.area_id
+        registry = er.async_get(self.hass)
+
+        for state in self.hass.states.async_all("light"):
+            entry = registry.async_get(state.entity_id)
+            if area_id and entry is not None and entry.area_id != area_id:
+                continue
+            age = (now - state.last_changed).total_seconds()
+            if 0 <= age <= 60:
+                return True
+        return False
+
     @property
     def transition_shadow(self) -> TransitionShadow:
         """The live transition counts (#603)."""
@@ -1063,6 +1148,19 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def likelihood_shadow_for(self, area_name: str) -> LikelihoodShadow | None:
         """Return the area's shadow likelihoods, if any were recorded."""
         return self._likelihood_shadow.get(area_name)
+
+    def auxiliary_shadow_for(self, area_name: str) -> AuxiliaryShadow | None:
+        """Return the area's bounded auxiliary shadow evidence, if observed."""
+        return self._auxiliary_shadows.get(area_name)
+
+    async def async_save_auxiliary_shadow(self) -> None:
+        """Persist bounded auxiliary shadow state via the HA storage helper."""
+        await self._auxiliary_shadow_store.async_save(
+            {
+                name: shadow.state.to_dict()
+                for name, shadow in self._auxiliary_shadows.items()
+            }
+        )
 
     async def async_save_likelihood_shadow(self) -> None:
         """Persist the shadow likelihoods via the HA storage helper."""
@@ -1136,6 +1234,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             max_hold=float(area.config.wasp_in_box.max_duration),
             fade_half_life=decay.half_life,
         )
+
+    async def _restore_auxiliary_shadows(self) -> None:
+        """Restore persisted bounded auxiliary shadow state for known areas."""
+        stored = await self._auxiliary_shadow_store.async_load() or {}
+        for area_name, area in self.areas.items():
+            payload = stored.get(area_name)
+            if isinstance(payload, dict):
+                self._auxiliary_shadows[area_name] = AuxiliaryShadow(
+                    AuxiliaryShadowState.from_dict(payload),
+                    purpose=getattr(area.config, "purpose", None),
+                )
 
     async def _restore_door_state(self) -> None:
         """Restore closed-door holds and the continuity shadow (#558)."""
@@ -1546,6 +1655,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning(
                 "Failed to save shadow likelihoods for areas: %s: %s",
                 format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_auxiliary_shadow()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save auxiliary sensor shadow state: %s",
                 err,
             )
         try:
