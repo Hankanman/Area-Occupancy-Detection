@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ..const import (
@@ -210,6 +211,24 @@ class Entity:
         return max(self.last_updated, self.active_state_changed_at)
 
     @property
+    def device_id(self) -> str | None:
+        """The physical device this sensor is a channel of.
+
+        A combined PIR and mmWave sensor exposes a motion and an occupancy
+        entity that see the same person, so ``sigmoid_probability`` counts
+        one device's ground-truth channels once. Read from the entity
+        registry on every call rather than cached, so an entity_id rename or
+        a device reassignment needs no invalidation. ``None`` without
+        ``hass`` (state-provider instances), or when the entity has no
+        registry entry or no device.
+        """
+        if self.hass is None:
+            return None
+        registry_entry = er.async_get(self.hass).async_get(self.entity_id)
+        device_id = getattr(registry_entry, "device_id", None)
+        return device_id if isinstance(device_id, str) else None
+
+    @property
     def is_stuck(self) -> bool:
         """Whether this sensor is flagged stuck and still in that same state.
 
@@ -364,6 +383,8 @@ class Entity:
             if state_obj and hasattr(state_obj, "name"):
                 return state_obj.name
             return None
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
@@ -442,6 +463,8 @@ class Entity:
                 return None
             # Handle both object with .state attribute and direct value
             return state_obj.state if hasattr(state_obj, "state") else state_obj
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.state if ha_state is not None else None
 
@@ -725,8 +748,10 @@ class Entity:
 
     def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
+        # A missing start defaults to now, as in ``Decay.__init__``: a ``None``
+        # here would break the age maths the next time the decay is read.
         self.decay.decay_start = (
-            to_utc(decay_start) if decay_start is not None else decay_start
+            to_utc(decay_start) if decay_start is not None else dt_util.utcnow()
         )
         self.decay.is_decaying = is_decaying
 

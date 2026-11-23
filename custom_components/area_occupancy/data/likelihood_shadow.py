@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
+from typing import Any
 
 from ..time_utils import ensure_utc_datetime
 from .online_prior import MAX_TICK_GAP_SECONDS
@@ -178,9 +179,9 @@ class LikelihoodShadowState:
     last_label: bool = False
     last_active: dict[str, bool] = field(default_factory=dict)
     # Daily worst-case gap to the database's values, oldest first.
-    diff_history: list[dict] = field(default_factory=list)
+    diff_history: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "binary": {k: vars(v) for k, v in self.binary.items()},
@@ -192,7 +193,7 @@ class LikelihoodShadowState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> LikelihoodShadowState:
+    def from_dict(cls, data: dict[str, Any]) -> LikelihoodShadowState:
         """Restore from storage; malformed payloads fall back to empty."""
         try:
             return cls(
@@ -281,7 +282,7 @@ class LikelihoodShadow:
             for entity_id in [e for e in table if e not in entity_ids]:
                 del table[entity_id]
 
-    def compare(self, db_values: dict[str, dict[str, float]]) -> dict:
+    def compare(self, db_values: dict[str, dict[str, float]]) -> dict[str, Any]:
         """Compare the shadow likelihoods with the database's.
 
         Args:
@@ -294,12 +295,12 @@ class LikelihoodShadow:
             largest gap over binary probabilities and numeric correlations
             (None when nothing is comparable yet).
         """
-        sensors: dict[str, dict] = {}
+        sensors: dict[str, dict[str, Any]] = {}
         diffs: list[float] = []
         for entity_id, stats in self.state.binary.items():
             shadow = stats.likelihoods()
             db = db_values.get(entity_id, {})
-            row: dict = {
+            row: dict[str, Any] = {
                 "shadow": [round(v, 4) for v in shadow] if shadow else None,
                 "db": [db.get("p_true"), db.get("p_false")] if "p_true" in db else None,
             }

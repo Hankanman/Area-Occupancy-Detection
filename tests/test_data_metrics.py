@@ -472,7 +472,7 @@ class TestAccuracyHistory:
         assert saved[area]["days"]["2026-10-06"]["samples"] == 7
         # The v1 daily rate snapshots can't be pooled: dropped on upgrade.
         v1 = {area: [{"date": "2026-10-06", "agreement": 0.9}]}
-        assert await store._async_migrate_func(1, v1) == {}  # noqa: SLF001
+        assert await store._async_migrate_func(1, 1, v1) == {}  # noqa: SLF001
 
     def test_batches_split_at_a_shared_tick_neither_overlap_nor_gap(self) -> None:
         samples = _samples([(0.9, True)] * 7)  # ticks 10 s apart over 60 s

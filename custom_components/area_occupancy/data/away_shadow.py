@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from ..const import AWAY_PRIOR
 from ..time_utils import ensure_utc_datetime
@@ -48,7 +49,7 @@ class AwayShadowState:
     last_present: bool = False
     last_differ: bool = False
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "away_seconds": self.away_seconds,
@@ -62,7 +63,7 @@ class AwayShadowState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> AwayShadowState:
+    def from_dict(cls, data: dict[str, Any]) -> AwayShadowState:
         """Restore from storage; malformed payloads fall back to empty."""
         try:
             return cls(
@@ -132,7 +133,7 @@ class AwayShadow:
             return None
         return self.state.occupied_away_seconds / self.state.away_seconds
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         """The JSON-safe diagnostics block."""
         state = self.state
         learned = self.learned_away_prior()

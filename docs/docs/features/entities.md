@@ -13,7 +13,7 @@ This integration creates several entities in Home Assistant to expose the calcul
         *   `occupied_since`: When the area last became occupied (ISO 8601, UTC); `null` while the area is clear.
         *   `vacant_since`: When the area last became clear (ISO 8601, UTC); `null` while the area is occupied.
 
-        Home Assistant resets `last_changed` of every entity on restart, so "occupied for 3 hours" would read "occupied for 2 minutes" afterwards. These attributes survive a restart when the state is the same before and after it, so use them instead of `last_changed` for durations, e.g. `{{ now() - as_datetime(state_attr('binary_sensor.area_occupancy_status_kitchen', 'occupied_since')) }}`.
+        Home Assistant resets `last_changed` of every entity on restart, so "occupied for 3 hours" would read "occupied for 2 minutes" afterwards. These attributes survive a restart when the state is the same before and after it, so use them instead of `last_changed` for durations, e.g. `{{ now() - as_datetime(state_attr('binary_sensor.kitchen_occupancy_status', 'occupied_since')) }}`.
 
 *   **`sensor.area_occupancy_probability_<area_name>` (Occupancy Probability)**
     *   **State:** Numeric value (0.0 to 100.0)

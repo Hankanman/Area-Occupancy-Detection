@@ -284,7 +284,7 @@ def _environmental_signal_strength(
     value: float,
     mean_occupied: float,
     mean_unoccupied: float,
-    condition: str,
+    condition: str | None,
 ) -> float:
     """Compute 0-1 signal strength for an environmental reading.
 

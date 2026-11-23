@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from ..const import GROUND_TRUTH_ACTIVE_FLOOR
 from ..time_utils import ensure_utc_datetime
@@ -99,7 +100,7 @@ class DoorHoldState:
     # (fresh motion then arms). None otherwise.
     awaiting: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "held_from": self.held_from.isoformat() if self.held_from else None,
@@ -113,7 +114,7 @@ class DoorHoldState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> DoorHoldState:
+    def from_dict(cls, data: dict[str, Any]) -> DoorHoldState:
         """Restore from storage; malformed payloads fall back to empty."""
 
         def _ts(key: str) -> datetime | None:

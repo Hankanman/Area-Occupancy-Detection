@@ -6,7 +6,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -70,7 +70,9 @@ DOOR_OPEN = STATE_ON
 DOOR_CLOSED = STATE_OFF
 
 
-class Occupancy(CoordinatorEntity, RestoreEntity, BinarySensorEntity):
+class Occupancy(
+    CoordinatorEntity["AreaOccupancyCoordinator"], RestoreEntity, BinarySensorEntity
+):
     """Binary sensor for the occupancy status.
 
     Home Assistant resets ``last_changed`` of every entity on restart, so
@@ -116,21 +118,13 @@ class Occupancy(CoordinatorEntity, RestoreEntity, BinarySensorEntity):
         # Unique ID: use entry_id, device_id, and entity_name
         self._attr_unique_id = generate_entity_unique_id(
             source.coordinator.entry_id,
-            (
-                area_handle.device_info()
-                if area_handle is not None
-                else all_areas.device_info()
-            ),
+            source.device_info(),
             NAME_BINARY_SENSOR,
         )
         self._attr_translation_key = "occupancy_status"
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
         # Get device_info directly from Area or AllAreas
-        self._attr_device_info = (
-            area_handle.device_info()
-            if area_handle is not None
-            else all_areas.device_info()
-        )
+        self._attr_device_info = source.device_info()
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
@@ -170,6 +164,7 @@ class Occupancy(CoordinatorEntity, RestoreEntity, BinarySensorEntity):
             self._state_since = dt_util.as_utc(parsed_since)
 
     @callback
+    @override
     def _handle_coordinator_update(self) -> None:
         """Stamp a real transition before the new state is written."""
         current_is_on = self.is_on
@@ -222,6 +217,7 @@ class Occupancy(CoordinatorEntity, RestoreEntity, BinarySensorEntity):
         return area.occupied()
 
     @property
+    @override
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return when the current state began, surviving HA restarts.
 
