@@ -1,4 +1,4 @@
-"""Binary sensor entities for Area Occupancy Detection."""
+"""Binary sensor entities for Area Occupancy Detection. """
 
 from __future__ import annotations
 
