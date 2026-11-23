@@ -102,3 +102,18 @@ set_area_option:
       description: Whether the area stays occupied while its doors stay closed after motion.
       selector:
         boolean:
+    long_motion_timeout:
+      name: Long-motion hold timeout
+      description: Seconds of uninterrupted motion required. Zero disables motion-only arming.
+      selector:
+        duration:
+    closed_door_hold_pir_timeout:
+      name: PIR off-delay
+      description: Hardware off-delay of the PIR, plus the 20-second motion tolerance.
+      selector:
+        duration:
+    max_hold:
+      name: Maximum hold duration
+      description: Maximum duration of trusted hold evidence. Zero means no expiry.
+      selector:
+        duration:

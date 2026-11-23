@@ -459,7 +459,10 @@
                     "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
                     "exclude_from_all_areas": "Exclude from All Areas",
-                    "closed_door_hold": "Closed door means still occupied"
+                    "closed_door_hold": "Closed door means still occupied",
+                    "long_motion_timeout": "Long-motion hold timeout",
+                    "closed_door_hold_pir_timeout": "PIR off-delay",
+                    "max_hold": "Maximum hold duration"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
@@ -518,12 +521,12 @@
             "custom_binary_states_required": "Custom binary active states are required when custom binary sensors are configured.",
             "custom_numeric_range_invalid": "Custom numeric active minimum must be less than the active maximum.",
             "person_entity_required": "A person entity is required.",
-            "person_already_configured": "This person is already configured.",
             "sleep_sensor_required": "At least one sleep sensor is required.",
             "sleep_area_required": "A sleep area is required.",
             "confidence_not_number": "Confidence threshold must be a number.",
             "invalid_selection": "Invalid selection. Please try again.",
-            "unknown": "An unexpected error occurred."
+            "unknown": "An unexpected error occurred.",
+            "person_already_configured": "This person is already configured."
         }
     },
     "options": {
@@ -984,7 +987,10 @@
                     "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
                     "exclude_from_all_areas": "Exclude from All Areas",
-                    "closed_door_hold": "Closed door means still occupied"
+                    "closed_door_hold": "Closed door means still occupied",
+                    "long_motion_timeout": "Long-motion hold timeout",
+                    "closed_door_hold_pir_timeout": "PIR off-delay",
+                    "max_hold": "Maximum hold duration"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
@@ -1111,12 +1117,12 @@
             "custom_binary_states_required": "Custom binary active states are required when custom binary sensors are configured.",
             "custom_numeric_range_invalid": "Custom numeric active minimum must be less than the active maximum.",
             "person_entity_required": "A person entity is required.",
-            "person_already_configured": "This person is already configured.",
             "sleep_sensor_required": "At least one sleep sensor is required.",
             "sleep_area_required": "A sleep area is required.",
             "confidence_not_number": "Confidence threshold must be a number.",
             "invalid_selection": "Invalid selection. Please try again.",
-            "unknown": "An unexpected error occurred."
+            "unknown": "An unexpected error occurred.",
+            "person_already_configured": "This person is already configured."
         }
     },
     "entity": {
@@ -1178,70 +1184,6 @@
         "number": {
             "threshold": {
                 "name": "Occupancy Threshold"
-            }
-        }
-    },
-    "services": {
-        "run_analysis": {
-            "name": "Run Analysis",
-            "description": "Run the analysis for all areas in the area occupancy instance."
-        },
-        "export_config": {
-            "name": "Export Config",
-            "description": "Export the complete integration configuration as YAML."
-        },
-        "purge_area_history": {
-            "name": "Purge Area History",
-            "description": "Delete all learned history for a single configured area (priors, correlations, intervals, aggregates, cached occupied intervals) without removing the area from the integration. Use this when a room's learned behavior is no longer accurate and you want the integration to re-learn from scratch.",
-            "fields": {
-                "area_id": {
-                    "name": "Area",
-                    "description": "The Home Assistant area whose learned history should be purged."
-                }
-            }
-        },
-        "get_time_priors": {
-            "name": "Get Time Priors",
-            "description": "Return the learned weekly occupancy-prior forecast for each area: for every weekly slot (day of week x time of day) the probability that the area tends to be occupied. Unlike the occupancy probability sensor (a current-state estimate), this exposes priors for future slots so other integrations can build a forward-looking occupancy profile, for example to pre-heat a room before its habitual occupancy. Returns response data only.",
-            "fields": {
-                "area_id": {
-                    "name": "Area",
-                    "description": "Optional Home Assistant area. When omitted, the forecast for all configured areas is returned. The aggregate zone ids (all_areas and floor_[floor_id]) are also accepted, but the area picker only lists real Home Assistant areas — pass an aggregate id in YAML mode."
-                }
-            }
-        },
-        "set_area_option": {
-            "name": "Set Area Option",
-            "description": "Change one configured area's detection tunables from an automation or script. Values go through the same validation and purpose-default handling the configuration UI applies, so an automation cannot put an area into a state the UI would reject. Structural configuration (which entities belong to an area, adjacent areas) is deliberately not settable here.",
-            "fields": {
-                "area_id": {
-                    "name": "Area",
-                    "description": "The Home Assistant area_id of the configured area to change."
-                },
-                "threshold": {
-                    "name": "Occupancy threshold",
-                    "description": "Percentage above which the area counts as occupied."
-                },
-                "decay_enabled": {
-                    "name": "Enable time decay",
-                    "description": "Whether occupancy probability decays once evidence stops."
-                },
-                "decay_half_life": {
-                    "name": "Decay half-life",
-                    "description": "Time over which occupancy probability halves. Set to 0 to follow the area's purpose default; any other value must be between 10 seconds and 1 hour."
-                },
-                "min_prior_override": {
-                    "name": "Minimum prior override",
-                    "description": "Floor for the learned prior, from 0 to 1. Set to 0 to disable."
-                },
-                "wasp_enabled": {
-                    "name": "Enable Wasp in Box",
-                    "description": "Whether the Wasp in Box virtual sensor runs for this area."
-                },
-                "closed_door_hold": {
-                    "name": "Closed door means still occupied",
-                    "description": "Whether the area stays occupied while its doors stay closed after motion."
-                }
             }
         }
     },
@@ -1517,7 +1459,10 @@
                         "decay_half_life": "Decay Half-Life",
                         "min_prior_override": "Minimum Prior Override",
                         "exclude_from_all_areas": "Exclude from All Areas",
-                        "closed_door_hold": "Closed door means still occupied"
+                        "closed_door_hold": "Closed door means still occupied",
+                        "long_motion_timeout": "Long-motion hold timeout",
+                        "closed_door_hold_pir_timeout": "PIR off-delay",
+                        "max_hold": "Maximum hold duration"
                     },
                     "data_description": {
                         "threshold": "The probability threshold above which the area is considered occupied.",
@@ -1572,6 +1517,70 @@
             "abort": {
                 "area_required": "Select a Home Assistant area first.",
                 "area_already_configured": "That area is already configured."
+            }
+        }
+    },
+    "services": {
+        "run_analysis": {
+            "name": "Run Analysis",
+            "description": "Run the analysis for all areas in the area occupancy instance."
+        },
+        "export_config": {
+            "name": "Export Config",
+            "description": "Export the complete integration configuration as YAML."
+        },
+        "purge_area_history": {
+            "name": "Purge Area History",
+            "description": "Delete all learned history for a single configured area (priors, correlations, intervals, aggregates, cached occupied intervals) without removing the area from the integration. Use this when a room's learned behavior is no longer accurate and you want the integration to re-learn from scratch.",
+            "fields": {
+                "area_id": {
+                    "name": "Area",
+                    "description": "The Home Assistant area whose learned history should be purged."
+                }
+            }
+        },
+        "get_time_priors": {
+            "name": "Get Time Priors",
+            "description": "Return the learned weekly occupancy-prior forecast for each area: for every weekly slot (day of week x time of day) the probability that the area tends to be occupied. Unlike the occupancy probability sensor (a current-state estimate), this exposes priors for future slots so other integrations can build a forward-looking occupancy profile, for example to pre-heat a room before its habitual occupancy. Returns response data only.",
+            "fields": {
+                "area_id": {
+                    "name": "Area",
+                    "description": "Optional Home Assistant area. When omitted, the forecast for all configured areas is returned. The aggregate zone ids (all_areas and floor_[floor_id]) are also accepted, but the area picker only lists real Home Assistant areas — pass an aggregate id in YAML mode."
+                }
+            }
+        },
+        "set_area_option": {
+            "name": "Set Area Option",
+            "description": "Change one configured area's detection tunables from an automation or script. Values go through the same validation and purpose-default handling the configuration UI applies, so an automation cannot put an area into a state the UI would reject. Structural configuration (which entities belong to an area, adjacent areas) is deliberately not settable here.",
+            "fields": {
+                "area_id": {
+                    "name": "Area",
+                    "description": "The Home Assistant area_id of the configured area to change."
+                },
+                "threshold": {
+                    "name": "Occupancy threshold",
+                    "description": "Percentage above which the area counts as occupied."
+                },
+                "decay_enabled": {
+                    "name": "Enable time decay",
+                    "description": "Whether occupancy probability decays once evidence stops."
+                },
+                "decay_half_life": {
+                    "name": "Decay half-life",
+                    "description": "Time over which occupancy probability halves. Set to 0 to follow the area's purpose default; any other value must be between 10 seconds and 1 hour."
+                },
+                "min_prior_override": {
+                    "name": "Minimum prior override",
+                    "description": "Floor for the learned prior, from 0 to 1. Set to 0 to disable."
+                },
+                "wasp_enabled": {
+                    "name": "Enable Wasp in Box",
+                    "description": "Whether the Wasp in Box virtual sensor runs for this area."
+                },
+                "closed_door_hold": {
+                    "name": "Closed door means still occupied",
+                    "description": "Whether the area stays occupied while its doors stay closed after motion."
+                }
             }
         }
     }

@@ -24,6 +24,7 @@ from ..const import (
     CONF_AWAY_MODE_ENTITY,
     CONF_BUTTON_SENSORS,
     CONF_CLOSED_DOOR_HOLD,
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -43,6 +44,8 @@ from ..const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_LOCK_ACTIVE_STATE,
     CONF_LOCK_SENSORS,
+    CONF_LONG_MOTION_TIMEOUT,
+    CONF_MAX_HOLD,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -91,6 +94,7 @@ from ..const import (
     CONF_WINDOW_SENSORS,
     DECAY_INTERVAL,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
     DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -101,6 +105,8 @@ from ..const import (
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_HEALTH_ENABLED,
     DEFAULT_LOCK_ACTIVE_STATE,
+    DEFAULT_LONG_MOTION_TIMEOUT,
+    DEFAULT_MAX_HOLD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -474,6 +480,16 @@ class WaspInBox:
     verification_delay: int = DEFAULT_WASP_VERIFICATION_DELAY
 
 
+@dataclass
+class ClosedDoorHoldConfig:
+    """Conservative closed-door hold settings."""
+
+    enabled: bool = False
+    long_motion_timeout: int = DEFAULT_LONG_MOTION_TIMEOUT
+    pir_timeout: int = DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT
+    max_hold: int = DEFAULT_MAX_HOLD
+
+
 class AreaConfig:
     """Configuration for Area Occupancy Detection."""
 
@@ -684,6 +700,40 @@ class AreaConfig:
             verification_delay=int(
                 data.get(CONF_WASP_VERIFICATION_DELAY, DEFAULT_WASP_VERIFICATION_DELAY)
             ),
+        )
+
+        self.closed_door_hold = bool(
+            data.get(CONF_CLOSED_DOOR_HOLD, self.wasp_in_box.enabled)
+        )
+        try:
+            long_motion_timeout = int(
+                data.get(CONF_LONG_MOTION_TIMEOUT, DEFAULT_LONG_MOTION_TIMEOUT)
+            )
+        except (TypeError, ValueError, OverflowError):
+            long_motion_timeout = DEFAULT_LONG_MOTION_TIMEOUT
+        try:
+            pir_timeout = int(
+                data.get(
+                    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+                    DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+                )
+            )
+        except (TypeError, ValueError, OverflowError):
+            pir_timeout = DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT
+        try:
+            max_hold = int(
+                data.get(
+                    CONF_MAX_HOLD,
+                    data.get(CONF_WASP_MAX_DURATION, DEFAULT_MAX_HOLD),
+                )
+            )
+        except (TypeError, ValueError, OverflowError):
+            max_hold = DEFAULT_MAX_HOLD
+        self.closed_door_hold_config = ClosedDoorHoldConfig(
+            enabled=self.closed_door_hold,
+            long_motion_timeout=max(0, long_motion_timeout),
+            pir_timeout=max(0, pir_timeout),
+            max_hold=max(0, max_hold),
         )
 
         self.min_prior_override = float(

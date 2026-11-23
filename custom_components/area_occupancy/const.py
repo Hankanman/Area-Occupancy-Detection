@@ -136,6 +136,9 @@ CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
 CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
 # A room with one way in stays occupied while its door is shut (#558).
 CONF_CLOSED_DOOR_HOLD: Final = "closed_door_hold"
+CONF_LONG_MOTION_TIMEOUT: Final = "long_motion_timeout"
+CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT: Final = "closed_door_hold_pir_timeout"
+CONF_MAX_HOLD: Final = "max_hold"
 CONF_SLEEP_START: Final = "sleep_start"
 CONF_SLEEP_END: Final = "sleep_end"
 CONF_HEALTH_ENABLED: Final = "health_enabled"
@@ -199,6 +202,9 @@ DEFAULT_EXCLUDE_FROM_ALL_AREAS: Final = False
 DEFAULT_SLEEP_START: Final = "23:00:00"
 DEFAULT_SLEEP_END: Final = "07:00:00"
 DEFAULT_HEALTH_ENABLED: Final = True
+DEFAULT_LONG_MOTION_TIMEOUT: Final = 0
+DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT: Final = 20
+DEFAULT_MAX_HOLD: Final = 3600
 SENSOR_HEALTH_IGNORE_STORE_KEY: Final = f"{DOMAIN}.sensor_health_ignores"
 SENSOR_HEALTH_IGNORE_STORE_VERSION: Final = 1
 DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
@@ -471,7 +477,7 @@ GROUND_TRUTH_STORE_VERSION: Final = 1
 GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
 
 # --- Closed-door hold (#558) ---
-DOOR_HOLD_STORE_VERSION: Final = 1
+DOOR_HOLD_STORE_VERSION: Final = 2
 DOOR_HOLD_STORE_KEY_PREFIX: Final = f"{DOMAIN}.door_hold"
 
 # --- Shadow sensor likelihoods without the database (#603) ---
@@ -781,6 +787,9 @@ def get_sensor_type_mapping() -> dict[str, Any]:
 DURATION_FIELDS: Final[set[str]] = {
     CONF_DECAY_HALF_LIFE,
     CONF_MOTION_TIMEOUT,
+    CONF_LONG_MOTION_TIMEOUT,
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+    CONF_MAX_HOLD,
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
     CONF_WASP_VERIFICATION_DELAY,

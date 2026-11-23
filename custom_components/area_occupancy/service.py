@@ -25,8 +25,11 @@ from .const import (
     CONF_AREA_ID,
     CONF_AREAS,
     CONF_CLOSED_DOOR_HOLD,
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
     CONF_DECAY_ENABLED,
     CONF_DECAY_HALF_LIFE,
+    CONF_LONG_MOTION_TIMEOUT,
+    CONF_MAX_HOLD,
     CONF_MIN_PRIOR_OVERRIDE,
     CONF_PURPOSE,
     CONF_THRESHOLD,
@@ -76,6 +79,13 @@ SETTABLE_AREA_OPTIONS: dict[str, Any] = {
     CONF_MIN_PRIOR_OVERRIDE: vol.Coerce(float),
     CONF_WASP_ENABLED: cv.boolean,
     CONF_CLOSED_DOOR_HOLD: cv.boolean,
+    CONF_LONG_MOTION_TIMEOUT: vol.All(
+        cv.time_period, lambda value: int(value.total_seconds())
+    ),
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT: vol.All(
+        cv.time_period, lambda value: int(value.total_seconds())
+    ),
+    CONF_MAX_HOLD: vol.All(cv.time_period, lambda value: int(value.total_seconds())),
 }
 
 
