@@ -15,7 +15,10 @@ from custom_components.area_occupancy.const import (
     DEVICE_SW_VERSION,
     DOMAIN,
 )
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,
+    _area_is_fading,
+)
 from custom_components.area_occupancy.data.config import Sensors
 from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.core import HomeAssistant
@@ -2262,3 +2265,64 @@ class TestCoordinatorFindAreaForEntity:
 
         result = coordinator.find_area_for_entity(entity_id)
         assert result == expected_result
+
+
+class TestAreaIsFading:
+    """The decay tail after motion is "fading" whatever else sits active (#642).
+
+    A Kitchen with a temperature sensor whose range covers everyday readings
+    had that sensor "active" all day, which hid every fade: the whole decay
+    tail after each burst of motion (45% of the room's on-time over a
+    weekend) was scored as a false "on".
+    """
+
+    @staticmethod
+    def _entity(
+        input_type: InputType, *, active: bool = False, decaying: bool = False
+    ) -> Mock:
+        entity = Mock()
+        entity.evidence = active
+        entity.type.input_type = input_type
+        entity.decay.is_decaying = decaying
+        return entity
+
+    def _area(self, *entities: Mock) -> Mock:
+        area = Mock()
+        area.entities.active_entities = list(entities)
+        area.entities.decaying_entities = [e for e in entities if e.decay.is_decaying]
+        return area
+
+    @pytest.mark.parametrize(
+        ("others", "expected"),
+        [
+            # Only the fading motion sensor: a fade.
+            ([], True),
+            # Standing conditions don't explain the "on": still a fade.
+            ([(InputType.TEMPERATURE, True)], True),
+            ([(InputType.HUMIDITY, True), (InputType.ILLUMINANCE, True)], True),
+            ([(InputType.DOOR, True)], True),
+            ([(InputType.WINDOW, True), (InputType.COVER, True)], True),
+            # Something that says someone is there right now: not a fade.
+            ([(InputType.MEDIA, True)], False),
+            ([(InputType.APPLIANCE, True)], False),
+            ([(InputType.POWER, True)], False),
+            ([(InputType.BUTTON, True)], False),
+            ([(InputType.MOTION, True)], False),
+            # Inactive sensors of any kind change nothing.
+            ([(InputType.MEDIA, False), (InputType.TEMPERATURE, False)], True),
+        ],
+    )
+    def test_fading_motion_with_other_sensors(
+        self, others: list[tuple[InputType, bool]], expected: bool
+    ) -> None:
+        """A fading motion sensor plus other sensors: only presence ones block it."""
+        fading_motion = self._entity(InputType.MOTION, decaying=True)
+        area = self._area(
+            fading_motion, *(self._entity(t, active=a) for t, a in others)
+        )
+        assert _area_is_fading(area) is expected
+
+    def test_nothing_decaying_is_not_a_fade(self) -> None:
+        """No decaying sensor: nothing is fading, whatever is active."""
+        area = self._area(self._entity(InputType.TEMPERATURE, active=True))
+        assert _area_is_fading(area) is False

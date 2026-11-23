@@ -38,7 +38,7 @@ FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
 # Device information
 DEVICE_MANUFACTURER: Final = "Hankanman"
 DEVICE_MODEL: Final = "Area Occupancy Detector"
-DEVICE_SW_VERSION: Final = "2026.11.1-pre3"
+DEVICE_SW_VERSION: Final = "2026.11.1-pre5"
 # Oldest Home Assistant this release runs on; keep in step with hacs.json.
 # HACS doesn't always enforce that file, so the migration checks it too.
 MIN_HA_VERSION: Final = "2026.9.0"
@@ -97,6 +97,7 @@ CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
 CONF_MEDIA_DEVICES: Final = "media_devices"
 CONF_APPLIANCES: Final = "appliances"
 CONF_BUTTON_SENSORS: Final = "button_sensors"
+CONF_BUTTON_PULSE_DURATION: Final = "button_pulse_duration"
 CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
@@ -227,8 +228,7 @@ DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
 DEFAULT_WEIGHT_MEDIA: Final = 0.7
 DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
 DEFAULT_WEIGHT_BUTTON: Final = 0.7
-# A press counts in full for this short window before the area's normal decay.
-BUTTON_PRESS_WINDOW: Final = 5
+DEFAULT_BUTTON_PULSE_DURATION: Final = 5
 DEFAULT_WEIGHT_DOOR: Final = 0.3
 DEFAULT_WEIGHT_LOCK: Final = 0.3
 DEFAULT_WEIGHT_WINDOW: Final = 0.2
@@ -573,6 +573,8 @@ ATTR_LAST_DOOR_TIME: Final = "last_door_time"
 ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
 ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
 ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
+ATTR_OCCUPIED_SINCE: Final = "occupied_since"
+ATTR_VACANT_SINCE: Final = "vacant_since"
 ATTR_MAX_DURATION: Final = "max_duration"
 ATTR_VERIFICATION_DELAY: Final = "verification_delay"
 ATTR_VERIFICATION_PENDING: Final = "verification_pending"
@@ -745,16 +747,16 @@ def get_default_state(platform_type: str) -> str:
 
 # Sensor type string -> InputType mapping (alphabetized).
 # Lazy-loaded to avoid circular imports with data.entity_type.
-_SENSOR_TYPE_MAPPING: dict[str, Any] | None = None
+_sensor_type_mapping: dict[str, Any] | None = None
 
 
 def get_sensor_type_mapping() -> dict[str, Any]:
     """Get sensor type mapping, building lazily to avoid circular imports."""
-    global _SENSOR_TYPE_MAPPING  # noqa: PLW0603
-    if _SENSOR_TYPE_MAPPING is None:
+    global _sensor_type_mapping  # noqa: PLW0603
+    if _sensor_type_mapping is None:
         from .data.entity_type import InputType  # noqa: PLC0415
 
-        _SENSOR_TYPE_MAPPING = {
+        _sensor_type_mapping = {
             "air_quality": InputType.AIR_QUALITY,
             "appliance": InputType.APPLIANCE,
             "button": InputType.BUTTON,
@@ -780,7 +782,7 @@ def get_sensor_type_mapping() -> dict[str, Any]:
             "wifi_clients": InputType.WIFI_CLIENTS,
             "window": InputType.WINDOW,
         }
-    return _SENSOR_TYPE_MAPPING
+    return _sensor_type_mapping
 
 
 # Fields that use DurationSelector and need conversion.
@@ -793,4 +795,5 @@ DURATION_FIELDS: Final[set[str]] = {
     CONF_WASP_MAX_DURATION,
     CONF_WASP_MOTION_TIMEOUT,
     CONF_WASP_VERIFICATION_DELAY,
+    CONF_BUTTON_PULSE_DURATION,
 }

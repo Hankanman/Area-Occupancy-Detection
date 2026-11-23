@@ -153,13 +153,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -340,13 +342,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -681,13 +685,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -868,13 +874,15 @@
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
                             "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
                             "weight_appliance": "Appliance Weight",
                             "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                             "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                            "weight_button": "The weight given to button presses in the occupancy calculation."
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -1270,7 +1278,7 @@
         },
         "pipeline_health_insufficient_priors": {
             "title": "Priors haven't trained for {area}",
-            "description": "The integration has been running for {duration} in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every Bayesian update falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
+            "description": "The integration has been running for {duration} in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every probability calculation falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
         },
         "pipeline_health_stale_intervals_cache": {
             "title": "Occupancy data hasn't refreshed for {area}",
@@ -1404,13 +1412,15 @@
                                 "appliances": "Appliances",
                                 "appliance_active_states": "Appliance Active States",
                                 "button_sensors": "Presence Buttons and Event Entities",
+                                "button_pulse_duration": "Button Pulse Duration",
                                 "weight_appliance": "Appliance Weight",
                                 "weight_button": "Button Weight"
                             },
                             "data_description": {
                                 "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
                                 "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
-                                "weight_button": "The weight given to button presses in the occupancy calculation."
+                                "weight_button": "The weight given to button presses in the occupancy calculation.",
+                                "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                             }
                         },
                         "environmental": {

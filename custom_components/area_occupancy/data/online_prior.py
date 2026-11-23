@@ -51,6 +51,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from ..const import (
     MAX_PRIOR,
@@ -112,7 +113,7 @@ class OnlinePriorState:
     #  "bucket_diff": float | None, "buckets": int}
     # where the diffs are the day's MAX absolute divergence (worst case,
     # so a briefly-good hourly sample can't mask a bad day).
-    diff_history: list[dict] = field(default_factory=list)
+    diff_history: list[dict[str, Any]] = field(default_factory=list)
     # Fingerprint of the area's ground-truth sensors and their active
     # states when these statistics started. Statistics gathered under a
     # different set (sensors swapped, "paused" no longer active, another
@@ -125,9 +126,9 @@ class OnlinePriorState:
     # One entry per completed day compared with the DB, oldest first:
     # {"date", "online_seconds", "db_seconds", "day_seconds",
     #  "diff" (online - db as a share of the day), "partial"}.
-    day_diff_history: list[dict] = field(default_factory=list)
+    day_diff_history: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "occupied_seconds": self.occupied_seconds,
@@ -151,7 +152,7 @@ class OnlinePriorState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> OnlinePriorState:
+    def from_dict(cls, data: dict[str, Any]) -> OnlinePriorState:
         """Restore from storage; malformed fields fall back to empty state.
 
         Tolerant of a v1 payload: the slot maps and diff history simply
@@ -305,7 +306,9 @@ class OnlinePriorEstimator:
             if day not in compared and date.fromisoformat(day) < cutoff
         ]
 
-    def record_day(self, day: str, db_seconds: float, day_seconds: float) -> dict:
+    def record_day(
+        self, day: str, db_seconds: float, day_seconds: float
+    ) -> dict[str, Any]:
         """Compare one completed day's live occupied time with the DB's.
 
         Args:

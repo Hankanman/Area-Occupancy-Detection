@@ -21,6 +21,7 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_BUTTON_PULSE_DURATION,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
     CONF_CUSTOM_BINARY_ACTIVE_STATES,
@@ -110,6 +111,8 @@ THRESHOLD_MAX = 100
 # decay_default``).
 DECAY_HALF_LIFE_MIN = 10
 DECAY_HALF_LIFE_MAX = 3600
+BUTTON_PULSE_DURATION_MIN = 5
+BUTTON_PULSE_DURATION_MAX = 600
 
 # Every per-type weight key with its default, in one place so the validator
 # and any future per-type UI iterate the same list.
@@ -280,6 +283,18 @@ def validate_decay_half_life(value: Any) -> str | None:
     return None
 
 
+def validate_button_pulse_duration(value: Any) -> str | None:
+    """Validate the duration of a button presence pulse in seconds."""
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or value < BUTTON_PULSE_DURATION_MIN
+        or value > BUTTON_PULSE_DURATION_MAX
+    ):
+        return "invalid_button_pulse_duration"
+    return None
+
+
 def validate_sensor_states(data: dict[str, Any]) -> dict[str, str]:
     """Validate the sensor groups' state and range settings.
 
@@ -358,6 +373,11 @@ def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
         half_life = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
         if error := validate_decay_half_life(half_life):
             errors[CONF_DECAY_HALF_LIFE] = error
+
+    if CONF_BUTTON_PULSE_DURATION in data and (
+        error := validate_button_pulse_duration(data[CONF_BUTTON_PULSE_DURATION])
+    ):
+        errors[CONF_BUTTON_PULSE_DURATION] = error
 
     return errors
 

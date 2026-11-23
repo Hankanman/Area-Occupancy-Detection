@@ -60,8 +60,8 @@ flowchart TD
     GetState --> CheckType2{Is Binary?}
     CheckType2 -- Yes --> UseStatic[Use Static Probabilities]
     CheckType2 -- No --> CalcGaussian[Calculate Gaussian Densities]
-    UseStatic --> Bayesian[Use in Bayesian Update]
-    CalcGaussian --> Bayesian
+    UseStatic --> Prob[Use in Probability Calculation]
+    CalcGaussian --> Prob
 ```
 
 ## Phase-by-Phase Breakdown
@@ -208,7 +208,7 @@ For each entity:
 
 ### Phase 4: Likelihood Calculation (Runtime)
 
-This phase occurs at runtime whenever the Bayesian probability calculation needs likelihood values.
+This phase occurs at runtime whenever the probability calculation needs likelihood values.
 
 #### Step 4.1: Get Likelihoods
 
@@ -232,7 +232,7 @@ This phase occurs at runtime whenever the Bayesian probability calculation needs
    - **Numeric Sensors**: Calculates $P(value | Occupied)$ and $P(value | Unoccupied)$ using Gaussian PDF.
 
 3. **Return Probabilities**:
-   - Returns the two probabilities for Bayesian update.
+   - Returns the two probabilities, which set the sensor's strength and information gain.
 
 ## Key Operations Reference
 
@@ -254,7 +254,7 @@ This section provides a quick reference to the key operations in the analysis ch
 
 ### Runtime Operations
 
-- **Likelihood Retrieval**: Retrieves likelihood values for Bayesian calculation at runtime based on current sensor state
+- **Likelihood Retrieval**: Retrieves likelihood values for the probability calculation at runtime based on current sensor state
 
 ## Unified Architecture
 

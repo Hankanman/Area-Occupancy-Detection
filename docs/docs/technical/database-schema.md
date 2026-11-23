@@ -43,7 +43,7 @@ Stores area configuration and metadata.
 
 ### `entities`
 
-Stores entity (sensor) configuration and Bayesian parameters.
+Stores entity (sensor) configuration and learned probability parameters.
 
 | Column              | Type            | Description                                    |
 | ------------------- | --------------- | ---------------------------------------------- |
@@ -51,7 +51,7 @@ Stores entity (sensor) configuration and Bayesian parameters.
 | `area_name`         | String (PK, FK) | Area this entity belongs to                    |
 | `entity_id`         | String (PK)     | Home Assistant entity ID                       |
 | `entity_type`       | String          | Type (motion, media, appliance, etc.)          |
-| `weight`            | Float           | Bayesian weight (0.0-1.0)                      |
+| `weight`            | Float           | Sensor weight (0.0-1.0)                        |
 | `prob_given_true`   | Float           | P(entity active \| area occupied)              |
 | `prob_given_false`  | Float           | P(entity active \| area unoccupied)            |
 | `is_shared`         | Boolean         | Whether entity is shared across areas          |
@@ -226,7 +226,7 @@ Stores precomputed occupied intervals for fast prior calculations.
 
 Stores global prior values with calculation metadata and history. **This is the only source of truth for global priors** - the `areas` table no longer contains an `area_prior` field.
 
-**Purpose:** Stores the global prior for each area with full history and metadata. The global prior represents the overall occupancy probability for an area, calculated from historical motion sensor data. It serves as the baseline for Bayesian probability calculations.
+**Purpose:** Stores the global prior for each area with full history and metadata. The global prior represents the overall occupancy probability for an area, calculated from historical motion sensor data. It serves as the baseline for the probability calculation.
 
 **Calculation Method:** The global prior is calculated as the ratio of total occupied time to total period duration:
 
@@ -404,7 +404,7 @@ mean_value_when_unoccupied = time_active_during_unoccupied / total_unoccupied_ti
 
 3. Calculate probabilities by dividing accumulated active durations by total occupied/unoccupied time
 
-4. Clamp probabilities to the range [0.05, 0.95] to avoid extreme "black hole" values that could skew Bayesian calculations
+4. Clamp probabilities to the range [0.05, 0.95] to avoid extreme "black hole" values that could skew the probability calculation
 
 **Supported Binary Sensor Types:**
 
@@ -433,7 +433,7 @@ Binary likelihood analysis is performed for sensors with binary states, includin
 
 ### `entity_statistics`
 
-Stores per-entity operational and Bayesian statistics.
+Stores per-entity operational and probability statistics.
 
 | Column            | Type         | Description                                         |
 | ----------------- | ------------ | --------------------------------------------------- |
@@ -453,7 +453,7 @@ Stores per-entity operational and Bayesian statistics.
 - Unique constraint on `(entity_id, statistic_type, statistic_name, period_start)`
 - Composite indexes for area-based and entity-based queries
 
-**Purpose:** Tracks operational statistics (counts, durations, frequencies) and Bayesian parameters (probabilities, weights) over time.
+**Purpose:** Tracks operational statistics (counts, durations, frequencies) and probability parameters (probabilities, weights) over time. The `"bayesian"` statistic type is a stored value kept for compatibility.
 
 ### `area_relationships`
 

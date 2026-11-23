@@ -1,6 +1,6 @@
-# Bayesian Probability Calculation
+# Probability Calculation
 
-This integration uses Bayesian probability to determine the likelihood of an area being occupied based on the current states of configured sensors.
+This integration calculates the probability of an area being occupied from a learned prior and the current states of configured sensors, using a weighted logistic model in log-odds space.
 
 ## Core Concept
 
@@ -40,7 +40,7 @@ The default time weight is 0.2, meaning 20% of the prior comes from time-based p
 
 ### 3. Combine Evidence in Logit Space
 
-Rather than adjusting per-entity likelihoods and running a Bayes'-theorem-style update, the integration builds one running total in **logit (log-odds) space**, starting from the prior and adding one weighted term per entity:
+Rather than multiplying per-entity likelihood ratios with Bayes' theorem, the integration builds one running total in **logit (log-odds) space**, starting from the prior and adding one weighted term per entity:
 
 ```
 z = logit(prior)
@@ -83,6 +83,8 @@ strength = hold
 - **Hold:** once it decays, its strength is exactly the hold, and decay halves it every half-life, so the area stays at or above its threshold for **one half-life** of the area's purpose and then releases, whatever its prior. A 2.5%-prior bathroom with a 450 s half-life stays occupied for 450 s after decay starts, rather than the ~170 s the floor alone gave. A 42%-prior bedroom (threshold 50%) also releases after one half-life, where fading from motion's fixed 2.85 took 3.1 half-lives (about 48 minutes).
 
 So a room releases at **motion timeout + one half-life** after the last PIR detection: a hallway with a 45 s half-life after about 2¼ minutes.
+
+- **One device counts once:** a combined sensor often exposes two entities for the same detection, such as a PIR "motion" and an mmWave "occupancy" entity on one device. Motion and sleep entities that share a device count once, at the stronger of the two, so the room still releases after one half-life rather than two. Sensors on separate devices each add their own contribution.
 
 Both limits apply at full *configured* weight: the sensor's information gain (how far its `prob_given_false` sits below `prob_given_true`), which otherwise also scales `effective_weight`, is divided back out, so a noisier motion sensor still holds for the full half-life. A lower configured weight still scales all of this down.
 
@@ -133,7 +135,7 @@ The **Occupancy Status** binary sensor compares this probability to the configur
 
 ## Mathematical Foundation
 
-The calculation combines a learned prior with sensor evidence in **logit (log-odds) space**: each entity adds one weighted, additive term to a running sum, and a single `sigmoid()` call converts that sum back to a probability at the end. This is not classic Bayes'-theorem likelihood-ratio multiplication — see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md) for the full formula, derivation, and a worked example.
+The calculation combines a learned prior with sensor evidence in **logit (log-odds) space**: each entity adds one weighted, additive term to a running sum, and a single `sigmoid()` call converts that sum back to a probability at the end. This is not classic Bayes'-theorem likelihood-ratio multiplication — see [Probability Calculation Deep Dive](../technical/bayesian-calculation.md) for the full formula, derivation, and a worked example.
 
 ## Entity Weight Application
 
@@ -160,7 +162,7 @@ Default weights by entity type:
 
 ## Decay Interpolation
 
-When [Probability Decay](../features/decay.md) is active, a decaying entity's evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole logit-space contribution shrinks smoothly toward zero as decay progresses — not an interpolation of the likelihood toward a neutral value. For the mathematical formula, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#decay-interpolation).
+When [Probability Decay](../features/decay.md) is active, a decaying entity's evidence value is the decay factor itself (`1.0` fresh, fading toward `0.0`), so its whole logit-space contribution shrinks smoothly toward zero as decay progresses — not an interpolation of the likelihood toward a neutral value. For the mathematical formula, see [Probability Calculation Deep Dive](../technical/bayesian-calculation.md#decay-interpolation).
 
 ## Edge Case Handling
 
@@ -171,7 +173,7 @@ The calculation handles several edge cases to ensure robust operation:
 - **No Entities**: If no entities are available, the calculation returns the prior probability
 - **Numerical Stability**: The system uses various techniques to prevent numerical overflow and underflow
 
-For detailed technical information about edge case handling, see [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md#numerical-stability-techniques).
+For detailed technical information about edge case handling, see [Probability Calculation Deep Dive](../technical/bayesian-calculation.md#numerical-stability-techniques).
 
 ## Example Calculation
 
@@ -222,7 +224,7 @@ The active, high-reliability motion sensor dominates (`+2.85` in logit space, vs
 ## See Also
 
 - [Complete Calculation Flow](../technical/calculation-flow.md) - End-to-end process explanation
-- [Bayesian Calculation Deep Dive](../technical/bayesian-calculation.md) - Detailed mathematical explanation
+- [Probability Calculation Deep Dive](../technical/bayesian-calculation.md) - Detailed mathematical explanation
 - [Prior Learning](../features/prior-learning.md) - How priors are learned from history
 - [Likelihood Learning](../features/likelihood.md) - How likelihoods are learned
 - [Decay Feature](../features/decay.md) - Decay mechanism overview
