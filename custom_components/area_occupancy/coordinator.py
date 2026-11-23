@@ -1299,7 +1299,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         holds, and one without decay never clears.
         """
         if area.config.closed_door_hold or not area.config.decay.enabled:
-            self._continuity.pop(area_name, None)
+            _ = self._continuity.pop(area_name, None)
             return
         modifier = self._adjacency_decay_modifiers.get(area_name)
         ratio = (

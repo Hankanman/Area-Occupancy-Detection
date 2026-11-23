@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from ..const import GROUND_TRUTH_ACTIVE_FLOOR
 from ..time_utils import ensure_utc_datetime
@@ -101,14 +101,15 @@ class DoorHoldState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DoorHoldState:
+    def from_dict(cls, data: object) -> DoorHoldState:
         """Restore state, migrating legacy held_from payloads defensively."""
 
         if not isinstance(data, dict):
             return cls()
+        typed_data = cast(dict[str, Any], data)
 
         def timestamp(key: str) -> datetime | None:
-            raw = data.get(key)
+            raw = typed_data.get(key)
             if raw is None:
                 return None
             if not isinstance(raw, str):
@@ -116,8 +117,8 @@ class DoorHoldState:
             return ensure_utc_datetime(datetime.fromisoformat(raw))
 
         try:
-            doors_open = data.get("doors_open")
-            motion_on_previous = data.get("motion_on_previous")
+            doors_open = typed_data.get("doors_open")
+            motion_on_previous = typed_data.get("motion_on_previous")
             if doors_open not in (True, False, None):
                 doors_open = None
             if motion_on_previous not in (True, False, None):

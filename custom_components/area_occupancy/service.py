@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import asdict
+from datetime import timedelta
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -61,6 +62,7 @@ GET_TIME_PRIORS_SCHEMA = vol.Schema(
     }
 )
 
+
 # Per-area tunables the ``set_area_option`` service may change, mapped to the
 # coercion applied before validation.
 #
@@ -70,22 +72,21 @@ GET_TIME_PRIORS_SCHEMA = vol.Schema(
 # is not something anyone asked for. Per-type weights are excluded because
 # learned sensor fusion is intended to take them over -- exposing them now
 # would publish an API that plan has to walk back.
+def _time_period_seconds(value: timedelta) -> int:
+    """Convert a Home Assistant time-period value to seconds."""
+    return int(value.total_seconds())
+
+
 SETTABLE_AREA_OPTIONS: dict[str, Any] = {
     CONF_THRESHOLD: vol.Coerce(float),
     CONF_DECAY_ENABLED: cv.boolean,
-    CONF_DECAY_HALF_LIFE: vol.All(
-        cv.time_period, lambda value: int(value.total_seconds())
-    ),
+    CONF_DECAY_HALF_LIFE: vol.All(cv.time_period, _time_period_seconds),
     CONF_MIN_PRIOR_OVERRIDE: vol.Coerce(float),
     CONF_WASP_ENABLED: cv.boolean,
     CONF_CLOSED_DOOR_HOLD: cv.boolean,
-    CONF_LONG_MOTION_TIMEOUT: vol.All(
-        cv.time_period, lambda value: int(value.total_seconds())
-    ),
-    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT: vol.All(
-        cv.time_period, lambda value: int(value.total_seconds())
-    ),
-    CONF_MAX_HOLD: vol.All(cv.time_period, lambda value: int(value.total_seconds())),
+    CONF_LONG_MOTION_TIMEOUT: vol.All(cv.time_period, _time_period_seconds),
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT: vol.All(cv.time_period, _time_period_seconds),
+    CONF_MAX_HOLD: vol.All(cv.time_period, _time_period_seconds),
 }
 
 

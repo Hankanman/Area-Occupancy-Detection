@@ -1934,9 +1934,7 @@ class BaseOccupancyFlow:
 
     hass: HomeAssistant
 
-    def add_suggested_values_to_schema(
-        self, *_args: Any, **_kwargs: Any
-    ) -> vol.Schema:
+    def add_suggested_values_to_schema(self, *_args: Any, **_kwargs: Any) -> vol.Schema:
         """Add suggested values to a schema."""
         raise NotImplementedError
 
@@ -2032,10 +2030,9 @@ class BaseOccupancyFlow:
         """Get the list of areas for duplicate checking. Overridden by subclasses."""
         raise NotImplementedError
 
-    async def _on_area_config_complete(
-        self, config: dict[str, Any]
-    ) -> Any:
+    async def _on_area_config_complete(self, config: dict[str, Any]) -> Any:
         """Handle completion of the area config wizard. Overridden by subclasses."""
+        _ = config
         raise NotImplementedError
 
     def _build_adjacent_area_options(self) -> list[SelectOptionDict]:

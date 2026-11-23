@@ -1020,14 +1020,6 @@
             {
                 "code": "reportUnusedParameter",
                 "range": {
-                    "startColumn": 18,
-                    "endColumn": 28,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedParameter",
-                "range": {
                     "startColumn": 8,
                     "endColumn": 12,
                     "lineCount": 1
@@ -1054,14 +1046,6 @@
                 "range": {
                     "startColumn": 13,
                     "endColumn": 31,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedParameter",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 20,
                     "lineCount": 1
                 }
             },
@@ -2588,14 +2572,6 @@
                 "range": {
                     "startColumn": 13,
                     "endColumn": 35,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 29,
                     "lineCount": 1
                 }
             },
@@ -5695,30 +5671,6 @@
             }
         ],
         "./custom_components/area_occupancy/service.py": [
-            {
-                "code": "reportUnknownLambdaType",
-                "range": {
-                    "startColumn": 31,
-                    "endColumn": 36,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnknownMemberType",
-                "range": {
-                    "startColumn": 42,
-                    "endColumn": 61,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnknownArgumentType",
-                "range": {
-                    "startColumn": 42,
-                    "endColumn": 63,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnknownVariableType",
                 "range": {

@@ -493,6 +493,9 @@ class ClosedDoorHoldConfig:
 class AreaConfig:
     """Configuration for Area Occupancy Detection."""
 
+    closed_door_hold: bool
+    closed_door_hold_config: ClosedDoorHoldConfig
+
     def __init__(
         self,
         coordinator: AreaOccupancyCoordinator,
