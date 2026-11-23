@@ -1020,14 +1020,6 @@
             {
                 "code": "reportUnusedParameter",
                 "range": {
-                    "startColumn": 18,
-                    "endColumn": 28,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedParameter",
-                "range": {
                     "startColumn": 8,
                     "endColumn": 12,
                     "lineCount": 1
@@ -1290,14 +1282,6 @@
                 }
             },
             {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 36,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnusedParameter",
                 "range": {
                     "startColumn": 14,
@@ -1366,14 +1350,6 @@
                 "range": {
                     "startColumn": 14,
                     "endColumn": 24,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 36,
                     "lineCount": 1
                 }
             },
@@ -1494,14 +1470,6 @@
                 "range": {
                     "startColumn": 14,
                     "endColumn": 24,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 36,
                     "lineCount": 1
                 }
             },
@@ -2588,14 +2556,6 @@
                 "range": {
                     "startColumn": 13,
                     "endColumn": 35,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 29,
                     "lineCount": 1
                 }
             },

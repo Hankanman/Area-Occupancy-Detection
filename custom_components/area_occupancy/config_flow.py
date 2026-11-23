@@ -2694,7 +2694,7 @@ class AreaSubentryFlowHandler(BaseOccupancyFlow, ConfigSubentryFlow):
         )
 
     async def async_step_edit_area(
-        self, user_input: dict[str, Any] | None = None
+        self, _user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult | SubentryFlowResult:
         """Walk every wizard page in order."""
         self._prepare_area_action_edit()
@@ -2968,7 +2968,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
         return await self.async_step_user()
 
     async def async_step_cancel_remove_area(
-        self, user_input: dict[str, Any] | None = None
+        self, _user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Cancel area removal."""
         self._area_to_remove = None
@@ -3165,7 +3165,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         )
 
     async def async_step_confirm_remove_area(
-        self, user_input: dict[str, Any] | None = None
+        self, _user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Execute area removal."""
         area_id = self._area_to_remove

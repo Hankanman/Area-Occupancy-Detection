@@ -1290,7 +1290,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         holds, and one without decay never clears.
         """
         if area.config.closed_door_hold or not area.config.decay.enabled:
-            self._continuity.pop(area_name, None)
+            _ = self._continuity.pop(area_name, None)
             return
         modifier = self._adjacency_decay_modifiers.get(area_name)
         ratio = (
@@ -1303,7 +1303,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else 1.0
         )
         neighbours = self._adjacency_snapshot.adjacency_index.get(area_name, set())
-        self._continuity.setdefault(area_name, ContinuityShadow()).observe(
+        _continuity = self._continuity.setdefault(area_name, ContinuityShadow())
+        _ = _continuity.observe(
             now,
             present=_ground_truth_present(area),
             occupied=is_occupied,
