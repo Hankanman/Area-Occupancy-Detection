@@ -1,0 +1,796 @@
+"""Constants and types for the Area Occupancy Detection integration."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import logging
+from typing import Any, Final, TypedDict
+
+from homeassistant.components.lock import LockState
+from homeassistant.const import (
+    STATE_BUFFERING,
+    STATE_CLOSED,
+    STATE_CLOSING,
+    STATE_IDLE,
+    STATE_OFF,
+    STATE_ON,
+    STATE_OPEN,
+    STATE_OPENING,
+    STATE_PAUSED,
+    STATE_PLAYING,
+    STATE_STANDBY,
+    Platform,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+DOMAIN: Final = "area_occupancy_dev"
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR]
+
+# Bundled Lovelace card, served by the integration itself (see async_setup).
+# The URL carries the integration version as a cache-busting query string, so
+# every release is a new cache key despite the long-lived cache headers.
+FRONTEND_DIR: Final = "frontend"
+FRONTEND_URL_BASE: Final = f"/{DOMAIN}/frontend"
+TIME_PRIORS_CARD_FILENAME: Final = "area-occupancy-time-priors-card.js"
+FRONTEND_REGISTERED_KEY: Final = f"{DOMAIN}_frontend_registered"
+
+# Device information
+DEVICE_MANUFACTURER: Final = "Hankanman"
+DEVICE_MODEL: Final = "Area Occupancy Detector"
+DEVICE_SW_VERSION: Final = "2026.11.1-pre3"
+# Oldest Home Assistant this release runs on; keep in step with hacs.json.
+# HACS doesn't always enforce that file, so the migration checks it too.
+MIN_HA_VERSION: Final = "2026.9.0"
+# Config entry format. v19 moves each area out of the legacy CONF_AREAS list
+# into its own config subentry (see migrations.py). Bumping this no longer
+# costs anyone their learned history -- that is what DB_SCHEMA_VERSION below
+# is for.
+CONF_VERSION: Final = 20
+CONF_VERSION_MINOR: Final = 0
+# Version stamp of the SQLite schema, stored in the ``metadata`` table as
+# ``db_version``. Deliberately independent of ``CONF_VERSION`` (the config
+# entry format version): a config-entry migration must never cost users their
+# learned history. Bump this ONLY for an incompatible SQLite schema change --
+# ``db/maintenance.py::_ensure_schema_up_to_date`` deletes and recreates the
+# whole database on mismatch.
+#
+# 18 -> 19: widened the aggregation/interval/numeric-sample unique constraints
+# and grouping keys to include entry_id (#533) -- two config entries sharing a
+# physical entity_id no longer collide. A genuine constraint change, not
+# additive, so it does need the destructive recreate; an in-place ALTER isn't
+# possible since the old constraint is narrower than the new one. This bump
+# used to ride on CONF_VERSION, which is why decoupling the two mattered:
+# without it this schema change would have silently not applied.
+DB_SCHEMA_VERSION: Final = 19
+HA_RECORDER_DAYS: Final = 10  # days
+
+# Multi-area architecture constants
+# Subentry type for a configured area. Since CONF_VERSION 19 each area is a
+# config subentry of the single entry rather than an item in the CONF_AREAS
+# list, which gives the integration page a native per-area list with its own
+# reconfigure and delete. CONF_AREAS remains defined only so the v18 migration
+# can read the old shape.
+SUBENTRY_TYPE_AREA: Final = "area"
+
+CONF_AREAS: Final = "areas"  # Legacy (<= v18) key holding the list of areas
+ALL_AREAS_IDENTIFIER: Final = (
+    "all_areas"  # Identifier for "All Areas" aggregation device
+)
+
+# Config flow action constants
+CONF_ACTION_ADD_AREA: Final = "add_area"
+CONF_ACTION_GLOBAL_SETTINGS: Final = "global_settings"
+CONF_ACTION_MANAGE_PEOPLE: Final = "manage_people"
+CONF_OPTION_PREFIX_AREA: Final = "area_"
+
+# Configuration constants
+# CONF_NAME removed - use CONF_AREA_ID instead
+CONF_AREA_ID: Final = "area_id"
+CONF_PURPOSE: Final = "purpose"
+CONF_ADJACENT_AREAS: Final = (
+    "adjacent_areas"  # JSON list of adjacent area_ids; consumed by AreaRelationships
+)
+CONF_MOTION_SENSORS: Final = "motion_sensors"
+CONF_MOTION_PROB_GIVEN_TRUE: Final = "motion_prob_given_true"
+CONF_MOTION_PROB_GIVEN_FALSE: Final = "motion_prob_given_false"
+CONF_MEDIA_DEVICES: Final = "media_devices"
+CONF_APPLIANCES: Final = "appliances"
+CONF_BUTTON_SENSORS: Final = "button_sensors"
+CONF_ILLUMINANCE_SENSORS: Final = "illuminance_sensors"
+CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
+CONF_TEMPERATURE_SENSORS: Final = "temperature_sensors"
+CONF_CO2_SENSORS: Final = "co2_sensors"
+CONF_CO_SENSORS: Final = "co_sensors"
+CONF_SOUND_PRESSURE_SENSORS: Final = "sound_pressure_sensors"
+CONF_PRESSURE_SENSORS: Final = "pressure_sensors"
+CONF_AIR_QUALITY_SENSORS: Final = "air_quality_sensors"
+CONF_VOC_SENSORS: Final = "voc_sensors"
+CONF_PM25_SENSORS: Final = "pm25_sensors"
+CONF_PM10_SENSORS: Final = "pm10_sensors"
+CONF_POWER_SENSORS: Final = "power_sensors"
+CONF_WIFI_CLIENTS_SENSORS: Final = "wifi_clients_sensors"
+CONF_DOOR_SENSORS: Final = "door_sensors"
+CONF_DOOR_ACTIVE_STATE: Final = "door_active_state"
+CONF_LOCK_SENSORS: Final = "lock_sensors"
+CONF_LOCK_ACTIVE_STATE: Final = "lock_active_state"
+CONF_WINDOW_SENSORS: Final = "window_sensors"
+CONF_WINDOW_ACTIVE_STATE: Final = "window_active_state"
+CONF_COVER_SENSORS: Final = "cover_sensors"
+CONF_COVER_ACTIVE_STATES: Final = "cover_active_states"
+CONF_APPLIANCE_ACTIVE_STATES: Final = "appliance_active_states"
+# Custom entities (#531): unlike every other sensor type, these have no
+# domain/device_class filter at all — the whole point is supporting
+# entities today's typed sections reject (e.g. an MQTT/HASS.Agent sensor).
+CONF_CUSTOM_BINARY_SENSORS: Final = "custom_binary_sensors"
+CONF_CUSTOM_BINARY_ACTIVE_STATES: Final = "custom_binary_active_states"
+CONF_CUSTOM_NUMERIC_SENSORS: Final = "custom_numeric_sensors"
+CONF_CUSTOM_NUMERIC_ACTIVE_MIN: Final = "custom_numeric_active_min"
+CONF_CUSTOM_NUMERIC_ACTIVE_MAX: Final = "custom_numeric_active_max"
+CONF_THRESHOLD: Final = "threshold"
+CONF_DECAY_ENABLED: Final = "decay_enabled"
+CONF_DECAY_HALF_LIFE: Final = "decay_half_life"
+CONF_MEDIA_ACTIVE_STATES: Final = "media_active_states"
+CONF_MOTION_TIMEOUT: Final = "motion_timeout"
+CONF_MIN_PRIOR_OVERRIDE: Final = "min_prior_override"
+CONF_EXCLUDE_FROM_ALL_AREAS: Final = "exclude_from_all_areas"
+# A room with one way in stays occupied while its door is shut (#558).
+CONF_CLOSED_DOOR_HOLD: Final = "closed_door_hold"
+CONF_LONG_MOTION_TIMEOUT: Final = "long_motion_timeout"
+CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT: Final = "closed_door_hold_pir_timeout"
+CONF_MAX_HOLD: Final = "max_hold"
+CONF_SLEEP_START: Final = "sleep_start"
+CONF_SLEEP_END: Final = "sleep_end"
+CONF_HEALTH_ENABLED: Final = "health_enabled"
+# Optional boolean entity that is on while the household is away (#485). Set,
+# it replaces person tracking and ``zone.home`` as the source for away mode.
+CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
+
+# People configuration constants
+CONF_PEOPLE: Final = "people"
+CONF_PERSON_ENTITY: Final = "person_entity"
+CONF_PERSON_SLEEP_SENSOR: Final = "sleep_confidence_sensor"
+CONF_PERSON_SLEEP_SENSORS: Final = "sleep_sensors"
+CONF_PERSON_SLEEP_AREA: Final = "sleep_area_id"
+CONF_PERSON_CONFIDENCE_THRESHOLD: Final = "confidence_threshold"
+CONF_PERSON_DEVICE_TRACKER: Final = "device_tracker"
+
+
+# Configured Weights
+CONF_WEIGHT_SLEEP: Final = "weight_sleep"
+CONF_WEIGHT_MOTION: Final = "weight_motion"
+CONF_WEIGHT_MEDIA: Final = "weight_media"
+CONF_WEIGHT_APPLIANCE: Final = "weight_appliance"
+CONF_WEIGHT_BUTTON: Final = "weight_button"
+CONF_WEIGHT_DOOR: Final = "weight_door"
+CONF_WEIGHT_LOCK: Final = "weight_lock"
+CONF_WEIGHT_WINDOW: Final = "weight_window"
+CONF_WEIGHT_COVER: Final = "weight_cover"
+CONF_WEIGHT_ENVIRONMENTAL: Final = "weight_environmental"
+CONF_WEIGHT_POWER: Final = "weight_power"
+CONF_WEIGHT_WIFI_CLIENTS: Final = "weight_wifi_clients"
+CONF_WEIGHT_CUSTOM_BINARY: Final = "weight_custom_binary"
+CONF_WEIGHT_CUSTOM_NUMERIC: Final = "weight_custom_numeric"
+CONF_WEIGHT_WASP: Final = "weight_wasp"
+
+# Default values
+DEFAULT_THRESHOLD: Final = 50.0
+DEFAULT_PURPOSE: Final = "social"  # Default area purpose
+DEFAULT_DECAY_ENABLED: Final = True
+DEFAULT_DECAY_HALF_LIFE: Final = 0  # 0 means "use purpose value"
+DEFAULT_DOOR_ACTIVE_STATE: Final = STATE_OPEN
+DEFAULT_LOCK_ACTIVE_STATE: Final = LockState.UNLOCKED
+DEFAULT_WINDOW_ACTIVE_STATE: Final = STATE_OPEN
+DEFAULT_MEDIA_ACTIVE_STATES: Final[list[str]] = [STATE_PLAYING, STATE_PAUSED]
+DEFAULT_APPLIANCE_ACTIVE_STATES: Final[list[str]] = [STATE_ON, STATE_STANDBY]
+DEFAULT_COVER_ACTIVE_STATES: Final[list[str]] = [STATE_OPENING, STATE_CLOSING]
+DEFAULT_CUSTOM_BINARY_ACTIVE_STATES: Final[list[str]] = [STATE_ON]
+DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN: Final = 1.0
+DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX: Final = 1000000.0
+DEFAULT_NAME: Final = "Area Occupancy"
+# 90 s bridges the gaps between a PIR's pulses during one visit (live PIR
+# medians 65-112 s); 300 s mostly added phantom time after people left.
+DEFAULT_MOTION_TIMEOUT: Final = 90
+# The default before CONF_VERSION 20, migrated to the new one (#604).
+LEGACY_DEFAULT_MOTION_TIMEOUT: Final = 300
+DEFAULT_MOTION_PROB_GIVEN_TRUE: Final = 0.95  # Matches DEFAULT_TYPES[InputType.MOTION]
+DEFAULT_MOTION_PROB_GIVEN_FALSE: Final = (
+    0.005  # Matches DEFAULT_TYPES[InputType.MOTION]
+)
+DEFAULT_MIN_PRIOR_OVERRIDE: Final = 0.0  # 0.0 = disabled by default
+DEFAULT_EXCLUDE_FROM_ALL_AREAS: Final = False
+DEFAULT_SLEEP_START: Final = "23:00:00"
+DEFAULT_SLEEP_END: Final = "07:00:00"
+DEFAULT_HEALTH_ENABLED: Final = True
+DEFAULT_LONG_MOTION_TIMEOUT: Final = 0
+DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT: Final = 20
+DEFAULT_MAX_HOLD: Final = 3600
+SENSOR_HEALTH_IGNORE_STORE_KEY: Final = f"{DOMAIN}.sensor_health_ignores"
+SENSOR_HEALTH_IGNORE_STORE_VERSION: Final = 1
+DEFAULT_SLEEP_CONFIDENCE_THRESHOLD: Final = 75
+SLEEP_PRESENCE_HALF_LIFE: Final = (
+    7200  # 2 hour half-life for sleep (persistent presence)
+)
+
+# Database recovery defaults
+DEFAULT_ENABLE_AUTO_RECOVERY: Final = True
+DEFAULT_MAX_RECOVERY_ATTEMPTS: Final = 3
+DEFAULT_ENABLE_PERIODIC_BACKUPS: Final = True
+DEFAULT_BACKUP_INTERVAL_HOURS: Final = 24
+
+# Default weights. These are authoritative: config Weights always pass
+# them as config_weight, so the "weight" values in DEFAULT_TYPES
+# (data/entity_type.py) are fallback-only and effectively shadowed.
+# Media intentionally differs there (0.85) — do not "align" either value
+# without a deliberate, tested decision.
+DEFAULT_WEIGHT_MOTION: Final = 1.0  # Full weight for ground truth sensors
+DEFAULT_WEIGHT_MEDIA: Final = 0.7
+DEFAULT_WEIGHT_APPLIANCE: Final = 0.4
+DEFAULT_WEIGHT_BUTTON: Final = 0.7
+# A press counts in full for this short window before the area's normal decay.
+BUTTON_PRESS_WINDOW: Final = 5
+DEFAULT_WEIGHT_DOOR: Final = 0.3
+DEFAULT_WEIGHT_LOCK: Final = 0.3
+DEFAULT_WEIGHT_WINDOW: Final = 0.2
+DEFAULT_WEIGHT_COVER: Final = (
+    0.5  # Covers (blinds/shades) being operated is strong activity signal
+)
+DEFAULT_WEIGHT_ENVIRONMENTAL: Final = 0.1
+DEFAULT_WEIGHT_POWER: Final = 0.3
+DEFAULT_WEIGHT_WIFI_CLIENTS: Final = (
+    0.35  # Matches DEFAULT_TYPES[InputType.WIFI_CLIENTS]
+)
+DEFAULT_WEIGHT_CUSTOM_BINARY: Final = (
+    0.4  # Matches DEFAULT_TYPES[InputType.CUSTOM_BINARY]
+)
+DEFAULT_WEIGHT_CUSTOM_NUMERIC: Final = (
+    0.3  # Matches DEFAULT_TYPES[InputType.CUSTOM_NUMERIC]
+)
+
+# Activity occupancy boost constants (logit-space magnitudes)
+ACTIVITY_BOOST_HIGH: Final[float] = 1.5  # Showering, bathing, sleeping
+ACTIVITY_BOOST_STRONG: Final[float] = 1.2  # Watching TV
+ACTIVITY_BOOST_MODERATE: Final[float] = 1.0  # Cooking, working
+ACTIVITY_BOOST_MILD: Final[float] = 0.8  # Listening to music, eating
+
+# Safety bounds
+MIN_PROBABILITY: Final = 0.01
+MAX_PROBABILITY: Final = 0.99
+
+# Lowest probability a single fully active ground-truth sensor (motion, sleep)
+# at full weight implies, whatever the area's prior. The fixed logit
+# contribution (prob_given_true x strength_multiplier = 2.85 for default
+# motion) cannot overcome a prior below ~5.5%, so realistic learned priors
+# (a kitchen occupied 2% of the day) left motion unable to reach the
+# threshold at all. The floor is applied in logit space, so decay still
+# fades it smoothly; areas whose prior already clears it are unchanged.
+GROUND_TRUTH_ACTIVE_FLOOR: Final[float] = 0.75
+
+# How long, in half-lives of the sensor's decay, one ground-truth sensor at
+# full weight holds its area above the occupancy threshold after it goes
+# quiet, whatever the prior. The 75% floor alone crossed a 50% threshold after
+# a third of a half-life in a 2.5%-prior bathroom (~170 s of a 450 s half-life),
+# so the purpose half-life said nothing about how long a shower stays lit.
+# One half-life makes it the hold time: rooms that already hold longer, as a
+# 30%-prior room does (~1.75 half-lives), are unchanged.
+GROUND_TRUTH_HOLD_HALF_LIVES: Final[float] = 1.0
+
+# Wasp in Box is deprecated in favour of the built-in presence-continuity
+# model (#558), which takes over wasp_enabled automatically; it is removed one
+# release after that ships. Until then a repair lists the areas using it.
+WASP_IN_BOX_DEPRECATION_ISSUE: Final = "wasp_in_box_deprecated"
+# Home Assistant's Home zone: its state counts the person entities at home
+# (#485, inactivity alerts pause while it is 0).
+HOME_ZONE_ENTITY_ID: Final = "zone.home"
+# Domains the away-mode entity can come from: anything with an on/off state
+# that a person flips (a vacation toggle) or a template derives.
+AWAY_MODE_ENTITY_DOMAINS: Final[tuple[str, ...]] = (
+    "input_boolean",
+    "binary_sensor",
+    "switch",
+)
+
+WASP_IN_BOX_DOCS_URL: Final = (
+    "https://hankanman.github.io/Area-Occupancy-Detection/features/wasp-in-box/"
+)
+MIN_PRIOR: Final[float] = 0.01
+MAX_PRIOR: Final[float] = 0.99
+MIN_WEIGHT: Final[float] = 0.01
+MAX_WEIGHT: Final[float] = 0.99
+
+# Margin kept between a prior *floor* (purpose min_prior, min_prior_override)
+# and the area's occupancy threshold. Floors alone must not be able to
+# hold an area above the threshold with no active evidence — see issue #435.
+PRIOR_FLOOR_THRESHOLD_MARGIN: Final[float] = 0.01
+
+# The prior away mode would give every room while the away-mode entity is
+# on (#584). Shadow mode for now: recorded beside the live probability,
+# never applied. With it, one active motion sensor (its hold floor scales
+# with the prior) still reads ~99%; a TV left playing reads ~3%.
+AWAY_PRIOR: Final[float] = 0.01
+
+# Time Prior Bounds
+TIME_PRIOR_MIN_BOUND: Final[float] = 0.03
+TIME_PRIOR_MAX_BOUND: Final[float] = 0.9
+
+# Weeks of the area's global prior mixed into every weekly slot before it is
+# used. A slot with one week of history is one afternoon, and on its own it
+# lands on a bound (0.9 or 0.03) and swings the live prior across the
+# threshold; with two pseudo-weeks it moves a third of the way, and after
+# eight weeks the slot's own data carries 80% of the weight.
+TIME_PRIOR_PSEUDO_WEEKS: Final[float] = 2.0
+
+# Minimum observation span (wall-clock time since the earliest ground-truth
+# data point for an area's *current* motion/sleep/media sensors — occupied
+# or not) required before the global prior is trusted. Below this span the
+# occupied/elapsed ratio is dominated by sampling noise (e.g. a single short
+# occupied interval minutes after a sensor swap or "Reset learning" computes
+# occupied/elapsed ~= 1.0, which clamps to MAX_PRIOR every time — issue
+# #520 Bug B). 25h mirrors ``STALE_CACHE_THRESHOLD`` in data/health.py: both
+# describe "one full day plus buffer for a missed hourly analysis cycle" for
+# data fed by the same occupied-intervals pipeline, so reusing the value
+# keeps the two thresholds conceptually aligned instead of introducing an
+# unrelated second magic number.
+PRIOR_WARMUP_MIN_SPAN_HOURS: Final[float] = 25.0
+
+# Adjacent-areas / transition learning tunables (Phase 3 of feat/adjacent-areas).
+# First-pass values; tune from real data once Phase 3 is collecting transitions.
+
+# Max gap between an area's interval ending and the next area's starting
+# to count as a transition between them.
+ADJACENCY_TRANSITION_WINDOW_S: Final[int] = 60
+
+# Half-life for exponential recency decay applied to transition counts
+# each pipeline run (so the model adapts to changing household patterns).
+ADJACENCY_RECENCY_HALF_LIFE_DAYS: Final[int] = 30
+
+# How far back to look for the recent-history slots used to build the
+# two-step trajectory feeding the Bayesian boost.
+ADJACENCY_TRAJECTORY_WINDOW_S: Final[int] = 300
+
+# k - multiplier applied to the logit-space adjacency boost
+# (post-Bayesian, before decay).
+ADJACENCY_BOOST_GAIN: Final[float] = 0.5
+
+# alpha - multiplier on the silence-score that slows decay when adjacent
+# exit paths have been quiet since the area's last evidence.
+ADJACENCY_DECAY_MODIFIER_GAIN: Final[float] = 0.75
+
+# Cap on effective_half_life / base_half_life from the silence modifier -
+# silence can stretch decay but never invert it.
+ADJACENCY_DECAY_MODIFIER_MAX: Final[float] = 1.75
+
+# Smoothing fallback thresholds for the per-chain, per-time-bucket lookup.
+# Higher levels require more observations before they are trusted.
+ADJACENCY_N_SPECIFIC: Final[int] = 5  # specific 2-hop chain at exact hour-of-week
+ADJACENCY_N_HOUR: Final[int] = 20  # day-collapsed (just hour-of-day)
+ADJACENCY_N_CHAIN: Final[int] = 50  # chain un-bucketed
+ADJACENCY_N_PAIR: Final[int] = 20  # 1-hop pair un-bucketed
+
+# Default prior probabilities
+# (Per-type probabilities/priors live in data/entity_type.py DEFAULT_TYPES.)
+DEFAULT_TIME_PRIOR: Final[float] = 0.5
+
+# Helper constants
+ROUNDING_PRECISION: Final = 2
+CONF_SENSOR_PRECISION: Final = "sensor_precision"
+DEFAULT_SENSOR_PRECISION: Final = ROUNDING_PRECISION
+
+# Performance optimization constants
+DEFAULT_LOOKBACK_DAYS: Final = 60  # Days of interval data to load for analysis
+# Gaps in a motion sensor's recorded history shorter than this still count
+# as observed when learning priors (#574): restarts and dropped sub-5 s rows
+# leave seconds-to-minutes gaps that aren't outages.
+OBSERVED_GAP_TOLERANCE_SECONDS: Final = 600
+DEFAULT_CACHE_TTL_SECONDS: Final = 3600  # Cache TTL for occupied intervals (1 hour)
+RETENTION_DAYS: Final = 365  # Days to retain interval data before pruning
+
+# Database interval filtering
+MIN_INTERVAL_SECONDS: Final = 5  # Exclude intervals shorter than 5 seconds
+MAX_INTERVAL_SECONDS: Final = (
+    46800  # Exclude intervals longer than 13 hours (13 * 3600)
+)
+
+# Database retention and aggregation constants
+# Raw data retention (before aggregation)
+RETENTION_RAW_INTERVALS_DAYS: Final = 28  # Days to keep raw intervals
+RETENTION_RAW_NUMERIC_SAMPLES_DAYS: Final = 7  # Days to keep raw numeric samples
+
+# Aggregation retention periods
+RETENTION_DAILY_AGGREGATES_DAYS: Final = 28  # Days to keep daily aggregates
+RETENTION_WEEKLY_AGGREGATES_DAYS: Final = 56  # Days to keep weekly aggregates
+RETENTION_MONTHLY_AGGREGATES_YEARS: Final = (
+    5  # Years to keep monthly aggregates (indefinite for trends)
+)
+RETENTION_HOURLY_NUMERIC_DAYS: Final = 30  # Days to keep hourly numeric aggregates
+RETENTION_WEEKLY_NUMERIC_YEARS: Final = (
+    3  # Years to keep weekly numeric aggregates for seasonal analysis
+)
+
+# ────────────────────────────────────── Database Constants ───────────────────────────
+
+# Database filename
+DB_NAME: Final = "area_occupancy_dev.db"
+
+# States to exclude from intervals
+INVALID_STATES: Final = {"unknown", "unavailable", None, "", "NaN"}
+
+# Database default values
+DEFAULT_AREA_PRIOR: Final = 0.15
+DEFAULT_ENTITY_WEIGHT: Final = 0.85
+DEFAULT_ENTITY_PROB_GIVEN_TRUE: Final = 0.8
+DEFAULT_ENTITY_PROB_GIVEN_FALSE: Final = 0.05
+
+# Aggregation period types
+AGGREGATION_PERIOD_HOURLY: Final = "hourly"
+AGGREGATION_PERIOD_DAILY: Final = "daily"
+AGGREGATION_PERIOD_WEEKLY: Final = "weekly"
+AGGREGATION_PERIOD_MONTHLY: Final = "monthly"
+AGGREGATION_PERIOD_YEARLY: Final = "yearly"
+AGGREGATION_LEVEL_RAW: Final = "raw"
+
+# Correlation analysis constants
+# Minimum samples needed for reliable correlation
+# --- Trust score (#499, shadow mode) ---
+# Rolling tick-buffer depth per area: 8640 = ~24h *if* ticks landed
+# exactly on the 10s decay cadence. In practice evidence-triggered
+# refreshes add extra ticks between decay ticks, so busy areas cover
+# less than 24h of wall-clock time; see metrics.py's time-weighting for
+# why that no longer biases the accuracy stats computed from it.
+ACCURACY_TICK_BUFFER_MAXLEN: Final = 8640
+# Hours of tick history scored against ground truth each analysis cycle.
+ACCURACY_WINDOW_HOURS: Final = 24
+
+# --- Online prior (#500, shadow mode) ---
+# Store version and key prefix for the per-entry online-prior estimator
+# state. Shared between the coordinator (persistence) and __init__.py
+# (removal cleanup) so the two never drift apart.
+# v1->v2 (2026.9.1): added the 168 weekly slot accumulators and the
+# divergence history. The migration is a passthrough (OnlinePriorState.
+# from_dict tolerates a v1 payload, preserving the scalar accumulators) —
+# see OnlinePriorStore in coordinator.py.
+ONLINE_PRIOR_STORE_VERSION: Final = 2
+ONLINE_PRIOR_STORE_KEY_PREFIX: Final = f"{DOMAIN}.online_prior"
+# The scalar shadow diff a day must stay within to count toward the #500
+# promotion gate's "30 days within tolerance". First-pass value: wider
+# than the issue's ~1e-3 aspiration because the online estimator samples
+# ticks rather than reading exact intervals, which bounds the expected diff
+# well above that on real homes. Tune from the
+# collected history before the gate is ever evaluated.
+ONLINE_PRIOR_DIFF_TOLERANCE: Final = 0.02
+# How many daily divergence summaries the store retains per area.
+ONLINE_PRIOR_DIFF_HISTORY_DAYS: Final = 90
+
+# --- Accuracy history (#499, shadow mode) ---
+# The tick window is in memory and restarts with Home Assistant, so each
+# hour's ticks are folded into a per-day tally of seconds that is persisted
+# and can be pooled over a month. Same Store lifecycle as the online-prior
+# pair above. v2 (2026.11.1-pre3): tallies replace the daily rate snapshots.
+ACCURACY_STORE_VERSION: Final = 2
+ACCURACY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.accuracy"
+ACCURACY_HISTORY_DAYS: Final = 90
+# Days pooled into the headline accuracy figure in diagnostics.
+ACCURACY_SUMMARY_DAYS: Final = 30
+
+# --- Live ground truth (#603): the label every learner trains against ---
+GROUND_TRUTH_STORE_VERSION: Final = 1
+GROUND_TRUTH_STORE_KEY_PREFIX: Final = f"{DOMAIN}.ground_truth"
+
+# --- Closed-door hold (#558) ---
+DOOR_HOLD_STORE_VERSION: Final = 2
+DOOR_HOLD_STORE_KEY_PREFIX: Final = f"{DOMAIN}.door_hold"
+
+# --- Shadow sensor likelihoods without the database (#603) ---
+LIKELIHOOD_SHADOW_STORE_VERSION: Final = 1
+LIKELIHOOD_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.likelihood_shadow"
+# Largest gap to the database's values (probabilities, correlations) that
+# counts as agreeing for the switch-over streak.
+LIKELIHOOD_DIFF_TOLERANCE: Final = 0.05
+
+# --- Shadow area transitions without the database (#603) ---
+TRANSITION_SHADOW_STORE_VERSION: Final = 1
+TRANSITION_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.transition_shadow"
+
+# --- Shadow presence continuity for open-plan rooms (#558) ---
+CONTINUITY_STORE_VERSION: Final = 1
+CONTINUITY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.continuity"
+# Largest gap in any next-room share that counts as agreeing.
+TRANSITION_DIFF_TOLERANCE: Final = 0.1
+
+# --- Away mode lowering occupancy (#584, shadow mode) ---
+AWAY_SHADOW_STORE_VERSION: Final = 1
+AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
+
+# --- Learned sensor fusion (#501, shadow mode) ---
+# Store version and key prefix for the per-entry learned-weight state,
+# shared between the coordinator (persistence) and __init__.py (removal
+# cleanup), mirroring the online-prior pair above.
+FUSION_STORE_VERSION: Final = 1
+FUSION_STORE_KEY_PREFIX: Final = f"{DOMAIN}.fusion"
+# First-pass tunables (shadow-only: they shape what the diagnostics
+# report, not any live behavior). Tune from real diagnostics exports
+# before the #499-gated promotion is ever considered.
+# One gradient pass per hourly analysis cycle over a ~24h tick window;
+# the small rate + L2 anchor keep a day's batch from swinging a weight
+# far from its live default without sustained evidence.
+FUSION_LEARNING_RATE: Final = 0.05
+FUSION_L2: Final = 0.01
+# Ticks observed for an area before learned weights are even reported
+# (~3h at the 10s cadence — enough to stop reporting pure noise, small
+# enough that diagnostics become informative on day one).
+FUSION_MIN_SAMPLES: Final = 1000
+
+MIN_CORRELATION_SAMPLES: Final = 50
+# Minimum confidence for correlation to be considered significant
+CORRELATION_CONFIDENCE_THRESHOLD: Final = 0.7
+# Strong correlation threshold (absolute value)
+CORRELATION_STRONG_THRESHOLD: Final = 0.7
+# Moderate correlation threshold (absolute value)
+CORRELATION_MODERATE_THRESHOLD: Final = 0.4
+# Weak correlation threshold (absolute value)
+CORRELATION_WEAK_THRESHOLD: Final = 0.15
+
+# Global prior retention
+# Number of historical global prior calculations to keep
+GLOBAL_PRIOR_HISTORY_COUNT: Final = 15
+
+# Correlation retention
+# Number of months of correlation history to keep per sensor
+CORRELATION_MONTHS_TO_KEEP: Final = 24
+
+# Coordinator timer intervals
+DECAY_INTERVAL: Final = 10  # seconds
+ANALYSIS_INTERVAL: Final = 3600  # seconds (1 hour)
+SAVE_INTERVAL: Final = 600  # seconds (10 minutes) - periodic database save interval
+
+
+########################################################
+# Virtual sensor constants
+########################################################
+
+# Entity naming
+NAME_WASP_IN_BOX: Final = "Wasp in Box"
+NAME_SLEEP_PRESENCE: Final = "Sleeping"
+
+# Configuration keys
+CONF_WASP_ENABLED: Final = "wasp_enabled"
+CONF_WASP_MOTION_TIMEOUT: Final = "wasp_motion_timeout"
+CONF_WASP_WEIGHT: Final = "wasp_weight"
+CONF_WASP_MAX_DURATION: Final = "wasp_max_duration"
+CONF_WASP_VERIFICATION_DELAY: Final = "wasp_verification_delay"
+
+# Default values
+DEFAULT_WASP_MOTION_TIMEOUT: Final = 300  # 5 minutes in seconds
+DEFAULT_WASP_WEIGHT: Final = 0.8
+DEFAULT_WASP_MAX_DURATION: Final = 3600  # 1 hour in seconds
+DEFAULT_WASP_VERIFICATION_DELAY: Final = 0  # Disabled by default (0 = no verification)
+
+# Attributes
+ATTR_DOOR_STATE: Final = "door_state"
+ATTR_MOTION_STATE: Final = "motion_state"
+ATTR_LAST_MOTION_TIME: Final = "last_motion_time"
+ATTR_LAST_DOOR_TIME: Final = "last_door_time"
+ATTR_MOTION_TIMEOUT: Final = "motion_timeout"
+ATTR_WASP_MAX_DURATION: Final = "wasp_max_duration"
+ATTR_LAST_OCCUPIED_TIME: Final = "last_occupied_time"
+ATTR_MAX_DURATION: Final = "max_duration"
+ATTR_VERIFICATION_DELAY: Final = "verification_delay"
+ATTR_VERIFICATION_PENDING: Final = "verification_pending"
+
+# Sleep Presence attributes
+ATTR_SLEEP_CONFIDENCE: Final = "sleep_confidence"
+ATTR_SLEEP_SENSORS: Final = "sleep_sensors"
+ATTR_PERSON_STATE: Final = "person_state"
+ATTR_SLEEP_THRESHOLD: Final = "sleep_threshold"
+ATTR_PEOPLE_SLEEPING: Final = "people_sleeping"
+ATTR_PEOPLE_DETAILS: Final = "people"
+ATTR_PERSON_NAME: Final = "name"
+ATTR_PERSON_SLEEPING: Final = "sleeping"
+
+
+# ────────────────────────────────────── State Mapping ───────────────────────────
+
+
+@dataclass
+class StateOption:
+    """Represents a state option with its value and friendly name."""
+
+    value: str
+    name: str
+    icon: str | None = None
+
+
+class PlatformStates(TypedDict):
+    """Type for platform states configuration."""
+
+    options: list[StateOption]
+    default: str
+
+
+# Door states configuration
+# Includes transitional states for garage doors and motorized covers
+DOOR_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_OPEN, "Open", "mdi:door-open"),
+        StateOption(STATE_OPENING, "Opening", "mdi:door-open"),
+        StateOption(STATE_CLOSED, "Closed", "mdi:door"),
+        StateOption(STATE_CLOSING, "Closing", "mdi:door"),
+    ],
+    "default": STATE_OPEN,
+}
+
+# Lock states configuration
+# All states from homeassistant.components.lock.LockState. Transitional
+# locking/unlocking states are omitted (too fleeting to be useful as a
+# configured active state); jammed and open are kept as operationally
+# meaningful.
+LOCK_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(LockState.UNLOCKED, "Unlocked", "mdi:lock-open-variant"),
+        StateOption(LockState.LOCKED, "Locked", "mdi:lock"),
+        StateOption(LockState.OPEN, "Open", "mdi:lock-open"),
+        StateOption(LockState.JAMMED, "Jammed", "mdi:lock-alert"),
+    ],
+    "default": LockState.UNLOCKED,
+}
+
+# Window states configuration
+# Includes transitional states for motorized blinds/shades
+WINDOW_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_OPEN, "Open", "mdi:window-open"),
+        StateOption(STATE_OPENING, "Opening", "mdi:window-open"),
+        StateOption(STATE_CLOSED, "Closed", "mdi:window-closed"),
+        StateOption(STATE_CLOSING, "Closing", "mdi:window-closed"),
+    ],
+    "default": STATE_OPEN,
+}
+
+# Media player states configuration
+# All states from homeassistant.components.media_player.MediaPlayerState
+MEDIA_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_PLAYING, "Playing", "mdi:play"),
+        StateOption(STATE_PAUSED, "Paused", "mdi:pause"),
+        StateOption(STATE_BUFFERING, "Buffering", "mdi:timer-sand"),
+        StateOption(STATE_IDLE, "Idle", "mdi:sleep"),
+        StateOption(STATE_STANDBY, "Standby", "mdi:power-sleep"),
+        StateOption(STATE_ON, "On", "mdi:power"),
+        StateOption(STATE_OFF, "Off", "mdi:power-off"),
+    ],
+    "default": STATE_PLAYING,
+}
+
+# Appliance states configuration
+APPLIANCE_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_ON, "On", "mdi:power"),
+        StateOption(STATE_OFF, "Off", "mdi:power-off"),
+        StateOption(STATE_STANDBY, "Standby", "mdi:power-sleep"),
+    ],
+    "default": STATE_ON,
+}
+
+# Custom binary sensor states configuration. Starting suggestions only —
+# the selector allows custom_value, since a custom entity's actual states
+# (e.g. an MQTT/HASS.Agent sensor) are unknown ahead of time (#531).
+CUSTOM_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_ON, "On", "mdi:power"),
+        StateOption(STATE_OFF, "Off", "mdi:power-off"),
+    ],
+    "default": STATE_ON,
+}
+
+# Cover states configuration (blinds, shades, garage doors, shutters)
+# All states from homeassistant.components.cover.CoverState
+COVER_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_OPENING, "Opening", "mdi:blinds-open"),
+        StateOption(STATE_CLOSING, "Closing", "mdi:blinds"),
+        StateOption(STATE_OPEN, "Open", "mdi:blinds-open"),
+        StateOption(STATE_CLOSED, "Closed", "mdi:blinds"),
+    ],
+    "default": STATE_OPENING,
+}
+
+# Motion sensor states configuration
+MOTION_STATES: Final[PlatformStates] = {
+    "options": [
+        StateOption(STATE_ON, "Active", "mdi:motion-sensor"),
+        StateOption(STATE_OFF, "Inactive", "mdi:motion-sensor-off"),
+    ],
+    "default": STATE_ON,
+}
+
+
+def get_state_options(platform_type: str) -> PlatformStates:
+    """Get state options for a given platform type."""
+    platform_map = {
+        "door": DOOR_STATES,
+        "lock": LOCK_STATES,
+        "window": WINDOW_STATES,
+        "cover": COVER_STATES,
+        "media": MEDIA_STATES,
+        "appliance": APPLIANCE_STATES,
+        "motion": MOTION_STATES,
+        "custom": CUSTOM_STATES,
+    }
+    return platform_map.get(platform_type, MOTION_STATES)
+
+
+def get_friendly_state_name(platform_type: str, state: str) -> str:
+    """Get the friendly name for a state in a given platform type."""
+    states = get_state_options(platform_type)
+    for option in states["options"]:
+        if option.value == state:
+            return option.name
+    return state
+
+
+def get_state_icon(platform_type: str, state: str) -> str | None:
+    """Get the icon for a state in a given platform type."""
+    states = get_state_options(platform_type)
+    for option in states["options"]:
+        if option.value == state:
+            return option.icon
+    return None
+
+
+def get_default_state(platform_type: str) -> str:
+    """Get the default state for a given platform type."""
+    states = get_state_options(platform_type)
+    return states["default"]
+
+
+# Sensor type string -> InputType mapping (alphabetized).
+# Lazy-loaded to avoid circular imports with data.entity_type.
+_SENSOR_TYPE_MAPPING: dict[str, Any] | None = None
+
+
+def get_sensor_type_mapping() -> dict[str, Any]:
+    """Get sensor type mapping, building lazily to avoid circular imports."""
+    global _SENSOR_TYPE_MAPPING  # noqa: PLW0603
+    if _SENSOR_TYPE_MAPPING is None:
+        from .data.entity_type import InputType  # noqa: PLC0415
+
+        _SENSOR_TYPE_MAPPING = {
+            "air_quality": InputType.AIR_QUALITY,
+            "appliance": InputType.APPLIANCE,
+            "button": InputType.BUTTON,
+            "co": InputType.CO,
+            "co2": InputType.CO2,
+            "cover": InputType.COVER,
+            "custom_binary": InputType.CUSTOM_BINARY,
+            "custom_numeric": InputType.CUSTOM_NUMERIC,
+            "door": InputType.DOOR,
+            "humidity": InputType.HUMIDITY,
+            "illuminance": InputType.ILLUMINANCE,
+            "lock": InputType.LOCK,
+            "media": InputType.MEDIA,
+            "motion": InputType.MOTION,
+            "pm10": InputType.PM10,
+            "pm25": InputType.PM25,
+            "power": InputType.POWER,
+            "pressure": InputType.PRESSURE,
+            "sleep": InputType.SLEEP,
+            "sound_pressure": InputType.SOUND_PRESSURE,
+            "temperature": InputType.TEMPERATURE,
+            "voc": InputType.VOC,
+            "wifi_clients": InputType.WIFI_CLIENTS,
+            "window": InputType.WINDOW,
+        }
+    return _SENSOR_TYPE_MAPPING
+
+
+# Fields that use DurationSelector and need conversion.
+DURATION_FIELDS: Final[set[str]] = {
+    CONF_DECAY_HALF_LIFE,
+    CONF_MOTION_TIMEOUT,
+    CONF_LONG_MOTION_TIMEOUT,
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+    CONF_MAX_HOLD,
+    CONF_WASP_MAX_DURATION,
+    CONF_WASP_MOTION_TIMEOUT,
+    CONF_WASP_VERIFICATION_DELAY,
+}

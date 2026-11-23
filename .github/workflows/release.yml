@@ -20,22 +20,23 @@ jobs:
       - name: Verify integration manifest version matches release tag
         run: |
           set -euo pipefail
-          MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('custom_components/area_occupancy/manifest.json'))['version'])")
-          if [ "$MANIFEST_VERSION" != "$TAG" ]; then
-            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release tag ($TAG)"
+          MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('custom_components/area_occupancy_dev/manifest.json'))['version'])")
+          RELEASE_VERSION="${TAG#v}"
+          if [ "$MANIFEST_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release version ($RELEASE_VERSION)"
             exit 1
           fi
-          echo "Version $MANIFEST_VERSION matches tag $TAG"
+          echo "Version $MANIFEST_VERSION matches release tag $TAG"
 
       - name: Build release zip
         run: |
           set -euo pipefail
-          cd custom_components/area_occupancy
-          zip -r "${GITHUB_WORKSPACE}/area_occupancy.zip" . -x '__pycache__/*' '*.pyc'
-          ls -la "${GITHUB_WORKSPACE}/area_occupancy.zip"
+          cd custom_components/area_occupancy_dev
+          zip -r "${GITHUB_WORKSPACE}/area_occupancy_dev.zip" . -x '__pycache__/*' '*.pyc'
+          ls -la "${GITHUB_WORKSPACE}/area_occupancy_dev.zip"
 
       - name: Upload zip to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$TAG" area_occupancy.zip --clobber
+          gh release upload "$TAG" area_occupancy_dev.zip --clobber

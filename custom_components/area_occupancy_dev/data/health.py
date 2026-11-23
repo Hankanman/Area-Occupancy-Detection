@@ -1,0 +1,1483 @@
+"""Sensor and pipeline health monitoring for Area Occupancy Detection.
+
+Two families of checks are run per area:
+
+- **Sensor health** — per-entity anomalies (stuck active/inactive,
+  unavailable, never-triggered).
+- **Pipeline health** — per-area calculation anomalies (priors haven't
+  trained, occupied-intervals cache is stale, last analysis cycle was
+  slow, correlation analysis is failing for too many sensors).
+
+Both surfaces emit Home Assistant repair issues with distinct
+translation-key namespaces (``sensor_health_*`` vs ``pipeline_health_*``)
+and share the same ``HealthIssue`` shape so callers (e.g. diagnostics)
+can iterate them uniformly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import StrEnum
+import logging
+import math
+from typing import TYPE_CHECKING
+
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
+
+from ..const import (
+    DOMAIN,
+    HOME_ZONE_ENTITY_ID,
+    MAX_PROBABILITY,
+    SENSOR_HEALTH_IGNORE_STORE_KEY,
+    SENSOR_HEALTH_IGNORE_STORE_VERSION,
+)
+from .entity_type import BINARY_INPUT_TYPES, InputType
+from .purpose import AreaPurpose
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+    from .entity import Entity
+
+_LOGGER = logging.getLogger(__name__)
+
+# Input types eligible for stuck-sensor and never-triggered detection
+# (binary + power + motion). A type only gets a stuck check when it also has
+# an entry in STUCK_ACTIVE_THRESHOLDS / STUCK_INACTIVE_THRESHOLDS. The custom
+# types (#531) deliberately have none: they exist for sensors whose meaning
+# AOD cannot infer, so any "normal" active or idle duration would be a guess,
+# and guessed thresholds are how #465/#466/#468's false repairs happened.
+# They still get the never-triggered check through this set.
+_STUCK_CHECK_TYPES: set[InputType] = BINARY_INPUT_TYPES | {
+    InputType.MOTION,
+    InputType.POWER,
+    InputType.COVER,
+    InputType.WIFI_CLIENTS,
+    InputType.CUSTOM_NUMERIC,
+}
+
+# Input types excluded from all health checks
+_EXCLUDED_TYPES: set[InputType] = {
+    InputType.SLEEP,
+}
+
+# How long a binary sensor can be stuck in its *active* state before flagging.
+# The motion default was 2h, which fired false-positives daily for bedrooms,
+# offices with stationary users, and any mmWave/presence sensor that
+# legitimately stays on for hours (#465, #468). 8h is a more realistic floor
+# for the base case; purpose-aware multipliers below extend it further for
+# rooms where long active periods are explicitly expected.
+STUCK_ACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
+    InputType.MOTION: timedelta(hours=8),
+    InputType.MEDIA: timedelta(hours=12),
+    InputType.APPLIANCE: timedelta(hours=24),
+    InputType.DOOR: timedelta(hours=48),
+    InputType.LOCK: timedelta(hours=48),
+    InputType.WINDOW: timedelta(hours=72),
+    InputType.COVER: timedelta(hours=24),
+}
+
+# Per-purpose multiplier applied on top of ``STUCK_ACTIVE_THRESHOLDS``. Rooms
+# where long stationary occupancy is normal (sleeping, relaxing, working) get
+# extended thresholds so a bedroom mmWave sensor doesn't trip every night
+# (#468). Purposes not listed use the base threshold unmodified.
+_PURPOSE_STUCK_ACTIVE_MULTIPLIER: dict[AreaPurpose, float] = {
+    AreaPurpose.SLEEPING: 6.0,  # 8h base × 6 = 48h for bedrooms
+    AreaPurpose.RELAXING: 4.0,  # 8h × 4 = 32h for media rooms
+    AreaPurpose.WORKING: 3.0,  # 8h × 3 = 24h for offices
+}
+
+# Entity-id domain prefixes whose ``unavailable`` state is normal operation
+# rather than a sensor fault. ``media_player.*`` becomes unavailable whenever
+# a TV or speaker is powered off — flagging that as a repair issue every
+# night was the root complaint behind #466's "TV off overnight" report.
+_UNAVAILABLE_EXEMPT_PREFIXES: tuple[str, ...] = ("media_player.",)
+
+# How long a binary sensor can remain *inactive* before flagging
+STUCK_INACTIVE_THRESHOLDS: dict[InputType, timedelta] = {
+    InputType.MOTION: timedelta(days=7),
+    InputType.MEDIA: timedelta(days=14),
+    InputType.APPLIANCE: timedelta(days=28),
+    InputType.DOOR: timedelta(days=14),
+    InputType.LOCK: timedelta(days=14),
+    InputType.WINDOW: timedelta(days=14),
+    InputType.COVER: timedelta(days=14),
+    InputType.POWER: timedelta(days=14),
+    InputType.WIFI_CLIENTS: timedelta(days=14),
+}
+
+# Report unavailable sensors after this duration
+UNAVAILABLE_THRESHOLD: timedelta = timedelta(hours=1)
+
+# A sensor whose last_updated is older than this and has never been active
+# is flagged as "never triggered" (uses persisted last_updated, survives restarts)
+NEVER_TRIGGERED_THRESHOLD: timedelta = timedelta(days=7)
+
+# --- Pipeline-health thresholds ---
+
+# An area is "old enough" that priors should have trained after this many
+# days. Below this grace period we assume the integration is still
+# warming up and don't flag missing global priors.
+PRIORS_TRAINING_GRACE_PERIOD: timedelta = timedelta(days=7)
+
+# Occupied-intervals cache is rebuilt hourly; flag if it's older than this
+# (a slightly larger margin than the 24h validity window in db.queries).
+STALE_CACHE_THRESHOLD: timedelta = timedelta(hours=25)
+
+# The global prior is recomputed every hourly analysis cycle alongside the
+# occupied-intervals cache above, from the same underlying data — reuse the
+# same 25h margin (one day plus buffer for a missed cycle) to flag a prior
+# that has stopped updating (#520 Bug A: a silent no-op previously left a
+# frozen value in place indefinitely with no signal anything had stopped).
+PRIOR_RECALCULATION_STALE_THRESHOLD: timedelta = STALE_CACHE_THRESHOLD
+
+# Last full analysis cycle is flagged as "slow" if it took longer than this.
+# Set conservatively to 3 minutes for now — large installations with many
+# correlatable sensors and long recorder histories can legitimately exceed
+# 30s on the first warm cycle. Tighten once we have a baseline distribution
+# from real installations.
+SLOW_ANALYSIS_THRESHOLD_MS: float = 180_000.0
+
+# Fraction of correlatable entities whose ``analysis_error`` indicates a real
+# failure (not a designed exclusion) before we flag the area's correlation
+# pipeline as broken. 0.5 = "half or more failed". The set of failure
+# strings themselves is owned by ``db.correlation.CORRELATION_FAILURE_ERRORS``
+# — single source of truth alongside the code that emits them.
+CORRELATION_FAILURE_RATIO: float = 0.5
+
+# Headroom between an area's peak learned prior and the threshold the
+# prior_above_threshold repair suggests.
+PRIOR_THRESHOLD_HEADROOM: float = 0.05
+
+
+class HealthIssueType(StrEnum):
+    """Types of health issues — sensor-scope and pipeline-scope."""
+
+    # Sensor-scope (per-entity)
+    STUCK_ACTIVE = "stuck_active"
+    STUCK_INACTIVE = "stuck_inactive"
+    UNAVAILABLE = "unavailable"
+    NEVER_TRIGGERED = "never_triggered"
+
+    # Pipeline-scope (per-area, no entity_id)
+    INSUFFICIENT_PRIORS = "insufficient_priors"
+    STALE_INTERVALS_CACHE = "stale_intervals_cache"
+    SLOW_ANALYSIS = "slow_analysis"
+    CORRELATION_FAILURES = "correlation_failures"
+    PRIOR_ABOVE_THRESHOLD = "prior_above_threshold"
+
+
+_PIPELINE_ISSUE_TYPES: frozenset[HealthIssueType] = frozenset(
+    {
+        HealthIssueType.INSUFFICIENT_PRIORS,
+        HealthIssueType.STALE_INTERVALS_CACHE,
+        HealthIssueType.SLOW_ANALYSIS,
+        HealthIssueType.CORRELATION_FAILURES,
+        HealthIssueType.PRIOR_ABOVE_THRESHOLD,
+    }
+)
+
+
+@dataclass(frozen=True)
+class HealthIssue:
+    """A detected health issue.
+
+    For sensor-scope issues, ``entity_id`` and ``input_type`` identify the
+    affected sensor. For pipeline-scope issues both are ``None`` and the
+    issue applies to the whole area.
+    """
+
+    entity_id: str | None
+    issue_type: HealthIssueType
+    input_type: InputType | None
+    since: datetime
+    duration_hours: float
+    details: str
+
+
+def _format_duration_human(hours: float) -> str:
+    """Format a duration (in hours) as an adaptive ``Xs/Ym/Zh/Wd`` string.
+
+    Used for pipeline-issue translation placeholders so that durations
+    smaller than an hour (e.g. a 30-second slow analysis) don't collapse
+    to ``"0"`` when the existing sensor-scope ``str(round(hours))``
+    pattern is reused. Sensor-scope durations are always >= 1 hour by
+    threshold design and keep their integer-hour formatting.
+    """
+    total_seconds = int(round(hours * 3600))
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    if total_seconds < 3600:
+        return f"{total_seconds // 60}m"
+    if total_seconds < 86400:
+        return f"{total_seconds // 3600}h"
+    return f"{total_seconds // 86400}d"
+
+
+def suggested_threshold(peak_prior: float) -> float | None:
+    """A threshold safely above an area's highest learned prior.
+
+    Five points of headroom, rounded up to a whole percent. ``None`` when
+    that would exceed ``MAX_PROBABILITY``: occupancy probability never goes
+    above it, so there is no threshold with that headroom to suggest.
+    """
+    # Round away float noise before the ceiling: 0.56 + 0.05 is
+    # 0.6100000000000001, which would otherwise round up to 62%.
+    percent = round((peak_prior + PRIOR_THRESHOLD_HEADROOM) * 100, 6)
+    suggested = math.ceil(percent) / 100
+    return suggested if suggested <= MAX_PROBABILITY else None
+
+
+def stuck_active_threshold(
+    input_type: InputType, purpose: AreaPurpose | None
+) -> timedelta | None:
+    """Return the stuck-active threshold for ``input_type`` in this area.
+
+    Applies ``_PURPOSE_STUCK_ACTIVE_MULTIPLIER`` if the area's purpose
+    expects long stationary occupancy. Returns ``None`` when ``input_type``
+    isn't tracked by the stuck-active check.
+    """
+    base = STUCK_ACTIVE_THRESHOLDS.get(input_type)
+    if base is None:
+        return None
+    multiplier = _PURPOSE_STUCK_ACTIVE_MULTIPLIER.get(purpose, 1.0) if purpose else 1.0
+    if multiplier == 1.0:
+        return base
+    return timedelta(seconds=base.total_seconds() * multiplier)
+
+
+def _issue_id(area_id: str, entity_id: str | None, issue_type: HealthIssueType) -> str:
+    """Build a repair ID, shared across areas for sensor issues.
+
+    Keep the issue type so ignoring one problem does not silence a different
+    problem with the same sensor. Pipeline issues still belong to an area.
+    """
+    if issue_type in _PIPELINE_ISSUE_TYPES:
+        return f"pipeline_health_{area_id}_{issue_type}"
+    return f"sensor_health_{entity_id}_{issue_type}"
+
+
+def _is_ignored(hass: HomeAssistant, issue_id: str) -> bool:
+    """Read HA's persistent Ignore choice, including for inactive repairs."""
+    try:
+        entry = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return isinstance(getattr(entry, "dismissed_version", None), str)
+
+
+class SensorHealthRepairs:
+    """Publish one sensor repair across all of the coordinator's areas.
+
+    Monitors retain their own findings and thresholds. This publisher owns
+    the shared repair's lifetime, so one area's recovery or removal cannot
+    delete a repair still reported by another area.
+    """
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the shared publisher and recover persisted repair IDs."""
+        self._hass = hass
+        self._areas: dict[str, tuple[str, list[HealthIssue]]] = {}
+        self._entities: dict[str, set[str]] = {}
+        # HA deletes a repair's Ignore choice with its registry entry. Keep
+        # superseded choices separately so only one repair remains per sensor.
+        self._ignored_issue_ids: set[str] = set()
+        self._ignore_store: Store[list[str]] = Store(
+            hass, SENSOR_HEALTH_IGNORE_STORE_VERSION, SENSOR_HEALTH_IGNORE_STORE_KEY
+        )
+        self._shutting_down = False
+        try:
+            self._active_issue_ids = {
+                issue_id
+                for domain, issue_id in ir.async_get(hass).issues
+                if domain == DOMAIN and issue_id.startswith("sensor_health_")
+            }
+        except (AttributeError, KeyError, TypeError):
+            self._active_issue_ids = set()
+
+    async def async_load(self) -> None:
+        """Restore Ignore choices for sensor problems replaced by another type."""
+        self._ignored_issue_ids = set(await self._ignore_store.async_load() or [])
+
+    async def async_shutdown(self) -> None:
+        """Flush saved choices and preserve repairs during coordinator teardown."""
+        self._shutting_down = True
+        await self._ignore_store.async_save(sorted(self._ignored_issue_ids))
+
+    async def async_remove(self) -> None:
+        """Remove repairs and saved choices when the integration is deleted."""
+        self.clear()
+        await self._ignore_store.async_remove()
+
+    def is_ignored(self, issue_id: str) -> bool:
+        """Include saved choices when another problem occupies the sensor's repair."""
+        return issue_id in self._ignored_issue_ids or _is_ignored(self._hass, issue_id)
+
+    def _save_ignores(self) -> None:
+        """Persist changed choices, coalescing updates from different rooms."""
+        self._ignore_store.async_delay_save(lambda: sorted(self._ignored_issue_ids), 5)
+
+    def register_area(self, area_id: str, area_name: str, entity_ids: set[str]) -> None:
+        """Register ownership before checking, including legacy Ignore choices."""
+        self._areas.setdefault(area_id, (area_name, []))
+        self._entities[area_id] = entity_ids
+
+    def update(
+        self,
+        area_id: str,
+        area_name: str,
+        issues: list[HealthIssue],
+        entity_ids: set[str],
+    ) -> None:
+        """Replace one area's sensor findings and refresh the shared repairs."""
+        self._areas[area_id] = (
+            area_name,
+            [issue for issue in issues if issue.entity_id is not None],
+        )
+        self._entities[area_id] = entity_ids
+        self._publish()
+
+    def remove_area(self, area_id: str) -> None:
+        """Withdraw an area, preserving repairs and ignores used elsewhere."""
+        if self._shutting_down:
+            return
+        self._areas.pop(area_id, None)
+        removed_entities = self._entities.pop(area_id, set())
+        remaining_entities = set().union(*self._entities.values())
+        orphaned_ids = {
+            _issue_id(area_id, entity_id, issue_type)
+            for entity_id in removed_entities - remaining_entities
+            for issue_type in HealthIssueType
+            if issue_type not in _PIPELINE_ISSUE_TYPES
+        }
+        for issue_id in self._active_issue_ids.copy():
+            if (
+                not self._areas
+                or issue_id in orphaned_ids
+                or (
+                    # Only legacy IDs sanitize the entity ID's dot. A room
+                    # named "media" must not match shared media_player IDs.
+                    "." not in issue_id
+                    and issue_id.startswith(f"sensor_health_{area_id}_")
+                )
+            ):
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+                self._active_issue_ids.discard(issue_id)
+        removed_ignores = (
+            self._ignored_issue_ids & orphaned_ids
+            if self._areas
+            else self._ignored_issue_ids.copy()
+        )
+        if removed_ignores:
+            self._ignored_issue_ids.difference_update(removed_ignores)
+            self._save_ignores()
+        self._publish()
+
+    def clear(self) -> None:
+        """Clear sensor repairs together when global monitoring is disabled."""
+        for issue_id in self._active_issue_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        self._active_issue_ids.clear()
+        self._areas.clear()
+        self._entities.clear()
+        if self._ignored_issue_ids:
+            self._ignored_issue_ids.clear()
+            self._save_ignores()
+
+    def _publish(self) -> None:
+        """Merge sensor findings and announce only newly detected problems."""
+        by_entity: dict[str, list[tuple[str, HealthIssue]]] = {}
+        for area_name, issues in self._areas.values():
+            for issue in issues:
+                if issue.entity_id is not None:
+                    by_entity.setdefault(issue.entity_id, []).append((area_name, issue))
+
+        current_ids = {
+            self._publish_sensor(entity_id, findings)
+            for entity_id, findings in by_entity.items()
+        }
+        resolved_ids = {
+            issue_id
+            for issue_id in self._active_issue_ids - current_ids
+            if not _is_ignored(self._hass, issue_id)
+        }
+        for issue_id in resolved_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        if resolved_ids:
+            _LOGGER.info("Resolved %d sensor health issue(s)", len(resolved_ids))
+        self._active_issue_ids = (self._active_issue_ids - resolved_ids) | current_ids
+
+    def _publish_sensor(
+        self, entity_id: str, findings: list[tuple[str, HealthIssue]]
+    ) -> str:
+        """Publish the most urgent finding and return this sensor's repair ID."""
+        # A shared sensor can have different mappings/thresholds in each room.
+        # Show its most urgent finding, deterministically, rather than raising
+        # several repairs. Every finding remains in its area's diagnostics.
+        priority = {
+            HealthIssueType.UNAVAILABLE: 0,
+            HealthIssueType.STUCK_ACTIVE: 1,
+            HealthIssueType.STUCK_INACTIVE: 2,
+            HealthIssueType.NEVER_TRIGGERED: 3,
+        }
+        _, issue = min(
+            findings,
+            key=lambda item: (
+                priority[item[1].issue_type],
+                -item[1].duration_hours,
+                item[0],
+            ),
+        )
+        repair_id = _issue_id("", entity_id, issue.issue_type)
+        self._retire_other_types(entity_id, repair_id)
+        area_names = ", ".join(
+            sorted(
+                {
+                    name
+                    for name, finding in findings
+                    if finding.issue_type == issue.issue_type
+                }
+            )
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            repair_id,
+            is_fixable=False,
+            severity=(
+                ir.IssueSeverity.ERROR
+                if issue.issue_type
+                in (HealthIssueType.UNAVAILABLE, HealthIssueType.STUCK_ACTIVE)
+                else ir.IssueSeverity.WARNING
+            ),
+            translation_key=f"sensor_health_{issue.issue_type}",
+            translation_placeholders={
+                "area": area_names,
+                "entity_id": entity_id,
+                "duration": str(round(issue.duration_hours)),
+                "sensor_type": issue.input_type.value if issue.input_type else "",
+            },
+        )
+        self._migrate_legacy_repairs(entity_id)
+        if repair_id in self._ignored_issue_ids:
+            ir.async_ignore_issue(self._hass, DOMAIN, repair_id, True)
+            # HA now owns this choice again, including a subsequent Unignore.
+            self._ignored_issue_ids.remove(repair_id)
+            self._save_ignores()
+        if repair_id not in self._active_issue_ids and not _is_ignored(
+            self._hass, repair_id
+        ):
+            _LOGGER.warning(
+                "New sensor health issues in area(s) '%s': %s (%s)",
+                area_names,
+                entity_id,
+                issue.issue_type,
+            )
+        return repair_id
+
+    def _retire_other_types(self, entity_id: str, current_id: str) -> None:
+        """Replace older problem types without forgetting their Ignore choices."""
+        other_ids = {
+            _issue_id("", entity_id, issue_type)
+            for issue_type in HealthIssueType
+            if issue_type not in _PIPELINE_ISSUE_TYPES
+        } - {current_id}
+        for issue_id in self._active_issue_ids & other_ids:
+            self._retire_repair(issue_id, issue_id)
+
+    def _retire_repair(self, issue_id: str, shared_id: str) -> None:
+        """Remove a superseded repair, saving its Ignore under the shared ID."""
+        if _is_ignored(self._hass, issue_id):
+            self._ignored_issue_ids.add(shared_id)
+            self._save_ignores()
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        self._active_issue_ids.discard(issue_id)
+
+    def _migrate_legacy_repairs(self, entity_id: str) -> None:
+        """Retire this sensor's per-area repair IDs, preserving any Ignore choice."""
+        for area_id, entity_ids in self._entities.items():
+            if entity_id not in entity_ids:
+                continue
+            for issue_type in HealthIssueType:
+                if issue_type in _PIPELINE_ISSUE_TYPES:
+                    continue
+                legacy_id = f"sensor_health_{area_id}_{entity_id.replace('.', '_')}_{issue_type}"
+                if legacy_id in self._active_issue_ids:
+                    self._retire_repair(legacy_id, _issue_id("", entity_id, issue_type))
+
+
+class HealthMonitor:
+    """Monitors sensor health for a single area.
+
+    Runs during the hourly analysis pipeline, checking each entity for:
+    - Stuck active/inactive states (binary sensors only)
+    - Prolonged unavailability
+    - Sensors that have never triggered
+
+    Between those checks it follows each sensor's state changes
+    (``entity_changed``), so a repair goes as soon as the sensor recovers.
+
+    Shares sensor repairs across areas; pipeline repairs use the stable
+    area_id (HA area registry ID) so they survive area renames.
+    """
+
+    def __init__(
+        self,
+        area_name: str,
+        area_id: str,
+        hass: HomeAssistant,
+        purpose: AreaPurpose | None = None,
+        sensor_repairs: SensorHealthRepairs | None = None,
+    ) -> None:
+        """Initialize health monitor for an area.
+
+        Args:
+            area_name: Human-readable area name (for log messages and translations)
+            area_id: Stable HA area registry ID (for repair issue keys)
+            hass: Home Assistant instance
+            purpose: Area purpose, used to scale stuck-active thresholds.
+                ``None`` falls back to the base thresholds (multiplier 1.0).
+            sensor_repairs: Shared sensor repair publisher for this integration.
+        """
+        self._area_name = area_name
+        self._area_id = area_id
+        self._hass = hass
+        self._purpose = purpose
+        self._sensor_repairs = sensor_repairs or SensorHealthRepairs(hass)
+        self._entity_ids: set[str] = set()
+        self._issues: list[HealthIssue] = []
+        self._checked_count: int = 0
+        self._last_check: datetime | None = None
+        # Whether the household was away at the last sample, and when it last
+        # went from away to home (#485). Sampled on each check run, so the
+        # return time is accurate to the check interval (hourly), which is
+        # plenty against thresholds measured in days.
+        self._home_was_empty: bool | None = None
+        self._home_returned_at: datetime | None = None
+        # Whether the last check ran as nobody home. A state change between
+        # checks is judged the same way, so it can't take down an inactivity
+        # repair that the next check would raise again.
+        self._nobody_home: bool = False
+        # In-memory record of when each entity went offline (its state
+        # change), or was first seen offline by a check if it already was.
+        # Used instead of ``entity.last_updated`` (which is persisted and
+        # reflects the last evidence transition, often days old) so a sensor
+        # whose source integration loads slowly at startup doesn't instantly
+        # cross the 1h threshold. Cleared on recovery; not persisted, so a
+        # restart resets the clock.
+        self._unavailable_since: dict[str, datetime] = {}
+        # When each sensor came back from an outage of at least
+        # ``UNAVAILABLE_THRESHOLD``. An offline sensor could not trigger, so
+        # its inactivity checks count from its return, not from before it
+        # went offline. In memory only, like ``_unavailable_since``.
+        self._back_online_at: dict[str, datetime] = {}
+        # Seed active issue IDs from the persisted issue registry so that
+        # resolved issues can be cleaned up even after a restart.
+        self._active_issue_ids: set[str] = self._load_existing_issue_ids()
+
+    def _load_existing_issue_ids(self) -> set[str]:
+        """Load existing repair issue IDs for this area from the HA issue registry.
+
+        This ensures that issues created before a restart can be properly
+        cleaned up if the underlying sensor or pipeline state has recovered
+        while HA was down. Sensor repairs are owned by the shared publisher.
+        """
+        prefix = f"pipeline_health_{self._area_id}_"
+        try:
+            registry = ir.async_get(self._hass)
+            return {
+                issue_id
+                for (domain, issue_id) in registry.issues
+                if domain == DOMAIN and issue_id.startswith(prefix)
+            }
+        except (AttributeError, KeyError, TypeError):
+            _LOGGER.debug(
+                "Could not load existing health issues for area '%s'",
+                self._area_name,
+                exc_info=True,
+            )
+            return set()
+
+    def _is_ignored(self, issue_id: str) -> bool:
+        """Keep the user's Ignore choice across recovery and recurrence."""
+        return self._sensor_repairs.is_ignored(issue_id)
+
+    @property
+    def issues(self) -> list[HealthIssue]:
+        """Current health issues."""
+        return self._issues
+
+    @property
+    def issue_count(self) -> int:
+        """Number of current health issues."""
+        return len(self._issues)
+
+    @property
+    def checked_count(self) -> int:
+        """Number of entities that were actually checked (excludes virtual sensors)."""
+        return self._checked_count
+
+    @property
+    def has_critical_issues(self) -> bool:
+        """Whether any critical issues exist (stuck active or unavailable)."""
+        return any(
+            issue.issue_type
+            in (HealthIssueType.STUCK_ACTIVE, HealthIssueType.UNAVAILABLE)
+            for issue in self._issues
+        )
+
+    @property
+    def last_check(self) -> datetime | None:
+        """Timestamp of last health check."""
+        return self._last_check
+
+    def get_issue_for_entity(self, entity_id: str) -> HealthIssue | None:
+        """Get the health issue for a specific entity, if any."""
+        for issue in self._issues:
+            if issue.entity_id == entity_id:
+                return issue
+        return None
+
+    def check_health(
+        self,
+        entities: dict[str, Entity],
+        excluded_entity_ids: set[str] | None = None,
+        away_entity: str | None = None,
+    ) -> list[HealthIssue]:
+        """Run all health checks on entities and update repair issues.
+
+        Args:
+            entities: All entities in the area
+            excluded_entity_ids: Entity IDs to skip (e.g., wasp/sleep virtual sensors)
+            away_entity: Boolean entity that is on while the household is away.
+                When set it replaces person tracking and ``zone.home`` as the
+                source for away mode (#485).
+
+        Returns:
+            List of detected health issues
+        """
+        now = dt_util.utcnow()
+        self._last_check = now
+        nobody_home = self._sample_home_presence(now, away_entity)
+        self._nobody_home = nobody_home
+        excluded = excluded_entity_ids or set()
+        issues: list[HealthIssue] = []
+        checked = 0
+
+        # Prune the unavailable-clock map of entity_ids that are no longer
+        # being checked (removed from area config, reclassified as excluded,
+        # or filtered out via ``excluded_entity_ids``). Without this, an
+        # entity that vanishes and later returns under the same entity_id
+        # would inherit the old outage start and instantly trip the
+        # threshold on its first re-observation as unavailable.
+        checkable_ids = {
+            entity.entity_id
+            for entity in entities.values()
+            if entity.entity_id not in excluded
+            and entity.type.input_type not in _EXCLUDED_TYPES
+        }
+        self._entity_ids = checkable_ids
+        self._unavailable_since = {
+            entity_id: since
+            for entity_id, since in self._unavailable_since.items()
+            if entity_id in checkable_ids
+        }
+        self._back_online_at = {
+            entity_id: since
+            for entity_id, since in self._back_online_at.items()
+            if entity_id in checkable_ids
+        }
+
+        for entity in entities.values():
+            if entity.entity_id in excluded:
+                continue
+            if entity.type.input_type in _EXCLUDED_TYPES:
+                continue
+
+            checked += 1
+            issue = self._check_entity(entity, now, nobody_home=nobody_home)
+            if issue:
+                issues.append(issue)
+
+        self._checked_count = checked
+        # This check does not look at the pipeline, so keep the pipeline
+        # issues the last pipeline check found. Dropping them here deleted
+        # them every hour, only for the pipeline check to raise them anew.
+        self._issues = issues + [
+            issue for issue in self._issues if issue.issue_type in _PIPELINE_ISSUE_TYPES
+        ]
+        self._update_repair_issues()
+        self._flag_stuck_entities(entities, issues)
+        return issues
+
+    def entity_changed(self, entity: Entity) -> bool:
+        """Take down this sensor's repairs that its state change has resolved.
+
+        Called on every state change of a monitored sensor, so a repair goes
+        the moment the sensor recovers: an offline sensor comes back, a stuck
+        one changes state, an idle one triggers. Raising repairs stays with
+        the hourly check, whose thresholds are hours or days. The change also
+        keeps the outage clock on the sensor's real transitions.
+
+        Args:
+            entity: The sensor that changed, after ``has_new_evidence``.
+
+        Returns:
+            True if a repair was resolved.
+        """
+        if entity.type.input_type in _EXCLUDED_TYPES:
+            return False
+        # Re-check the sensor as the last hourly check did, with its reading
+        # of who is home: sampling presence here would move the return time.
+        now = dt_util.utcnow()
+        current = self._check_entity(entity, now, nobody_home=self._nobody_home)
+        resolved = [
+            issue
+            for issue in self._issues
+            if issue.entity_id == entity.entity_id
+            and (current is None or current.issue_type != issue.issue_type)
+        ]
+        if not resolved:
+            return False
+        self._issues = [issue for issue in self._issues if issue not in resolved]
+        if any(issue.issue_type == HealthIssueType.STUCK_ACTIVE for issue in resolved):
+            entity.stuck_since = None
+        self._update_repair_issues()
+        return True
+
+    def _check_entity(
+        self, entity: Entity, now: datetime, *, nobody_home: bool
+    ) -> HealthIssue | None:
+        """The issue a sensor has now, if any.
+
+        Args:
+            entity: The sensor to check.
+            now: The current check time.
+            nobody_home: Whether the household is away, which pauses the
+                inactivity checks (#485).
+
+        Returns:
+            The issue, or None.
+        """
+        issue = self._check_unavailable(entity, now)
+        if issue:
+            return issue  # Skip other checks if unavailable
+
+        issue = self._check_stuck_sensor(entity, now, check_inactive=not nobody_home)
+        if issue:
+            return issue
+
+        # Never-triggered uses persisted last_updated, so it survives
+        # restarts. Nobody home means nobody to trigger it (#485).
+        if nobody_home:
+            return None
+        return self._check_never_triggered(entity, now)
+
+    def _flag_stuck_entities(
+        self, entities: dict[str, Entity], issues: list[HealthIssue]
+    ) -> None:
+        """Mark sensors flagged stuck active so they stop counting as evidence.
+
+        A sensor stuck on (a TV left paused for a day, a PIR that stopped
+        reporting while "on") would otherwise hold the area occupied. It
+        stays a repair for the user; ignoring that repair says the long
+        activity is real, so an ignored issue leaves the sensor counting.
+        """
+        stuck = {
+            issue.entity_id: issue.since
+            for issue in issues
+            if issue.issue_type == HealthIssueType.STUCK_ACTIVE
+            and issue.entity_id is not None
+            and not self._is_ignored(
+                _issue_id(self._area_id, issue.entity_id, issue.issue_type)
+            )
+        }
+        for entity in entities.values():
+            entity.stuck_since = stuck.get(entity.entity_id)
+
+    def cleanup(self) -> None:
+        """Remove all repair issues for this area.
+
+        Call when the area is unloaded, removed, or the integration shuts down
+        to prevent orphaned repair entries.
+        """
+        self._sensor_repairs.remove_area(self._area_id)
+        for issue_id in self._active_issue_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+
+        if self._active_issue_ids:
+            _LOGGER.debug(
+                "Cleaned up %d health repair issue(s) for area '%s'",
+                len(self._active_issue_ids),
+                self._area_name,
+            )
+        self._active_issue_ids.clear()
+        self._issues.clear()
+        self._unavailable_since.clear()
+        self._back_online_at.clear()
+
+    def clear_all_issues(self) -> None:
+        """Delete every active repair issue without resetting runtime state.
+
+        Used when the integration-level ``health_enabled`` toggle is turned
+        off: existing repairs should disappear immediately, but the
+        in-memory ``_unavailable_since`` clock is left intact so re-enabling
+        the toggle later doesn't make every currently-unavailable sensor
+        instantly trip the threshold.
+
+        ``_issues`` is cleared unconditionally so any in-memory state that
+        isn't (yet) mirrored to ``_active_issue_ids`` doesn't linger after
+        a toggle-off.
+        """
+        self._sensor_repairs.remove_area(self._area_id)
+        for issue_id in self._active_issue_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        if self._active_issue_ids:
+            _LOGGER.debug(
+                "Cleared %d repair issue(s) for area '%s' (health monitoring disabled)",
+                len(self._active_issue_ids),
+                self._area_name,
+            )
+        self._active_issue_ids.clear()
+        self._issues.clear()
+
+    def check_pipeline_health(
+        self,
+        *,
+        area_age_hours: float | None,
+        has_global_prior: bool,
+        cache_age_hours: float | None,
+        last_analysis_duration_ms: float | None,
+        correlation_failure_count: int,
+        correlatable_entity_count: int,
+        last_prior_calculation_hours_ago: float | None = None,
+        peak_prior: tuple[float, str] | None = None,
+        threshold: float | None = None,
+    ) -> list[HealthIssue]:
+        """Run pipeline-scope checks and merge results with sensor issues.
+
+        This method is intentionally parameter-driven (rather than taking
+        an ``Area`` object) so it stays easy to unit-test and decoupled
+        from the Area's runtime surface. Callers in the analysis pipeline
+        gather the inputs and pass them in; the monitor decides what to
+        flag.
+
+        Pipeline issues are merged into ``self._issues`` and persisted to
+        the HA repair registry alongside any existing sensor-scope issues
+        from the most recent ``check_health`` run.
+
+        Returns the full list of current issues (sensor + pipeline).
+        """
+        now = dt_util.utcnow()
+        # Carry over only sensor-scope issues from the most recent
+        # ``check_health`` run; drop any prior pipeline issues so that a
+        # check whose condition has cleared can't survive as a stale entry
+        # if ``check_pipeline_health`` is called twice without an
+        # intervening ``check_health``.
+        new_issues: list[HealthIssue] = [
+            issue
+            for issue in self._issues
+            if issue.issue_type not in _PIPELINE_ISSUE_TYPES
+        ]
+
+        issue = self._check_insufficient_priors(
+            area_age_hours, has_global_prior, last_prior_calculation_hours_ago, now
+        )
+        if issue:
+            new_issues.append(issue)
+
+        issue = self._check_stale_cache(cache_age_hours, area_age_hours, now)
+        if issue:
+            new_issues.append(issue)
+
+        issue = self._check_slow_analysis(last_analysis_duration_ms, now)
+        if issue:
+            new_issues.append(issue)
+
+        issue = self._check_correlation_failures(
+            correlation_failure_count,
+            correlatable_entity_count,
+            area_age_hours,
+            now,
+        )
+        if issue:
+            new_issues.append(issue)
+
+        issue = self._check_prior_above_threshold(peak_prior, threshold, now)
+        if issue:
+            new_issues.append(issue)
+
+        self._issues = new_issues
+        self._update_repair_issues()
+        return new_issues
+
+    def _sample_home_presence(
+        self, now: datetime, away_entity: str | None = None
+    ) -> bool:
+        """Sample whether the household is away and report if nobody is home (#485).
+
+        A sensor that is idle while everyone is away is not stuck or
+        misconfigured, so the inactivity checks pause while nobody is home,
+        and afterwards measure idleness from the return rather than from
+        before the trip; otherwise a ten-day holiday would raise every "not
+        triggered" alert the moment you walked back in. ``zone.home``'s own
+        ``last_changed`` can't stand in for the return: it moves whenever
+        anyone arrives or leaves, which would keep resetting the clock and
+        hide real alerts.
+
+        ``away_entity`` and person tracking are alternative sources, never
+        combined. With ``away_entity`` set it decides alone: ``on`` is away,
+        ``off`` is home. That serves a household with no person entities, and
+        one whose phones say something other than the truth (a house-sitter in
+        while the owners are away). Without it, ``zone.home`` counting nobody
+        home decides.
+
+        Whichever source is in use, an unusable reading returns ``False`` and
+        the checks behave exactly as before, without falling back to the other
+        source. For the entity that is any state but ``on``/``off``, or the
+        entity being gone. For ``zone.home`` it is no person with a known
+        location: it still reads ``0`` on an install with no person entities,
+        or when every person is ``unknown``/``unavailable``, and that is not
+        "nobody home".
+
+        Args:
+            now: The current check time.
+            away_entity: Boolean entity that is on while the household is
+                away, or None to use ``zone.home``.
+
+        Returns:
+            True if the household is away.
+        """
+        empty = (
+            self._away_entity_says_away(away_entity)
+            if away_entity
+            else self._zone_home_says_empty()
+        )
+        if empty is None:
+            return False
+        if not empty and self._home_was_empty:
+            self._home_returned_at = now
+        self._home_was_empty = empty
+        return empty
+
+    def _away_entity_says_away(self, entity_id: str) -> bool | None:
+        """Read the away-mode entity.
+
+        Args:
+            entity_id: The boolean entity that is on while the household is away.
+
+        Returns:
+            True while it is on, False while it is off, None in any other
+            state or when it does not exist.
+        """
+        state = self._hass.states.get(entity_id)
+        if state is None or state.state not in (STATE_ON, STATE_OFF):
+            return None
+        return state.state == STATE_ON
+
+    def _zone_home_says_empty(self) -> bool | None:
+        """Read ``zone.home``, provided some person has a known location.
+
+        Returns:
+            True if it counts nobody home, False if it counts someone, None
+            when person tracking gives no usable reading.
+        """
+        tracked = any(
+            person.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE)
+            for person in self._hass.states.async_all("person")
+        )
+        if not tracked:
+            return None
+        state = self._hass.states.get(HOME_ZONE_ENTITY_ID)
+        try:
+            count = int(state.state) if state is not None else None
+        except (TypeError, ValueError):
+            count = None
+        if count is None:
+            return None
+        return count == 0
+
+    def _inactive_since(self, entity: Entity) -> datetime | None:
+        """When an inactive entity's idleness counts from.
+
+        Its last change, the last return home, or its return from an outage,
+        whichever is latest.
+        """
+        since = entity.last_updated
+        if since is None:
+            return None
+        for later in (
+            self._home_returned_at,
+            self._back_online_at.get(entity.entity_id),
+        ):
+            if later is not None:
+                since = max(since, later)
+        return since
+
+    def _check_stuck_sensor(
+        self, entity: Entity, now: datetime, *, check_inactive: bool = True
+    ) -> HealthIssue | None:
+        """Check if a binary sensor is stuck in one state too long.
+
+        Args:
+            entity: The entity to check.
+            now: The current check time.
+            check_inactive: False while nobody is home, so an idle sensor
+                is not reported as stuck inactive (#485). Stuck-active is
+                still checked: a sensor on while the house is empty is more
+                suspicious, not less.
+
+        Returns:
+            The issue, or None.
+        """
+        if entity.type.input_type not in _STUCK_CHECK_TYPES:
+            return None
+
+        if entity.last_updated is None:
+            return None
+
+        duration = now - entity.last_updated
+        evidence = entity.evidence
+
+        # Check stuck active, timed from when the sensor entered its current
+        # state: a move between two active states (paused to playing)
+        # restarts the clock, as the sensor is plainly not stuck.
+        if evidence is True:
+            since = entity.active_since or entity.last_updated
+            duration = now - since
+            threshold = stuck_active_threshold(entity.type.input_type, self._purpose)
+            if threshold and duration >= threshold:
+                hours = duration.total_seconds() / 3600
+                return HealthIssue(
+                    entity_id=entity.entity_id,
+                    issue_type=HealthIssueType.STUCK_ACTIVE,
+                    input_type=entity.type.input_type,
+                    since=since,
+                    duration_hours=round(hours, 1),
+                    details=(
+                        f"{entity.type.input_type.value} sensor has been active "
+                        f"for {hours:.0f}h (threshold: "
+                        f"{threshold.total_seconds() / 3600:.0f}h)"
+                    ),
+                )
+
+        # Check stuck inactive
+        if evidence is False and check_inactive:
+            threshold = STUCK_INACTIVE_THRESHOLDS.get(entity.type.input_type)
+            since = self._inactive_since(entity)
+            duration = now - since if since is not None else duration
+            if threshold and duration >= threshold:
+                hours = duration.total_seconds() / 3600
+                return HealthIssue(
+                    entity_id=entity.entity_id,
+                    issue_type=HealthIssueType.STUCK_INACTIVE,
+                    input_type=entity.type.input_type,
+                    since=since or entity.last_updated,
+                    duration_hours=round(hours, 1),
+                    details=(
+                        f"{entity.type.input_type.value} sensor hasn't changed "
+                        f"state for {hours / 24:.0f} days (threshold: "
+                        f"{threshold.total_seconds() / 86400:.0f} days)"
+                    ),
+                )
+
+        return None
+
+    def _check_unavailable(self, entity: Entity, now: datetime) -> HealthIssue | None:
+        """Check if a sensor has been unavailable for too long.
+
+        Duration is measured from when *this* health monitor saw the sensor
+        go offline (or first saw it offline, if it already was) in the
+        current HA session, not from ``entity.last_updated``.
+        ``last_updated`` is persisted in the DB and tracks the last evidence
+        transition, so a sensor that's been functioning for weeks will have
+        an ancient timestamp — feeding that into the duration calc would
+        instantly cross the 1h threshold the moment the source integration
+        (Z2M, ESPHome, etc.) is slow to load on HA startup, producing a
+        false-positive repair for every sensor in the area.
+
+        Some entity domains report ``unavailable`` as a normal off-state
+        (notably ``media_player.*`` for TVs and speakers that are simply
+        powered off) and are exempted via
+        ``_UNAVAILABLE_EXEMPT_PREFIXES``. This stops the repair from
+        firing every night a TV is off, which was the loudest complaint
+        in #466.
+
+        Only ``unavailable``, or the entity being gone, is offline. A sensor
+        that reads ``unknown`` is reachable and has yet to report a value,
+        which is how many devices come back, so it is not offline.
+        """
+        if entity.entity_id.startswith(_UNAVAILABLE_EXEMPT_PREFIXES):
+            self._unavailable_since.pop(entity.entity_id, None)
+            return None
+
+        if not entity.offline:
+            # Recovered (or never was unavailable in this session) — clear
+            # any tracked start so the next outage starts a fresh clock.
+            unavailable_since = self._unavailable_since.pop(entity.entity_id, None)
+            if (
+                unavailable_since is not None
+                and now - unavailable_since >= UNAVAILABLE_THRESHOLD
+            ):
+                self._back_online_at[entity.entity_id] = now
+            return None
+
+        unavailable_since = self._unavailable_since.setdefault(entity.entity_id, now)
+
+        duration = now - unavailable_since
+        if duration < UNAVAILABLE_THRESHOLD:
+            return None
+
+        hours = duration.total_seconds() / 3600
+        return HealthIssue(
+            entity_id=entity.entity_id,
+            issue_type=HealthIssueType.UNAVAILABLE,
+            input_type=entity.type.input_type,
+            since=unavailable_since,
+            duration_hours=round(hours, 1),
+            details=(
+                f"Sensor has been unavailable for {hours:.0f}h "
+                f"(possible dead battery or connectivity issue)"
+            ),
+        )
+
+    def _check_never_triggered(
+        self, entity: Entity, now: datetime
+    ) -> HealthIssue | None:
+        """Check if a binary sensor has never been active.
+
+        Uses the persisted entity.last_updated field (stored in DB, survives
+        restarts). An entity that has never transitioned will have last_updated
+        still at its initial value from when it was first created. If that
+        timestamp is older than NEVER_TRIGGERED_THRESHOLD and the entity is
+        currently inactive, it has likely never triggered.
+
+        This intentionally overlaps with stuck_inactive detection for long
+        durations but provides a distinct "misconfiguration" message for sensors
+        that have literally never been active.
+        """
+        if entity.type.input_type not in _STUCK_CHECK_TYPES:
+            return None
+
+        if entity.last_updated is None:
+            return None
+
+        # If evidence is currently active, it has triggered
+        if entity.evidence is True:
+            return None
+
+        # If previous_evidence was ever set to True (and is now False),
+        # the sensor HAS triggered before - this is just normal inactive
+        if entity.previous_evidence is True:
+            return None
+
+        # Check if last_updated is old enough to flag as never-triggered.
+        # Entity.last_updated is persisted in the DB and only advances on
+        # evidence transitions, so a sensor that has never triggered will
+        # have last_updated close to its creation time.
+        since = self._inactive_since(entity) or entity.last_updated
+        time_since_update = now - since
+        if time_since_update < NEVER_TRIGGERED_THRESHOLD:
+            return None
+
+        days = time_since_update.total_seconds() / 86400
+        return HealthIssue(
+            entity_id=entity.entity_id,
+            issue_type=HealthIssueType.NEVER_TRIGGERED,
+            input_type=entity.type.input_type,
+            since=since,
+            duration_hours=round(days * 24, 1),
+            details=(
+                f"{entity.type.input_type.value} sensor has never been "
+                f"active in {days:.0f} days of monitoring "
+                f"(possible misconfiguration)"
+            ),
+        )
+
+    def _check_insufficient_priors(
+        self,
+        area_age_hours: float | None,
+        has_global_prior: bool,
+        last_prior_calculation_hours_ago: float | None,
+        now: datetime,
+    ) -> HealthIssue | None:
+        """Flag areas whose global prior is missing or has stopped updating.
+
+        Two distinct conditions share this issue type (both mean the same
+        thing to the user: "the learned prior can't be trusted right now"):
+
+        - ``global_prior`` is still ``None`` after
+          ``PRIORS_TRAINING_GRACE_PERIOD`` — the prior calculator has never
+          produced a value (original behavior).
+        - A prior *was* computed at some point, but hasn't been recomputed
+          in over ``PRIOR_RECALCULATION_STALE_THRESHOLD``. Before #520 this
+          case was invisible: ``PriorAnalyzer.calculate_and_update_prior``
+          silently no-ops (at DEBUG level) whenever the occupied-intervals
+          query returns empty — e.g. after a motion/presence sensor swap
+          wipes that area's interval history — and the stale in-memory
+          value persists indefinitely with no signal that recalculation
+          has stopped. ``last_prior_calculation_hours_ago`` is ``None``
+          only when a prior exists but was never accompanied by a
+          calculation timestamp (legacy data) — that's deliberately not
+          flagged, since we can't tell how stale it is.
+        """
+        if area_age_hours is None:
+            return None
+        grace_hours = PRIORS_TRAINING_GRACE_PERIOD.total_seconds() / 3600
+
+        if not has_global_prior:
+            if area_age_hours < grace_hours:
+                return None
+            return HealthIssue(
+                entity_id=None,
+                issue_type=HealthIssueType.INSUFFICIENT_PRIORS,
+                input_type=None,
+                since=now,
+                duration_hours=round(area_age_hours, 1),
+                details=(
+                    f"Area has been running for {area_age_hours / 24:.0f} days "
+                    f"but no global prior has been learned yet "
+                    f"(grace period: {grace_hours / 24:.0f} days)"
+                ),
+            )
+
+        stale_hours = PRIOR_RECALCULATION_STALE_THRESHOLD.total_seconds() / 3600
+        if (
+            last_prior_calculation_hours_ago is not None
+            and last_prior_calculation_hours_ago >= stale_hours
+        ):
+            return HealthIssue(
+                entity_id=None,
+                issue_type=HealthIssueType.INSUFFICIENT_PRIORS,
+                input_type=None,
+                since=now,
+                duration_hours=round(last_prior_calculation_hours_ago, 1),
+                details=(
+                    f"Global prior hasn't been recalculated in "
+                    f"{last_prior_calculation_hours_ago:.0f}h (threshold: "
+                    f"{stale_hours:.0f}h) — recalculation may be silently "
+                    f"failing, e.g. no occupied-interval data for this "
+                    f"area's currently configured sensors"
+                ),
+            )
+        return None
+
+    def _check_stale_cache(
+        self,
+        cache_age_hours: float | None,
+        area_age_hours: float | None,
+        now: datetime,
+    ) -> HealthIssue | None:
+        """Flag stale occupied-intervals cache.
+
+        Two cases:
+        - Cache exists but is older than ``STALE_CACHE_THRESHOLD`` — the
+          analysis pipeline that rebuilds it has stopped running for this
+          area.
+        - Cache is missing entirely (``None``) and the area is past its
+          grace period — population step has never succeeded.
+        """
+        threshold_hours = STALE_CACHE_THRESHOLD.total_seconds() / 3600
+        grace_hours = PRIORS_TRAINING_GRACE_PERIOD.total_seconds() / 3600
+
+        if cache_age_hours is None:
+            if area_age_hours is None or area_age_hours < grace_hours:
+                return None
+            return HealthIssue(
+                entity_id=None,
+                issue_type=HealthIssueType.STALE_INTERVALS_CACHE,
+                input_type=None,
+                since=now,
+                duration_hours=round(area_age_hours, 1),
+                details=(
+                    "Occupied-intervals cache has never been populated "
+                    f"({area_age_hours / 24:.0f} days since area was added)"
+                ),
+            )
+
+        if cache_age_hours < threshold_hours:
+            return None
+        return HealthIssue(
+            entity_id=None,
+            issue_type=HealthIssueType.STALE_INTERVALS_CACHE,
+            input_type=None,
+            since=now,
+            duration_hours=round(cache_age_hours, 1),
+            details=(
+                f"Occupied-intervals cache is {cache_age_hours:.0f}h old "
+                f"(threshold: {threshold_hours:.0f}h)"
+            ),
+        )
+
+    def _check_slow_analysis(
+        self,
+        last_analysis_duration_ms: float | None,
+        now: datetime,
+    ) -> HealthIssue | None:
+        """Flag analysis runs that took longer than ``SLOW_ANALYSIS_THRESHOLD_MS``."""
+        if last_analysis_duration_ms is None:
+            return None
+        if last_analysis_duration_ms < SLOW_ANALYSIS_THRESHOLD_MS:
+            return None
+        return HealthIssue(
+            entity_id=None,
+            issue_type=HealthIssueType.SLOW_ANALYSIS,
+            input_type=None,
+            since=now,
+            duration_hours=round(last_analysis_duration_ms / 3_600_000, 4),
+            details=(
+                f"Last analysis cycle took {last_analysis_duration_ms / 1000:.1f}s "
+                f"(threshold: {SLOW_ANALYSIS_THRESHOLD_MS / 1000:.0f}s)"
+            ),
+        )
+
+    def _check_prior_above_threshold(
+        self,
+        peak_prior: tuple[float, str] | None,
+        threshold: float | None,
+        now: datetime,
+    ) -> HealthIssue | None:
+        """Flag an area whose learned prior reaches its occupancy threshold.
+
+        The live prior is capped just under the threshold, so the area still
+        needs a sensor to read occupied. But a prior that high leaves the
+        sensors almost nothing to decide, and usually means the threshold is
+        too low or something other than people (pets, a stuck sensor) is
+        being learned as occupancy, so suggest a threshold above the peak.
+
+        Args:
+            peak_prior: The highest learned prior over the week and the slot
+                it occurs in (e.g. ``"Sunday 18:00"``).
+            threshold: The area's occupancy threshold.
+            now: The current check time.
+
+        Returns:
+            The issue, or None.
+        """
+        if peak_prior is None or threshold is None:
+            return None
+        peak, slot = peak_prior
+        if peak < threshold:
+            return None
+        suggested = suggested_threshold(peak)
+        # Whole percents, unless that would print the same number twice.
+        decimals = 1 if round(peak * 100) == round(threshold * 100) else 0
+        details = (
+            f"Busiest time: {slot}. "
+            f"Learned chance someone is there: {peak * 100:.{decimals}f}%. "
+            f"Occupancy threshold: {threshold * 100:.{decimals}f}%. "
+        )
+        if suggested is not None:
+            details += f"Raise the threshold to {suggested * 100:.0f}% to stop this."
+        else:
+            details += (
+                "The room is occupied at that time almost every week, so no "
+                "threshold can stop this and still let sensors mark it occupied."
+            )
+        return HealthIssue(
+            entity_id=None,
+            issue_type=HealthIssueType.PRIOR_ABOVE_THRESHOLD,
+            input_type=None,
+            since=now,
+            duration_hours=0.0,
+            details=details,
+        )
+
+    def _check_correlation_failures(
+        self,
+        failure_count: int,
+        total_count: int,
+        area_age_hours: float | None,
+        now: datetime,
+    ) -> HealthIssue | None:
+        """Flag when too many correlatable entities have failed correlation analysis.
+
+        Suppressed during the warm-up window: ``CORRELATION_FAILURE_ERRORS``
+        includes soft "not enough data yet" states (``no_occupied_intervals``,
+        ``too_few_samples``, ``no_occupied_time``, etc.) that are the
+        *expected* outcome on a fresh install or when a non-motion sensor is
+        first added. Firing during warm-up produces a repair the user can't
+        action — the same grace period used for ``insufficient_priors`` and
+        ``stale_intervals_cache`` applies here.
+        """
+        if total_count <= 0:
+            return None
+        grace_hours = PRIORS_TRAINING_GRACE_PERIOD.total_seconds() / 3600
+        if area_age_hours is None or area_age_hours < grace_hours:
+            return None
+        ratio = failure_count / total_count
+        if ratio < CORRELATION_FAILURE_RATIO:
+            return None
+        return HealthIssue(
+            entity_id=None,
+            issue_type=HealthIssueType.CORRELATION_FAILURES,
+            input_type=None,
+            since=now,
+            duration_hours=0.0,
+            details=(
+                f"{failure_count} of {total_count} correlatable sensors "
+                f"({ratio * 100:.0f}%) failed correlation analysis"
+            ),
+        )
+
+    def _update_repair_issues(self) -> None:
+        """Publish shared sensor repairs and this area's pipeline repairs."""
+        self._sensor_repairs.update(
+            self._area_id, self._area_name, self._issues, self._entity_ids
+        )
+        current_issue_ids: set[str] = set()
+        for issue in self._issues:
+            if issue.issue_type not in _PIPELINE_ISSUE_TYPES:
+                continue
+            repair_id = _issue_id(self._area_id, None, issue.issue_type)
+            current_issue_ids.add(repair_id)
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                repair_id,
+                is_fixable=False,
+                severity=(
+                    ir.IssueSeverity.ERROR
+                    if issue.issue_type == HealthIssueType.STALE_INTERVALS_CACHE
+                    else ir.IssueSeverity.WARNING
+                ),
+                translation_key=f"pipeline_health_{issue.issue_type}",
+                translation_placeholders={
+                    "area": self._area_name,
+                    "duration": _format_duration_human(issue.duration_hours),
+                    "details": issue.details,
+                },
+            )
+
+        # Deleting an ignored issue would also erase HA's persistent Ignore
+        # choice. Keep tracking it so a recurrence is not announced as new.
+        candidate_ids = self._active_issue_ids - current_issue_ids
+        ignored_ids = {i for i in candidate_ids if self._is_ignored(i)}
+        resolved_ids = candidate_ids - ignored_ids
+        for resolved_id in resolved_ids:
+            ir.async_delete_issue(self._hass, DOMAIN, resolved_id)
+        if resolved_ids:
+            _LOGGER.info(
+                "Resolved %d pipeline health issue(s) in area '%s'",
+                len(resolved_ids),
+                self._area_name,
+            )
+
+        new_issue_ids = current_issue_ids - self._active_issue_ids
+        if new_issue_ids:
+            _LOGGER.warning(
+                "New pipeline health issues in area '%s': %s",
+                self._area_name,
+                ", ".join(
+                    str(issue.issue_type)
+                    for issue in self._issues
+                    if issue.issue_type in _PIPELINE_ISSUE_TYPES
+                    and _issue_id(self._area_id, None, issue.issue_type)
+                    in new_issue_ids
+                ),
+            )
+        self._active_issue_ids = current_issue_ids | ignored_ids

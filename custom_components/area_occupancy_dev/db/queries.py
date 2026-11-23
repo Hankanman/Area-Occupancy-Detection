@@ -1,0 +1,835 @@
+"""Database query operations."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+import logging
+from typing import TYPE_CHECKING, Any
+
+import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql import literal
+
+from homeassistant.util import dt as dt_util
+
+from ..const import (
+    DEFAULT_MOTION_TIMEOUT,
+    DEFAULT_TIME_PRIOR,
+    OBSERVED_GAP_TOLERANCE_SECONDS,
+)
+from ..data.entity_type import InputType
+from ..data.ground_truth import extend_pulses, pulse_like_sensors
+from ..time_utils import from_db_utc, to_db_utc, to_utc
+from .utils import (
+    area_active_states_by_type,
+    merge_overlapping_intervals,
+    merge_with_tolerance,
+)
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Query, Session
+
+    from .core import AreaOccupancyDB
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def get_area_data(db: AreaOccupancyDB, entry_id: str) -> dict[str, Any] | None:
+    """Get area data for a specific entry_id (read-only, no lock)."""
+    try:
+        with db.get_session() as session:
+            area = session.query(db.Areas).filter_by(entry_id=entry_id).first()
+            if area:
+                return dict(area.to_dict())
+            return None
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Failed to get area data: %s", e)
+        return None
+
+
+def get_latest_interval(db: AreaOccupancyDB) -> datetime:
+    """Return the latest interval end time minus 1 hour, or default window if none (read-only, no lock)."""
+    try:
+        with db.get_session() as session:
+            result = session.execute(
+                sa.select(sa.func.max(db.Intervals.end_time))
+            ).scalar()
+            if result:
+                # DB stores naive UTC; convert to aware UTC for runtime/recorder APIs
+                return from_db_utc(result) - timedelta(hours=1)
+            return dt_util.utcnow() - timedelta(days=10)
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
+        # If table doesn't exist or any other error, return a default time
+        if "no such table" in str(e).lower():
+            _LOGGER.debug("Intervals table doesn't exist yet, using default time")
+        else:
+            _LOGGER.warning("Failed to get latest interval, using default time: %s", e)
+        return dt_util.utcnow() - timedelta(days=10)
+
+
+def get_time_prior(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    day_of_week: int,
+    time_slot: int,
+    default_prior: float = DEFAULT_TIME_PRIOR,
+) -> float:
+    """Get the time prior for a specific time slot.
+
+    Args:
+        db: Database instance
+        entry_id: The area entry ID to filter by
+        area_name: The area name to filter by
+        day_of_week: Day of week (0=Monday, 6=Sunday)
+        time_slot: Time slot index
+        default_prior: Default prior value if not found
+
+    Returns:
+        Time prior value or default if not found
+    """
+    try:
+        with db.get_session() as session:
+            prior = (
+                session.query(db.Priors)
+                .filter_by(
+                    entry_id=entry_id,
+                    area_name=area_name,
+                    day_of_week=day_of_week,
+                    time_slot=time_slot,
+                )
+                .first()
+            )
+            return float(prior.prior_value) if prior else default_prior
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error getting time prior: %s", e)
+        return default_prior
+
+
+def get_stored_time_priors(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+) -> dict[tuple[int, int], tuple[float, int]] | None:
+    """Get only the time priors actually stored for an area.
+
+    Unlike :func:`get_all_time_priors`, missing slots are *not* filled with a
+    default: the caller can tell "learned to be empty" apart from "never
+    observed". That distinction matters because the two must not be rendered —
+    or fed to the Bayesian prior — as the same number.
+
+    Args:
+        db: Database instance
+        entry_id: The area entry ID to filter by
+        area_name: The area name to filter by
+
+    Returns:
+        Dictionary mapping (day_of_week, time_slot) to
+        (prior_value, data_points), with slots that have no stored row
+        absent — or ``None`` when the read fails, so callers can tell a
+        database error apart from a genuinely empty table and avoid
+        caching a fallback-only grid.
+    """
+    try:
+        with db.get_session() as session:
+            priors = (
+                session.query(db.Priors)
+                .filter_by(entry_id=entry_id, area_name=area_name)
+                .all()
+            )
+            return {
+                (p.day_of_week, p.time_slot): (
+                    float(p.prior_value),
+                    int(p.data_points or 0),
+                )
+                for p in priors
+            }
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error getting stored time priors: %s", e)
+        return None
+
+
+def get_all_time_priors(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    default_prior: float = DEFAULT_TIME_PRIOR,
+) -> dict[tuple[int, int], float]:
+    """Get all time priors for an area (all 168 slots).
+
+    Args:
+        db: Database instance
+        entry_id: The area entry ID to filter by
+        area_name: The area name to filter by
+        default_prior: Default prior value for slots not found
+
+    Returns:
+        Dictionary mapping (day_of_week, time_slot) to prior_value.
+        All 168 slots are included, using default_prior for missing slots.
+    """
+    try:
+        with db.get_session() as session:
+            priors = (
+                session.query(db.Priors)
+                .filter_by(
+                    entry_id=entry_id,
+                    area_name=area_name,
+                )
+                .all()
+            )
+
+            # Build dictionary from database results
+            result: dict[tuple[int, int], float] = {}
+            for prior in priors:
+                slot_key = (prior.day_of_week, prior.time_slot)
+                result[slot_key] = float(prior.prior_value)
+
+            # Fill in missing slots with default (all 168 slots: 7 days × 24 hours)
+            for day_of_week in range(7):  # 0-6 (Monday-Sunday)
+                for time_slot in range(24):  # 0-23 (hourly slots)
+                    slot_key = (day_of_week, time_slot)
+                    if slot_key not in result:
+                        result[slot_key] = default_prior
+
+            return result
+
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
+        _LOGGER.error("Error getting all time priors: %s", e)
+        # Return default dict with all slots set to default_prior
+        return {
+            (day_of_week, time_slot): default_prior
+            for day_of_week in range(7)
+            for time_slot in range(24)
+        }
+
+
+def get_occupied_intervals(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    lookback_days: int,
+    motion_timeout_seconds: int | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Fetch occupied intervals from presence sensors (direct query).
+
+    Occupied intervals are determined by motion, sleep, and media sensors
+    to provide comprehensive ground truth for prior calculations and
+    correlation analysis. Motion timeout is only applied to motion intervals.
+
+    For cached version with prior-specific caching, use analysis.get_occupied_intervals_with_cache.
+    """
+    now = dt_util.utcnow()
+    lookback_date_db = to_db_utc(now - timedelta(days=lookback_days))
+    all_intervals: list[tuple[datetime, datetime]] = []
+    motion_raw: list[tuple[datetime, datetime]] = []
+    extended_intervals: list[tuple[datetime, datetime]] = []
+
+    try:
+        start_time = dt_util.utcnow()
+        with db.get_session() as session:
+            base_filters = build_base_filters(db, entry_id, lookback_date_db, area_name)
+            motion_query = build_motion_query(session, db, base_filters)
+            presence_query = build_presence_query(session, db, base_filters, area_name)
+
+            all_results = execute_union_queries(
+                session, db, [motion_query, presence_query]
+            )
+            limits = _stuck_limits(db, area_name)
+            all_intervals, motion_raw = process_query_results(all_results, limits)
+            # Motion "on" stretches per sensor (clipped like the rest), to
+            # find the PIR-like ones the motion timeout applies to.
+            motion_by_entity: dict[str, list[tuple[datetime, datetime]]] = {}
+            presence_intervals: list[tuple[datetime, datetime]] = []
+            for row in all_results:
+                start, end = from_db_utc(row[0]), from_db_utc(row[1])
+                limit = limits.get(row[2])
+                if limit is not None and end - start > limit:
+                    end = start + limit
+                if row[2] == "motion":
+                    motion_by_entity.setdefault(row[3], []).append((start, end))
+                else:
+                    presence_intervals.append((start, end))
+
+        query_time = (dt_util.utcnow() - start_time).total_seconds()
+        _LOGGER.debug(
+            "Interval query executed in %.3fs for %s (total=%d, motion=%d)",
+            query_time,
+            area_name,
+            len(all_intervals),
+            len(motion_raw),
+        )
+
+        if not all_intervals:
+            return []
+
+        # The motion timeout bridges PIR pulses: it applies to PIR-like
+        # sensors only (see data.ground_truth), and actually extends them
+        # (the previous segmentation capped it at the stretch's own end).
+        timeout = timedelta(
+            seconds=_area_motion_timeout(db, area_name, motion_timeout_seconds)
+        )
+        # The live labeller's classification is the shared one (so both paths
+        # extend the same sensors); a sensor it hasn't classified yet falls
+        # back to the rule applied to this query's own rows.
+        known = _pulse_classification(db, area_name)
+        pulse_ids = {
+            entity_id for entity_id, is_pulse in known.items() if is_pulse
+        } | pulse_like_sensors(
+            {
+                entity_id: [(e - s).total_seconds() for s, e in spans]
+                for entity_id, spans in motion_by_entity.items()
+                if entity_id not in known
+            }
+        )
+        extended_intervals = merge_overlapping_intervals(
+            presence_intervals + extend_pulses(motion_by_entity, pulse_ids, timeout)
+        )
+        now_aware = dt_util.utcnow()
+        extended_intervals = [
+            (start, min(end, now_aware)) for start, end in extended_intervals
+        ]
+
+        processing_time = (dt_util.utcnow() - start_time).total_seconds()
+        _LOGGER.debug(
+            "Unified occupancy calculation for %s: %d raw -> %d merged intervals (processing: %.3fs)",
+            area_name,
+            len(all_intervals),
+            len(extended_intervals),
+            processing_time,
+        )
+
+    except (
+        SQLAlchemyError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+    ) as e:
+        _LOGGER.error("Error in get_occupied_intervals: %s", e)
+        return []
+    else:
+        return extended_intervals
+
+
+def get_observed_intervals(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+    lookback_days: int,
+) -> list[tuple[datetime, datetime]]:
+    """When the area's motion sensors had a recorded state, merged (#574).
+
+    A motion sensor reporting anything, ``on`` or ``off``, is the area
+    being watched; ``unavailable``/``unknown`` are never stored, so its
+    gaps are the outages. Media and sleep states don't count: a TV that
+    is off says nothing about whether the room is empty. Gaps up to
+    ``OBSERVED_GAP_TOLERANCE_SECONDS`` are bridged.
+
+    Returns:
+        Merged ``(start, end)`` spans in aware UTC, or ``[]``.
+    """
+    lookback_date_db = to_db_utc(dt_util.utcnow() - timedelta(days=lookback_days))
+    try:
+        with db.get_session() as session:
+            rows = (
+                session.query(db.Intervals.start_time, db.Intervals.end_time)
+                .join(
+                    db.Entities,
+                    (db.Intervals.entity_id == db.Entities.entity_id)
+                    & (db.Intervals.area_name == db.Entities.area_name),
+                )
+                .filter(
+                    db.Entities.entry_id == entry_id,
+                    db.Entities.area_name == area_name,
+                    db.Intervals.area_name == area_name,
+                    # Overlap, not start: a row that began before the cutoff
+                    # and runs into the window is observed time too; the
+                    # caller clips it to the window.
+                    db.Intervals.end_time > lookback_date_db,
+                    db.Entities.entity_type == InputType.MOTION.value,
+                )
+                .all()
+            )
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error in get_observed_intervals: %s", e)
+        return []
+    return merge_with_tolerance(
+        [(from_db_utc(start), from_db_utc(end)) for start, end in rows],
+        timedelta(seconds=OBSERVED_GAP_TOLERANCE_SECONDS),
+    )
+
+
+def get_first_interval_timestamp(
+    db: AreaOccupancyDB,
+    entry_id: str,
+    area_name: str,
+) -> datetime | None:
+    """Return the earliest Intervals timestamp for this area's ground-truth entities.
+
+    Unlike :func:`get_occupied_intervals`, this looks at every interval
+    *regardless of state* (not just "on"/active rows) for the area's current
+    motion/sleep/media sensors. It answers "when did we start observing
+    these entities at all" rather than "when did we first see them active".
+
+    Used two ways by prior calculation (#520):
+
+    - Distinguishing "no data exists yet for this area's current sensors"
+      (returns ``None``) from "there is data but none of it is occupied"
+      (returns a timestamp, with ``get_occupied_intervals`` returning ``[]``)
+      — Bug A's silent-freeze fix needs this distinction to know when to
+      flag a stale prior versus computing a genuine near-zero one.
+    - As the warm-up-guard denominator basis, replacing "first *occupied*
+      interval" — a single occupied interval minutes after a sensor swap
+      no longer makes the observation window collapse to just that
+      interval's own duration, which is what produced Bug B's
+      occupied/elapsed ~= 1.0 clamp-to-0.99.
+
+    Deliberately unbounded by lookback days: a sensor that has been
+    reporting for longer than the lookback window should resolve to "seen
+    at least since the lookback window started" once combined with the
+    configured lookback in the caller, not to "no data" just because this
+    query's own window was truncated.
+    """
+    try:
+        with db.get_session() as session:
+            result = (
+                session.query(sa.func.min(db.Intervals.start_time))
+                .join(
+                    db.Entities,
+                    (db.Intervals.entity_id == db.Entities.entity_id)
+                    & (db.Intervals.area_name == db.Entities.area_name),
+                )
+                .filter(
+                    db.Entities.entry_id == entry_id,
+                    db.Entities.area_name == area_name,
+                    db.Intervals.area_name == area_name,
+                    db.Entities.entity_type.in_(
+                        [
+                            InputType.MOTION.value,
+                            InputType.MEDIA.value,
+                            InputType.SLEEP.value,
+                        ]
+                    ),
+                )
+                .scalar()
+            )
+            if result is None:
+                return None
+            return from_db_utc(result)
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error(
+            "Error getting first interval timestamp for area '%s': %s", area_name, e
+        )
+        return None
+
+
+def get_entities_without_intervals(
+    db: AreaOccupancyDB,
+    entity_ids: list[str],
+) -> set[str]:
+    """Return the subset of ``entity_ids`` that have zero Intervals rows.
+
+    Used by ``sync_states`` to identify newly-(re)configured entities that
+    need a recorder-history backfill rather than only accumulating data
+    forward from the shared sync watermark (#520 Bug A path 1: a sensor
+    swap otherwise leaves the new entity with no ground-truth history until
+    it happens to trigger after being added).
+    """
+    if not entity_ids:
+        return set()
+    try:
+        with db.get_session() as session:
+            with_data = {
+                row[0]
+                for row in session.query(db.Intervals.entity_id)
+                .filter(db.Intervals.entity_id.in_(entity_ids))
+                .distinct()
+                .all()
+            }
+        return set(entity_ids) - with_data
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting entities without intervals: %s", e)
+        return set()
+
+
+def build_base_filters(
+    db: AreaOccupancyDB, entry_id: str, lookback_date_db: datetime, area_name: str
+) -> list[Any]:
+    """Construct base SQLAlchemy filters for interval queries."""
+    return [
+        db.Entities.entry_id == entry_id,
+        db.Entities.area_name == area_name,
+        db.Intervals.area_name == area_name,
+        # DB stores naive UTC
+        db.Intervals.start_time >= lookback_date_db,
+    ]
+
+
+def build_motion_query(
+    session: Any, db: AreaOccupancyDB, base_filters: list[Any]
+) -> Any:
+    """Create query selecting motion intervals."""
+    return (
+        session.query(
+            db.Intervals.start_time,
+            db.Intervals.end_time,
+            literal("motion").label("sensor_type"),
+            db.Intervals.entity_id,
+        )
+        .join(
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
+        )
+        .filter(
+            *base_filters,
+            db.Entities.entity_type == InputType.MOTION.value,
+            db.Intervals.state == "on",
+        )
+    )
+
+
+def build_presence_query(
+    session: Session,
+    db: AreaOccupancyDB,
+    base_filters: list[sa.ColumnElement[bool]],
+    area_name: str,
+) -> Query[Any] | None:
+    """Create query selecting sleep and media presence intervals.
+
+    These sensors indicate sustained presence (e.g., sleeping, watching TV)
+    that motion sensors may miss.
+
+    Active states come from the area's *configured* values, not from
+    ``DEFAULT_TYPES``. Deriving them from defaults meant a user who removed
+    ``paused`` from ``CONF_MEDIA_ACTIVE_STATES`` still had every ``paused``
+    stretch counted as occupancy ground truth, pinning ``global_prior`` at the
+    0.99 clamp while live evidence read ~0.01 — issue #520.
+
+    Each type is matched against its own state set rather than the union, so a
+    sleep sensor can never be matched by a media state (or vice versa).
+
+    Returns ``None`` when the area has no configured presence sensors, so the
+    caller can skip the query entirely rather than emit an always-false filter.
+    """
+    states_by_type = area_active_states_by_type(
+        db.coordinator, area_name, (InputType.MEDIA, InputType.SLEEP)
+    )
+
+    type_clauses = [
+        (db.Entities.entity_type == input_type.value)
+        & db.Intervals.state.in_(sorted(active_states))
+        for input_type, active_states in sorted(
+            states_by_type.items(), key=lambda item: item[0].value
+        )
+        if active_states
+    ]
+    if not type_clauses:
+        return None
+
+    return (
+        session.query(
+            db.Intervals.start_time,
+            db.Intervals.end_time,
+            db.Entities.entity_type.label("sensor_type"),
+            db.Intervals.entity_id,
+        )
+        .join(
+            db.Entities,
+            (db.Intervals.entity_id == db.Entities.entity_id)
+            & (db.Intervals.area_name == db.Entities.area_name),
+        )
+        .filter(
+            *base_filters,
+            sa.or_(*type_clauses),
+        )
+    )
+
+
+def execute_union_queries(
+    session: Session, db: AreaOccupancyDB, queries: list[Query[Any]]
+) -> list[Any]:
+    """Execute and union multiple interval queries, returning ordered results."""
+    # Filter out None queries (presence query may return no results).
+    valid_queries = [q for q in queries if q is not None]
+    if not valid_queries:
+        return []
+
+    if len(valid_queries) == 1:
+        combined_query = valid_queries[0].order_by(db.Intervals.start_time)
+        return combined_query.all()
+
+    # Union all queries then order.
+    combined = valid_queries[0].union_all(*valid_queries[1:])
+    return combined.order_by(db.Intervals.start_time).all()
+
+
+def _pulse_classification(db: AreaOccupancyDB, area_name: str) -> dict[str, bool]:
+    """The coordinator's shared PIR-like classification, if it has one."""
+    getter = getattr(db.coordinator, "pulse_classification", None)
+    if getter is None:
+        return {}
+    result = getter(area_name)
+    return result if isinstance(result, dict) else {}
+
+
+def _area_motion_timeout(
+    db: AreaOccupancyDB, area_name: str, fallback: int | None
+) -> int:
+    """The motion timeout to apply, in seconds.
+
+    An explicit value wins; otherwise the area's configured timeout (which
+    used to be ignored here), and the default when the area isn't loaded.
+    """
+    if fallback is not None:
+        return int(fallback)
+    area = db.coordinator.get_area(area_name)
+    if area is not None:
+        return int(area.config.sensors.motion_timeout)
+    return DEFAULT_MOTION_TIMEOUT
+
+
+def _stuck_limits(db: AreaOccupancyDB, area_name: str) -> dict[str, timedelta]:
+    """The longest believable active stretch per ground-truth sensor type.
+
+    The health check's stuck-active thresholds for this area's purpose: a
+    stretch longer than that gets flagged as a stuck sensor, so it can't be
+    trusted as occupancy history either. Sleep has no threshold and is never
+    clipped.
+    """
+    from ..data.health import stuck_active_threshold  # noqa: PLC0415
+
+    area = db.coordinator.get_area(area_name)
+    purpose = area.purpose.purpose if area is not None else None
+    limits: dict[str, timedelta] = {}
+    for input_type in (InputType.MOTION, InputType.MEDIA, InputType.SLEEP):
+        limit = stuck_active_threshold(input_type, purpose)
+        if limit is not None:
+            limits[input_type.value] = limit
+    return limits
+
+
+def process_query_results(
+    results: list[tuple[datetime, datetime, str]],
+    max_durations: dict[str, timedelta] | None = None,
+) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
+    """Process query results into all intervals and motion-only intervals.
+
+    Motion intervals are tracked separately because apply_motion_timeout()
+    only extends motion segments (not sleep/media presence).
+
+    An interval longer than its sensor type's ``max_durations`` entry is cut
+    to that length: past it the sensor would be flagged stuck active, so the
+    rest is a stuck sensor, not someone present. Without the cut, one
+    player left paused for a day taught the area a prior and likelihoods
+    as if it had been occupied all day.
+    """
+    motion_raw: list[tuple[datetime, datetime]] = []
+    all_intervals: list[tuple[datetime, datetime]] = []
+    limits = max_durations or {}
+
+    for row in results:
+        start, end, sensor_type = row[0], row[1], row[2]
+        # DB stores naive UTC; convert to aware UTC for runtime computations
+        interval = (from_db_utc(start), from_db_utc(end))
+        limit = limits.get(sensor_type)
+        if limit is not None and interval[1] - interval[0] > limit:
+            interval = (interval[0], interval[0] + limit)
+        all_intervals.append(interval)
+        if sensor_type == "motion":
+            motion_raw.append(interval)
+
+    return (all_intervals, motion_raw)
+
+
+def get_global_prior(db: AreaOccupancyDB, area_name: str) -> dict[str, Any] | None:
+    """Get the most recent global prior for an area.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+
+    Returns:
+        Dictionary with global prior data, or None if not found
+    """
+    try:
+        with db.get_session() as session:
+            global_prior = (
+                session.query(db.GlobalPriors).filter_by(area_name=area_name).first()
+            )
+
+            if global_prior:
+                return {
+                    "prior_value": global_prior.prior_value,
+                    # DB stores naive UTC; convert to aware UTC so callers can
+                    # do datetime arithmetic directly (e.g. staleness checks).
+                    # calculation_date is NOT NULL for rows created by the
+                    # current schema, but legacy rows predating that
+                    # constraint may still have NULL — guard rather than
+                    # let AttributeError escape uncaught below.
+                    "calculation_date": (
+                        from_db_utc(global_prior.calculation_date)
+                        if global_prior.calculation_date is not None
+                        else None
+                    ),
+                    "data_period_start": global_prior.data_period_start,
+                    "data_period_end": global_prior.data_period_end,
+                    "total_occupied_seconds": global_prior.total_occupied_seconds,
+                    "total_period_seconds": global_prior.total_period_seconds,
+                    "interval_count": global_prior.interval_count,
+                    "confidence": global_prior.confidence,
+                    "calculation_method": global_prior.calculation_method,
+                }
+
+            return None
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting global prior: %s", e)
+        return None
+
+
+def get_occupied_intervals_cache(
+    db: AreaOccupancyDB,
+    area_name: str,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Get occupied intervals from OccupiedIntervalsCache table.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        period_start: Optional start time filter
+        period_end: Optional end time filter
+
+    Returns:
+        List of (start_time, end_time) tuples
+    """
+    try:
+        with db.get_session() as session:
+            query = session.query(db.OccupiedIntervalsCache).filter_by(
+                area_name=area_name
+            )
+
+            if period_start:
+                query = query.filter(
+                    db.OccupiedIntervalsCache.start_time >= to_db_utc(period_start)
+                )
+            if period_end:
+                query = query.filter(
+                    db.OccupiedIntervalsCache.end_time <= to_db_utc(period_end)
+                )
+
+            cached_intervals = query.order_by(
+                db.OccupiedIntervalsCache.start_time
+            ).all()
+
+            return [
+                (from_db_utc(interval.start_time), from_db_utc(interval.end_time))
+                for interval in cached_intervals
+            ]
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error getting occupied intervals cache: %s", e)
+        return []
+
+
+def is_occupied_intervals_cache_valid(
+    db: AreaOccupancyDB,
+    area_name: str,
+    max_age_hours: int = 24,
+) -> bool:
+    """Check if cached occupied intervals are still valid.
+
+    Args:
+        db: Database instance
+        area_name: Area name
+        max_age_hours: Maximum age in hours before cache is considered stale
+
+    Returns:
+        True if cache is valid, False otherwise
+    """
+    age = get_occupied_intervals_cache_age_hours(db, area_name)
+    return age is not None and age < max_age_hours
+
+
+def get_occupied_intervals_cache_age_hours(
+    db: AreaOccupancyDB,
+    area_name: str,
+) -> float | None:
+    """Return age of the most recent occupied-intervals cache entry in hours.
+
+    Returns None if no cache entry exists yet (e.g., the populate step
+    hasn't run for this area), or on query error. Used by both the
+    cache-freshness boolean check above and the pipeline health monitor.
+    """
+    try:
+        with db.get_session() as session:
+            latest = (
+                session.query(db.OccupiedIntervalsCache)
+                .filter_by(area_name=area_name)
+                .order_by(db.OccupiedIntervalsCache.calculation_date.desc())
+                .first()
+            )
+
+            if not latest:
+                return None
+
+            # DB stores naive UTC; compare using aware UTC.
+            now = to_utc(dt_util.utcnow())
+            calc_date = from_db_utc(latest.calculation_date)
+            return (now - calc_date).total_seconds() / 3600
+
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error reading cache age for area '%s': %s", area_name, e)
+        return None
+
+
+def get_area_created_at(
+    db: AreaOccupancyDB,
+    area_name: str,
+) -> datetime | None:
+    """Return the persisted ``created_at`` for an area, or None if not stored.
+
+    Used by the pipeline health monitor to compute "is this area old enough
+    that priors should have trained?" without exposing the DB row to callers.
+    """
+    try:
+        with db.get_session() as session:
+            row = (
+                session.query(db.Areas.created_at)
+                .filter_by(area_name=area_name)
+                .first()
+            )
+            if not row or row[0] is None:
+                return None
+            return from_db_utc(row[0])
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError) as e:
+        _LOGGER.error("Error reading created_at for area '%s': %s", area_name, e)
+        return None

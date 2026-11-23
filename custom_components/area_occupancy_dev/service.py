@@ -1,0 +1,684 @@
+"""Service definitions for the Area Occupancy Detection integration."""
+
+from __future__ import annotations
+
+import contextlib
+from dataclasses import asdict
+import logging
+import time
+from typing import TYPE_CHECKING, Any
+
+import voluptuous as vol
+
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.util import dt as dt_util
+
+from .config_helpers import (
+    apply_purpose_based_decay_default,
+    iter_area_subentries,
+    validate_area_config,
+)
+from .const import (
+    ALL_AREAS_IDENTIFIER,
+    CONF_AREA_ID,
+    CONF_AREAS,
+    CONF_CLOSED_DOOR_HOLD,
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+    CONF_DECAY_ENABLED,
+    CONF_DECAY_HALF_LIFE,
+    CONF_LONG_MOTION_TIMEOUT,
+    CONF_MAX_HOLD,
+    CONF_MIN_PRIOR_OVERRIDE,
+    CONF_PURPOSE,
+    CONF_THRESHOLD,
+    CONF_WASP_ENABLED,
+    DEFAULT_PURPOSE,
+    DEVICE_SW_VERSION,
+    DOMAIN,
+)
+from .data.forecast import build_aggregate_time_priors, build_area_time_priors
+from .data.prior import DEFAULT_SLOT_MINUTES, PRIOR_FACTOR
+from .data.purpose import get_default_decay_half_life
+from .utils import get_coordinator
+
+if TYPE_CHECKING:
+    from .area.area import Area
+    from .coordinator import AreaOccupancyCoordinator
+
+_LOGGER = logging.getLogger(__name__)
+
+PURGE_AREA_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+    }
+)
+
+GET_TIME_PRIORS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+    }
+)
+
+# Per-area tunables the ``set_area_option`` service may change, mapped to the
+# coercion applied before validation.
+#
+# Deliberately narrow. Structural configuration (which entities belong to the
+# area, adjacency, the area id itself) stays in the UI: adjacency has to be
+# mirrored onto neighbours, and silently reshaping an area from an automation
+# is not something anyone asked for. Per-type weights are excluded because
+# learned sensor fusion is intended to take them over -- exposing them now
+# would publish an API that plan has to walk back.
+SETTABLE_AREA_OPTIONS: dict[str, Any] = {
+    CONF_THRESHOLD: vol.Coerce(float),
+    CONF_DECAY_ENABLED: cv.boolean,
+    CONF_DECAY_HALF_LIFE: vol.All(
+        cv.time_period, lambda value: int(value.total_seconds())
+    ),
+    CONF_MIN_PRIOR_OVERRIDE: vol.Coerce(float),
+    CONF_WASP_ENABLED: cv.boolean,
+    CONF_CLOSED_DOOR_HOLD: cv.boolean,
+    CONF_LONG_MOTION_TIMEOUT: vol.All(
+        cv.time_period, lambda value: int(value.total_seconds())
+    ),
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT: vol.All(
+        cv.time_period, lambda value: int(value.total_seconds())
+    ),
+    CONF_MAX_HOLD: vol.All(cv.time_period, lambda value: int(value.total_seconds())),
+}
+
+
+def _require_at_least_one_option(data: dict[str, Any]) -> dict[str, Any]:
+    """Reject a ``set_area_option`` call that would change nothing."""
+    if not any(option in data for option in SETTABLE_AREA_OPTIONS):
+        raise vol.Invalid(
+            "Specify at least one option to set: "
+            + ", ".join(sorted(SETTABLE_AREA_OPTIONS))
+        )
+    return data
+
+
+SET_AREA_OPTION_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Required(CONF_AREA_ID): vol.All(str, vol.Length(min=1)),
+            **{
+                vol.Optional(option): coerce
+                for option, coerce in SETTABLE_AREA_OPTIONS.items()
+            },
+        },
+        _require_at_least_one_option,
+    )
+)
+
+
+def _collect_entity_states(hass: HomeAssistant, area: Area) -> dict[str, str]:
+    """Collect current states for all entities in an area.
+
+    Args:
+        hass: Home Assistant instance
+        area: The area to collect entity states for
+
+    Returns:
+        Dictionary mapping entity_id to state (or "NOT_FOUND" if unavailable)
+    """
+    entity_states = {}
+    for entity_id in area.entities.entities:
+        state = hass.states.get(entity_id)
+        if state:
+            entity_states[entity_id] = state.state
+        else:
+            entity_states[entity_id] = "NOT_FOUND"
+    return entity_states
+
+
+def _collect_likelihood_data(area: Area) -> dict[str, dict[str, Any]]:
+    """Collect likelihood data for all entities in an area.
+
+    Args:
+        area: The area to collect likelihood data for
+
+    Returns:
+        Dictionary mapping entity_id to likelihood data dict
+    """
+    likelihood_data = {}
+    for entity_id, entity in area.entities.entities.items():
+        # Get runtime likelihood values (uses Gaussian params if available, falls back to defaults)
+        prob_given_true, prob_given_false = entity.get_likelihoods()
+
+        # Prepare active_range for JSON serialization (only for numeric sensors)
+        # Binary sensors shouldn't show active_range
+        active_range_val = None
+        if entity.active_range and not entity.active_states:
+            # Only include active_range for numeric sensors (those without active_states)
+            try:
+                active_range_val = []
+                # Ensure active_range is iterable (tuple or list)
+                # Mock objects might report having active_range but fail iteration if not configured
+                range_iter = entity.active_range
+                if not isinstance(range_iter, (tuple, list)) and not hasattr(
+                    range_iter, "__iter__"
+                ):
+                    # Fallback for unconfigured mocks
+                    active_range_val = None
+                else:
+                    for val in range_iter:
+                        # JSON doesn't support infinity, use None for open bounds
+                        if val == float("inf") or val == float("-inf"):
+                            active_range_val.append(None)
+                        else:
+                            active_range_val.append(val)
+            except TypeError:
+                # Handle case where iteration fails (e.g. non-iterable Mock)
+                active_range_val = None
+
+        raw_data = {
+            "type": entity.type.input_type.value,
+            "weight": entity.type.weight,
+            "prob_given_true": prob_given_true,  # Runtime calculated value
+            "prob_given_false": prob_given_false,  # Runtime calculated value
+            "active_states": entity.active_states,
+            "active_range": active_range_val,
+            "is_active": entity.active,
+        }
+
+        # Always include analysis data and errors (even if None) for visibility
+        gaussian_params = getattr(entity, "learned_gaussian_params", None)
+        analysis_data = asdict(gaussian_params) if gaussian_params else None
+        analysis_error = getattr(entity, "analysis_error", None)
+        correlation_type = getattr(entity, "correlation_type", None)
+
+        raw_data["analysis_data"] = analysis_data
+        raw_data["analysis_error"] = analysis_error
+        raw_data["correlation_type"] = correlation_type
+
+        # Filter out keys with None values, but keep analysis_data, analysis_error, and correlation_type
+        # even if None so users can see which entities have been analyzed
+        filtered_data = {
+            k: v
+            for k, v in raw_data.items()
+            if k in ("analysis_data", "analysis_error", "correlation_type")
+            or v is not None
+        }
+        likelihood_data[entity_id] = filtered_data
+    return likelihood_data
+
+
+def _build_analysis_data(
+    hass: HomeAssistant, area: Area, area_name: str
+) -> dict[str, Any]:
+    """Build analysis data dictionary for an area.
+
+    Args:
+        hass: Home Assistant instance
+        area: The area to build analysis data for
+        area_name: The name of the area
+
+    Returns:
+        Dictionary containing analysis data for the area
+    """
+    entity_states = _collect_entity_states(hass, area)
+    likelihood_data = _collect_likelihood_data(area)
+
+    # Resolve half_life: use configured value, or derive from purpose if set to auto (0)
+    half_life = area.config.decay.half_life
+    if half_life == 0:
+        half_life = get_default_decay_half_life(area.config.purpose)
+
+    data = {
+        "area_name": area_name,
+        "purpose": area.purpose.name,
+        "half_life": half_life,
+        "current_probability": area.probability(),
+        "current_occupied": area.occupied(),
+        "current_threshold": area.threshold(),
+        "current_prior": area.area_prior(),
+        "global_prior": area.prior.global_prior,
+        "time_prior": area.prior.time_prior,
+        "prior_entity_ids": area.prior.sensor_ids,
+        "total_entities": len(area.entities.entities),
+        "entity_states": entity_states,
+        "likelihoods": likelihood_data,
+    }
+    # Filter out keys with None values
+    return {k: v for k, v in data.items() if v is not None}
+
+
+async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Manually trigger an update of sensor likelihoods.
+
+    Always runs analysis for all areas.
+    """
+    try:
+        coordinator = get_coordinator(hass)
+
+        _LOGGER.info("Running analysis for all areas")
+        analysis_start_time = time.perf_counter()
+        await coordinator.run_analysis()
+        analysis_time_ms = (time.perf_counter() - analysis_start_time) * 1000
+
+        # Aggregate data from all areas
+        all_areas_data = {}
+        for area_name_item in coordinator.get_area_names():
+            area = coordinator.get_area(area_name_item)
+            all_areas_data[area_name_item] = _build_analysis_data(
+                hass, area, area_name_item
+            )
+
+        return {
+            "areas": all_areas_data,
+            "update_timestamp": dt_util.utcnow().isoformat(),
+            "analysis_time_ms": analysis_time_ms,
+            "device_sw_version": DEVICE_SW_VERSION,
+        }
+    except Exception as err:
+        error_msg = f"Failed to run analysis: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+
+async def _export_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Export the complete integration configuration as YAML.
+
+    The areas are read from their config subentries, which is where they have
+    lived since CONF_VERSION 19; an entry that still carries the legacy list
+    (one that has not been migrated yet) is read from that instead. The
+    export is what users paste into bug reports and the simulator, so it has
+    to describe the whole instance either way.
+    """
+    try:
+        coordinator = get_coordinator(hass)
+        config_entry = coordinator.config_entry
+
+        config = dict(config_entry.data) | dict(config_entry.options)
+        areas = [area for _, area in iter_area_subentries(config_entry)] or config.get(
+            CONF_AREAS
+        )
+
+        if areas:
+            # Reorder area dicts so area_id comes first
+            config[CONF_AREAS] = [
+                {
+                    CONF_AREA_ID: area.get(CONF_AREA_ID),
+                    **{k: v for k, v in area.items() if k != CONF_AREA_ID},
+                }
+                for area in areas
+            ]
+    except Exception as err:
+        error_msg = f"Failed to export config: {err}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+    else:
+        return config
+
+
+def _find_area_by_area_id(
+    coordinator: Any, area_id: str
+) -> tuple[str | None, Area | None]:
+    """Look up an area by its Home Assistant area_id.
+
+    Args:
+        coordinator: AreaOccupancyCoordinator instance
+        area_id: Home Assistant area_id stored on each area's config
+
+    Returns:
+        Tuple of (area_name, area) — both None when no match is found.
+    """
+    for area_name, area in coordinator.areas.items():
+        if area.config.area_id == area_id:
+            return area_name, area
+    return None, None
+
+
+async def async_purge_area_data(
+    hass: HomeAssistant,
+    coordinator: AreaOccupancyCoordinator,
+    area_name: str,
+    area: Area,
+) -> dict[str, Any]:
+    """Purge DB rows + in-memory state for a single configured area.
+
+    Deletes all database rows for the area (intervals, priors, correlations,
+    caches, etc.) without removing the area from configuration. The area's
+    in-memory prior cache is cleared and a coordinator refresh is requested so
+    the UI immediately reflects the purge.
+
+    Shared by the public ``purge_area_history`` service and the options-flow
+    "Reset learning" action — both want the same effect (data wiped, area
+    config preserved). Caller is responsible for the area-id → name lookup
+    and any user-facing validation messaging; this helper assumes the area
+    exists in the coordinator.
+
+    Returns the same result dict the service handler exposes:
+    ``{"area_id", "area_name", "entities_deleted", "shell_repersisted",
+    "purged_at"}``. Raises ``HomeAssistantError`` on hard DB failure.
+    """
+    try:
+        deleted = await hass.async_add_executor_job(
+            coordinator.db.delete_area_data, area_name
+        )
+    except Exception as err:
+        error_msg = f"Failed to purge database records for area '{area_name}': {err}"
+        _LOGGER.exception(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+    # Reset in-memory prior state so next calculation rebuilds cleanly.
+    with contextlib.suppress(AttributeError):
+        area.prior.clear_cache()
+
+    # Re-persist the area shell so subsequent operations still find it.
+    # A failure here does not invalidate the purge itself (the user-visible
+    # history has been deleted) — the shell is re-created on the next save
+    # cycle. Surfaced via the response and at warning level so callers can
+    # see partial failures without the service raising.
+    shell_repersisted = True
+    try:
+        await hass.async_add_executor_job(coordinator.db.save_area_data, area_name)
+    except Exception:  # noqa: BLE001
+        shell_repersisted = False
+        _LOGGER.warning(
+            "Failed to re-persist area shell for '%s' after purge; "
+            "it will be recreated on the next save cycle",
+            area_name,
+            exc_info=True,
+        )
+
+    # Reload priors/correlations/entity state from DB (now empty for this area).
+    try:
+        await coordinator.db.load_data()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning("db.load_data() after purge raised; continuing", exc_info=True)
+
+    # The purge deleted this area's AreaRelationships rows (and the shell
+    # re-persist above re-synced them), so refresh the in-memory copy.
+    try:
+        await coordinator.async_load_adjacency_snapshot()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "async_load_adjacency_snapshot() after purge raised; continuing",
+            exc_info=True,
+        )
+
+    try:
+        await coordinator.async_refresh_correlations()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "async_refresh_correlations() after purge raised; continuing",
+            exc_info=True,
+        )
+
+    try:
+        await coordinator.async_request_refresh()
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "async_request_refresh() after purge raised; continuing", exc_info=True
+        )
+
+    return {
+        "area_id": area.config.area_id,
+        "area_name": area_name,
+        "entities_deleted": int(deleted),
+        "shell_repersisted": shell_repersisted,
+        "purged_at": dt_util.utcnow().isoformat(),
+    }
+
+
+async def _purge_area_history(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Service handler: purge learned history for a single configured area.
+
+    Resolves the caller-supplied ``area_id`` and delegates to
+    ``async_purge_area_data``. The service-call layer owns the user-facing
+    validation messaging; the helper is kept ServiceCall-free so the
+    options-flow "Reset learning" action can reuse it.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data[CONF_AREA_ID]
+
+    area_name, area = _find_area_by_area_id(coordinator, area_id)
+    if area_name is None or area is None:
+        known = sorted(
+            a.config.area_id
+            for a in coordinator.areas.values()
+            if isinstance(a.config.area_id, str)
+        )
+        raise ServiceValidationError(
+            f"No configured area found for area_id '{area_id}'. "
+            f"Known area_ids: {', '.join(known) if known else '(none)'}"
+        )
+
+    _LOGGER.info(
+        "Purging learned history for area '%s' (area_id=%s) on user request",
+        area_name,
+        area_id,
+    )
+
+    return await async_purge_area_data(hass, coordinator, area_name, area)
+
+
+async def _get_time_priors(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Return the learned weekly occupancy-prior forecast per area.
+
+    The response includes every configured area plus the aggregate zones AOD
+    derives from them — the "All Areas" device and one per HA floor — whose
+    per-slot forecast is the clamped average of their member areas (mirroring
+    ``AllAreas.area_prior()``). Aggregates are handy for air-based devices that
+    condition a whole floor/home at once. With an ``area_id`` only the matching
+    zone (real or aggregate) is returned, raising ``ServiceValidationError``
+    when it is unknown. Time-prior caches are warmed off the event loop.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data.get(CONF_AREA_ID)
+
+    def _build_areas_data() -> dict[str, Any]:
+        """Warm the caches and build every zone's forecast in one executor job.
+
+        Cache load and forecast build must share the executor trip: the
+        analysis pipeline can invalidate an area's time-prior cache between
+        a separate warm-up and a later event-loop build, and the builders
+        would then reload the cache (a DB read) on the event loop.
+        """
+        data: dict[str, Any] = {}
+        for area_name, area in coordinator.areas.items():
+            data[area_name] = build_area_time_priors(area, DEFAULT_SLOT_MINUTES)
+
+        # Aggregate zones: "All Areas" + one per floor, from the union of
+        # their rooms' history (#557). These reuse the per-area caches warmed just above.
+        all_areas_zone = coordinator.get_all_areas()
+        all_areas = build_aggregate_time_priors(
+            all_areas_zone.areas(),
+            DEFAULT_SLOT_MINUTES,
+            ALL_AREAS_IDENTIFIER,
+            "All Areas",
+            prior_factor=PRIOR_FACTOR,
+            empirical=all_areas_zone.empirical,
+        )
+        if all_areas is not None:
+            data["All Areas"] = all_areas
+        for floor_id, floor_agg in coordinator.get_floor_aggregators().items():
+            floor_data = build_aggregate_time_priors(
+                floor_agg.areas(),
+                DEFAULT_SLOT_MINUTES,
+                f"floor_{floor_id}",
+                floor_agg.floor_name,
+                prior_factor=PRIOR_FACTOR,
+                empirical=floor_agg.empirical,
+            )
+            if floor_data is not None:
+                data[floor_agg.floor_name] = floor_data
+        return data
+
+    areas_data = await hass.async_add_executor_job(_build_areas_data)
+
+    if area_id is not None:
+        filtered = {
+            name: data
+            for name, data in areas_data.items()
+            if data.get("area_id") == area_id
+        }
+        if not filtered:
+            known = sorted(
+                str(data["area_id"])
+                for data in areas_data.values()
+                if isinstance(data.get("area_id"), str)
+            )
+            raise ServiceValidationError(
+                f"No area found for area_id '{area_id}'. "
+                f"Known area_ids: {', '.join(known) if known else '(none)'}"
+            )
+        areas_data = filtered
+
+    return {
+        "slot_minutes": DEFAULT_SLOT_MINUTES,
+        "generated_at": dt_util.utcnow().isoformat(),
+        "areas": areas_data,
+    }
+
+
+async def _set_area_option(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Service handler: change one area's tunables from an automation.
+
+    This is the single automatable write path into an area's configuration,
+    and it goes through exactly the same steps the config flow does on save:
+    merge the requested changes over the stored data, normalise the decay
+    half-life against the area's purpose, validate, then persist. Sharing
+    those steps is the point -- a writer that skipped the normalisation is
+    how the half-life kept reverting to a purpose default in the past.
+    """
+    coordinator = get_coordinator(hass)
+    area_id = call.data[CONF_AREA_ID]
+
+    area_name, area = _find_area_by_area_id(coordinator, area_id)
+    if area_name is None or area is None:
+        known = sorted(
+            a.config.area_id
+            for a in coordinator.areas.values()
+            if isinstance(a.config.area_id, str)
+        )
+        raise ServiceValidationError(
+            f"No configured area found for area_id '{area_id}'. "
+            f"Known area_ids: {', '.join(known) if known else '(none)'}"
+        )
+
+    requested = {
+        option: call.data[option]
+        for option in SETTABLE_AREA_OPTIONS
+        if option in call.data
+    }
+
+    subentry_id = area.config.subentry_id
+    subentry = (
+        coordinator.config_entry.subentries.get(subentry_id) if subentry_id else None
+    )
+    if subentry is None:
+        raise ServiceValidationError(
+            f"Area '{area_name}' has no config subentry to update"
+        )
+
+    # Stored area data is flat (the config flow flattens its form sections
+    # before saving), so the requested changes merge straight over it.
+    candidate = {**dict(subentry.data), **requested}
+    apply_purpose_based_decay_default(
+        candidate, candidate.get(CONF_PURPOSE, DEFAULT_PURPOSE)
+    )
+
+    if errors := validate_area_config(candidate):
+        raise ServiceValidationError(
+            f"Invalid configuration for area '{area_name}': "
+            + ", ".join(f"{field}={reason}" for field, reason in sorted(errors.items()))
+        )
+
+    # Persist only the keys this call touched, plus the normalised half-life
+    # when it was one of them, so nothing else in the area is rewritten.
+    changes = {option: candidate[option] for option in requested}
+
+    _LOGGER.info(
+        "Setting %s on area '%s' (area_id=%s) via service call",
+        ", ".join(f"{key}={value}" for key, value in sorted(changes.items())),
+        area_name,
+        area_id,
+    )
+    await area.config.update_config(changes)
+
+    return {
+        "area_id": area_id,
+        "area_name": area_name,
+        "updated": changes,
+    }
+
+
+async def async_setup_services(hass: HomeAssistant) -> None:
+    """Register custom services for area occupancy."""
+
+    # Create async wrapper function to properly handle the service call
+    async def handle_run_analysis(call: ServiceCall) -> dict[str, Any]:
+        return await _run_analysis(hass, call)
+
+    async def handle_export_config(call: ServiceCall) -> dict[str, Any]:
+        return await _export_config(hass, call)
+
+    async def handle_purge_area_history(call: ServiceCall) -> dict[str, Any]:
+        return await _purge_area_history(hass, call)
+
+    async def handle_get_time_priors(call: ServiceCall) -> dict[str, Any]:
+        return await _get_time_priors(hass, call)
+
+    async def handle_set_area_option(call: ServiceCall) -> dict[str, Any]:
+        return await _set_area_option(hass, call)
+
+    # Register service with async wrapper function
+    hass.services.async_register(
+        DOMAIN,
+        "run_analysis",
+        handle_run_analysis,
+        schema=None,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "export_config",
+        handle_export_config,
+        schema=None,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "purge_area_history",
+        handle_purge_area_history,
+        schema=PURGE_AREA_HISTORY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "get_time_priors",
+        handle_get_time_priors,
+        schema=GET_TIME_PRIORS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_area_option",
+        handle_set_area_option,
+        schema=SET_AREA_OPTION_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+
+def async_unload_services(hass: HomeAssistant) -> None:
+    """Remove the domain services.
+
+    Called when the last config entry unloads; otherwise the handlers
+    linger and raise once the coordinator is gone.
+    """
+    for service in (
+        "run_analysis",
+        "export_config",
+        "purge_area_history",
+        "get_time_priors",
+        "set_area_option",
+    ):
+        hass.services.async_remove(DOMAIN, service)

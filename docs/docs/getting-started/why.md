@@ -43,7 +43,7 @@ Here's how AOD fits into your automation workflow:
 ### The Workflow
 
 1. **AOD analyzes your sensors** → Motion, TV, doors, appliances, learned patterns
-2. **AOD calculates probability** → Combines all inputs using [Bayesian inference](../features/calculation.md)
+2. **AOD calculates probability** → Starts from what's usual for this room at this hour, then adds each active sensor's [weighted evidence](../features/calculation.md)
 3. **AOD creates occupancy sensors** → Binary occupancy status and probability sensors
 4. **Your automations use these sensors** → Trigger actions based on occupancy state or probability
 5. **AOD learns and adapts** → Gets smarter over time, improving your automations automatically
@@ -166,7 +166,7 @@ Home Assistant can analyze historical data, but you must manually query APIs, wr
 - Automatically combines motion, media, appliances, doors, windows, covers, power sensors, sleep presence, and environmental sensors
 - Separates presence indicators (which set the probability) from environmental support (which adjusts it at 20% influence) for more accurate results
 - Each sensor type has learned reliability with weighted contributions
-- See [Bayesian Calculation](../features/calculation.md) for details
+- See [Probability Calculation](../features/calculation.md) for details
 
 **Example:**
 
@@ -349,7 +349,7 @@ You're in the bathroom. Motion stops, but the door is closed.
 
 1. **Accuracy**: Multi-sensor fusion + learning = fewer false positives/negatives
 2. **Adaptability**: Learns your patterns automatically, gets smarter over time
-3. **Intelligence**: Bayesian probability vs. simple binary logic
+3. **Intelligence**: A learned, weighted probability vs. simple binary logic
 4. **Context**: Activity detection tells you *what* is happening, not just *if* someone is there
 5. **Overnight**: Sleep presence keeps bedrooms occupied while you sleep
 6. **Convenience**: UI-based configuration, automatic learning, purpose-based defaults
@@ -362,7 +362,7 @@ Ready to try Area Occupancy Detection? See the [Installation Guide](installation
 
 ## Learn More
 
-- **[Bayesian Calculation](../features/calculation.md)**: How probability is calculated
+- **[Probability Calculation](../features/calculation.md)**: How probability is calculated
 - **[Prior Learning](../features/prior-learning.md)**: How the system learns from history
 - **[Activity Detection](../features/activity-detection.md)**: How activity detection works
 - **[Sleep Presence](../features/sleep-presence.md)**: How sleep detection works
