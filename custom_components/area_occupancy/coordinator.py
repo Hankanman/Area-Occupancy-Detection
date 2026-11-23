@@ -115,6 +115,34 @@ def _ground_truth_present(area: Area, *, include_stuck: bool = False) -> bool:
     )
 
 
+# Presence types whose "active" state is a standing condition (a door left open,
+# a lock or window in its usual state, a cover raised) rather than a sign of
+# someone being there right now. They can sit active all day, so they don't
+# count as explaining why an area is on.
+_STANDING_STATE_INPUT_TYPES = frozenset(
+    {InputType.DOOR, InputType.LOCK, InputType.WINDOW, InputType.COVER}
+)
+
+
+def _area_is_fading(area: Area) -> bool:
+    """Return whether the area is on only because sensors are fading out.
+
+    True when some sensor is decaying and no sensor that says someone is
+    there right now is active. Environmental sensors don't count as active
+    (they can only add support to a presence reading, never hold a room on),
+    and neither do standing-state sensors: a temperature sensor whose range
+    covers the room's everyday readings, or a door left open, is "active" all
+    day and would hide every fade, so the whole decay tail after motion read
+    as a false "on" in the accuracy numbers.
+    """
+    return bool(area.entities.decaying_entities) and not any(
+        entity.evidence is True
+        and entity.type.input_type in PRESENCE_INPUT_TYPES
+        and entity.type.input_type not in _STANDING_STATE_INPUT_TYPES
+        for entity in area.entities.active_entities
+    )
+
+
 def _arrived_after(area: Area, departed_at: datetime | None) -> bool:
     """Return whether one of the area's presence sensors fired after a departure.
 
@@ -912,10 +940,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 probability=probability,
                 occupied=is_occupied,
                 truth=truth,
-                fading=bool(area.entities.decaying_entities)
-                and not any(
-                    entity.evidence is True for entity in area.entities.active_entities
-                ),
+                fading=_area_is_fading(area),
             )
         )
         # The live label matches db.queries.get_occupied_intervals' ground
