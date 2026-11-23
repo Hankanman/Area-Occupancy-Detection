@@ -1932,6 +1932,28 @@ class BaseOccupancyFlow:
     and options flow. It ensures consistent validation across both flows.
     """
 
+    hass: HomeAssistant
+
+    def add_suggested_values_to_schema(
+        self, *_args: Any, **_kwargs: Any
+    ) -> vol.Schema:
+        """Add suggested values to a schema."""
+        raise NotImplementedError
+
+    def async_show_menu(self, *_args: Any, **_kwargs: Any) -> Any:
+        """Show a flow menu."""
+        raise NotImplementedError
+
+    def async_show_form(self, *_args: Any, **_kwargs: Any) -> Any:
+        """Show a flow form."""
+        raise NotImplementedError
+
+    async def async_step_area_action(
+        self, _user_input: dict[str, Any] | None = None
+    ) -> Any:
+        """Show the area action menu."""
+        raise NotImplementedError
+
     def _validate_duplicate_area_id(
         self,
         flattened_input: dict[str, Any],
@@ -2012,7 +2034,7 @@ class BaseOccupancyFlow:
 
     async def _on_area_config_complete(
         self, config: dict[str, Any]
-    ) -> ConfigFlowResult:
+    ) -> Any:
         """Handle completion of the area config wizard. Overridden by subclasses."""
         raise NotImplementedError
 
@@ -2643,7 +2665,7 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Add an area: the full linear wizard."""
         self._area_being_edited = None
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(Any, await self.async_step_area_basics())
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -2682,7 +2704,7 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Walk every wizard page in order."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(Any, await self.async_step_area_basics())
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
@@ -3276,15 +3298,15 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         """Manage global settings."""
         if user_input is not None:
             # Validate and coerce using the schema
-            schema = _create_global_settings_schema(self.config_entry.options)
-            user_input = schema(user_input)
+            schema = _create_global_settings_schema(dict(self.config_entry.options))
+            validated_input = cast(dict[str, Any], schema(user_input))
 
             # Update the config entry options directly
             new_options = dict(self.config_entry.options)
-            new_options.update(user_input)
+            new_options.update(validated_input)
             # A cleared optional field is left out of the input, and update()
             # cannot remove a key, so the old value would come back.
-            if CONF_AWAY_MODE_ENTITY not in user_input:
+            if CONF_AWAY_MODE_ENTITY not in validated_input:
                 new_options.pop(CONF_AWAY_MODE_ENTITY, None)
 
             return self.async_create_entry(title="", data=new_options)
