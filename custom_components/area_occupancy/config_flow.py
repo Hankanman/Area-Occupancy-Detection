@@ -1934,6 +1934,9 @@ class BaseOccupancyFlow:
     and options flow. It ensures consistent validation across both flows.
     """
 
+    hass: HomeAssistant
+    flow_id: str
+
     def _validate_duplicate_area_id(
         self,
         flattened_input: dict[str, Any],
@@ -2014,7 +2017,7 @@ class BaseOccupancyFlow:
 
     async def _on_area_config_complete(
         self, config: dict[str, Any]
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Handle completion of the area config wizard. Overridden by subclasses."""
         raise NotImplementedError
 
@@ -2158,7 +2161,9 @@ class BaseOccupancyFlow:
     def _editing_single_section(self) -> bool:
         return self._area_edit_section is not None
 
-    async def _start_section_edit(self, section: str) -> ConfigFlowResult:
+    async def _start_section_edit(
+        self, section: str
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Open one wizard page as a standalone edit form."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
@@ -2173,7 +2178,7 @@ class BaseOccupancyFlow:
 
     async def _complete_section_edit(
         self, updates: dict[str, Any]
-    ) -> tuple[dict[str, str], ConfigFlowResult | None]:
+    ) -> tuple[dict[str, str], ConfigFlowResult | SubentryFlowResult | None]:
         """Merge a single-section edit into the draft, validate, and save.
 
         Returns ``(errors, result)``: on validation failure ``errors`` is
@@ -2190,38 +2195,38 @@ class BaseOccupancyFlow:
 
     async def async_step_edit_basics(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: edit purpose and adjacency only."""
         return await self._start_section_edit("basics")
 
     async def async_step_edit_motion(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: edit motion sensors only."""
         return await self._start_section_edit("motion")
 
     async def async_step_edit_behavior(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: edit threshold, decay and wasp-in-box only."""
         return await self._start_section_edit("behavior")
 
     async def async_step_edit_sensors(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke hub: pick which additional-sensor group to edit."""
         self._prepare_area_action_edit()
         return await self.async_step_area_sensors_menu()
 
     async def async_step_area_sensors_menu(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Menu of additional-sensor groups for the area being edited."""
         area_id = self._area_being_edited
         area_config = find_area_by_id(self._get_wizard_areas(), area_id or "")
         if not area_id or area_config is None:
-            return await self.async_step_area_action()
-        return self.async_show_menu(
+            return await cast(Any, self).async_step_area_action()
+        return cast(Any, self).async_show_menu(
             step_id="area_sensors_menu",
             menu_options=[f"edit_sensors_{group}" for group in SENSOR_GROUPS]
             + ["cancel_sensors_menu"],
@@ -2230,7 +2235,9 @@ class BaseOccupancyFlow:
             ),
         )
 
-    async def _start_sensor_group_edit(self, group: str) -> ConfigFlowResult:
+    async def _start_sensor_group_edit(
+        self, group: str
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Open one additional-sensor group as a standalone edit form."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
@@ -2240,55 +2247,55 @@ class BaseOccupancyFlow:
 
     async def async_step_edit_sensors_windows_and_doors(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: doors, windows, locks and covers."""
         return await self._start_sensor_group_edit("windows_and_doors")
 
     async def async_step_edit_sensors_media(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: media players."""
         return await self._start_sensor_group_edit("media")
 
     async def async_step_edit_sensors_appliances(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: appliances."""
         return await self._start_sensor_group_edit("appliances")
 
     async def async_step_edit_sensors_environmental(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: environmental sensors."""
         return await self._start_sensor_group_edit("environmental")
 
     async def async_step_edit_sensors_power(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: power sensors."""
         return await self._start_sensor_group_edit("power")
 
     async def async_step_edit_sensors_wifi_clients(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: Wi-Fi client-count sensors."""
         return await self._start_sensor_group_edit("wifi_clients")
 
     async def async_step_edit_sensors_custom(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Spoke: custom sensor rows."""
         return await self._start_sensor_group_edit("custom")
 
     async def async_step_cancel_sensors_menu(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Back from the sensor-group menu to the area menu."""
-        return await self.async_step_area_action()
+        return await cast(Any, self).async_step_area_action()
 
     async def async_step_area_basics(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Wizard step 1: Area selection and purpose."""
         errors: dict[str, str] = {}
 
@@ -2343,7 +2350,9 @@ class BaseOccupancyFlow:
             )
         )
         if suggested:
-            data_schema = self.add_suggested_values_to_schema(base_schema, suggested)
+            data_schema = cast(Any, self).add_suggested_values_to_schema(
+                base_schema, suggested
+            )
         else:
             data_schema = base_schema
 
@@ -2358,7 +2367,7 @@ class BaseOccupancyFlow:
         else:
             placeholders = {"mode": "Adding", "area_name": "New Area"}
 
-        return self.async_show_form(
+        return cast(Any, self).async_show_form(
             step_id="area_basics",
             data_schema=data_schema,
             errors=errors,
@@ -2368,7 +2377,7 @@ class BaseOccupancyFlow:
 
     async def async_step_area_motion(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Wizard step 2: Motion sensor configuration."""
         errors: dict[str, str] = {}
 
@@ -2408,18 +2417,20 @@ class BaseOccupancyFlow:
             CONF_MOTION_PROB_GIVEN_FALSE,
         }
         if user_input is not None:
-            data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
+            data_schema = cast(Any, self).add_suggested_values_to_schema(
+                base_schema, user_input
+            )
         else:
             suggested = _draft_to_suggested(self._area_config_draft, motion_keys)
             if suggested:
-                data_schema = self.add_suggested_values_to_schema(
+                data_schema = cast(Any, self).add_suggested_values_to_schema(
                     base_schema, suggested
                 )
             else:
                 data_schema = base_schema
 
         self._publish_preview_context()
-        return self.async_show_form(
+        return cast(Any, self).async_show_form(
             step_id="area_motion",
             data_schema=data_schema,
             errors=errors,
@@ -2430,7 +2441,7 @@ class BaseOccupancyFlow:
 
     async def async_step_area_sensors(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Wizard step 3: Additional sensor configuration (sections)."""
         errors: dict[str, str] = {}
 
@@ -2462,12 +2473,14 @@ class BaseOccupancyFlow:
 
         # For edit mode with sections, need nested suggested values
         if user_input is not None:
-            data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
+            data_schema = cast(Any, self).add_suggested_values_to_schema(
+                base_schema, user_input
+            )
         elif self._area_config_draft:
             nested = _nest_config_for_sections(self._area_config_draft)
             suggested = {k: v for k, v in nested.items() if k in groups}
             if suggested:
-                data_schema = self.add_suggested_values_to_schema(
+                data_schema = cast(Any, self).add_suggested_values_to_schema(
                     base_schema, suggested
                 )
             else:
@@ -2476,7 +2489,7 @@ class BaseOccupancyFlow:
             data_schema = base_schema
 
         self._publish_preview_context()
-        return self.async_show_form(
+        return cast(Any, self).async_show_form(
             step_id="area_sensors",
             data_schema=data_schema,
             errors=errors,
@@ -2487,7 +2500,7 @@ class BaseOccupancyFlow:
 
     async def async_step_area_behavior(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Wizard step 4: Behavior parameters (threshold, decay, wasp)."""
         errors: dict[str, str] = {}
 
@@ -2526,7 +2539,9 @@ class BaseOccupancyFlow:
             CONF_MAX_HOLD,
         }
         if user_input is not None:
-            data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
+            data_schema = cast(Any, self).add_suggested_values_to_schema(
+                base_schema, user_input
+            )
         elif self._area_config_draft:
             suggested = _draft_to_suggested(self._area_config_draft, behavior_keys)
             # Build nested wasp section suggested values
@@ -2534,7 +2549,7 @@ class BaseOccupancyFlow:
             if "wasp_in_box" in nested:
                 suggested["wasp_in_box"] = nested["wasp_in_box"]
             if suggested:
-                data_schema = self.add_suggested_values_to_schema(
+                data_schema = cast(Any, self).add_suggested_values_to_schema(
                     base_schema, suggested
                 )
             else:
@@ -2543,7 +2558,7 @@ class BaseOccupancyFlow:
             data_schema = base_schema
 
         self._publish_preview_context()
-        return self.async_show_form(
+        return cast(Any, self).async_show_form(
             step_id="area_behavior",
             data_schema=data_schema,
             errors=errors,
@@ -2553,7 +2568,7 @@ class BaseOccupancyFlow:
         )
 
 
-class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
+class AreaSubentryFlowHandler(BaseOccupancyFlow, ConfigSubentryFlow):
     """Add or reconfigure one area as a config subentry.
 
     This is the native path: Home Assistant renders every area on the
@@ -2641,21 +2656,21 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Add an area: the full linear wizard."""
         self._area_being_edited = None
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(ConfigFlowResult, await self.async_step_area_basics())
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Reconfigure an area: the hub menu of per-page spokes."""
         return await self.async_step_area_action()
 
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """The hub menu itself.
 
         A menu's ``step_id`` must have a matching step handler, because the
@@ -2680,11 +2695,11 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
 
     async def async_step_edit_area(
         self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
+    ) -> ConfigFlowResult | SubentryFlowResult:
         """Walk every wizard page in order."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(ConfigFlowResult, await self.async_step_area_basics())
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
@@ -2873,7 +2888,7 @@ class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Initialize the area config wizard."""
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(ConfigFlowResult, await self.async_step_area_basics())
 
     async def async_step_area_action(
         self, user_input: dict[str, Any] | None = None
@@ -3053,7 +3068,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         self._area_being_edited = None
         self._area_config_draft = {}
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(ConfigFlowResult, await self.async_step_area_basics())
 
     async def async_step_manage_areas(
         self, user_input: dict[str, Any] | None = None
@@ -3113,7 +3128,7 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         """Edit the selected area."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(ConfigFlowResult, await self.async_step_area_basics())
 
     async def async_step_remove_area_confirm(
         self, user_input: dict[str, Any] | None = None
@@ -3278,11 +3293,12 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         """Manage global settings."""
         if user_input is not None:
             # Validate and coerce using the schema
-            schema = _create_global_settings_schema(self.config_entry.options)
-            user_input = schema(user_input)
+            options = dict(self.config_entry.options)
+            schema = _create_global_settings_schema(options)
+            user_input = cast(dict[str, Any], schema(user_input))
 
             # Update the config entry options directly
-            new_options = dict(self.config_entry.options)
+            new_options = dict(options)
             new_options.update(user_input)
             # A cleared optional field is left out of the input, and update()
             # cannot remove a key, so the old value would come back.
@@ -3292,20 +3308,17 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
             return self.async_create_entry(title="", data=new_options)
 
         # Get current values
+        options = dict(self.config_entry.options)
         defaults = {
-            CONF_SLEEP_START: self.config_entry.options.get(
-                CONF_SLEEP_START, DEFAULT_SLEEP_START
-            ),
-            CONF_SLEEP_END: self.config_entry.options.get(
-                CONF_SLEEP_END, DEFAULT_SLEEP_END
-            ),
-            CONF_HEALTH_ENABLED: self.config_entry.options.get(
+            CONF_SLEEP_START: options.get(CONF_SLEEP_START, DEFAULT_SLEEP_START),
+            CONF_SLEEP_END: options.get(CONF_SLEEP_END, DEFAULT_SLEEP_END),
+            CONF_HEALTH_ENABLED: options.get(
                 CONF_HEALTH_ENABLED, DEFAULT_HEALTH_ENABLED
             ),
-            CONF_SENSOR_PRECISION: self.config_entry.options.get(
+            CONF_SENSOR_PRECISION: options.get(
                 CONF_SENSOR_PRECISION, DEFAULT_SENSOR_PRECISION
             ),
-            CONF_AWAY_MODE_ENTITY: self.config_entry.options.get(CONF_AWAY_MODE_ENTITY),
+            CONF_AWAY_MODE_ENTITY: options.get(CONF_AWAY_MODE_ENTITY),
         }
 
         return self.async_show_form(
