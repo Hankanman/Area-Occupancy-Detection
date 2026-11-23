@@ -471,7 +471,7 @@ def suggest_threshold(metrics: AccuracyMetrics) -> float | None:
     return best_threshold
 
 
-def accuracy_summary(metrics: AccuracyMetrics) -> dict:
+def accuracy_summary(metrics: AccuracyMetrics) -> dict[str, Any]:
     """The headline numbers of a snapshot, for the persisted daily history."""
     return {
         "samples": metrics.sample_count,
@@ -485,7 +485,7 @@ def accuracy_summary(metrics: AccuracyMetrics) -> dict:
     }
 
 
-def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict:
+def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict[str, Any]:
     """Flatten an ``AccuracyMetrics`` into a JSON-safe diagnostics block."""
     return {
         # Still shadow: the Accuracy sensor (2026.9.1) exposes these values

@@ -7,10 +7,11 @@ validation of all inputs to ensure a valid configuration.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import contextlib
 import logging
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import voluptuous as vol
 
@@ -1872,7 +1873,7 @@ def _create_area_selector_schema(
     )
 
 
-def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _create_global_settings_schema(defaults: Mapping[str, Any]) -> vol.Schema:
     """Create schema for global settings."""
     return vol.Schema(
         {
@@ -1914,12 +1915,42 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-class BaseOccupancyFlow:
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    class _FlowBase:
+        """What the mixin below uses from Home Assistant's flow classes.
+
+        The mixin is only ever combined with the config flow, the options flow
+        or the subentry flow, which provide these. They are declared here, for
+        the type checker only. The three flows have different result types, so
+        the results are ``Any`` and the arguments aren't checked inside the
+        mixin; Home Assistant's own signatures apply at run time. At run time
+        this base is ``object``.
+        """
+
+        hass: HomeAssistant
+        add_suggested_values_to_schema: Callable[..., vol.Schema]
+        async_show_form: Callable[..., Any]
+        async_show_menu: Callable[..., Any]
+
+else:
+    _FlowBase = object
+
+
+class BaseOccupancyFlow(_FlowBase):
     """Base class for config and options flow.
 
     This class provides shared validation logic used by both the config flow
     and options flow. It ensures consistent validation across both flows.
     """
+
+    if TYPE_CHECKING:
+
+        async def async_step_area_action(
+            self, user_input: dict[str, Any] | None = None
+        ) -> Any:
+            """The hub menu, defined by the flows that use this mixin."""
 
     def _validate_duplicate_area_id(
         self,
@@ -2572,7 +2603,9 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Every configured area, for duplicate and adjacency checks."""
         return [data for _, data in iter_area_subentries(self._get_entry())]
 
-    async def _on_area_config_complete(
+    # The subentry flow ends with a subentry result, the other flows with a
+    # config flow result, and the shared base method is typed for the latter.
+    async def _on_area_config_complete(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, config: dict[str, Any]
     ) -> SubentryFlowResult:
         """Write the area, mirroring adjacency onto its neighbours."""
@@ -2629,7 +2662,11 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Add an area: the full linear wizard."""
         self._area_being_edited = None
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        # The shared wizard steps are typed with the config flow's result,
+        # but under this flow they return its own.
+        return cast(
+            "SubentryFlowResult", cast("object", await self.async_step_area_basics())
+        )
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -2668,7 +2705,9 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Walk every wizard page in order."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(
+            "SubentryFlowResult", cast("object", await self.async_step_area_basics())
+        )
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
@@ -3263,14 +3302,14 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if user_input is not None:
             # Validate and coerce using the schema
             schema = _create_global_settings_schema(self.config_entry.options)
-            user_input = schema(user_input)
+            validated = cast("dict[str, Any]", schema(user_input))
 
             # Update the config entry options directly
             new_options = dict(self.config_entry.options)
-            new_options.update(user_input)
+            new_options.update(validated)
             # A cleared optional field is left out of the input, and update()
             # cannot remove a key, so the old value would come back.
-            if CONF_AWAY_MODE_ENTITY not in user_input:
+            if CONF_AWAY_MODE_ENTITY not in validated:
                 new_options.pop(CONF_AWAY_MODE_ENTITY, None)
 
             return self.async_create_entry(title="", data=new_options)

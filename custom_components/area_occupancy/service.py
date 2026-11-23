@@ -163,7 +163,7 @@ def _collect_likelihood_data(area: Area) -> dict[str, dict[str, Any]]:
                 # Handle case where iteration fails (e.g. non-iterable Mock)
                 active_range_val = None
 
-        raw_data = {
+        raw_data: dict[str, Any] = {
             "type": entity.type.input_type.value,
             "weight": entity.type.weight,
             "prob_given_true": prob_given_true,  # Runtime calculated value
@@ -252,6 +252,8 @@ async def _run_analysis(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
         all_areas_data = {}
         for area_name_item in coordinator.get_area_names():
             area = coordinator.get_area(area_name_item)
+            if area is None:
+                continue
             all_areas_data[area_name_item] = _build_analysis_data(
                 hass, area, area_name_item
             )
