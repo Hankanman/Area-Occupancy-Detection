@@ -32,30 +32,27 @@ behaviour settings, and settable with the
 [`set_area_option`](services.md) service). Turn it on for a room with one way
 in, such as a bathroom. It needs at least one door sensor in the area.
 
-While it is on:
+The hold is intentionally conservative. It can start only from:
 
-- The area is **held** when the door closes after motion started *while it was
-  open* (someone came in and shut it behind them), or while a stronger signal
-  confirms someone is there: an mmWave presence sensor, or an active media
-  player, appliance, power, Wi-Fi client, button or custom sensor. Motion while
-  the door is already shut holds it too.
-- It is **not** held when the motion sensor was already on before the door opened
-  and is simply still on after it shuts. That looks the same as someone leaving
-  and the sensor trailing off over its off-delay, and a closed door says nothing
-  about who is behind it. The hold arms later only if the sensor goes quiet and
-  then fires again (someone is moving about inside) or a stronger signal
-  confirms. The cost is that someone who opens the door from inside, shuts it
-  again and then keeps still is no longer held; a motion sensor that can see
-  stationary people (mmWave) avoids that.
-- While held, the area's probability is kept at **75%** at least (or just above
-  its threshold, if that is higher), so it reads as occupied even when motion
-  loses someone keeping still. The sensors' own evidence still counts on top.
-- **Any door opening releases the hold** straight away.
-- The hold lasts up to the Wasp in Box maximum duration (an hour by default; 0
-  means no limit) after the last motion seen behind the closed door. It then
-  fades towards the area's prior over the area's decay half-life, rather than
-  dropping at once.
-- A hold survives a Home Assistant restart.
+- A trusted presence sensor, such as an mmWave sensor with the `presence`
+  device class.
+- An occupancy button assigned to the area.
+- A motion sensor that remains continuously active for the configured
+  **Long-motion hold timeout**.
+
+The continuous-motion timeout includes the sensor's hardware off-delay. Set
+**PIR off-delay** to the hardware off-delay and **Long-motion hold timeout** to
+the additional time motion must remain continuously active. Motion-only arming
+can be disabled by setting the long-motion timeout to `0`.
+
+While held, the area's probability is kept at **75%** at least (or just above
+its threshold, if that is higher). Any door opening releases the hold
+immediately. Unknown or stale door and motion states do not confirm a hold.
+
+**Maximum hold duration** limits how long a confirmed hold remains active.
+Set it to `0` for no automatic expiry. After expiry, the probability floor
+fades toward the area's prior over the decay half-life. Holds and fades survive
+a Home Assistant restart.
 
 Differences from Wasp in Box:
 
@@ -69,12 +66,9 @@ Differences from Wasp in Box:
 - Doors are read as open or closed directly, whatever their active state is
   set to.
 
-Existing areas follow their Wasp in Box setting. The hold uses the **area's
-motion timeout** (90 seconds by default) as the window in which motion that began
-while the door was open still counts as an arrival, for every area; the Wasp in
-Box motion timeout no longer feeds it. Humidity, temperature and other
-environmental readings don't confirm a hold: they lag, so they can't tell someone
-leaving a steamy room from someone staying in it.
+Existing areas preserve their Wasp-in-Box setting unless the hold is
+reconfigured explicitly. Humidity, temperature and other environmental readings
+do not confirm a hold.
 
 The "Wasp in Box" feature provides enhanced occupancy detection for rooms with a single entry/exit point (like bathrooms, closets, or small offices). It uses a simple but effective principle: if someone enters a room and the door closes, they remain in that room until the door opens again.
 

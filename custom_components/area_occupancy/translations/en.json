@@ -459,7 +459,10 @@
                     "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
                     "exclude_from_all_areas": "Exclude from All Areas",
-                    "closed_door_hold": "Closed door means still occupied"
+                    "closed_door_hold": "Closed door means still occupied",
+                    "long_motion_timeout": "Long-motion hold timeout",
+                    "closed_door_hold_pir_timeout": "PIR off-delay",
+                    "max_hold": "Maximum hold duration"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
@@ -984,7 +987,10 @@
                     "decay_half_life": "Decay Half-Life",
                     "min_prior_override": "Minimum Prior Override",
                     "exclude_from_all_areas": "Exclude from All Areas",
-                    "closed_door_hold": "Closed door means still occupied"
+                    "closed_door_hold": "Closed door means still occupied",
+                    "long_motion_timeout": "Long-motion hold timeout",
+                    "closed_door_hold_pir_timeout": "PIR off-delay",
+                    "max_hold": "Maximum hold duration"
                 },
                 "data_description": {
                     "threshold": "The probability threshold above which the area is considered occupied.",
@@ -1517,7 +1523,10 @@
                         "decay_half_life": "Decay Half-Life",
                         "min_prior_override": "Minimum Prior Override",
                         "exclude_from_all_areas": "Exclude from All Areas",
-                        "closed_door_hold": "Closed door means still occupied"
+                        "closed_door_hold": "Closed door means still occupied",
+                        "long_motion_timeout": "Long-motion hold timeout",
+                        "closed_door_hold_pir_timeout": "PIR off-delay",
+                        "max_hold": "Maximum hold duration"
                     },
                     "data_description": {
                         "threshold": "The probability threshold above which the area is considered occupied.",

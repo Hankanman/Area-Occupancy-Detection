@@ -71,7 +71,7 @@ from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.continuity_shadow import ContinuityShadow, ContinuityState, half_life_ratio
-from .data.door_hold import DOOR_HOLD_CONFIRMING_TYPES, DoorHold, DoorHoldState
+from .data.door_hold import DoorHold, DoorHoldState
 from .data.entity_type import (
     BINARY_INPUT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
@@ -89,7 +89,7 @@ from .data.trajectory import TrajectoryTracker
 from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
 from .db.transitions import AdjacencySnapshot, load_adjacency_snapshot
-from .time_utils import to_local
+from .time_utils import to_local, to_utc
 from .utils import clamp_probability, evidence_value, format_area_names, logit
 
 _LOGGER = logging.getLogger(__name__)
@@ -1095,47 +1095,149 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _observe_door_hold(self, area_name: str, area: Area, now: datetime) -> None:
         """Update an area's closed-door hold from its doors and motion (#558).
 
-        Doors are read by their raw state (``on``/``open`` is open), so the
-        hold works whatever the door's configured active state is.
+        Only explicit, reliable evidence can arm the hold.
         """
+        if not area.config.closed_door_hold:
+            self._door_holds.pop(area_name, None)
+            return
+
         doors = [
             entity
             for entity in area.entities.entities.values()
             if entity.type.input_type == InputType.DOOR
         ]
-        if not area.config.closed_door_hold or not doors:
+        if not doors:
             self._door_holds.pop(area_name, None)
             return
+
+        def doors_state() -> bool | None:
+            if not doors:
+                return None
+            for door in doors:
+                if not self._door_hold_entity_fresh(door, now, 300.0):
+                    continue
+                if door.evidence is True:
+                    return True
+            reliable_closed_seen = False
+            for door in doors:
+                if not self._door_hold_entity_fresh(door, now, 300.0):
+                    continue
+                if door.evidence is False:
+                    reliable_closed_seen = True
+            if reliable_closed_seen and all(
+                door.evidence is not None
+                and self._door_hold_entity_fresh(door, now, 300.0)
+                for door in doors
+            ):
+                return False
+            return None
+
+        motion_entities = [
+            entity
+            for entity in area.entities.entities.values()
+            if entity.type.input_type == InputType.MOTION
+            and entity.entity_id != area.wasp_entity_id
+            and entity.ha_device_class != "presence"
+        ]
+        hold_config = area.config.closed_door_hold_config
+        long_timeout = max(0, hold_config.long_motion_timeout)
+        effective_long_timeout = (
+            max(long_timeout, hold_config.pir_timeout + 20) if long_timeout > 0 else 0
+        )
+        motion_stale_seconds = max(
+            float(area.config.sensors.motion_timeout + 20),
+            float(effective_long_timeout + 20),
+            300.0,
+        )
+        motion_on: bool | None = None
+        for entity in motion_entities:
+            if not self._door_hold_entity_fresh(entity, now, motion_stale_seconds):
+                continue
+            evidence = entity.evidence
+            if evidence is True:
+                motion_on = True
+                break
+            if evidence is False and motion_on is None:
+                motion_on = False
+        if motion_entities and all(
+            not self._door_hold_entity_fresh(entity, now, motion_stale_seconds)
+            for entity in motion_entities
+        ):
+            motion_on = None
+
+        button_entities = {
+            entity.entity_id: entity
+            for entity in area.entities.entities.values()
+            if entity.type.input_type == InputType.BUTTON
+        }
+        occupancy_button_pressed = any(
+            button_id in area.config.sensors.button
+            and button_id in button_entities
+            and self._door_hold_entity_fresh(button_entities[button_id], now, 300.0)
+            and button_entities[button_id].evidence is True
+            for button_id in area.config.sensors.button
+        )
+        trusted_presence_on = any(
+            entity.type.input_type == InputType.MOTION
+            and entity.ha_device_class == "presence"
+            and entity.entity_id != area.wasp_entity_id
+            and getattr(entity, "is_stuck", False) is not True
+            and self._door_hold_entity_fresh(entity, now, 300.0)
+            and entity.evidence is True
+            for entity in area.entities.entities.values()
+        )
+
         decay = area.config.decay
         self._door_holds.setdefault(area_name, DoorHold()).observe(
             now,
-            doors_open=any(str(door.state) in ("on", "open") for door in doors),
-            motion_on=any(
-                entity.evidence is True
-                and entity.type.input_type == InputType.MOTION
-                and entity.entity_id != area.wasp_entity_id
-                and getattr(entity, "is_stuck", False) is not True
-                for entity in area.entities.entities.values()
-            ),
-            presence_on=any(
-                entity.evidence is True
-                and getattr(entity, "is_stuck", False) is not True
-                and entity.entity_id != area.wasp_entity_id
-                and (
-                    entity.type.input_type in DOOR_HOLD_CONFIRMING_TYPES
-                    or (
-                        entity.type.input_type == InputType.MOTION
-                        and entity.ha_device_class == "presence"
-                    )
-                )
-                for entity in area.entities.entities.values()
-            ),
-            # The area's motion timeout, for every area (the Wasp in Box
-            # timeout no longer feeds the hold).
-            motion_window=float(area.config.sensors.motion_timeout),
-            max_hold=float(area.config.wasp_in_box.max_duration),
+            doors_open=doors_state(),
+            motion_on=motion_on,
+            trusted_presence_on=trusted_presence_on,
+            occupancy_button_pressed=occupancy_button_pressed,
+            long_motion_timeout=float(effective_long_timeout),
+            max_hold=float(hold_config.max_hold),
             fade_half_life=decay.half_life,
         )
+
+    def _door_hold_entity_fresh(
+        self,
+        entity: Any,
+        now: datetime,
+        stale_seconds: float,
+    ) -> bool:
+        """Return whether an entity state is known and freshly updated."""
+
+        if getattr(entity, "is_stuck", False) is True:
+            return False
+        if entity.state is None:
+            return False
+
+        updated = getattr(entity, "last_updated", None)
+        if not isinstance(updated, datetime):
+            return False
+        try:
+            updated = to_utc(updated)
+            now = to_utc(now)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False
+        age = (now - updated).total_seconds()
+        if age < 0 or age > stale_seconds:
+            return False
+
+        if entity.hass is not None:
+            state_obj = entity.hass.states.get(entity.entity_id)
+            if state_obj is None:
+                return False
+            ha_updated = getattr(state_obj, "last_updated", None)
+            if isinstance(ha_updated, datetime):
+                try:
+                    ha_updated = to_utc(ha_updated)
+                except (AttributeError, TypeError, ValueError, OverflowError):
+                    return False
+                ha_age = (now - ha_updated).total_seconds()
+                if ha_age < 0 or ha_age > stale_seconds:
+                    return False
+        return True
 
     async def _restore_door_state(self) -> None:
         """Restore closed-door holds and the continuity shadow (#558)."""

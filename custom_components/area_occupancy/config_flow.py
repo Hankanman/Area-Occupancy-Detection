@@ -95,6 +95,7 @@ from .const import (
     CONF_AWAY_MODE_ENTITY,
     CONF_BUTTON_SENSORS,
     CONF_CLOSED_DOOR_HOLD,
+    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
     CONF_COVER_ACTIVE_STATES,
@@ -114,6 +115,8 @@ from .const import (
     CONF_ILLUMINANCE_SENSORS,
     CONF_LOCK_ACTIVE_STATE,
     CONF_LOCK_SENSORS,
+    CONF_LONG_MOTION_TIMEOUT,
+    CONF_MAX_HOLD,
     CONF_MEDIA_ACTIVE_STATES,
     CONF_MEDIA_DEVICES,
     CONF_MIN_PRIOR_OVERRIDE,
@@ -164,6 +167,7 @@ from .const import (
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
     DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -172,6 +176,8 @@ from .const import (
     DEFAULT_DECAY_HALF_LIFE,
     DEFAULT_EXCLUDE_FROM_ALL_AREAS,
     DEFAULT_HEALTH_ENABLED,
+    DEFAULT_LONG_MOTION_TIMEOUT,
+    DEFAULT_MAX_HOLD,
     DEFAULT_MEDIA_ACTIVE_STATES,
     DEFAULT_MIN_PRIOR_OVERRIDE,
     DEFAULT_MOTION_PROB_GIVEN_FALSE,
@@ -209,7 +215,7 @@ from .const import (
     get_default_state,
     get_state_options,
 )
-from .data.purpose import AreaPurpose, Purpose, get_purpose_options
+from .data.purpose import Purpose, get_purpose_options
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1355,15 +1361,14 @@ def _create_sensors_step_schema(
 def _closed_door_hold_default(area: dict[str, Any]) -> bool:
     """The closed-door hold's form default for an area (#558).
 
-    An area saved before the setting existed follows its Wasp in Box
-    setting, as the loader does. A new area defaults it on for the
-    bathroom purpose, the room most often with one way in.
+    The feature is opt-in. Existing Wasp-in-Box configurations are preserved,
+    while areas that did not previously enable Wasp start with the hold off.
     """
     if CONF_CLOSED_DOOR_HOLD in area:
         return bool(area[CONF_CLOSED_DOOR_HOLD])
     if CONF_WASP_ENABLED in area:
         return bool(area[CONF_WASP_ENABLED])
-    return area.get(CONF_PURPOSE) == AreaPurpose.BATHROOM
+    return False
 
 
 def _create_behavior_step_schema(
@@ -1390,6 +1395,25 @@ def _create_behavior_step_schema(
         vol.Optional(
             CONF_CLOSED_DOOR_HOLD, default=_closed_door_hold_default(defaults)
         ): BooleanSelector(),
+        vol.Optional(
+            CONF_LONG_MOTION_TIMEOUT,
+            default=seconds_to_duration(
+                defaults.get(CONF_LONG_MOTION_TIMEOUT, DEFAULT_LONG_MOTION_TIMEOUT)
+            ),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+        vol.Optional(
+            CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+            default=seconds_to_duration(
+                defaults.get(
+                    CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+                    DEFAULT_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+                )
+            ),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+        vol.Optional(
+            CONF_MAX_HOLD,
+            default=seconds_to_duration(defaults.get(CONF_MAX_HOLD, DEFAULT_MAX_HOLD)),
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
         vol.Optional(
             CONF_DECAY_HALF_LIFE,
             default=seconds_to_duration(DEFAULT_DECAY_HALF_LIFE),
@@ -2497,6 +2521,9 @@ class BaseOccupancyFlow:
             CONF_MIN_PRIOR_OVERRIDE,
             CONF_EXCLUDE_FROM_ALL_AREAS,
             CONF_CLOSED_DOOR_HOLD,
+            CONF_LONG_MOTION_TIMEOUT,
+            CONF_CLOSED_DOOR_HOLD_PIR_TIMEOUT,
+            CONF_MAX_HOLD,
         }
         if user_input is not None:
             data_schema = self.add_suggested_values_to_schema(base_schema, user_input)
