@@ -25,6 +25,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import statistics
+from typing import Any
 
 from ..time_utils import ensure_utc_datetime
 
@@ -122,7 +123,7 @@ class LabelerState:
     # Current PIR-like classification per sensor (sticky, see the band).
     pulse: dict[str, bool] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "on_since": {k: v.isoformat() for k, v in self.on_since.items()},
@@ -132,7 +133,7 @@ class LabelerState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> LabelerState:
+    def from_dict(cls, data: dict[str, Any]) -> LabelerState:
         """Restore from storage; malformed payloads fall back to empty."""
         try:
             return cls(

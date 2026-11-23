@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import calendar
-from collections.abc import Awaitable
+from collections.abc import Coroutine, Sequence
 from datetime import date, datetime, timedelta
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -92,7 +92,9 @@ async def run_full_analysis(
     cancelled = False
     total_steps = 14
 
-    async def _run_step(step_num: int, step_name: str, coro: Awaitable[None]) -> None:
+    async def _run_step(
+        step_num: int, step_name: str, coro: Coroutine[Any, Any, object]
+    ) -> None:
         """Run a single analysis step with timing and error tracking."""
         nonlocal cancelled
         # Skip remaining steps once HA has signalled shutdown — the inner
@@ -725,7 +727,7 @@ def observed_coverage(
     occupied: list[tuple[datetime, datetime]],
     period_start: datetime,
     period_end: datetime,
-    excluded: list[tuple[datetime, datetime]] = (),
+    excluded: Sequence[tuple[datetime, datetime]] = (),
 ) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
     """The time a prior should learn from, and the occupied part of it (#574).
 
@@ -877,7 +879,7 @@ def compute_zone_priors(
     period_start: datetime,
     period_end: datetime,
     member_observed: list[list[tuple[datetime, datetime]]] | None = None,
-    excluded: list[tuple[datetime, datetime]] = (),
+    excluded: Sequence[tuple[datetime, datetime]] = (),
 ) -> ZonePriors | None:
     """Priors for an aggregate zone from the union of its rooms' intervals.
 

@@ -8,7 +8,7 @@ This represents a single device area in the multi-area architecture.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import dt as dt_util
@@ -104,7 +104,7 @@ class Area:
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        area_data: dict | None = None,
+        area_data: dict[str, Any] | None = None,
         subentry_id: str | None = None,
     ) -> None:
         """Initialize the Area instance.

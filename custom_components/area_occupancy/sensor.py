@@ -45,7 +45,9 @@ NAME_SENSOR_HEALTH_SENSOR = "Sensor Health"
 NAME_ACCURACY_SENSOR = "Accuracy"
 
 
-class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
+class AreaOccupancySensorBase(
+    CoordinatorEntity["AreaOccupancyCoordinator"], SensorEntity
+):
     """Base class for area occupancy sensors."""
 
     def __init__(
@@ -68,12 +70,7 @@ class AreaOccupancySensorBase(CoordinatorEntity, SensorEntity):
             self._area_name = ALL_AREAS_IDENTIFIER
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        device_info = (
-            area_handle.device_info()
-            if area_handle is not None
-            else all_areas.device_info()
-        )
-        self._attr_device_info = device_info
+        self._attr_device_info = source.device_info()
         self._entry_id = source.coordinator.entry_id
         self._attr_suggested_display_precision = 1
         self._sensor_option_display_precision = 1

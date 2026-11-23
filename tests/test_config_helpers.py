@@ -21,6 +21,7 @@ from custom_components.area_occupancy.config_helpers import (
     duration_to_seconds,
     seconds_to_duration,
     validate_area_config,
+    validate_button_pulse_duration,
     validate_decay_half_life,
     validate_person_input,
     validate_threshold,
@@ -127,6 +128,18 @@ class TestValidateDecayHalfLife:
     )
     def test_rejects_out_of_range_and_non_numeric(self, value: object) -> None:
         assert validate_decay_half_life(value) == "invalid_decay_half_life"
+
+
+class TestValidateButtonPulseDuration:
+    """validate_button_pulse_duration enforces the supported pulse range."""
+
+    @pytest.mark.parametrize("value", [5, 60, 600])
+    def test_accepts_supported_values(self, value: int) -> None:
+        assert validate_button_pulse_duration(value) is None
+
+    @pytest.mark.parametrize("value", [4, 601, -1, "60", None, False])
+    def test_rejects_unsupported_values(self, value: object) -> None:
+        assert validate_button_pulse_duration(value) == "invalid_button_pulse_duration"
 
 
 class TestValidateAreaConfig:

@@ -16,7 +16,7 @@ can iterate them uniformly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 import logging
@@ -578,6 +578,10 @@ class HealthMonitor:
         # Seed active issue IDs from the persisted issue registry so that
         # resolved issues can be cleaned up even after a restart.
         self._active_issue_ids: set[str] = self._load_existing_issue_ids()
+        # Whether the pipeline check has run since this monitor was created.
+        # Until it has, the monitor knows nothing about pipeline issues, so a
+        # sensor check must not resolve the ones stored from before a restart.
+        self._pipeline_checked: bool = False
 
     def _load_existing_issue_ids(self) -> set[str]:
         """Load existing repair issue IDs for this area from the HA issue registry.
@@ -883,6 +887,12 @@ class HealthMonitor:
             for issue in self._issues
             if issue.issue_type not in _PIPELINE_ISSUE_TYPES
         ]
+        previous = {
+            issue.issue_type: issue
+            for issue in self._issues
+            if issue.issue_type in _PIPELINE_ISSUE_TYPES
+        }
+        self._pipeline_checked = True
 
         issue = self._check_insufficient_priors(
             area_age_hours, has_global_prior, last_prior_calculation_hours_ago, now
@@ -911,9 +921,30 @@ class HealthMonitor:
         if issue:
             new_issues.append(issue)
 
+        # An issue that is still there keeps the time it was first seen, so
+        # diagnostics show how long it has lasted rather than restarting the
+        # count at every hourly check. One with no duration of its own (the
+        # state-only checks report 0) takes the elapsed time instead.
+        new_issues = [
+            self._keep_first_seen(issue, previous.get(issue.issue_type), now)
+            for issue in new_issues
+        ]
+
         self._issues = new_issues
         self._update_repair_issues()
         return new_issues
+
+    @staticmethod
+    def _keep_first_seen(
+        issue: HealthIssue, earlier: HealthIssue | None, now: datetime
+    ) -> HealthIssue:
+        """Return ``issue`` stamped with when ``earlier`` first saw it."""
+        if earlier is None or issue.issue_type not in _PIPELINE_ISSUE_TYPES:
+            return issue
+        duration = issue.duration_hours
+        if duration == 0.0:
+            duration = round((now - earlier.since).total_seconds() / 3600, 1)
+        return replace(issue, since=earlier.since, duration_hours=duration)
 
     def _sample_home_presence(
         self, now: datetime, away_entity: str | None = None
@@ -1429,6 +1460,12 @@ class HealthMonitor:
         self._sensor_repairs.update(
             self._area_id, self._area_name, self._issues, self._entity_ids
         )
+        if not self._pipeline_checked:
+            # After a restart the first sensor check knows nothing about the
+            # pipeline issues stored before it. Resolving them here deleted
+            # each one, only for the pipeline check seconds later to raise it
+            # again as new (and move its created time to the restart).
+            return
         current_issue_ids: set[str] = set()
         for issue in self._issues:
             if issue.issue_type not in _PIPELINE_ISSUE_TYPES:

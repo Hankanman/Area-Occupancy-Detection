@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .area import AreaDeviceHandle
@@ -28,7 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 NAME_THRESHOLD_NUMBER = "Occupancy Threshold"
 
 
-class Threshold(CoordinatorEntity, NumberEntity):
+class Threshold(CoordinatorEntity["AreaOccupancyCoordinator"], NumberEntity):
     """Number entity for adjusting occupancy threshold."""
 
     def __init__(
@@ -120,7 +120,9 @@ def _area_subentry_id(
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Area Occupancy threshold number based on a config entry."""
     coordinator: AreaOccupancyCoordinator = entry.runtime_data

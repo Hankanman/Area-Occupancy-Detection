@@ -7,8 +7,9 @@ defensive default when data are sparse or sensors are being re-configured.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from homeassistant.util import dt as dt_util
 
@@ -31,13 +32,20 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+
 # Sentinel distinguishing "caller didn't pass calculation_date" (fresh
 # calculation just completed -> default to now) from "caller explicitly
 # passed calculation_date=None" (loaded a legacy DB row with no recorded
 # timestamp -> must stay None, not silently become now). `None` itself
 # can't serve as the "not passed" default since it's also the valid explicit
 # value for the legacy case.
-_CALCULATION_DATE_UNSET = object()
+class _Unset(Enum):
+    """Type of the "argument not passed" sentinel (an enum so it type-checks)."""
+
+    UNSET = "unset"
+
+
+_CALCULATION_DATE_UNSET: Final = _Unset.UNSET
 
 # Prior calculation constants
 PRIOR_FACTOR = 1.0
@@ -54,14 +62,14 @@ class Prior:
     def __init__(
         self,
         coordinator: AreaOccupancyCoordinator,
-        area_name: str | None = None,
+        area_name: str,
         config: AreaConfig | None = None,
     ) -> None:
         """Initialize the Prior class.
 
         Args:
             coordinator: The coordinator instance
-            area_name: Optional area name for multi-area support
+            area_name: The area this prior belongs to
             config: Area configuration (preferred). Falls back to coordinator lookup.
         """
         self.coordinator = coordinator
@@ -331,7 +339,7 @@ class Prior:
         self,
         prior: float,
         *,
-        calculation_date: datetime | None = _CALCULATION_DATE_UNSET,  # type: ignore[assignment]
+        calculation_date: datetime | None | _Unset = _CALCULATION_DATE_UNSET,
     ) -> None:
         """Set the global prior value.
 

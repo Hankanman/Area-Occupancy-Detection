@@ -28,7 +28,9 @@ def test_dev_manifest_and_release_target_are_consistent() -> None:
     """The fork release must install only the development integration."""
     repository_root = Path(__file__).parents[1]
     manifest = json.loads(
-        (repository_root / "custom_components/area_occupancy_dev/manifest.json").read_text()
+        (
+            repository_root / "custom_components/area_occupancy_dev/manifest.json"
+        ).read_text()
     )
     release_workflow = (repository_root / ".github/workflows/release.yml").read_text()
 

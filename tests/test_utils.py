@@ -1111,3 +1111,96 @@ class TestFadingHold:
         assert sigmoid_probability({"m": motion}, prior=self.PRIOR) == pytest.approx(
             0.74914, abs=1e-4
         )
+
+
+class TestOneDeviceCountsOnce:
+    """Channels of one physical device count once, at their strongest.
+
+    Live report (2026.10.2): a study with a combined PIR and mmWave sensor
+    (one device, a motion and an occupancy entity) stayed occupied two
+    half-lives after a few seconds of motion. Hand-computed with the
+    ``TestFadingHold`` room (prior 41.8%, threshold 50%, hold 0.66198): two
+    fading channels summed give ``z = -0.33099 + 2 * 0.66198 * 0.5 =
+    0.33099``, 58.20% at one half-life; counted once, exactly 50%.
+    """
+
+    PRIOR = 0.418
+
+    @staticmethod
+    def _channel(device_id: str | None, **overrides: Any) -> Mock:
+        params: dict[str, Any] = {
+            "evidence": True,
+            "prob_given_true": 0.95,
+            "prob_given_false": 0.005,
+            "weight": 1.0,
+            "input_type": InputType.MOTION,
+        }
+        entity = _create_mock_entity(**(params | overrides))
+        entity.device_id = device_id
+        return entity
+
+    def _fading_pair(
+        self, first_device: str | None, second_device: str | None
+    ) -> float:
+        fading = {"evidence": False, "is_decaying": True, "decay_factor": 0.5}
+        return sigmoid_probability(
+            {
+                "movement": self._channel(first_device, **fading),
+                "occupancy": self._channel(second_device, **fading),
+            },
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+
+    def test_same_device_releases_at_one_half_life(self) -> None:
+        """Two fading channels of one device: exactly 50% at f = 0.5."""
+        assert self._fading_pair("sensor_1", "sensor_1") == pytest.approx(0.5, abs=1e-6)
+
+    def test_different_devices_still_add_up(self) -> None:
+        """Two devices are two observations: 58.20% at f = 0.5, as before."""
+        assert self._fading_pair("sensor_1", "sensor_2") == pytest.approx(
+            0.58200, abs=1e-4
+        )
+
+    def test_channels_without_a_device_still_add_up(self) -> None:
+        """No device to group by: summed as before."""
+        assert self._fading_pair(None, None) == pytest.approx(0.58200, abs=1e-4)
+
+    def test_same_device_active_counts_one_channel(self) -> None:
+        """Both channels on: sigmoid(-0.33099 + 2.85) = 92.55%, one sensor's worth."""
+        probability = sigmoid_probability(
+            {
+                "movement": self._channel("sensor_1"),
+                "occupancy": self._channel("sensor_1"),
+            },
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+        assert probability == pytest.approx(0.92546, abs=1e-4)
+
+    def test_the_strongest_channel_wins(self) -> None:
+        """One channel on, the other fading: the active one sets the contribution."""
+        probability = sigmoid_probability(
+            {
+                "movement": self._channel("sensor_1"),
+                "occupancy": self._channel(
+                    "sensor_1", evidence=False, is_decaying=True, decay_factor=0.5
+                ),
+            },
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+        assert probability == pytest.approx(0.92546, abs=1e-4)
+
+    def test_other_types_on_the_device_are_not_grouped(self) -> None:
+        """A door on the same device is separate evidence and still adds up."""
+        door = self._channel("sensor_1", input_type=InputType.DOOR, prob_given_true=0.2)
+        alone = sigmoid_probability(
+            {"movement": self._channel("sensor_1")}, prior=self.PRIOR, threshold=0.5
+        )
+        with_door = sigmoid_probability(
+            {"movement": self._channel("sensor_1"), "door": door},
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+        assert with_door > alone
