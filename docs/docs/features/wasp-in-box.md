@@ -51,6 +51,9 @@ While it is on:
   its threshold, if that is higher), so it reads as occupied even when motion
   loses someone keeping still. The sensors' own evidence still counts on top.
 - **Any door opening releases the hold** straight away.
+- **A door that reads unknown or unavailable** neither starts a hold nor
+  releases one: a hold already on carries on until it expires, and a new one
+  waits until the door reads closed again.
 - The hold lasts up to the Wasp in Box maximum duration (an hour by default; 0
   means no limit) after the last motion seen behind the closed door. It then
   fades towards the area's prior over the area's decay half-life, rather than

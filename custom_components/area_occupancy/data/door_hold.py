@@ -40,9 +40,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 from typing import Any
 
-from ..const import GROUND_TRUTH_ACTIVE_FLOOR
+from ..const import DEFAULT_WASP_MAX_DURATION, GROUND_TRUTH_ACTIVE_FLOOR
 from ..time_utils import ensure_utc_datetime
 from ..utils import clamp_probability, logit
 from .entity_type import InputType
@@ -69,6 +70,11 @@ DOOR_HOLD_CONFIRMING_TYPES: frozenset[InputType] = frozenset(
 HOLD_THRESHOLD_MARGIN = 0.05
 # Half-lives after which a fading hold is dropped (2^-6: under 2% left).
 FADE_HALF_LIVES = 6
+
+
+def _safe_half_life(value: float) -> float:
+    """The fade half-life, at least a second; a non-finite value fades fast."""
+    return max(value, 1.0) if math.isfinite(value) else 1.0
 
 
 def hold_logit(threshold: float) -> float:
@@ -153,7 +159,7 @@ class DoorHold:
         self,
         now: datetime,
         *,
-        doors_open: bool,
+        doors_open: bool | None,
         motion_on: bool,
         motion_window: float,
         max_hold: float,
@@ -164,13 +170,18 @@ class DoorHold:
 
         Args:
             now: The observation time.
-            doors_open: Whether any of the area's doors is open.
+            doors_open: Whether any of the area's doors is open; None when
+                no door is known to be open and at least one reads unknown
+                or unavailable. An unreadable door arms nothing and releases
+                nothing: a hold already on carries on until it expires.
             motion_on: Whether any of its motion sensors is active.
             motion_window: The area's motion timeout in seconds: motion that
                 started while the door was open counts as an arrival if it
                 began within this long of the door closing.
             max_hold: Seconds after the last motion the hold lasts; 0 for
-                no limit (as Wasp in Box's maximum duration).
+                no limit (as Wasp in Box's maximum duration). A negative or
+                non-finite value is replaced by the default, never read as
+                "no limit".
             fade_half_life: Half-life of the fade after ``max_hold``.
             presence_on: Whether a stronger current signal than the PIR (an
                 mmWave presence sensor, media, an appliance, power...)
@@ -178,6 +189,26 @@ class DoorHold:
         """
         now = ensure_utc_datetime(now)
         state = self.state
+        if not math.isfinite(motion_window):
+            motion_window = 0.0
+        if not math.isfinite(max_hold) or max_hold < 0:
+            max_hold = float(DEFAULT_WASP_MAX_DURATION)
+        fade_half_life = _safe_half_life(fade_half_life)
+        # A timestamp after "now" (a restored state, or the clock moving back)
+        # must not stretch a hold: count from now instead.
+        for name in ("held_from", "fade_from", "motion_rising_at"):
+            stamp = getattr(state, name)
+            if stamp is not None and stamp > now:
+                setattr(state, name, now)
+        if doors_open is None:
+            # Nothing known about the doors: keep what we have. The pending
+            # arrival is dropped (we can't tell it from a departure now) but
+            # ``awaiting`` stays, so a trailing PIR can't arm once they read
+            # closed again.
+            state.motion_on_previous = motion_on
+            state.motion_rising_at = None
+            self._expire(now, max_hold, fade_half_life)
+            return
         just_closed = state.doors_open is True and not doors_open
         just_opened = state.doors_open is not True and doors_open
         motion_rising = motion_on and state.motion_on_previous is not True
@@ -217,7 +248,12 @@ class DoorHold:
             state.held_from = now
             state.fade_from = None
             state.awaiting = None
-        elif (
+        self._expire(now, max_hold, fade_half_life)
+
+    def _expire(self, now: datetime, max_hold: float, fade_half_life: float) -> None:
+        """End a hold that ran past ``max_hold`` and drop a finished fade."""
+        state = self.state
+        if (
             state.held_from is not None
             and max_hold > 0
             and (now - state.held_from).total_seconds() >= max_hold
@@ -255,4 +291,6 @@ class DoorHold:
         elapsed = max((ensure_utc_datetime(now) - state.fade_from).total_seconds(), 0)
         if target <= bias:
             return None
-        return bias + (target - bias) * 0.5 ** (elapsed / max(fade_half_life, 1.0))
+        return bias + (target - bias) * 0.5 ** (
+            elapsed / _safe_half_life(fade_half_life)
+        )
