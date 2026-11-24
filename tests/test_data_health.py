@@ -2548,6 +2548,34 @@ class TestPipelineIssuesKeepTheirFirstSeenTime:
         assert again.duration_hours == 0.0
 
 
+class TestFirstSeenSurvivesARestart:
+    """The repair registry remembers when an issue was first raised."""
+
+    CALL = TestPipelineIssuesKeepTheirFirstSeenTime.CALL
+
+    async def test_a_restarted_monitor_takes_the_registered_time(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        before = HealthMonitor("Bedroom", "bedroom", hass)
+        first = before.check_pipeline_health(**self.CALL)[0]
+
+        freezer.tick(timedelta(hours=30))
+        after = HealthMonitor("Bedroom", "bedroom", hass)
+        after.check_health({})
+        again = after.check_pipeline_health(**self.CALL)[0]
+
+        assert again.since == first.since
+        assert again.duration_hours == pytest.approx(30.0, abs=0.1)
+
+    async def test_a_new_issue_with_no_stored_repair_starts_now(
+        self, hass: HomeAssistant
+    ) -> None:
+        issue = HealthMonitor("Bedroom", "bedroom", hass).check_pipeline_health(
+            **self.CALL
+        )[0]
+        assert issue.duration_hours == 0.0
+
+
 class TestSharedSensorRepairs:
     """A shared input has one repair while each room retains its diagnosis."""
 
