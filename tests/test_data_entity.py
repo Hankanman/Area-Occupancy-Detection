@@ -1416,8 +1416,9 @@ class TestEntityPropertiesAndMethods:
         assert entity.learned_gaussian_params.mean_unoccupied == 10.0
         assert entity.learned_gaussian_params.std_unoccupied == 2.0
 
-        # Should also set learned_active_range
-        assert entity.learned_active_range == (14.0, 26.0)  # 10+2*2, 20+2*3
+        # Should also set learned_active_range: one-sided, never capped at
+        # the occupied mean + 2σ (26.0)
+        assert entity.learned_active_range == (14.0, float("inf"))  # 10+2*2
 
     def test_update_correlation_binary_sensor(
         self, coordinator: AreaOccupancyCoordinator
@@ -1522,6 +1523,49 @@ class TestEntityPropertiesAndMethods:
 
         # Should fallback to open-ended range when stats overlap
         assert entity.learned_active_range == expected_range
+
+    def test_strong_reading_is_not_capped_out_of_the_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A shower's 96-99% humidity must stay active (it was capped at 95.8).
+
+        Learned on a live Bathroom: unoccupied 62.5 +/- 6.3, occupied
+        71.2 +/- 12.3. Hand-computed lower bound 62.5 + 2 * 6.3 = 75.1; the old
+        upper bound 71.2 + 2 * 12.3 = 95.8 switched the evidence off above it.
+        """
+        entity = create_test_entity(coordinator=coordinator)
+        entity.update_correlation(
+            {
+                "confidence": 0.8,
+                "correlation_type": "positive",
+                "mean_value_when_unoccupied": 62.5,
+                "std_dev_when_unoccupied": 6.3,
+                "mean_value_when_occupied": 71.2,
+                "std_dev_when_occupied": 12.3,
+            }
+        )
+        low, high = entity.learned_active_range
+        assert low == pytest.approx(75.1)
+        assert high == float("inf")
+
+    def test_falling_sensor_is_not_floored_out_of_the_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """The mirror: a reading far below the learned range stays active."""
+        entity = create_test_entity(coordinator=coordinator)
+        entity.update_correlation(
+            {
+                "confidence": 0.8,
+                "correlation_type": "negative",
+                "mean_value_when_unoccupied": 500.0,
+                "std_dev_when_unoccupied": 20.0,
+                "mean_value_when_occupied": 450.0,
+                "std_dev_when_occupied": 10.0,
+            }
+        )
+        low, high = entity.learned_active_range
+        assert low == float("-inf")
+        assert high == pytest.approx(460.0)
 
     def test_update_correlation_unknown_type(
         self, coordinator: AreaOccupancyCoordinator

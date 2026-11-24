@@ -634,7 +634,12 @@ class Entity:
             # Binary sensors: don't set learned_active_range
             self.learned_active_range = None
         else:
-            # Numeric sensors: calculate thresholds (mean ± 2σ)
+            # Numeric sensors: one-sided threshold at mean ± 2σ of the
+            # unoccupied readings. The far side stays open: a sensor that
+            # rises with occupancy is stronger evidence the higher it goes, so
+            # capping it at the occupied mean + 2σ switched the evidence off
+            # exactly when it was strongest (a Bathroom's humidity above
+            # 95.8% mid-shower).
             k_factor = 2.0
 
             if correlation_type in (
@@ -642,42 +647,16 @@ class Entity:
                 CorrelationType.POSITIVE,
             ):
                 # Active > mean_unoccupied + K*std_unoccupied
-                # Same logic for both strong and weak positive correlations
                 lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
-
-                # Try to determine upper bound from occupied stats
-                if mean_occupied is not None and std_occupied is not None:
-                    # Cap at mean_occupied + K*std_occupied
-                    upper_bound = mean_occupied + (k_factor * std_occupied)
-                    # Ensure logical consistency (upper > lower)
-                    if upper_bound <= lower_bound:
-                        # Fallback to open-ended if stats overlap significantly
-                        upper_bound = float("inf")
-                else:
-                    upper_bound = float("inf")
-
-                self.learned_active_range = (lower_bound, upper_bound)
+                self.learned_active_range = (lower_bound, float("inf"))
 
             elif correlation_type in (
                 CorrelationType.STRONG_NEGATIVE,
                 CorrelationType.NEGATIVE,
             ):
                 # Active < mean_unoccupied - K*std_unoccupied
-                # Same logic for both strong and weak negative correlations
                 upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
-
-                # Try to determine lower bound from occupied stats
-                if mean_occupied is not None and std_occupied is not None:
-                    # Floor at mean_occupied - K*std_occupied
-                    lower_bound = mean_occupied - (k_factor * std_occupied)
-                    # Ensure logical consistency (lower < upper)
-                    if lower_bound >= upper_bound:
-                        # Fallback to open-ended if stats overlap significantly
-                        lower_bound = float("-inf")
-                else:
-                    lower_bound = float("-inf")
-
-                self.learned_active_range = (lower_bound, upper_bound)
+                self.learned_active_range = (float("-inf"), upper_bound)
             else:
                 self.learned_active_range = None
 
