@@ -888,7 +888,7 @@ class HealthMonitor:
             if issue.issue_type not in _PIPELINE_ISSUE_TYPES
         ]
         previous = {
-            issue.issue_type: issue
+            issue.issue_type: issue.since
             for issue in self._issues
             if issue.issue_type in _PIPELINE_ISSUE_TYPES
         }
@@ -924,9 +924,15 @@ class HealthMonitor:
         # An issue that is still there keeps the time it was first seen, so
         # diagnostics show how long it has lasted rather than restarting the
         # count at every hourly check. One with no duration of its own (the
-        # state-only checks report 0) takes the elapsed time instead.
+        # state-only checks report 0) takes the elapsed time instead. After a
+        # restart nothing is in memory, so the repair the registry still holds
+        # says when the issue was first raised.
         new_issues = [
-            self._keep_first_seen(issue, previous.get(issue.issue_type), now)
+            self._keep_first_seen(
+                issue,
+                previous.get(issue.issue_type) or self._registry_first_seen(issue),
+                now,
+            )
             for issue in new_issues
         ]
 
@@ -934,17 +940,26 @@ class HealthMonitor:
         self._update_repair_issues()
         return new_issues
 
+    def _registry_first_seen(self, issue: HealthIssue) -> datetime | None:
+        """When the repair for ``issue`` was first raised, if one is stored."""
+        if issue.issue_type not in _PIPELINE_ISSUE_TYPES:
+            return None
+        entry = ir.async_get(self._hass).async_get_issue(
+            DOMAIN, _issue_id(self._area_id, None, issue.issue_type)
+        )
+        return entry.created if entry is not None else None
+
     @staticmethod
     def _keep_first_seen(
-        issue: HealthIssue, earlier: HealthIssue | None, now: datetime
+        issue: HealthIssue, first_seen: datetime | None, now: datetime
     ) -> HealthIssue:
-        """Return ``issue`` stamped with when ``earlier`` first saw it."""
-        if earlier is None or issue.issue_type not in _PIPELINE_ISSUE_TYPES:
+        """Return ``issue`` stamped with the time it was first seen."""
+        if first_seen is None or issue.issue_type not in _PIPELINE_ISSUE_TYPES:
             return issue
         duration = issue.duration_hours
         if duration == 0.0:
-            duration = round((now - earlier.since).total_seconds() / 3600, 1)
-        return replace(issue, since=earlier.since, duration_hours=duration)
+            duration = round((now - first_seen).total_seconds() / 3600, 1)
+        return replace(issue, since=first_seen, duration_hours=duration)
 
     def _sample_home_presence(
         self, now: datetime, away_entity: str | None = None
