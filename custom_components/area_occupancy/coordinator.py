@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Standard library imports
 from collections import deque
+from collections.abc import Iterable
 import contextlib
 from datetime import datetime, timedelta
 import logging
@@ -122,6 +123,27 @@ def _ground_truth_present(area: Area, *, include_stuck: bool = False) -> bool:
 _STANDING_STATE_INPUT_TYPES = frozenset(
     {InputType.DOOR, InputType.LOCK, InputType.WINDOW, InputType.COVER}
 )
+
+
+_DOOR_OPEN_STATES = frozenset({"on", "open"})
+_DOOR_CLOSED_STATES = frozenset({"off", "closed"})
+
+
+def _doors_open(states: Iterable[str]) -> bool | None:
+    """Whether an area's doors are open: True, False, or None if unreadable.
+
+    Open wins (one open door releases the hold whatever the others read).
+    Otherwise a door that isn't plainly closed, such as ``unknown``,
+    ``unavailable`` or mid-travel, makes the answer None: it must neither
+    arm a closed-door hold nor release one.
+    """
+    seen_unknown = False
+    for state in states:
+        if state in _DOOR_OPEN_STATES:
+            return True
+        if state not in _DOOR_CLOSED_STATES:
+            seen_unknown = True
+    return None if seen_unknown else False
 
 
 def _area_is_fading(area: Area) -> bool:
@@ -1142,7 +1164,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         decay = area.config.decay
         self._door_holds.setdefault(area_name, DoorHold()).observe(
             now,
-            doors_open=any(str(door.state) in ("on", "open") for door in doors),
+            doors_open=_doors_open(str(door.state) for door in doors),
             motion_on=any(
                 entity.evidence is True
                 and entity.type.input_type == InputType.MOTION
