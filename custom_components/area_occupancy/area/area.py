@@ -27,6 +27,7 @@ from ..data.analysis import start_prior_analysis
 from ..data.door_hold import DoorHold
 from ..data.health import HealthMonitor
 from ..utils import (
+    activity_boost_fade,
     apply_activity_boost,
     clamp_probability,
     combined_probability as calc_combined,
@@ -300,8 +301,13 @@ class Area:
         if activity.activity_id in (ActivityId.UNOCCUPIED, ActivityId.IDLE):
             result = base
         else:
+            # Fade the boost in above the threshold: activity is only detected
+            # while ``base`` is at or above it, so a full-strength boost was
+            # removed in a single step as ``base`` crossed.
             result = apply_activity_boost(
-                base, activity.occupancy_boost, activity.confidence
+                base,
+                activity.occupancy_boost,
+                activity.confidence * activity_boost_fade(base, self.config.threshold),
             )
 
         boost = self.coordinator.adjacency_boost_for(self.area_name)

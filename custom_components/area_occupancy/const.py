@@ -246,6 +246,11 @@ ACTIVITY_BOOST_HIGH: Final[float] = 1.5  # Showering, bathing, sleeping
 ACTIVITY_BOOST_STRONG: Final[float] = 1.2  # Watching TV
 ACTIVITY_BOOST_MODERATE: Final[float] = 1.0  # Cooking, working
 ACTIVITY_BOOST_MILD: Final[float] = 0.8  # Listening to music, eating
+# The boost fades in over this many logits above the occupancy threshold, so it
+# is zero at the threshold and full strength from here up. Without the fade the
+# boost vanished all at once when the sensor-only probability crossed the
+# threshold (a 26 point drop in one step on a live Bathroom).
+ACTIVITY_BOOST_FADE_LOGIT: Final[float] = 1.0
 
 # Safety bounds
 MIN_PROBABILITY: Final = 0.01

@@ -9,6 +9,7 @@ import pytest
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
 from custom_components.area_occupancy.data.entity_type import DEFAULT_TYPES, InputType
 from custom_components.area_occupancy.utils import (
+    activity_boost_fade,
     apply_activity_boost,
     clamp_probability,
     combine_priors,
@@ -842,6 +843,63 @@ class TestApplyActivityBoost:
         """Result should always be within MIN_PROBABILITY to MAX_PROBABILITY."""
         result = apply_activity_boost(0.99, activity_boost=5.0, activity_confidence=1.0)
         assert MIN_PROBABILITY <= result <= MAX_PROBABILITY
+
+
+class TestActivityBoostFade:
+    """The boost fades in above the threshold instead of vanishing at it.
+
+    Live report: a Bathroom's showering boost (1.5 x confidence 0.744 = 1.116
+    logits) was released when the sensor-only probability crossed the 0.5
+    threshold, so the published probability fell from 0.7565 to 0.4971 in one
+    step.
+    """
+
+    def test_no_boost_at_or_below_the_threshold(self) -> None:
+        assert activity_boost_fade(0.5, 0.5) == 0.0
+        assert activity_boost_fade(0.3, 0.5) == 0.0
+
+    def test_full_boost_one_logit_above(self) -> None:
+        assert activity_boost_fade(sigmoid(1.0), 0.5) == pytest.approx(1.0)
+        assert activity_boost_fade(0.95, 0.5) == 1.0
+
+    def test_half_way_up_is_half_a_boost(self) -> None:
+        assert activity_boost_fade(sigmoid(0.5), 0.5) == pytest.approx(0.5)
+
+    def test_it_follows_a_threshold_other_than_half(self) -> None:
+        """Headroom is measured from the threshold, not from 0.5."""
+        threshold = 0.7
+        assert activity_boost_fade(threshold, threshold) == 0.0
+        assert activity_boost_fade(
+            sigmoid(logit(threshold) + 0.25), threshold
+        ) == pytest.approx(0.25)
+
+    def test_no_cliff_as_the_base_crosses_the_threshold(self) -> None:
+        """The published probability is continuous across the threshold."""
+
+        def published(base: float) -> float:
+            return apply_activity_boost(
+                base, 1.5, 0.744 * activity_boost_fade(base, 0.5)
+            )
+
+        assert abs(published(0.5001) - published(0.4999)) < 0.001
+
+    def test_the_live_bathroom_no_longer_drops_26_points(self) -> None:
+        """Base 50.4% just before the crossing now publishes ~50.9%, not 75.7%."""
+        base = 0.504
+        # headroom = logit(0.504) = 0.016 -> boost 1.116 * 0.016 = 0.0179
+        published = apply_activity_boost(
+            base, 1.5, 0.744 * activity_boost_fade(base, 0.5)
+        )
+        assert published == pytest.approx(sigmoid(logit(base) + 0.0179), abs=1e-3)
+        assert 0.504 < published < 0.52
+
+    def test_the_boost_never_pulls_below_the_base(self) -> None:
+        """The fade only shrinks a boost: occupied status can't change."""
+        for base in (0.5, 0.52, 0.6, 0.8, 0.99):
+            faded = apply_activity_boost(
+                base, 1.5, 0.9 * activity_boost_fade(base, 0.5)
+            )
+            assert faded >= base - 1e-12
 
 
 class TestGroundTruthActiveFloor:
