@@ -119,20 +119,16 @@ class DecayModifierContribution:
 # ─── Helpers ────────────────────────────────────────────────────────
 
 
-def _bounded_unit(value: object, *, fallback: float) -> float:
-    """Bound ``value`` to [0, 1]; return ``fallback`` if it is not a finite number.
+def _bounded_unit(value: float | None, *, fallback: float) -> float:
+    """Bound ``value`` to [0, 1]; return ``fallback`` if it is missing or not finite.
 
     Plain ``max(0, min(1, x))`` silently maps NaN to 1.0 (``min(1.0, nan)``
     returns 1.0), which would distort the silence score. Callers choose a
     conservative ``fallback`` instead.
     """
-    try:
-        number = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    if value is None or not math.isfinite(value):
         return fallback
-    if not math.isfinite(number):
-        return fallback
-    return max(0.0, min(1.0, number))
+    return max(0.0, min(1.0, value))
 
 
 # ─── Bayesian boost ─────────────────────────────────────────────────

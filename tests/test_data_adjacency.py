@@ -170,6 +170,15 @@ class TestComputeAdjacencyBoost:
         )
         assert out.logit_contribution == 0.0
 
+    @pytest.mark.parametrize("probability", [math.nan, math.inf])
+    def test_non_finite_lookup_probability_has_no_effect(self, probability: float):
+        """A NaN from the lookup must not reach logit() or become a boost."""
+        traj = Trajectory(prev_area="hall", prev_prev_area=None, hour_of_week=10)
+        out = compute_adjacency_boost(
+            target_area="bedroom", trajectory=traj, lookup=_stub_lookup(probability)
+        )
+        assert out.logit_contribution == 0.0
+
     @pytest.mark.parametrize("probability", [0.3, 0.8])
     def test_static_default_has_no_effect(self, probability: float):
         """Nothing learned for the chain yet → no boost, whatever the default.
@@ -222,6 +231,11 @@ class TestApplyLogitBoost:
     def test_extreme_boost_clamped_to_max(self):
         b = BoostContribution(fired=True, logit_contribution=100.0)
         assert apply_logit_boost(0.5, b) <= 0.99
+
+    def test_nan_boost_leaves_probability_unchanged(self):
+        """A NaN used to be clamped to the maximum probability."""
+        b = BoostContribution(fired=True, logit_contribution=math.nan)
+        assert apply_logit_boost(0.42, b) == 0.42
 
 
 # ─── compute_decay_modifier ────────────────────────────────────────
@@ -365,6 +379,50 @@ class TestComputeDecayModifier:
             {"from_area": "hall", "mid_area": "bedroom", "to_area": "hall"}
         ]
         assert out.fired is True
+
+    def test_nan_exit_probability_does_not_inflate_silence(self):
+        """max(0, min(1, nan)) is 1.0: a NaN exit used to slow decay fully."""
+        out = compute_decay_modifier(
+            target_area="bedroom",
+            adjacency_index={"bedroom": {"hall"}},
+            lagged_probabilities={"hall": 0.0},
+            trajectory=Trajectory(prev_area=None, prev_prev_area=None, hour_of_week=10),
+            lookup=_stub_lookup(math.nan),
+            base_half_life_seconds=300.0,
+        )
+        assert out.silence_score == 0.0
+        assert out.decay_modifier == 1.0
+        assert out.effective_half_life_seconds == 300.0
+
+    @pytest.mark.parametrize("neighbour_probability", [math.nan, math.inf, None])
+    def test_invalid_neighbour_probability_counts_as_not_silent(
+        self, neighbour_probability
+    ):
+        """A neighbour we can't read is treated as occupied, never as silent."""
+        out = compute_decay_modifier(
+            target_area="bedroom",
+            adjacency_index={"bedroom": {"hall"}},
+            lagged_probabilities={"hall": neighbour_probability},
+            trajectory=Trajectory(prev_area=None, prev_prev_area=None, hour_of_week=10),
+            lookup=_per_neighbour_lookup({"hall": 1.0}),
+            base_half_life_seconds=300.0,
+        )
+        assert out.silence_score == 0.0
+        assert out.decay_modifier == 1.0
+
+    def test_modifier_never_speeds_decay_up(self):
+        """A negative gain must not push the modifier below 1."""
+        out = compute_decay_modifier(
+            target_area="bedroom",
+            adjacency_index={"bedroom": {"hall"}},
+            lagged_probabilities={"hall": 0.0},
+            trajectory=Trajectory(prev_area=None, prev_prev_area=None, hour_of_week=10),
+            lookup=_per_neighbour_lookup({"hall": 1.0}),
+            base_half_life_seconds=300.0,
+            gain=-0.5,
+        )
+        assert out.decay_modifier == 1.0
+        assert out.effective_half_life_seconds == 300.0
 
     def test_silent_neighbour_breakdown_reflects_lookup_inputs(self):
         """The diagnostic breakdown carries each neighbour's contributions."""

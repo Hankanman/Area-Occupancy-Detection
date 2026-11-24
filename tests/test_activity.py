@@ -11,10 +11,13 @@ from custom_components.area_occupancy.const import (
     ACTIVITY_BOOST_HIGH,
     ACTIVITY_BOOST_STRONG,
 )
+from custom_components.area_occupancy.data import activity as activity_module
 from custom_components.area_occupancy.data.activity import (
     ACTIVITY_DEFINITIONS,
+    ActivityDefinition,
     ActivityId,
     DetectedActivity,
+    Indicator,
     _environmental_signal_strength,
     detect_activity,
 )
@@ -132,6 +135,23 @@ class TestEnvironmentalSignalStrength:
     def test_identical_means_returns_zero(self) -> None:
         """When means are identical, signal should be 0.0 (no information)."""
         assert _environmental_signal_strength(25.0, 25.0, 25.0, "elevated") == 0.0
+
+    @pytest.mark.parametrize(
+        ("value", "occupied", "unoccupied"),
+        [
+            (float("nan"), 80.0, 50.0),
+            (65.0, float("nan"), 50.0),
+            (65.0, 80.0, float("inf")),
+        ],
+    )
+    @pytest.mark.parametrize("condition", ["elevated", "suppressed"])
+    def test_non_finite_input_returns_zero(
+        self, value: float, occupied: float, unoccupied: float, condition: str
+    ) -> None:
+        assert (
+            _environmental_signal_strength(value, occupied, unoccupied, condition)
+            == 0.0
+        )
 
     def test_unknown_condition_returns_zero(self) -> None:
         """Unknown condition string → 0.0."""
@@ -689,6 +709,35 @@ class TestEdgeCases:
         result = detect_activity(area)
         assert result.activity_id is not None
 
+    @pytest.mark.parametrize("reading", ["nan", "inf", "-inf"])
+    def test_non_finite_reading_is_not_evidence(self, reading: str) -> None:
+        """A "nan" state used to score as full strength (min(1, nan) is 1).
+
+        One such humidity sensor plus motion was enough to detect SHOWERING.
+        """
+        humidity = _make_entity(
+            "sensor.humidity",
+            InputType.HUMIDITY,
+            state=reading,
+            gaussian_params=GaussianParams(
+                mean_occupied=80.0,
+                std_occupied=5.0,
+                mean_unoccupied=50.0,
+                std_unoccupied=5.0,
+            ),
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        area = _make_area(
+            purpose=AreaPurpose.BATHROOM,
+            entities_by_type={
+                InputType.HUMIDITY: [humidity],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id != ActivityId.SHOWERING
+        assert "sensor.humidity" not in result.matching_indicators
+
 
 # ─── DetectedActivity Dataclass ──────────────────────────────────────
 
@@ -1092,6 +1141,46 @@ class TestTiebreaker:
             ActivityId.LISTENING_TO_MUSIC,
         )
         assert result.confidence == pytest.approx(0.7, abs=0.01)
+
+    def test_float_noise_does_not_bypass_the_specificity_tiebreak(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """0.1 + 0.2 is 0.30000000000000004: still a tie with 0.3 when reported.
+
+        The purpose-specific candidate is evaluated first. The generic one
+        scores 0.3 plus float noise; compared raw it used to win, though both
+        report 0.3 and the specific one should keep the tie.
+        """
+        specific = ActivityDefinition(
+            activity_id=ActivityId.COOKING,
+            indicators=(
+                Indicator(InputType.MOTION, 0.3),
+                Indicator(InputType.DOOR, 0.7),
+            ),
+            min_match_weight=0.1,
+            purposes=frozenset({AreaPurpose.SOCIAL}),
+        )
+        generic = ActivityDefinition(
+            activity_id=ActivityId.WATCHING_TV,
+            indicators=(
+                Indicator(InputType.MOTION, 0.1),
+                Indicator(InputType.MEDIA, 0.2),
+                Indicator(InputType.DOOR, 0.7),
+            ),
+            min_match_weight=0.1,
+        )
+        monkeypatch.setattr(
+            activity_module, "ACTIVITY_DEFINITIONS", (specific, generic)
+        )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        media = _make_entity("media_player.tv", InputType.MEDIA, evidence=True)
+        area = _make_area(
+            purpose=AreaPurpose.SOCIAL,
+            entities_by_type={InputType.MOTION: [motion], InputType.MEDIA: [media]},
+        )
+        result = detect_activity(area)
+        assert result.activity_id == ActivityId.COOKING
+        assert result.confidence == 0.3
 
 
 # ─── Bedroom Scenario Tests ─────────────────────────────────────────
