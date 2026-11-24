@@ -12,6 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceInfo
 
 from .const import (
+    ACTIVITY_BOOST_FADE_LOGIT,
     DOMAIN,
     GROUND_TRUTH_ACTIVE_FLOOR,
     GROUND_TRUTH_HOLD_HALF_LIVES,
@@ -414,6 +415,24 @@ def combined_probability(
     z_combined = z_presence + 0.2 * z_env
 
     return clamp_probability(sigmoid(z_combined))
+
+
+def activity_boost_fade(base_probability: float, threshold: float) -> float:
+    """How much of an activity boost applies, from 0.0 to 1.0.
+
+    The boost is zero at the occupancy threshold and reaches full strength
+    ``ACTIVITY_BOOST_FADE_LOGIT`` logits above it. Activity is only detected
+    while the sensor-only probability is at or above the threshold, so a boost
+    that stayed at full strength right down to it was removed in one step as
+    the probability crossed, which looked like a sudden drop.
+
+    Never changes whether an area is occupied: below the threshold there is no
+    boost, and above it the boosted probability is still above it.
+    """
+    headroom = logit(clamp_probability(base_probability)) - logit(
+        clamp_probability(threshold)
+    )
+    return max(0.0, min(1.0, headroom / ACTIVITY_BOOST_FADE_LOGIT))
 
 
 def apply_activity_boost(
