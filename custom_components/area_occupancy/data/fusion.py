@@ -35,14 +35,16 @@ Safety rails, per the issue:
 * **MOTION and SLEEP are excluded** from learning: the ground-truth
   labels are derived from motion ∪ media ∪ sleep evidence, so those
   types are partially self-labelling (correlation analysis already
-  excludes them for the same reason). MEDIA stays learnable but shares
-  the caveat — its learned weight will read optimistically high and
-  must be judged accordingly at promotion time.
+  excludes them for the same reason). The caller enforces this by
+  leaving those entities out of ``FusionTick.features``. MEDIA stays
+  learnable but shares the caveat — its learned weight will read
+  optimistically high and must be judged accordingly at promotion time.
 * **L2 anchor toward the live defaults**: with little data the learned
   weight stays near ``effective_weight``; a cold start is exactly
   today's behavior.
 * **Minimum-sample gate** before a learned weight is even *reported*
-  (``FUSION_MIN_SAMPLES`` ticks observed for the area).
+  (``FUSION_MIN_SAMPLES`` ticks observed for the area); each weight
+  additionally carries ``reliable`` once its own entity has that many.
 
 Like ``metrics.py`` and ``adjacency.py``, this module has no
 coordinator, HA, or DB dependencies — callers gather inputs and pass
@@ -52,12 +54,13 @@ them in, so the math stays testable in isolation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from itertools import pairwise
-from typing import Any
+import math
+from typing import Any, cast
 
 from ..const import FUSION_L2, FUSION_LEARNING_RATE, FUSION_MIN_SAMPLES, MAX_WEIGHT
-from ..time_utils import to_local
+from ..time_utils import ensure_utc_datetime, to_local
 from ..utils import clamp_probability, sigmoid
 from .metrics import DEFAULT_CALIBRATION_BINS, _is_occupied_at
 from .online_prior import MAX_TICK_GAP_SECONDS
@@ -69,6 +72,62 @@ SCORE_WINDOW_DAYS = 30
 # Seconds of each truth class before a false-on/false-off rate is reported
 # (as metrics.ACCURACY_MIN_CLASS_SECONDS).
 SCORE_MIN_CLASS_SECONDS = 3600.0
+
+_BIN_FIELDS = ("bin_weight", "bin_probability", "bin_hits")
+_SUM_FIELDS = ("true_on", "false_on", "false_off", "true_off")
+
+
+# --- storage parsing helpers -------------------------------------------------
+
+
+def _as_float(value: Any, *, nonnegative: bool = False) -> float | None:
+    """Return ``value`` as a finite float (optionally >= 0), else ``None``."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or (nonnegative and number < 0):
+        return None
+    return number
+
+
+def _as_count(value: Any) -> int | None:
+    """Return ``value`` as a non-negative int, else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def _as_dict(value: Any) -> dict[Any, Any]:
+    return cast(dict[Any, Any], value) if isinstance(value, dict) else {}
+
+
+def _parse_datetime(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return ensure_utc_datetime(datetime.fromisoformat(raw))
+    except ValueError:
+        return None
+
+
+def _is_iso_day(raw: Any) -> bool:
+    if not isinstance(raw, str):
+        return False
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        return False
+    return True
+
+
+# --- calibration tallies -----------------------------------------------------
 
 
 @dataclass
@@ -113,9 +172,12 @@ class CalibrationTally:
 
     def merge(self, other: CalibrationTally) -> None:
         """Add another tally's sums into this one."""
-        for name in ("bin_weight", "bin_probability", "bin_hits"):
-            mine = getattr(self, name)
-            for i, value in enumerate(getattr(other, name)):
+        for mine, theirs in (
+            (self.bin_weight, other.bin_weight),
+            (self.bin_probability, other.bin_probability),
+            (self.bin_hits, other.bin_hits),
+        ):
+            for i, value in enumerate(theirs):
                 mine[i] += value
         self.true_on += other.true_on
         self.false_on += other.false_on
@@ -147,19 +209,50 @@ class CalibrationTally:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize (JSON-safe)."""
-        return vars(self).copy()
+        """Serialize (JSON-safe; lists are copied, not shared)."""
+        return {
+            "bin_weight": list(self.bin_weight),
+            "bin_probability": list(self.bin_probability),
+            "bin_hits": list(self.bin_hits),
+            "true_on": self.true_on,
+            "false_on": self.false_on,
+            "false_off": self.false_off,
+            "true_off": self.true_off,
+        }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CalibrationTally:
-        """Restore; raises on malformed data (callers fall back to empty)."""
-        tally = cls(**{k: data[k] for k in data if k in cls.__dataclass_fields__})
-        for name in ("bin_weight", "bin_probability", "bin_hits"):
-            values = [float(v) for v in getattr(tally, name)]
-            if len(values) != DEFAULT_CALIBRATION_BINS:
+    def from_dict(cls, data: Any) -> CalibrationTally:
+        """Restore; raises ``ValueError`` on malformed data."""
+        if not isinstance(data, dict):
+            raise ValueError("tally")
+        payload = cast(dict[str, Any], data)
+        bins: dict[str, list[float]] = {}
+        for name in _BIN_FIELDS:
+            raw = payload.get(name)
+            if not isinstance(raw, list):
                 raise ValueError(name)
-            setattr(tally, name, values)
-        return tally
+            values = [_as_float(v, nonnegative=True) for v in cast(list[Any], raw)]
+            if len(values) != DEFAULT_CALIBRATION_BINS or None in values:
+                raise ValueError(name)
+            bins[name] = [v for v in values if v is not None]
+        sums: dict[str, float] = {}
+        for name in _SUM_FIELDS:
+            value = _as_float(payload.get(name, 0.0), nonnegative=True)
+            if value is None:
+                raise ValueError(name)
+            sums[name] = value
+        return cls(
+            bin_weight=bins["bin_weight"],
+            bin_probability=bins["bin_probability"],
+            bin_hits=bins["bin_hits"],
+            true_on=sums["true_on"],
+            false_on=sums["false_on"],
+            false_off=sums["false_off"],
+            true_off=sums["true_off"],
+        )
+
+
+# --- training rows and state -------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -184,6 +277,14 @@ class FusionTick:
     # don't touch (prior, motion and sleep, activity and adjacency boosts).
     probability: float | None = None
     fixed_logit: float | None = None
+
+
+def _tick_truth(
+    tick: FusionTick, occupied_intervals: list[tuple[datetime, datetime]]
+) -> bool:
+    if tick.truth is not None:
+        return tick.truth
+    return _is_occupied_at(tick.timestamp, occupied_intervals)
 
 
 @dataclass
@@ -222,36 +323,59 @@ class FusionState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FusionState:
-        """Restore from storage; malformed payloads fall back to empty."""
-        try:
-            return cls(
-                weights={
-                    str(k): float(v) for k, v in (data.get("weights") or {}).items()
-                },
-                samples=int(data.get("samples", 0)),
-                entity_samples={
-                    str(k): int(v)
-                    for k, v in (data.get("entity_samples") or {}).items()
-                },
-                signatures={
-                    str(k): str(v) for k, v in (data.get("signatures") or {}).items()
-                },
-                trained_through=(
-                    datetime.fromisoformat(raw)
-                    if (raw := data.get("trained_through"))
-                    else None
-                ),
-                score_days={
-                    str(day): {
-                        str(model): CalibrationTally.from_dict(t)
-                        for model, t in tallies.items()
-                    }
-                    for day, tallies in (data.get("score_days") or {}).items()
-                },
-            )
-        except (AttributeError, KeyError, TypeError, ValueError):
-            return cls()
+    def from_dict(cls, data: Any) -> FusionState:
+        """Restore from storage; malformed parts are dropped individually.
+
+        A single bad value must not discard every learned weight (and
+        restart the sample gate), so each field and entry is validated on
+        its own.
+        """
+        payload = _as_dict(data)
+
+        weights: dict[str, float] = {}
+        for k, v in _as_dict(payload.get("weights")).items():
+            w = _as_float(v)
+            if isinstance(k, str) and w is not None:
+                weights[k] = min(max(w, 0.0), MAX_WEIGHT)
+
+        entity_samples: dict[str, int] = {}
+        for k, v in _as_dict(payload.get("entity_samples")).items():
+            n = _as_count(v)
+            if isinstance(k, str) and n is not None:
+                entity_samples[k] = n
+
+        signatures = {
+            k: v
+            for k, v in _as_dict(payload.get("signatures")).items()
+            if isinstance(k, str) and isinstance(v, str)
+        }
+
+        score_days: dict[str, dict[str, CalibrationTally]] = {}
+        for day, tallies in _as_dict(payload.get("score_days")).items():
+            if not _is_iso_day(day):
+                continue
+            restored: dict[str, CalibrationTally] = {}
+            for model, raw_tally in _as_dict(tallies).items():
+                if not isinstance(model, str):
+                    continue
+                try:
+                    restored[model] = CalibrationTally.from_dict(raw_tally)
+                except ValueError:
+                    continue
+            if restored:
+                score_days[cast(str, day)] = restored
+
+        return cls(
+            weights=weights,
+            samples=_as_count(payload.get("samples")) or 0,
+            entity_samples=entity_samples,
+            signatures=signatures,
+            trained_through=_parse_datetime(payload.get("trained_through")),
+            score_days=score_days,
+        )
+
+
+# --- learner -----------------------------------------------------------------
 
 
 class FusionLearner:
@@ -259,7 +383,20 @@ class FusionLearner:
 
     def __init__(self, state: FusionState | None = None) -> None:
         """Initialize from persisted state (or empty)."""
-        self.state = state or FusionState()
+        self.state: FusionState = state if state is not None else FusionState()
+
+    def _new_ticks(self, ticks: list[FusionTick]) -> list[FusionTick]:
+        """Ticks after ``trained_through``, oldest first, timestamps in UTC."""
+        normalized = [
+            tick
+            if tick.timestamp.tzinfo is not None
+            else _with_timestamp(tick, ensure_utc_datetime(tick.timestamp))
+            for tick in ticks
+        ]
+        cutoff = self.state.trained_through
+        if cutoff is not None:
+            normalized = [t for t in normalized if t.timestamp > cutoff]
+        return sorted(normalized, key=lambda t: t.timestamp)
 
     def update(
         self,
@@ -287,7 +424,8 @@ class FusionLearner:
         it rather than silently relaxing back to the default.
 
         Args:
-            ticks: Training rows, any order; already-trained ones are skipped.
+            ticks: Training rows, any order; already-trained ones are skipped
+                and the rest are stepped oldest first.
             occupied_intervals: Motion-confirmed ``(start, end)`` ground
                 truth — the same source #499's metrics score against.
             defaults: entity_id -> the live pipeline's current
@@ -303,36 +441,32 @@ class FusionLearner:
         Returns:
             The number of new ticks consumed.
         """
-        if self.state.trained_through is not None:
-            ticks = [t for t in ticks if t.timestamp > self.state.trained_through]
+        ticks = self._new_ticks(ticks)
         if not ticks:
             return 0
-        weights = self.state.weights
+        state = self.state
+        weights = state.weights
         for tick in ticks:
-            occupied = (
-                tick.truth
-                if tick.truth is not None
-                else _is_occupied_at(tick.timestamp, occupied_intervals)
-            )
-            y = 1.0 if occupied else 0.0
+            features = {
+                entity_id: x
+                for entity_id, x in tick.features.items()
+                if math.isfinite(x)
+            }
+            y = 1.0 if _tick_truth(tick, occupied_intervals) else 0.0
             z = tick.bias
-            for entity_id, x in tick.features.items():
-                w = weights.get(entity_id, defaults.get(entity_id, 0.0))
-                z += w * x
-            prediction = sigmoid(z)
-            error = prediction - y
-            for entity_id, x in tick.features.items():
+            for entity_id, x in features.items():
+                z += weights.get(entity_id, defaults.get(entity_id, 0.0)) * x
+            error = sigmoid(z) - y
+            for entity_id, x in features.items():
                 default = defaults.get(entity_id, 0.0)
                 w = weights.get(entity_id, default)
-                gradient = error * x + l2 * (w - default)
-                w -= learning_rate * gradient
+                w -= learning_rate * (error * x + l2 * (w - default))
                 weights[entity_id] = min(max(w, 0.0), MAX_WEIGHT)
-            for entity_id in tick.features:
-                self.state.entity_samples[entity_id] = (
-                    self.state.entity_samples.get(entity_id, 0) + 1
+                state.entity_samples[entity_id] = (
+                    state.entity_samples.get(entity_id, 0) + 1
                 )
-        self.state.samples += len(ticks)
-        self.state.trained_through = max(t.timestamp for t in ticks)
+        state.samples += len(ticks)
+        state.trained_through = ticks[-1].timestamp
         return len(ticks)
 
     def score(
@@ -357,66 +491,52 @@ class FusionLearner:
         weights are not reported, let alone candidates for promotion.
 
         Returns:
-            The number of ticks scored.
+            The number of ticks actually tallied.
         """
         if self.state.samples < FUSION_MIN_SAMPLES:
             return 0
-        ticks = sorted(
-            (
-                t
-                for t in ticks
-                if t.probability is not None
-                and t.fixed_logit is not None
-                and (
-                    self.state.trained_through is None
-                    or t.timestamp > self.state.trained_through
-                )
-            ),
-            key=lambda t: t.timestamp,
-        )
-        if len(ticks) < 2:
+        scorable = [
+            t
+            for t in self._new_ticks(ticks)
+            if t.probability is not None and t.fixed_logit is not None
+        ]
+        if len(scorable) < 2:
             return 0
         gaps = [
             min(
                 max((b.timestamp - a.timestamp).total_seconds(), 0.0),
                 MAX_TICK_GAP_SECONDS,
             )
-            for a, b in pairwise(ticks)
+            for a, b in pairwise(scorable)
         ]
         gaps.append(gaps[-1])
         weights = self.state.weights
-        for tick, seconds in zip(ticks, gaps, strict=True):
-            if seconds <= 0:
-                continue
-            truth = (
-                tick.truth
-                if tick.truth is not None
-                else _is_occupied_at(tick.timestamp, occupied_intervals)
-            )
+        scored = 0
+        for tick, seconds in zip(scorable, gaps, strict=True):
             # Both were filtered above; the checker can't follow that.
             probability = tick.probability
             z = tick.fixed_logit
-            if probability is None or z is None:
+            if seconds <= 0 or probability is None or z is None:
                 continue
+            truth = _tick_truth(tick, occupied_intervals)
             for entity_id, x in tick.features.items():
-                z += weights.get(entity_id, defaults.get(entity_id, 0.0)) * x
+                if math.isfinite(x):
+                    z += weights.get(entity_id, defaults.get(entity_id, 0.0)) * x
             learned = clamp_probability(sigmoid(z))
             day = to_local(tick.timestamp).date().isoformat()
             tallies = self.state.score_days.setdefault(
                 day, {"live": CalibrationTally(), "learned": CalibrationTally()}
             )
             tallies["live"].add(
-                probability,
-                on=probability >= threshold,
-                truth=truth,
-                seconds=seconds,
+                probability, on=probability >= threshold, truth=truth, seconds=seconds
             )
             tallies["learned"].add(
                 learned, on=learned >= threshold, truth=truth, seconds=seconds
             )
+            scored += 1
         for day in sorted(self.state.score_days)[:-SCORE_HISTORY_DAYS]:
             del self.state.score_days[day]
-        return len(ticks)
+        return scored
 
     def calibration(self) -> dict[str, Any] | None:
         """Live vs learned scores, pooled over the latest days (diagnostics)."""
@@ -424,7 +544,7 @@ class FusionLearner:
         if not days:
             return None
         pooled = {"live": CalibrationTally(), "learned": CalibrationTally()}
-        daily = []
+        daily: list[dict[str, Any]] = []
         for day in days:
             tallies = self.state.score_days[day]
             row: dict[str, Any] = {"date": day}
@@ -451,6 +571,9 @@ class FusionLearner:
         starts again from its live default. An entity with no stored
         fingerprint (state saved before fingerprints) adopts the current one.
 
+        Note: ``score_days`` are not rewritten — days already tallied keep
+        the scores the old weight produced until they age out of the window.
+
         Args:
             signatures: entity_id -> fingerprint for the area's current
                 entities.
@@ -459,28 +582,29 @@ class FusionLearner:
             The entity ids whose learning was discarded.
         """
         state = self.state
-        dropped = [
+        dropped = sorted(
             entity_id
             for entity_id in set(state.weights) | set(state.entity_samples)
             if entity_id not in signatures
             or state.signatures.get(entity_id, signatures[entity_id])
             != signatures[entity_id]
-        ]
+        )
         for entity_id in dropped:
             state.weights.pop(entity_id, None)
             state.entity_samples.pop(entity_id, None)
-            state.signatures.pop(entity_id, None)
         state.signatures = {
             entity_id: signatures[entity_id] for entity_id in state.weights
         }
-        return sorted(dropped)
+        return dropped
 
     def snapshot(self, defaults: dict[str, float]) -> dict[str, Any]:
         """Return the JSON-safe diagnostics block for this area.
 
         Below the sample gate only the counters are reported — a weight
         learned from an hour of data is noise wearing a number's
-        clothes.
+        clothes. Above it, each weight's ``reliable`` flag says whether
+        that entity has passed the same gate on its own (a sensor added
+        or reset later has not).
         """
         block: dict[str, Any] = {
             "shadow_mode": True,
@@ -489,17 +613,30 @@ class FusionLearner:
             "min_samples": FUSION_MIN_SAMPLES,
         }
         if self.state.samples >= FUSION_MIN_SAMPLES:
-            block["weights"] = {
-                entity_id: {
+            weights: dict[str, dict[str, Any]] = {}
+            for entity_id, w in sorted(self.state.weights.items()):
+                entity_samples = self.state.entity_samples.get(entity_id, 0)
+                weights[entity_id] = {
                     "learned_weight": round(w, 4),
                     # The live pipeline's weight for it: configured weight
                     # x information gain (0 when its learned likelihoods
                     # carry no information), the anchor learning starts from.
                     "effective_weight": round(defaults.get(entity_id, 0.0), 4),
-                    "samples": self.state.entity_samples.get(entity_id, 0),
+                    "samples": entity_samples,
+                    "reliable": entity_samples >= FUSION_MIN_SAMPLES,
                 }
-                for entity_id, w in sorted(self.state.weights.items())
-            }
+            block["weights"] = weights
         if (calibration := self.calibration()) is not None:
             block["calibration"] = calibration
         return block
+
+
+def _with_timestamp(tick: FusionTick, timestamp: datetime) -> FusionTick:
+    return FusionTick(
+        timestamp=timestamp,
+        bias=tick.bias,
+        features=tick.features,
+        truth=tick.truth,
+        probability=tick.probability,
+        fixed_logit=tick.fixed_logit,
+    )
