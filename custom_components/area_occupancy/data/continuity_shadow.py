@@ -1,14 +1,15 @@
 """Shadow-mode presence continuity for open-plan rooms (#558).
 
 Motion loses people who sit still, and today an open-plan room then decays
-to empty on its half-life (stretched up to x1.75 while its usual next rooms
-stay quiet). Continuity asks for more: don't clear a room because motion
-lost you, clear it when you're seen leaving. While no exit is observed the
-room would decay on a longer half-life, ``1 + 2 * silence`` times its own
-(capped at ``CONTINUITY_MAX_HALF_LIFE``), and on an exit it would go back to
-normal at once. An exit is a door of the room opening, or a neighbouring
-room lighting up within ``ADJACENCY_TRANSITION_WINDOW_S`` of the last
-evidence.
+ to empty on its half-life (stretched up to x1.75 while its usual next rooms
+ stay quiet). Continuity asks for more: don't clear a room because motion
+ lost you, clear it when you're seen leaving. While no exit is observed the
+ room would decay on a longer half-life, ``1 + 2 * silence`` times its own
+ (capped at ``CONTINUITY_MAX_HALF_LIFE``), and on an exit it would go back to
+ normal at once. An exit is a door of the room opening, or a neighbouring
+ room lighting up within ``ADJACENCY_TRANSITION_WINDOW_S`` of the last
+ evidence.
+
 
 This is the part of #558 most exposed to flaky sensors, so it runs in
 shadow only. Each time a room's ground-truth sensors go quiet an episode
@@ -22,6 +23,7 @@ starts, and it ends with one of three outcomes:
   way nobody watches, and any time continuity held the room beyond today's
   model was a *false hold*.
 
+
 Continuity's clear time is estimated from the live one: a room clears when
 its decaying evidence crosses the threshold, at a time proportional to the
 half-life, so it scales by the ratio of the two half-lives at the start of
@@ -31,13 +33,19 @@ false-hold rate of at most 5%.
 
 from __future__ import annotations
 
+
+
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
 from typing import Any
 
+
+
 from ..const import ADJACENCY_TRANSITION_WINDOW_S
 from ..time_utils import ensure_utc_datetime, to_local
+
+
 
 # Continuity's half-life multiplier at full silence (today's is 1.75).
 CONTINUITY_MULTIPLIER = 3.0
@@ -48,6 +56,8 @@ EPISODE_MAX_SECONDS = 7200.0
 # Days of counters kept, and how many of the latest are pooled.
 HISTORY_DAYS = 45
 WINDOW_DAYS = 30
+
+
 
 _COUNTERS = (
     "episodes",
@@ -62,27 +72,49 @@ _COUNTERS = (
 )
 
 
+
+
 def continuity_half_life(base: float, live: float, silence: float) -> float:
     """The half-life continuity would decay on while no exit is seen.
+
+
 
     Args:
         base: The room's own half-life.
         live: Today's effective half-life (with the adjacency stretch).
         silence: The adjacency silence score in [0, 1].
     """
+    # Defensive normalization: callers should provide valid model values, but
+    # malformed sensor/config values must not produce NaN or negative half-lives.
+    if not math.isfinite(base) or base <= 0:
+        return live if math.isfinite(live) and live > 0 else 0.0
+    if not math.isfinite(live) or live <= 0:
+        live = base
+    if not math.isfinite(silence):
+        silence = 0.0
+    silence = max(0.0, min(1.0, silence))
+
     stretched = base * (1.0 + (CONTINUITY_MULTIPLIER - 1.0) * silence)
+    # Continuity never shortens today's live half-life. The cap applies to
+    # the stretched estimate, but cannot shorten a live half-life already
+    # above the configured cap.
     return max(live, min(stretched, CONTINUITY_MAX_HALF_LIFE))
+
 
 
 @dataclass
 class Episode:
     """One open episode: the room's sensors went quiet at ``start``."""
 
+
+
     start: datetime
     half_life_ratio: float
     # Neighbours that were empty at the start (an exit is one lighting up).
     quiet_neighbours: list[str]
     live_cleared: float | None = None
+
+
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize (JSON-safe)."""
@@ -92,6 +124,8 @@ class Episode:
             "quiet_neighbours": list(self.quiet_neighbours),
             "live_cleared": self.live_cleared,
         }
+
+
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Episode:
@@ -105,15 +139,20 @@ class Episode:
         )
 
 
+
 @dataclass
 class ContinuityState:
     """One area's continuity shadow (persisted)."""
+
+
 
     present: bool | None = None
     doors_open: bool | None = None
     episode: Episode | None = None
     # Local date (of the episode start) -> counters.
     days: dict[str, dict[str, float]] = field(default_factory=dict)
+
+
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -123,6 +162,8 @@ class ContinuityState:
             "episode": self.episode.to_dict() if self.episode else None,
             "days": {day: dict(c) for day, c in self.days.items()},
         }
+
+
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ContinuityState:
@@ -144,12 +185,17 @@ class ContinuityState:
             return cls()
 
 
+
 class ContinuityShadow:
     """Scores continuity against today's decay for one area."""
+
+
 
     def __init__(self, state: ContinuityState | None = None) -> None:
         """Initialize from persisted state (or empty)."""
         self.state = state or ContinuityState()
+
+
 
     def observe(
         self,
@@ -162,6 +208,8 @@ class ContinuityShadow:
         half_life_ratio: float,
     ) -> None:
         """Record one tick.
+
+
 
         Args:
             now: The tick time.
@@ -194,11 +242,28 @@ class ContinuityShadow:
                 episode.live_cleared = elapsed
         # A room that is held occupied when its sensors go quiet starts one.
         if state.episode is None and was_present is True and not present and occupied:
-            state.episode = Episode(
-                start=now,
-                half_life_ratio=half_life_ratio,
-                quiet_neighbours=sorted(n for n, on in neighbours.items() if not on),
-            )
+            # If a door opened in the same tick the room's evidence went
+            # quiet, the exit is already observed; don't leave an episode
+            # hanging until a later tick.
+            if door_opened:
+                episode = Episode(
+                    start=now,
+                    half_life_ratio=half_life_ratio,
+                    quiet_neighbours=sorted(
+                        n for n, on in neighbours.items() if not on
+                    ),
+                )
+                self._close(episode, "exits", 0.0)
+            else:
+                state.episode = Episode(
+                    start=now,
+                    half_life_ratio=half_life_ratio,
+                    quiet_neighbours=sorted(
+                        n for n, on in neighbours.items() if not on
+                    ),
+                )
+
+
 
     def _close(self, episode: Episode, outcome: str, elapsed: float) -> None:
         """Score a finished episode into its day's counters."""
@@ -210,9 +275,12 @@ class ContinuityShadow:
         if outcome == "unexplained":
             if live is not None:
                 continuity = live * episode.half_life_ratio
-                if continuity > live:
+                # The episode is only observed for EPISODE_MAX_SECONDS.
+                # Do not count a hypothetical hold beyond that horizon.
+                observed_end = min(continuity, EPISODE_MAX_SECONDS)
+                if observed_end > live:
                     counters["false_holds"] += 1
-                    counters["false_hold_seconds"] += continuity - live
+                    counters["false_hold_seconds"] += observed_end - live
         elif live is not None:
             continuity = live * episode.half_life_ratio
             # Time continuity kept the room occupied past today's clear,
@@ -226,6 +294,8 @@ class ContinuityShadow:
         for old in sorted(self.state.days)[:-HISTORY_DAYS]:
             del self.state.days[old]
 
+
+
     def summary(self) -> dict[str, Any] | None:
         """Outcomes pooled over the latest days (diagnostics)."""
         days = sorted(self.state.days)[-WINDOW_DAYS:]
@@ -236,10 +306,14 @@ class ContinuityShadow:
             for key in _COUNTERS:
                 total[key] += self.state.days[day].get(key, 0.0)
 
+
+
         def rate(numerator: str, denominator: str) -> float | None:
             if not total[denominator]:
                 return None
             return round(total[numerator] / total[denominator], 4)
+
+
 
         return {
             "shadow_mode": True,
@@ -257,6 +331,7 @@ class ContinuityShadow:
             "recovered_minutes": round(total["recovered_seconds"] / 60, 1),
             "open_episode": self.state.episode is not None,
         }
+
 
 
 def half_life_ratio(base: float, live: float, silence: float) -> float:
