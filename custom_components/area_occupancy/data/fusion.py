@@ -105,7 +105,7 @@ def _as_count(value: Any) -> int | None:
 
 
 def _as_dict(value: Any) -> dict[Any, Any]:
-    return cast(dict[Any, Any], value) if isinstance(value, dict) else {}
+    return cast("dict[Any, Any]", value) if isinstance(value, dict) else {}
 
 
 def _parse_datetime(raw: Any) -> datetime | None:
@@ -121,7 +121,7 @@ def _is_iso_day(raw: Any) -> bool:
     if not isinstance(raw, str):
         return False
     try:
-        date.fromisoformat(raw)
+        _ = date.fromisoformat(raw)
     except ValueError:
         return False
     return True
@@ -222,16 +222,16 @@ class CalibrationTally:
 
     @classmethod
     def from_dict(cls, data: Any) -> CalibrationTally:
-        """Restore; raises ``ValueError`` on malformed data."""
+        """Restore; raises ``TypeError``/``ValueError`` on malformed data."""
         if not isinstance(data, dict):
-            raise ValueError("tally")
-        payload = cast(dict[str, Any], data)
+            raise TypeError("tally")
+        payload = cast("dict[str, Any]", data)
         bins: dict[str, list[float]] = {}
         for name in _BIN_FIELDS:
             raw = payload.get(name)
             if not isinstance(raw, list):
-                raise ValueError(name)
-            values = [_as_float(v, nonnegative=True) for v in cast(list[Any], raw)]
+                raise TypeError(name)
+            values = [_as_float(v, nonnegative=True) for v in cast("list[Any]", raw)]
             if len(values) != DEFAULT_CALIBRATION_BINS or None in values:
                 raise ValueError(name)
             bins[name] = [v for v in values if v is not None]
@@ -360,10 +360,10 @@ class FusionState:
                     continue
                 try:
                     restored[model] = CalibrationTally.from_dict(raw_tally)
-                except ValueError:
+                except (TypeError, ValueError):
                     continue
             if restored:
-                score_days[cast(str, day)] = restored
+                score_days[cast("str", day)] = restored
 
         return cls(
             weights=weights,
