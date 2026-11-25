@@ -16,15 +16,11 @@ keeps reading the database snapshot until #603's switch-over.
 
 from __future__ import annotations
 
-
-
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import math
 from typing import Any
-
-
 
 from ..const import (
     ADJACENCY_RECENCY_HALF_LIFE_DAYS,
@@ -33,13 +29,12 @@ from ..const import (
 )
 from ..time_utils import ensure_utc_datetime, to_local
 
-
-
 # A conditional next-room share needs this much decayed count behind it
 # before it is compared (a single walk-through is not a distribution).
 TRANSITION_MIN_COUNT = 5.0
-
-
+MAX_RECENT_ENDS = 8
+MAX_DIFF_HISTORY_DAYS = 90
+HOURS_PER_WEEK = 168
 
 Counts = dict[str, dict[int, dict[str, float]]]  # "from|mid" -> hour -> to -> n
 
@@ -49,9 +44,10 @@ def _hour_of_week(ts: datetime) -> int:
     return local.weekday() * 24 + local.hour
 
 
-
 def _finite_nonnegative(value: Any, default: float = 0.0) -> float:
     """Return a finite, non-negative float, or the supplied default."""
+    if isinstance(value, bool):
+        return default
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -59,12 +55,86 @@ def _finite_nonnegative(value: Any, default: float = 0.0) -> float:
     return number if math.isfinite(number) and number >= 0 else default
 
 
+def _parse_counts(raw_counts: Any) -> Counts:
+    if not isinstance(raw_counts, dict):
+        return {}
+
+    counts: Counts = {}
+    for raw_chain, by_hour in raw_counts.items():
+        if not isinstance(raw_chain, str) or not isinstance(by_hour, dict):
+            continue
+
+        valid_hours: dict[int, dict[str, float]] = {}
+        for raw_hour, tos in by_hour.items():
+            if isinstance(raw_hour, bool) or not isinstance(raw_hour, (int, str)):
+                continue
+            if not isinstance(tos, dict):
+                continue
+
+            try:
+                hour = int(raw_hour)
+            except (TypeError, ValueError):
+                continue
+
+            if not 0 <= hour < HOURS_PER_WEEK:
+                continue
+
+            valid_tos: dict[str, float] = {}
+            for to_area, raw_number in tos.items():
+                if not isinstance(to_area, str):
+                    continue
+                number = _finite_nonnegative(raw_number, -1.0)
+                if number >= 0:
+                    valid_tos[to_area] = number
+
+            if valid_tos:
+                valid_hours[hour] = valid_tos
+
+        if valid_hours:
+            counts[raw_chain] = valid_hours
+
+    return counts
+
+
+def _parse_recent_ends(raw_ends: Any) -> list[tuple[str, datetime]]:
+    if not isinstance(raw_ends, list):
+        return []
+
+    recent_ends: list[tuple[str, datetime]] = []
+    for item in raw_ends:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        area_name, raw_time = item
+        if not isinstance(area_name, str) or not isinstance(raw_time, str):
+            continue
+        try:
+            event_time = ensure_utc_datetime(datetime.fromisoformat(raw_time))
+        except (TypeError, ValueError):
+            continue
+        recent_ends.append((area_name, event_time))
+
+    return recent_ends[-MAX_RECENT_ENDS:]
+
+
+def _parse_diff_history(raw_history: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_history, list):
+        return []
+
+    history: list[dict[str, Any]] = []
+    for item in raw_history:
+        if not isinstance(item, dict):
+            continue
+        date_value = item.get("date")
+        diff_value = _finite_nonnegative(item.get("max_diff"), -1.0)
+        if isinstance(date_value, str) and diff_value >= 0:
+            history.append({"date": date_value, "max_diff": diff_value})
+
+    return history[-MAX_DIFF_HISTORY_DAYS:]
+
 
 @dataclass
 class TransitionShadowState:
     """Live transition counts and the detector's short memory (persisted)."""
-
-
 
     counts: Counts = field(default_factory=dict)
     last_decay: datetime | None = None
@@ -73,8 +143,6 @@ class TransitionShadowState:
     recent_ends: list[tuple[str, datetime]] = field(default_factory=list)
     # Daily worst gap to the database's next-room shares, oldest first.
     diff_history: list[dict[str, Any]] = field(default_factory=list)
-
-
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
@@ -89,93 +157,51 @@ class TransitionShadowState:
             "diff_history": list(self.diff_history),
         }
 
-
-
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TransitionShadowState:
         """Restore from storage; malformed payloads fall back to empty."""
+        if not isinstance(data, dict):
+            return cls()
+
         try:
-            raw_counts = data.get("counts") or {}
-            counts: Counts = {}
-            for chain, by_hour in raw_counts.items():
-                if not isinstance(by_hour, dict):
-                    continue
-                valid_hours: dict[int, dict[str, float]] = {}
-                for raw_hour, tos in by_hour.items():
-                    try:
-                        hour = int(raw_hour)
-                    except (TypeError, ValueError):
-                        continue
-                    if not 0 <= hour < 168 or not isinstance(tos, dict):
-                        continue
-                    valid_tos = {
-                        str(to_area): number
-                        for to_area, raw_number in tos.items()
-                        if (number := _finite_nonnegative(raw_number, -1.0)) >= 0
-                    }
-                    if valid_tos:
-                        valid_hours[hour] = valid_tos
-                if valid_hours:
-                    counts[str(chain)] = valid_hours
+            counts = _parse_counts(data.get("counts"))
 
             raw_last_decay = data.get("last_decay")
-            last_decay = (
-                ensure_utc_datetime(datetime.fromisoformat(raw_last_decay))
-                if isinstance(raw_last_decay, str) and raw_last_decay
-                else None
-            )
+            last_decay: datetime | None = None
+            if isinstance(raw_last_decay, str) and raw_last_decay:
+                last_decay = ensure_utc_datetime(datetime.fromisoformat(raw_last_decay))
 
-            occupied_raw = data.get("occupied") or {}
+            occupied_raw = data.get("occupied")
             occupied = (
-                {str(k): bool(v) for k, v in occupied_raw.items()}
+                {
+                    k: bool(v)
+                    for k, v in occupied_raw.items()
+                    if isinstance(k, str)
+                }
                 if isinstance(occupied_raw, dict)
                 else {}
             )
 
-            recent_ends: list[tuple[str, datetime]] = []
-            for item in data.get("recent_ends") or []:
-                if not isinstance(item, (list, tuple)) or len(item) != 2:
-                    continue
-                area_name, raw_time = item
-                if not isinstance(raw_time, str):
-                    continue
-                try:
-                    event_time = ensure_utc_datetime(datetime.fromisoformat(raw_time))
-                except (TypeError, ValueError):
-                    continue
-                recent_ends.append((str(area_name), event_time))
-
-            history: list[dict[str, Any]] = []
-            for item in data.get("diff_history") or []:
-                if not isinstance(item, dict):
-                    continue
-                date_value = item.get("date")
-                diff_value = _finite_nonnegative(item.get("max_diff"), -1.0)
-                if isinstance(date_value, str) and diff_value >= 0:
-                    history.append({"date": date_value, "max_diff": diff_value})
+            recent_ends = _parse_recent_ends(data.get("recent_ends"))
+            history = _parse_diff_history(data.get("diff_history"))
 
             return cls(
                 counts=counts,
                 last_decay=last_decay,
                 occupied=occupied,
-                recent_ends=recent_ends[-8:],
-                diff_history=history[-90:],
+                recent_ends=recent_ends,
+                diff_history=history,
             )
         except (AttributeError, TypeError, ValueError):
             return cls()
 
 
-
 class TransitionShadow:
     """Detects area transitions from live labels, as ``db.transitions`` does."""
-
-
 
     def __init__(self, state: TransitionShadowState | None = None) -> None:
         """Initialize from persisted state (or empty)."""
         self.state = state if state is not None else TransitionShadowState()
-
-
 
     def _decay(self, now: datetime) -> None:
         state = self.state
@@ -190,19 +216,16 @@ class TransitionShadow:
                     for tos in by_hour.values():
                         for to_area, count in list(tos.items()):
                             tos[to_area] = _finite_nonnegative(count) * factor
+
         # Do not move the decay anchor backwards if an older tick arrives.
         if state.last_decay is None or now > state.last_decay:
             state.last_decay = now
-
-
 
     def _count(self, from_area: str, mid_area: str, to_area: str, hour: int) -> None:
         tos = self.state.counts.setdefault(f"{from_area}|{mid_area}", {}).setdefault(
             hour, {}
         )
         tos[to_area] = _finite_nonnegative(tos.get(to_area, 0.0)) + 1.0
-
-
 
     def observe(
         self,
@@ -213,8 +236,6 @@ class TransitionShadow:
     ) -> None:
         """Record one tick of every area's label.
 
-
-
         Args:
             now: The tick time.
             labels: area name -> live ground-truth label.
@@ -223,13 +244,16 @@ class TransitionShadow:
         now = ensure_utc_datetime(now)
         state = self.state
         self._decay(now)
+
         transition_window = timedelta(
             seconds=_finite_nonnegative(ADJACENCY_TRANSITION_WINDOW_S)
         )
         trajectory_window = timedelta(
             seconds=_finite_nonnegative(ADJACENCY_TRAJECTORY_WINDOW_S)
         )
-        ends: deque[tuple[str, datetime]] = deque(state.recent_ends, maxlen=8)
+        ends: deque[tuple[str, datetime]] = deque(
+            state.recent_ends, maxlen=MAX_RECENT_ENDS
+        )
 
         # Ends first, so an area emptying in the same tick another fills
         # is a candidate "from" for it (the database orders by timestamp).
@@ -267,8 +291,6 @@ class TransitionShadow:
         state.occupied = {str(area): bool(label) for area, label in labels.items()}
         state.recent_ends = list(ends)
 
-
-
     @staticmethod
     def _shares(counts: Counts) -> dict[str, dict[str, float]]:
         """Next-room shares per chain, over the whole week."""
@@ -284,12 +306,8 @@ class TransitionShadow:
                 shares[chain] = {t: n / total for t, n in totals.items()}
         return shares
 
-
-
     def compare(self, db_counts: Counts) -> dict[str, Any]:
         """Compare next-room shares with the database's.
-
-
 
         Returns:
             Per chain both share maps, and ``max_diff``: the largest gap in
@@ -313,8 +331,6 @@ class TransitionShadow:
             chains[chain] = row
         return {"chains": chains, "max_diff": max(diffs) if diffs else None}
 
-
-
     def record_divergence(self, day: str, max_diff: float | None) -> None:
         """Fold today's worst gap into the daily history (kept 90 days)."""
         if max_diff is None or not math.isfinite(max_diff) or max_diff < 0:
@@ -325,9 +341,7 @@ class TransitionShadow:
             history[-1]["max_diff"] = max(previous, max_diff)
         else:
             history.append({"date": day, "max_diff": max_diff})
-        del history[:-90]
-
-
+        del history[:-MAX_DIFF_HISTORY_DAYS]
 
     def days_within_tolerance(self, tolerance: float) -> int:
         """Consecutive most-recent days whose worst gap stayed in tolerance."""
