@@ -1,56 +1,35 @@
 #!/usr/bin/env python3
-"""Offline evaluation for predictive occupancy (#502 step 1 — the go/no-go gate).
+"""Replay historical occupancy entries and report next-area accuracy.
 
-Replays area-entry events from a copy of ``area_occupancy.db`` and asks:
-for each entry, would the trailing trajectory + hour-of-week bucket —
-fed through the REAL six-level transition fallback
-(``AdjacencySnapshot.lookup_distribution``, reused, not reimplemented) —
-have predicted the area a person entered next? Reports top-1/top-2 accuracy
-per area and per fallback level, plus the transition-gap distribution
-that tells us what a "P(occupied within N minutes)" horizon could
-honestly promise.
-
-Per the issue's fence: if no operating point clears the bar
-(precision ≥ 0.7 at usable recall), the prediction sensor never gets
-built and this report is the record of why.
+Uses the integration's real adjacency fallback and a read-only database copy.
+The saved transition counts may include the replayed events, so this is an
+exploratory report, not a held-out evaluation or a deployment gate (#502).
 
 Usage:
-    python scripts/evaluate_prediction.py --time-zone ZONE [--db-path PATH] [--days DAYS]
+    python scripts/evaluate_prediction.py --time-zone ZONE [options]
 
-Requirements on the source install: adjacency configured (the
-``area_transitions`` table populated) and a warm
-``occupied_intervals_cache`` (run ``run_analysis`` before copying).
-
-Method notes:
-
-* Entry events and trailing trajectories are reconstructed from the
-  occupied-intervals cache with the same semantics as the live
-  ``TrajectoryTracker``: an area joins the trajectory when its
-  occupancy ENDS, only ends within the 300 s window
-  (``ADJACENCY_TRAJECTORY_WINDOW_S``) count, the target area's own
-  prior occupancy is skipped, and the most recent end is ``prev``.
-* Evaluation is leave-nothing-out: the transition table being queried
-  was itself learned from (a decayed version of) the same history, so
-  accuracy reads optimistic. Good enough for a go/no-go; a shipped
-  sensor would be scored live by the #499 harness.
+The database copy needs learned transitions and a populated intervals cache.
 """
 
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 from collections import defaultdict
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import sqlite3
 import sys
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ruff: noqa: T201, E402
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from custom_components.area_occupancy.const import ADJACENCY_TRAJECTORY_WINDOW_S
 from custom_components.area_occupancy.db.schema import (
@@ -63,203 +42,208 @@ from homeassistant.util import dt as dt_util
 
 
 class _DbStub:
-    """The minimal surface ``load_adjacency_snapshot`` reads.
-
-    A real ``AreaOccupancyDB`` needs a live coordinator; the loader only
-    touches ``get_session()`` and the two adjacency models.
-    """
+    """Provide the session and models used by the production snapshot loader."""
 
     AreaTransitions = AreaTransitions
     AreaRelationships = AreaRelationships
 
-    def __init__(self, db_path: Path) -> None:
-        self._engine = create_engine(f"sqlite:///file:{db_path}?mode=ro&uri=true")
+    def __init__(self, database_uri: str) -> None:
+        self._engine = create_engine(
+            "sqlite://", creator=lambda: sqlite3.connect(database_uri, uri=True)
+        )
         self._session_factory = sessionmaker(bind=self._engine)
 
     @contextmanager
-    def get_session(self):
-        session = self._session_factory()
-        try:
+    def get_session(self) -> Iterator[Session]:
+        with self._session_factory() as session:
             yield session
-        finally:
-            session.close()
+
+    def close(self) -> None:
+        """Release the database connections used for the snapshot."""
+        self._engine.dispose()
 
 
 def _parse_dt(value: str) -> datetime:
     dt = datetime.fromisoformat(value)
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
+def _entry_id(connection: sqlite3.Connection) -> str:
+    """Reject multi-entry copies instead of choosing an arbitrary entry."""
+    rows = connection.execute("SELECT DISTINCT entry_id FROM areas LIMIT 2").fetchall()
+    if len(rows) != 1 or not rows[0][0]:
+        msg = "Expected exactly one entry_id in the areas table."
+        raise ValueError(msg)
+    return str(rows[0][0])
 
 
 def _load_occupancy_events(
-    db: _DbStub, cutoff: datetime
-) -> list[tuple[str, datetime, datetime]]:
-    """Return (area, start, end) spans from the occupied-intervals cache."""
-    with db.get_session() as session:
-        rows = session.execute(
-            text(
-                "SELECT area_name, start_time, end_time FROM occupied_intervals_cache "
-                "WHERE end_time >= :cutoff ORDER BY start_time"
-            ),
-            {"cutoff": cutoff.replace(tzinfo=None).isoformat(sep=" ")},
-        ).fetchall()
-    return [(area, _parse_dt(s), _parse_dt(e)) for area, s, e in rows]
+    connection: sqlite3.Connection,
+    entry_id: str,
+    cutoff: datetime,
+    until: datetime,
+) -> tuple[list[tuple[datetime, str]], list[tuple[datetime, str]]]:
+    """Return in-window starts and exits, including trajectory warm-up exits."""
+    warmup = cutoff - timedelta(seconds=ADJACENCY_TRAJECTORY_WINDOW_S)
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(occupied_intervals_cache)")
+    }
+    sql = "SELECT area_name, start_time, end_time FROM occupied_intervals_cache"
+    if "entry_id" in columns:
+        rows = connection.execute(sql + " WHERE entry_id = ?", (entry_id,))
+    else:
+        # Older caches are keyed by area rather than by configuration entry.
+        rows = connection.execute(
+            sql + " WHERE area_name IN (SELECT area_name FROM areas WHERE entry_id = ?)",
+            (entry_id,),
+        )
 
-
-def _entry_id(db: _DbStub) -> str | None:
-    with db.get_session() as session:
-        row = session.execute(text("SELECT DISTINCT entry_id FROM areas")).fetchone()
-    return row[0] if row else None
+    entries: list[tuple[datetime, str]] = []
+    ends: list[tuple[datetime, str]] = []
+    # Compare parsed UTC timestamps, not potentially mixed SQLite text formats.
+    for area, start_raw, end_raw in rows:
+        start, end = _parse_dt(start_raw), _parse_dt(end_raw)
+        if start >= end:
+            continue
+        if cutoff <= start <= until:
+            entries.append((start, area))
+        if warmup <= end <= until:
+            ends.append((end, area))
+    return sorted(entries), sorted(ends)
 
 
 def _trajectory_before(
     entry_time: datetime,
     target_area: str,
     ends: list[tuple[datetime, str]],
-) -> tuple[str | None, str | None]:
-    """Return (prev, prev_prev) mirroring TrajectoryTracker semantics."""
+    end_times: list[datetime],
+) -> tuple[str | None, str | None, datetime | None]:
+    """Return the two most recent distinct other areas and the latest exit."""
     window_start = entry_time - timedelta(seconds=ADJACENCY_TRAJECTORY_WINDOW_S)
-    recent = [
-        area
-        for end, area in reversed(ends)
-        if window_start <= end <= entry_time and area != target_area
-    ]
-    deduped: list[str] = []
-    for area in recent:
-        if area not in deduped:
-            deduped.append(area)
-        if len(deduped) == 2:
+    index = bisect_right(end_times, entry_time) - 1
+    prev: str | None = None
+    prev_end: datetime | None = None
+    while index >= 0:
+        end, area = ends[index]
+        if end < window_start:
             break
-    prev = deduped[0] if deduped else None
-    prev_prev = deduped[1] if len(deduped) > 1 else None
-    return prev, prev_prev
+        if area != target_area:
+            if prev is None:
+                prev, prev_end = area, end
+            elif area != prev:
+                return prev, area, prev_end
+        index -= 1
+    return prev, None, prev_end
 
 
 def main() -> int:
-    """Replay entry events and score next-area predictions."""
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    """Replay entry events and score next-area rankings."""
+    parser = argparse.ArgumentParser(
+        description="Replay historical occupancy entries."
+    )
     parser.add_argument(
         "--db-path",
-        default="config/.storage/area_occupancy.db",
+        type=Path,
+        default=Path("config/.storage/area_occupancy.db"),
         help="Path to a COPY of area_occupancy.db (never the live file)",
     )
     parser.add_argument("--days", type=int, default=30)
-    parser.add_argument(
-        "--time-zone",
-        required=True,
-        help=(
-            "The source install's IANA time zone, e.g. Europe/London. "
-            "Transitions were learned in local hour_of_week buckets."
-        ),
-    )
+    parser.add_argument("--time-zone", required=True, help="Source IANA time zone")
     args = parser.parse_args()
-    # to_local() uses Home Assistant's default zone, which is UTC outside a
-    # running instance; every bucket would be off by the install's offset.
-    dt_util.set_default_time_zone(ZoneInfo(args.time_zone))
-
-    db_path = Path(args.db_path)
-    if not db_path.exists():
-        print(f"Database not found: {db_path}", file=sys.stderr)
+    if args.days <= 0:
+        parser.error("--days must be positive")
+    try:
+        dt_util.set_default_time_zone(ZoneInfo(args.time_zone))
+    except (ValueError, ZoneInfoNotFoundError):
+        parser.error(f"Invalid IANA time zone: {args.time_zone}")
+    if not args.db_path.is_file():
+        print(f"Database file not found: {args.db_path}", file=sys.stderr)
+        return 1
+    database_uri = args.db_path.resolve().as_uri() + "?mode=ro"
+    until = datetime.now(tz=UTC)
+    try:
+        cutoff = until - timedelta(days=args.days)
+        with closing(sqlite3.connect(database_uri, uri=True)) as connection:
+            entry_id = _entry_id(connection)
+            entries, ends = _load_occupancy_events(connection, entry_id, cutoff, until)
+    except (sqlite3.Error, TypeError, ValueError, OverflowError) as exc:
+        print(f"Could not read occupancy history: {exc}", file=sys.stderr)
+        return 1
+    if not entries:
+        print("No cached entry events in the evaluation window.", file=sys.stderr)
         return 1
 
-    db = _DbStub(db_path)
-    entry_id = _entry_id(db)
-    if entry_id is None:
-        print("No areas table / entry_id found", file=sys.stderr)
-        return 1
-
-    snapshot = load_adjacency_snapshot(db, entry_id)
+    with closing(_DbStub(database_uri)) as db:
+        snapshot = load_adjacency_snapshot(db, entry_id)
     if snapshot is None:
-        print("Failed to load the adjacency snapshot", file=sys.stderr)
+        print("Failed to load the adjacency snapshot.", file=sys.stderr)
         return 1
 
-    cutoff = datetime.now(tz=UTC) - timedelta(days=args.days)
-    spans = _load_occupancy_events(db, cutoff)
-    if not spans:
-        print(
-            "occupied_intervals_cache is empty for the window — run "
-            "run_analysis on the source install before copying the DB.",
-            file=sys.stderr,
-        )
-        return 1
-
-    ends = sorted((end, area) for area, _start, end in spans)
-
-    total = 0
-    with_trajectory = 0
-    top1 = 0
-    top2 = 0
-    by_level: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # level -> [hits, n]
+    end_times = [end for end, _ in ends]
+    with_trajectory = predicted = top1 = top2 = 0
+    by_level: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     by_area: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     gaps: list[float] = []
 
-    for area, start, _end in spans:
-        total += 1
-        prev, prev_prev = _trajectory_before(start, area, ends)
-        if prev is None:
+    for area, start in entries:
+        prev, prev_prev, prev_end = _trajectory_before(start, area, ends, end_times)
+        if prev is None or prev_end is None:
             continue
         with_trajectory += 1
-
-        # Gap from the trajectory's most recent exit to this entry.
-        window_start = start - timedelta(seconds=ADJACENCY_TRAJECTORY_WINDOW_S)
-        prev_end = max(
-            (end for end, a in ends if a == prev and window_start <= end <= start),
-            default=None,
-        )
-        if prev_end is not None:
-            gaps.append((start - prev_end).total_seconds())
-
         local = to_local(start)
-        hour_of_week = local.weekday() * 24 + local.hour
-        # Same chain mapping as the live boost (data/adjacency.py): rows
-        # store W -> X -> Y as from_area=W, mid_area=X, so a 2-hop trajectory
-        # prev_prev -> prev -> area asks from=prev_prev, mid=prev, and a
-        # 1-hop one asks from=prev, mid="".
-        if prev_prev is not None:
-            from_area, mid_area = prev_prev, prev
-        else:
-            from_area, mid_area = prev, ""
-        # A 2-hop miss falls back to the 1-hop chain prev → ? inside the walk
-        # itself (levels 4-5 key on mid_area), so no retry is needed here.
         dist = snapshot.lookup_distribution(
-            from_area=from_area, mid_area=mid_area, hour_of_week=hour_of_week
+            from_area=prev if prev_prev is None else prev_prev,
+            mid_area="" if prev_prev is None else prev,
+            hour_of_week=local.weekday() * 24 + local.hour,
         )
-
         ranked = sorted(
             dist.probabilities.items(), key=lambda item: item[1], reverse=True
         )
-        predictions = [dest for dest, _p in ranked[:2]]
-        hit1 = bool(predictions) and predictions[0] == area
-        hit2 = area in predictions
+        if not ranked:
+            continue
+        predicted += 1
+        gaps.append((start - prev_end).total_seconds())
+        hit1 = int(ranked[0][0] == area)
         top1 += hit1
-        top2 += hit2
+        top2 += int(any(dest == area for dest, _ in ranked[:2]))
         by_level[dist.level][0] += hit1
         by_level[dist.level][1] += 1
         by_area[area][0] += hit1
         by_area[area][1] += 1
 
-    print(f"Entry events: {total}; with usable trajectory: {with_trajectory}")
-    if not with_trajectory:
-        print("Nothing predictable — no trajectories within the window.")
-        return 0
+    total = len(entries)
+    print("Exploratory replay: transition counts may include evaluation events.")
+    print(f"Entry events: {total}")
     print(
-        f"Top-1 accuracy: {top1 / with_trajectory:.3f}  "
-        f"Top-2 accuracy: {top2 / with_trajectory:.3f}  "
-        f"(recall base: {with_trajectory / total:.3f} of entries had a trajectory)"
+        f"Trajectory coverage: {with_trajectory}/{total} = "
+        f"{with_trajectory / total:.3f}"
     )
-    print("\nBy fallback level:")
-    for level, (hits, n) in sorted(by_level.items()):
-        print(f"  {level}: {hits}/{n} = {hits / n:.3f}")
-    print("\nBy target area (top-1):")
-    for area, (hits, n) in sorted(by_area.items()):
-        print(f"  {area}: {hits}/{n} = {hits / n:.3f}")
-    if gaps:
-        gaps.sort()
-        pct = lambda p: gaps[min(len(gaps) - 1, int(p * len(gaps)))]  # noqa: E731
-        print(
-            f"\nExit->entry gap seconds (what a 'within N minutes' horizon "
-            f"could promise): p50={pct(0.5):.0f} p90={pct(0.9):.0f} "
-            f"p99={pct(0.99):.0f}"
-        )
+    print(f"Prediction coverage: {predicted}/{total} = {predicted / total:.3f}")
+    if not predicted:
+        print("No predictions returned. Accuracy is undefined.")
+        return 0
+    print(f"Top-1 accuracy on predictions: {top1}/{predicted} = {top1 / predicted:.3f}")
+    print(f"Top-2 hit rate on predictions: {top2}/{predicted} = {top2 / predicted:.3f}")
+    print(
+        f"Correct top-1 predictions across all entries: {top1}/{total} = "
+        f"{top1 / total:.3f}"
+    )
+    for label, scores in (("fallback level", by_level), ("target area", by_area)):
+        print(f"\nBy {label} (top-1, predictions only):")
+        for key, (hits, count) in sorted(scores.items()):
+            print(f"  {key}: {hits}/{count} = {hits / count:.3f}")
+
+    gaps.sort()
+    # Preserve the previous empirical percentile convention.
+    percentiles = (
+        gaps[min(len(gaps) - 1, int(p * len(gaps)))] for p in (0.5, 0.9, 0.99)
+    )
+    p50, p90, p99 = percentiles
+    print(
+        f"\nObserved exit-to-entry gaps (seconds): "
+        f"p50={p50:.0f} p90={p90:.0f} p99={p99:.0f}"
+    )
     return 0
 
 
