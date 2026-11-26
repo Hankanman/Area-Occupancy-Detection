@@ -1,7 +1,13 @@
-language: en-US
+language: en-GB
 
 reviews:
   profile: chill
+  auto_review:
+    # Feature PRs target `next`; the default branch (`main`) is always reviewed.
+    base_branches:
+      - next
+  path_filters:
+    - "!uv.lock"
   path_instructions:
     - path: "**/*.py"
       instructions: |
@@ -76,7 +82,16 @@ reviews:
         Helper classes and functions used throughout the codebase, following
         the pattern of one module per concern (config, entity, entity_type,
         prior, decay, purpose, analysis, adjacency, trajectory, metrics,
-        online_prior). Should not import from area/ or coordinator.py.
+        online_prior, activity, door_hold, health, ground_truth and the
+        shadow-mode modules). Should not import from area/ or coordinator.py.
+
+    - path: "custom_components/area_occupancy/{utils,data/prior,data/decay,data/entity,data/activity,data/adjacency,db/correlation}.py"
+      instructions: |
+        Probability maths. A change to a prior, likelihood, decay or boost
+        must state the expected numbers in the PR description, worked by
+        hand or with the simulator, before tests. Flag a math change that
+        has none, and flag a test whose expected value was copied from the
+        new output rather than derived independently.
 
     - path: "custom_components/area_occupancy/coordinator.py"
       instructions: |
