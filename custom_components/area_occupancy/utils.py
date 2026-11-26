@@ -21,12 +21,20 @@ from .const import (
     ROUNDING_PRECISION,
 )
 
-_LOGGER = logging.getLogger(__name__)
-
-
 if TYPE_CHECKING:
     from .coordinator import AreaOccupancyCoordinator
     from .data.entity import Entity
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _get_device_identifiers(
+    device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any] | None,
+) -> set[tuple[str, str]] | None:
+    """Read identifiers from a device info mapping."""
+    if device_info is None:
+        return None
+    return device_info.get("identifiers")
 
 
 def assign_device_to_ha_area(
@@ -35,121 +43,91 @@ def assign_device_to_ha_area(
     area_id: str | None,
     config_entry_id: str,
 ) -> None:
-    """Assign an entity's device to its configured Home Assistant area.
-
-    Shared by the sensor, binary_sensor, and number platforms in
-    ``async_added_to_hass``. No-op when the area has no ``area_id``
-    configured or the device isn't registered yet.
-
-    The lookup is scoped to ``config_entry_id`` because device identifiers
-    are only unique per config entry since HA 2026.9 (the unscoped
-    ``async_get_device`` is deprecated).
-    """
-    if not area_id or not device_info:
+    """Assign a registered device to its configured Home Assistant area."""
+    if not area_id or device_info is None:
         return
-    identifier = next(iter(device_info.get("identifiers", set())), None)
-    if identifier is None:
+    identifiers = device_info.get("identifiers")
+    if not identifiers:
         return
-    device_registry = dr.async_get(hass)
-    device = device_registry.async_get_device_by_identifier(identifier, config_entry_id)
-    if device and device.area_id != area_id:
-        device_registry.async_update_device(device.id, area_id=area_id)
+
+    registry = dr.async_get(hass)
+    is_child = "parent_device_id" in device_info
+    lookup = (
+        registry.async_get_child_device_by_identifier
+        if is_child
+        else registry.async_get_device_by_identifier
+    )
+    matched_device: dr.DeviceEntry | dr.ChildDeviceEntry | None = None
+    for identifier in identifiers:
+        device = lookup(identifier, config_entry_id)
+        if device is None:
+            continue
+        if matched_device is not None and device.id != matched_device.id:
+            _LOGGER.warning(
+                "Device identifiers match multiple devices in config entry %s; "
+                "skipping area assignment",
+                config_entry_id,
+            )
+            return
+        matched_device = device
+
+    if matched_device is None or matched_device.area_id == area_id:
+        return
+    if is_child:
+        _ = registry.async_update_child_device(matched_device.id, area_id=area_id)
+    else:
+        _ = registry.async_update_device(matched_device.id, area_id=area_id)
 
 
 def format_float(value: float, precision: int = ROUNDING_PRECISION) -> float:
-    """Format float value."""
+    """Round a numeric value to the requested decimal precision."""
     return round(float(value), precision)
 
 
 def format_percentage(value: float) -> str:
-    """Format float value as percentage."""
+    """Format a fraction as a percentage with two decimal places."""
     return f"{value * 100:.2f}%"
 
 
 def is_valid_number(value: float) -> bool:
-    """Check if value is a valid finite number (not NaN or infinity).
-
-    Args:
-        value: Value to check
-
-    Returns:
-        True if value is finite and not NaN, False otherwise
-    """
-    return not (math.isnan(value) or math.isinf(value))
+    """Return whether the value is finite."""
+    return math.isfinite(value)
 
 
 def clamp_probability(
     value: float, min_val: float | None = None, max_val: float | None = None
 ) -> float:
-    """Clamp probability value to valid range.
+    """Clamp a probability to the default or caller-supplied bounds.
 
-    Args:
-        value: Probability value to clamp
-        min_val: Minimum value (default: MIN_PROBABILITY from const)
-        max_val: Maximum value (default: MAX_PROBABILITY from const)
-
-    Returns:
-        Clamped probability value (always a valid finite number)
+    Custom bounds are expected to be finite and ordered. Preserve the existing
+    NaN fallback to the upper bound.
     """
-    # Handle NaN and infinity values explicitly
-    if not is_valid_number(value):
-        if math.isinf(value):
-            if value > 0:
-                # Positive infinity -> clamp to MAX_PROBABILITY
-                return max_val if max_val is not None else MAX_PROBABILITY
-            # Negative infinity -> clamp to MIN_PROBABILITY
-            return min_val if min_val is not None else MIN_PROBABILITY
-        # NaN -> clamp to MAX_PROBABILITY (matching existing test behavior)
+    min_bound = MIN_PROBABILITY if min_val is None else min_val
+    max_bound = MAX_PROBABILITY if max_val is None else max_val
+    if math.isnan(value):
         _LOGGER.warning(
-            "clamp_probability received invalid value (NaN): %s, using MAX_PROBABILITY",
-            value,
+            "clamp_probability received NaN; using upper bound %s", max_bound
         )
-        return max_val if max_val is not None else MAX_PROBABILITY
-
-    min_bound = min_val if min_val is not None else MIN_PROBABILITY
-    max_bound = max_val if max_val is not None else MAX_PROBABILITY
+        return max_bound
+    if value == math.inf:
+        return max_bound
+    if value == -math.inf:
+        return min_bound
     return max(min_bound, min(max_bound, value))
 
 
 def map_binary_state_to_semantic(state: str, active_states: list[str]) -> str:
-    """Map binary sensor state ('on'/'off') to semantic state ('open'/'closed') if needed.
-
-    Home Assistant binary sensors always report 'on'/'off', but some configs use
-    semantic states like 'open'/'closed'. This function maps between them.
-
-    Args:
-        state: The actual state from the sensor ('on' or 'off')
-        active_states: List of active states expected by the config
-
-    Returns:
-        The mapped state if mapping is needed, otherwise the original state
-    """
-    # If active_states contains semantic states, map binary states
-    if "closed" in active_states or "open" in active_states:
-        # Map binary states to semantic states
-        # For doors: 'off' means closed, 'on' means open
-        # For windows: 'off' means closed, 'on' means open
-        if state == "off":
-            return "closed"
+    """Map on/off to open/closed when the configuration uses those states."""
+    if "open" in active_states or "closed" in active_states:
         if state == "on":
             return "open"
-    # No mapping needed, return original state
+        if state == "off":
+            return "closed"
     return state
 
 
-# ────────────────────────────────────── Sigmoid Functions ───────────────────────────
-
-
 def sigmoid(z: float) -> float:
-    """Compute sigmoid function with numerical stability.
-
-    Args:
-        z: Input value (log-odds)
-
-    Returns:
-        Probability in range (0, 1)
-    """
-    # Handle edge cases for numerical stability
+    """Convert log-odds to a probability without overflowing exp()."""
     if z >= 0:
         return 1 / (1 + math.exp(-z))
     exp_z = math.exp(z)
@@ -157,34 +135,20 @@ def sigmoid(z: float) -> float:
 
 
 def logit(p: float) -> float:
-    """Compute logit (inverse sigmoid) with bounds protection.
-
-    Args:
-        p: Probability value
-
-    Returns:
-        Log-odds value
-    """
-    p = clamp_probability(p)  # Ensure 0.01-0.99 range
+    """Convert a probability to log-odds after clamping it away from 0 and 1."""
+    p = clamp_probability(p)
     return math.log(p / (1 - p))
 
 
 def evidence_value(entity: Entity) -> float:
-    """Return one entity's 0..1 evidence factor (active / decaying / off).
-
-    Extracted from ``sigmoid_probability``'s loop so the shadow fusion
-    learner (#501, ``data/fusion.py``) builds its training features from
-    the exact factor the live pipeline uses — a copy of this branch in
-    two places is how the two would silently drift. Pure refactor: the
-    live pipeline's behavior is unchanged.
-    """
+    """Return the evidence factor shared by live and shadow fusion."""
     if getattr(entity, "is_stuck", False) is True:
-        return 0.0  # Flagged stuck active: a repair, not evidence
+        return 0.0
     if entity.evidence is True:
         return 1.0
     if entity.decay.is_decaying:
-        return entity.decay_factor  # Gradual fade (0.0 to 1.0)
-    return 0.0  # Inactive = no contribution (not negative!)
+        return entity.decay_factor
+    return 0.0
 
 
 def sigmoid_probability(
@@ -193,116 +157,53 @@ def sigmoid_probability(
     correlations: dict[str, float] | None = None,
     threshold: float | None = None,
 ) -> float:
-    """Calculate occupancy probability using weighted sigmoid model.
+    """Calculate occupancy from a prior and weighted evidence in logit space.
 
-    This replaces Bayesian calculation with logistic regression-style probability:
-    z = bias + Σ(weight_i × evidence_i × correlation_i × strength_factor)
-    P = sigmoid(z)
-
-    For the ground-truth types (motion, sleep) ``strength_factor`` is at least
-    ``logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias``, so one such sensor, fully
-    active at full weight, lifts any prior to at least that probability.
-    Given the area's ``threshold``, it is also at least
-    ``(logit(threshold) - bias) * 2 ** GROUND_TRUTH_HOLD_HALF_LIVES``, so the
-    same sensor keeps the area at or above the threshold for that many
-    half-lives of its decay after it goes quiet; while it fades its strength
-    is exactly that hold, so the area releases then rather than crawling
-    towards a prior close to the threshold.
-
-    Ground-truth channels of one physical device (same ``device_id``) count
-    once, at the strongest of them: they report the same presence, and
-    summing them would double the hold.
-
-    Args:
-        entities: Dict of Entity objects
-        prior: Learned prior probability for this area (0.0-1.0)
-        correlations: Optional dict of entity_id -> correlation strength (0-1)
-                     If None or missing entries, defaults to 1.0
-        threshold: The area's occupancy threshold, for the hold floor.
-                   ``None`` applies only the probability floor.
-
-    Returns:
-        Probability in range MIN_PROBABILITY to MAX_PROBABILITY
+    At configured weight and correlation of 1, an active motion or sleep
+    sensor with positive effective weight can lift the estimate to the active
+    floor. If the threshold is above the prior, use a threshold-based signal
+    during decay so an isolated full-weight sensor holds it for the configured
+    number of decay half-lives. Count only the strongest motion or sleep
+    channel per physical device.
     """
     from .data.entity_type import InputType  # noqa: PLC0415
 
     if not entities:
         return clamp_probability(prior)
 
-    # Start with bias from prior (logit transforms prior to log-odds space)
-    # logit(0.5) = 0, logit(0.7) = 0.85, logit(0.3) = -0.85
     bias = logit(prior)
-
-    # A ground-truth sensor's strength is floored at what it takes to lift
-    # this prior to GROUND_TRUTH_ACTIVE_FLOOR on its own. Without it, motion's
-    # fixed 2.85 cannot overcome a learned prior below ~5.5%.
     ground_truth_floor = logit(GROUND_TRUTH_ACTIVE_FLOOR) - bias
     hold: float | None = None
     if threshold is not None:
-        # Decay scales the contribution by 2^-t/half_life, so a signal of
-        # (logit(threshold) - bias) * 2^H is still at the threshold after H
-        # half-lives: the purpose half-life becomes the minimum hold time.
-        hold = (logit(clamp_probability(threshold)) - bias) * (
-            2**GROUND_TRUTH_HOLD_HALF_LIVES
-        )
+        hold = (logit(threshold) - bias) * (2**GROUND_TRUTH_HOLD_HALF_LIVES)
         ground_truth_floor = max(ground_truth_floor, hold)
 
-    # Sum weighted contributions from all entities
     z = bias
-    # Channels of one physical device (a combined PIR and mmWave sensor's
-    # motion and occupancy entities) see the same person. Summed, two of them
-    # doubled the hold and the area released after two half-lives, not one.
-    # Each device's ground-truth channels count once, at their strongest;
-    # a channel with no device counts on its own, as before.
     device_contributions: dict[str, float] = {}
-
     for entity_id, entity in entities.items():
-        if entity.weight <= 0:
+        weight = entity.weight
+        if weight <= 0:
             continue
 
-        # Get correlation multiplier (learned or default)
-        correlation = 1.0
-        if correlations and entity_id in correlations:
-            correlation = correlations[entity_id]
-
-        # Determine evidence contribution
-        # Active = full contribution, Decaying = partial, Inactive = zero
+        correlation = correlations.get(entity_id, 1.0) if correlations else 1.0
         evidence = evidence_value(entity)
+        entity_type = entity.type
+        is_ground_truth = entity_type.input_type in (InputType.MOTION, InputType.SLEEP)
+        effective_weight = getattr(entity, "effective_weight", weight)
+        signal = entity.prob_given_true * getattr(
+            entity_type, "strength_multiplier", 2.0
+        )
 
-        # Scale by sensor type strength (prob_given_true indicates signal strength)
-        # Motion (0.95) contributes more than door (0.2)
-        strength = entity.prob_given_true
-
-        # Use effective_weight (weight × information_gain) so uninformative sensors
-        # contribute less. Falls back to weight if effective_weight is not available.
-        ew = getattr(entity, "effective_weight", entity.weight)
-
-        # Add to z: effective_weight × evidence × correlation × strength_factor.
-        # strength_multiplier is per-type (e.g., 3.0 for motion, 2.0 for others)
-        # to give ground-truth sensors a stronger logit-space contribution.
-        strength_multiplier = getattr(entity.type, "strength_multiplier", 2.0)
-        signal = strength * strength_multiplier
-        if entity.type.input_type in (InputType.MOTION, InputType.SLEEP):
-            # The floor and hold promise their effect at full *configured*
-            # weight. effective_weight also carries information_gain (below
-            # 1 for any p_given_false > 0: 0.79 for a 0.95/0.2 motion
-            # sensor), which would cut a 450 s hold to ~300 s, so divide it
-            # back out; a lower configured weight still scales it down.
-            gain = ew / entity.weight if ew > 0 else 1.0
+        if is_ground_truth:
+            # Undo information-gain attenuation for the floor/hold only.
+            gain = effective_weight / weight if effective_weight > 0 else 1.0
             if hold is not None and hold > 0 and 0.0 < evidence < 1.0:
-                # Fading: exactly the hold, so the area releases after H
-                # half-lives whatever its prior. Fading from motion's fixed
-                # 2.85 instead crawls towards a prior near the threshold: a
-                # 42% bedroom (threshold 50%) took 3.1 half-lives, ~48 min.
                 signal = hold / gain
             else:
                 signal = max(signal, ground_truth_floor / gain)
-        contribution = ew * evidence * correlation * signal
-        device_id = (
-            getattr(entity, "device_id", None)
-            if entity.type.input_type in (InputType.MOTION, InputType.SLEEP)
-            else None
-        )
+
+        contribution = effective_weight * evidence * correlation * signal
+        device_id = getattr(entity, "device_id", None) if is_ground_truth else None
         if isinstance(device_id, str):
             device_contributions[device_id] = max(
                 device_contributions.get(device_id, 0.0), contribution
@@ -320,34 +221,16 @@ def presence_probability(
     correlations: dict[str, float] | None = None,
     threshold: float | None = None,
 ) -> float:
-    """Calculate presence probability from strong binary indicators.
-
-    Filters entities to only include presence-related sensors (motion, media,
-    appliances, doors, windows, covers, power, wifi_clients) and calculates
-    probability using the sigmoid model.
-
-    Args:
-        entities: Dict of Entity objects
-        prior: Learned prior probability for this area
-        correlations: Optional dict of entity_id -> correlation strength
-        threshold: The area's occupancy threshold, for the ground-truth hold
-            floor (see :func:`sigmoid_probability`)
-
-    Returns:
-        Probability in range MIN_PROBABILITY to MAX_PROBABILITY
-    """
+    """Calculate probability from presence sensors, or use a reduced prior."""
     from .data.entity_type import PRESENCE_INPUT_TYPES  # noqa: PLC0415
 
     presence_entities = {
-        eid: e
-        for eid, e in entities.items()
-        if e.type.input_type in PRESENCE_INPUT_TYPES
+        entity_id: entity
+        for entity_id, entity in entities.items()
+        if entity.type.input_type in PRESENCE_INPUT_TYPES
     }
-
     if not presence_entities:
-        # No presence sensors - return reduced prior (uncertain state)
         return clamp_probability(prior * 0.5)
-
     return sigmoid_probability(presence_entities, prior, correlations, threshold)
 
 
@@ -355,83 +238,29 @@ def environmental_confidence(
     entities: dict[str, Entity],
     correlations: dict[str, float] | None = None,
 ) -> float:
-    """Calculate environmental support as 0-1 confidence.
-
-    Uses sigmoid centered at 0.5 (neutral prior) so the result represents
-    how much environmental data supports vs opposes occupancy.
-
-    Args:
-        entities: Dict of Entity objects
-        correlations: Optional dict of entity_id -> correlation strength
-
-    Returns:
-        Confidence value 0.0-1.0 (0.5 = neutral, >0.5 = supports, <0.5 = opposes)
-    """
+    """Calculate environmental support relative to a neutral prior of 0.5."""
     from .data.entity_type import ENVIRONMENTAL_INPUT_TYPES  # noqa: PLC0415
 
     env_entities = {
-        eid: e
-        for eid, e in entities.items()
-        if e.type.input_type in ENVIRONMENTAL_INPUT_TYPES
+        entity_id: entity
+        for entity_id, entity in entities.items()
+        if entity.type.input_type in ENVIRONMENTAL_INPUT_TYPES
     }
-
     if not env_entities:
-        return 0.5  # Neutral - no environmental data
-
-    # Use 0.5 prior so result is purely from environmental evidence
+        return 0.5
     return sigmoid_probability(env_entities, prior=0.5, correlations=correlations)
 
 
-def combined_probability(
-    presence: float,
-    environmental: float,
-) -> float:
-    """Combine presence and environmental as an evidence update in logit space.
-
-    Environmental data adjusts the presence estimate rather than being averaged
-    with it. Averaging pulls the result toward whichever channel is less
-    confident, so a weakly-supportive environmental reading used to *lower* a
-    motion-confirmed probability. Environmental influence stays damped at 20%.
-
-    Direction follows ``environmental``: at 0.5 (neutral) presence passes
-    through unchanged, above 0.5 it is raised, and below 0.5 it is lowered.
-    Within this integration the lowering case does not arise —
-    ``environmental_confidence()`` builds its result from per-entity
-    contributions that are non-negative by construction, so it never returns
-    below 0.5 — but the function itself does not assume that.
-
-    Args:
-        presence: Presence probability (0.0-1.0)
-        environmental: Environmental confidence (0.0-1.0)
-
-    Returns:
-        Combined probability in range MIN_PROBABILITY to MAX_PROBABILITY
-    """
-    # Convert to logit space for principled combination
+def combined_probability(presence: float, environmental: float) -> float:
+    """Update presence with 20% of the environmental logit contribution."""
     z_presence = logit(presence)
     z_env = logit(environmental)
-
-    # Additive update (environmental damped to 20% of its logit contribution)
-    z_combined = z_presence + 0.2 * z_env
-
-    return clamp_probability(sigmoid(z_combined))
+    return clamp_probability(sigmoid(z_presence + 0.2 * z_env))
 
 
 def activity_boost_fade(base_probability: float, threshold: float) -> float:
-    """How much of an activity boost applies, from 0.0 to 1.0.
-
-    The boost is zero at the occupancy threshold and reaches full strength
-    ``ACTIVITY_BOOST_FADE_LOGIT`` logits above it. Activity is only detected
-    while the sensor-only probability is at or above the threshold, so a boost
-    that stayed at full strength right down to it was removed in one step as
-    the probability crossed, which looked like a sudden drop.
-
-    Never changes whether an area is occupied: below the threshold there is no
-    boost, and above it the boosted probability is still above it.
-    """
-    headroom = logit(clamp_probability(base_probability)) - logit(
-        clamp_probability(threshold)
-    )
+    """Ramp the boost from zero at the threshold to full strength above it."""
+    headroom = logit(base_probability) - logit(threshold)
     return max(0.0, min(1.0, headroom / ACTIVITY_BOOST_FADE_LOGIT))
 
 
@@ -440,21 +269,7 @@ def apply_activity_boost(
     activity_boost: float,
     activity_confidence: float,
 ) -> float:
-    """Apply an activity-based occupancy boost in logit space.
-
-    When a strong activity is detected (e.g. watching TV, showering), the
-    combination of signals is a stronger occupancy indicator than any single
-    sensor. This function boosts the base probability proportionally to the
-    activity's strength and confidence.
-
-    Args:
-        base_probability: Sensor-only probability (0.0-1.0).
-        activity_boost: Logit-space boost magnitude from the activity definition.
-        activity_confidence: Activity detection confidence (0.0-1.0).
-
-    Returns:
-        Boosted probability in range MIN_PROBABILITY to MAX_PROBABILITY.
-    """
+    """Apply a confidence-weighted activity boost in logit space."""
     effective_boost = activity_boost * activity_confidence
     if effective_boost <= 0:
         return clamp_probability(base_probability)
@@ -465,100 +280,43 @@ def apply_activity_boost(
 def combine_priors(
     area_prior: float, time_prior: float, time_weight: float = 0.4
 ) -> float:
-    """Combine area prior and time prior using weighted averaging in logit space.
-
-    Args:
-        area_prior: Base prior probability of occupancy for this area
-        time_prior: Time-based modifier for the prior
-        time_weight: Weight given to time_prior (0.0 to 1.0, default: 0.4)
-
-    Returns:
-        float: Combined prior probability
-
-    """
-    # Handle edge cases first
+    """Interpolate between area and time priors in logit space."""
     if time_weight == 0.0:
-        # No time influence, return area_prior
         return clamp_probability(area_prior)
-
     if time_weight == 1.0:
-        # Full time influence, return time_prior (with clamping)
         return clamp_probability(time_prior)
 
-    if time_prior == 0.0:
-        # Time slot has never been occupied - this is strong evidence
-        # Use a very small probability but not zero
-        time_prior = MIN_PROBABILITY
-    elif time_prior == 1.0:
-        # Time slot has always been occupied - this is strong evidence
-        time_prior = MAX_PROBABILITY
-
-    # Handle area_prior edge cases
+    # Normalize exact endpoints before testing for nearly identical priors.
     if area_prior == 0.0:
-        # Area has never been occupied - this is strong evidence
         area_prior = MIN_PROBABILITY
     elif area_prior == 1.0:
-        # Area has always been occupied - this is strong evidence
         area_prior = MAX_PROBABILITY
+    if time_prior == 0.0:
+        time_prior = MIN_PROBABILITY
+    elif time_prior == 1.0:
+        time_prior = MAX_PROBABILITY
 
-    # Handle identical priors case
     if abs(area_prior - time_prior) < 1e-10:
-        # Priors are essentially identical, return the common value (clamped)
         return clamp_probability(area_prior)
 
-    # Clamp inputs to valid ranges to prevent division by zero in logit conversion
-    # prob_to_logit(p) = log(p / (1 - p)) requires p ∈ (0, 1)
-    area_prior = clamp_probability(area_prior)
-    time_prior = clamp_probability(time_prior)
     time_weight = max(0.0, min(1.0, time_weight))
-
-    area_weight = 1.0 - time_weight
-
-    # Interpolate in logit space for more principled combination
     area_logit = logit(area_prior)
     time_logit = logit(time_prior)
-
-    # Weighted combination in logit space
-    combined_logit = area_weight * area_logit + time_weight * time_logit
-    combined_prior = sigmoid(combined_logit)
-
-    return clamp_probability(combined_prior)
-
-
-# ────────────────────────────────────── Coordinator Utilities ───────────────────────────
+    combined_logit = (1.0 - time_weight) * area_logit + time_weight * time_logit
+    return clamp_probability(sigmoid(combined_logit))
 
 
 def format_area_names(coordinator: AreaOccupancyCoordinator) -> str:
-    """Format area names as a comma-separated string.
-
-    Args:
-        coordinator: The coordinator instance containing areas
-
-    Returns:
-        Comma-separated string of area names, or "no areas" if empty
-    """
+    """Format the names, falling back while the coordinator is unavailable."""
     try:
-        if not hasattr(coordinator, "get_area_names"):
-            return "no areas"
         area_names = coordinator.get_area_names()
         return ", ".join(area_names) if area_names else "no areas"
     except Exception:  # noqa: BLE001
-        # Handle case where coordinator isn't fully initialized or get_area_names fails
         return "no areas"
 
 
 def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
-    """Get global coordinator from hass.data with error handling.
-
-    Args:
-        hass: Home Assistant instance
-
-    Returns:
-        AreaOccupancyCoordinator instance
-
-    Raises:
-        HomeAssistantError: If coordinator not found
-    """
+    """Return the global coordinator or raise if it has not been configured."""
     coordinator = hass.data.get(DOMAIN)
     if coordinator is None:
         raise HomeAssistantError(
@@ -570,24 +328,16 @@ def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
 def extract_device_identifier_from_device_info(
     device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any],
 ) -> str | None:
-    """Extract device identifier from DeviceInfo identifiers.
-
-    Args:
-        device_info: DeviceInfo object containing identifiers
-
-    Returns:
-        Device identifier string (second element of tuple) or None if not found
-    """
-    identifiers = device_info.get("identifiers")
+    """Extract the first identifier without changing legacy unique-ID selection."""
+    identifiers = _get_device_identifiers(device_info)
     if not identifiers:
         return None
-    # Identifiers is a set of tuples like {(DOMAIN, device_identifier)}
     try:
-        identifier_tuple = next(iter(identifiers))
-        if isinstance(identifier_tuple, tuple) and len(identifier_tuple) >= 2:
-            return str(identifier_tuple[1])
-    except (StopIteration, TypeError):
-        pass
+        identifier = next(iter(identifiers), None)
+    except TypeError:
+        return None
+    if isinstance(identifier, tuple) and len(identifier) >= 2:
+        return str(identifier[1])
     return None
 
 
@@ -596,20 +346,13 @@ def generate_entity_unique_id(
     device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any] | None,
     entity_name: str,
 ) -> str:
-    """Generate consistent unique_id for platform entities.
-
-    Args:
-        entry_id: Config entry identifier associated with the entity.
-        device_info: DeviceInfo for the parent device (may be None).
-        entity_name: Entity name constant (will be normalized).
-
-    Returns:
-        Unique ID in format: {entry_id}_{device_id}_{normalized_entity_name}
-    """
-    device_id = extract_device_identifier_from_device_info(device_info or {})
+    """Generate the existing platform unique-ID format."""
+    device_id = (
+        extract_device_identifier_from_device_info(device_info)
+        if device_info is not None
+        else None
+    )
     if device_id is None:
         device_id = entry_id
-
     normalized_name = entity_name.lower().replace(" ", "_")
-
     return f"{entry_id}_{device_id}_{normalized_name}"
