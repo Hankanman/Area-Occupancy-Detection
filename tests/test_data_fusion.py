@@ -179,6 +179,7 @@ class TestSnapshot:
             "learned_weight": 0.4,
             "effective_weight": 0.5,
             "samples": 0,
+            "reliable": False,
         }
 
 
@@ -464,10 +465,14 @@ class TestScore:
         restored = FusionLearner(FusionState.from_dict(learner.state.to_dict()))
         assert restored.calibration() == learner.calibration()
 
-    def test_malformed_scores_fall_back_to_empty(self) -> None:
+    def test_malformed_scores_are_dropped_without_losing_valid_state(self) -> None:
         data = _past_gate().state.to_dict()
         data["score_days"] = {"2026-09-26": {"live": {"bin_weight": [1.0]}}}
-        assert FusionState.from_dict(data) == FusionState()
+        restored = FusionState.from_dict(data)
+
+        assert restored.weights == {"binary_sensor.door": 0.99}
+        assert restored.samples == FUSION_MIN_SAMPLES
+        assert restored.score_days == {}
 
     async def test_tick_records_live_probability_and_fixed_logit(
         self, coordinator: AreaOccupancyCoordinator
