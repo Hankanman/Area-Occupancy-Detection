@@ -85,7 +85,7 @@ reviews:
         online_prior, activity, door_hold, health, ground_truth and the
         shadow-mode modules). Should not import from area/ or coordinator.py.
 
-    - path: "custom_components/area_occupancy/{utils,data/prior,data/decay,data/entity,data/activity,data/adjacency,db/correlation}.py"
+    - path: "custom_components/area_occupancy/{utils,area/area,area/all_areas,data/prior,data/decay,data/entity,data/activity,data/adjacency,db/correlation}.py"
       instructions: |
         Probability maths. A change to a prior, likelihood, decay or boost
         must state the expected numbers in the PR description, worked by
