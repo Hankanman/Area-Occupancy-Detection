@@ -31,14 +31,10 @@ _LOGGER = logging.getLogger(__name__)
 def _get_device_identifiers(
     device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any] | None,
 ) -> set[tuple[str, str]] | None:
-    """Read identifiers from legacy dictionaries or device info dataclasses."""
+    """Read identifiers from a device info mapping."""
     if device_info is None:
         return None
-    if isinstance(device_info, dict):
-        return device_info.get("identifiers")
-    identifiers = device_info.identifiers
-    # An unset dataclass field holds Home Assistant's UNDEFINED sentinel.
-    return identifiers if isinstance(identifiers, set) else None
+    return device_info.get("identifiers")
 
 
 def assign_device_to_ha_area(
@@ -48,15 +44,14 @@ def assign_device_to_ha_area(
     config_entry_id: str,
 ) -> None:
     """Assign a registered device to its configured Home Assistant area."""
-    if not area_id or not (identifiers := _get_device_identifiers(device_info)):
+    if not area_id or device_info is None:
+        return
+    identifiers = device_info.get("identifiers")
+    if not identifiers:
         return
 
     registry = dr.async_get(hass)
-    is_child = (
-        "parent_device_id" in device_info
-        if isinstance(device_info, dict)
-        else isinstance(device_info, ChildDeviceInfo)
-    )
+    is_child = "parent_device_id" in device_info
     lookup = (
         registry.async_get_child_device_by_identifier
         if is_child
@@ -79,9 +74,9 @@ def assign_device_to_ha_area(
     if matched_device is None or matched_device.area_id == area_id:
         return
     if is_child:
-        registry.async_update_child_device(matched_device.id, area_id=area_id)
+        _ = registry.async_update_child_device(matched_device.id, area_id=area_id)
     else:
-        registry.async_update_device(matched_device.id, area_id=area_id)
+        _ = registry.async_update_device(matched_device.id, area_id=area_id)
 
 
 def format_float(value: float, precision: int = ROUNDING_PRECISION) -> float:
