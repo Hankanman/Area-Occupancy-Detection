@@ -1,14 +1,53 @@
 #!/usr/bin/env python3
-"""Replay historical occupancy entries and report next-area accuracy.
+"""Replay historical occupancy events to evaluate next-area predictions (#502).
 
-Uses the integration's real adjacency fallback and a read-only database copy.
-The saved transition counts may include the replayed events, so this is an
-exploratory report, not a held-out evaluation or a deployment gate (#502).
+This script reads a copy of the Home Assistant area_occupancy database and
+checks whether the integration's saved transition model would have ranked
+the area that was actually entered among its most likely destinations.
+It uses the production adjacency fallback rather than reimplementing it.
 
 Usage:
-    python scripts/evaluate_prediction.py --time-zone ZONE [options]
+    python scripts/evaluate_prediction.py --time-zone Europe/Berlin \
+        --db-path /path/to/area_occupancy.db --days 30
 
-The database copy needs learned transitions and a populated intervals cache.
+The database copy must contain exactly one configuration entry in the areas
+table, a populated occupied_intervals_cache, and learned adjacency data.
+Run the integration's analysis before copying the database if the cache
+needs to be populated. Use a copy, not the live database. Set --time-zone
+to the source installation's IANA time zone so the replay queries the
+same local hour-of-week buckets used to learn the transitions.
+
+Replay method:
+    Only occupancy intervals that start inside the evaluation window
+    count as entry events. Earlier exits are retained as context if
+    they fall within one trajectory window before the cutoff.
+
+    For each entry, the script looks backward for up to two distinct
+    areas whose occupancy ended within the trajectory window. It skips
+    prior occupancy of the target area. It then queries the production
+    adjacency snapshot using that trajectory and the entry's local
+    hour-of-week bucket, and ranks the returned destinations.
+
+Reading the report:
+    Trajectory coverage is the share of all evaluated entries with
+    usable prior trajectory context. Prediction coverage is the share
+    for which the lookup actually returns at least one destination.
+
+    Top-1 accuracy and the top-2 hit rate are calculated only for entries
+    with predictions. The report also shows correct top-1 predictions
+    across all entries, so low prediction coverage is visible even when
+    accuracy on the predicted subset is high.
+
+    Exit-to-entry gap percentiles describe observed gaps for entries
+    with predictions. They do not measure advance warning or validate
+    a claim that an area will be occupied within a given time horizon.
+
+Limitations:
+    This is an exploratory replay, not an independent test or a release
+    gate. The saved transition counts may have been learned from some
+    of the same events being evaluated, which can inflate accuracy.
+    To assess live predictive performance, train on an earlier period
+    and score on a separate, later period without using future events.
 """
 
 from __future__ import annotations
