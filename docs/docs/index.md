@@ -171,3 +171,4 @@ This integration provides enhanced room occupancy detection for Home Assistant b
 - **GitHub Issues**: [Report bugs and request features](https://github.com/Hankanman/Area-Occupancy-Detection/issues)
 - **Community Discussion**: [Ask questions and share experiences](https://github.com/Hankanman/Area-Occupancy-Detection/discussions)
 - **GitHub Releases**: [Check for updates and changelog](https://github.com/Hankanman/Area-Occupancy-Detection/releases)
+- **Roadmap**: [See what's planned for each release](https://github.com/users/Hankanman/projects/5)
