@@ -88,7 +88,12 @@ from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, AccuracyTally, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
-from .data.sojourn import SojournShadow, SojournState
+from .data.sojourn import (
+    SOJOURN_START_MIN_THRESHOLD_FRAC,
+    SojournShadow,
+    SojournState,
+    sojourn_context,
+)
 from .data.trajectory import TrajectoryTracker
 from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
@@ -967,7 +972,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             adjacency=self._adjacency_snapshot.adjacency_index,
         )
         self._observe_continuity(area_name, area, now, is_occupied)
-        self._observe_sojourn(area_name, area, now, is_occupied)
+        self._observe_sojourn(area_name, area, now, probability, is_occupied)
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
@@ -1281,7 +1286,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     def _observe_sojourn(
-        self, area_name: str, area: Area, now: datetime, is_occupied: bool
+        self,
+        area_name: str,
+        area: Area,
+        now: datetime,
+        probability: float,
+        is_occupied: bool,
     ) -> None:
         """Record one tick of the sojourn-time survival shadow.
 
@@ -1307,13 +1317,25 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ),
             default=float(area.config.decay.half_life),
         )
+        # Episodes may start on a near-threshold probability too: the
+        # binary decision gives up before the person actually leaves,
+        # and those borderline silences are exactly what the learned
+        # curve exists to measure.
+        room_held = is_occupied or probability >= (
+            area.threshold() * SOJOURN_START_MIN_THRESHOLD_FRAC
+        )
         self._sojourn.setdefault(area_name, SojournShadow()).observe(
             now,
+            room_held=room_held,
             present=present,
-            occupied=is_occupied,
             doors_open=doors_open,
             neighbours=neighbour_labels,
             half_life_seconds=half_life,
+            context=sojourn_context(
+                now,
+                self.integration_config.sleep_start,
+                self.integration_config.sleep_end,
+            ),
         )
 
     def sojourn_for(self, area_name: str) -> SojournShadow | None:
