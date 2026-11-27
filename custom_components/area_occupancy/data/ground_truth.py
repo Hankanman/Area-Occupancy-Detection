@@ -1,4 +1,4 @@
-"""What counts as "occupied" when learning: the ground-truth rule. 
+"""What counts as "occupied" when learning: the ground-truth rule.
 
 Every learner (priors, likelihoods, transitions, the shadow metrics) is
 trained against the same definition: an area is occupied while one of its

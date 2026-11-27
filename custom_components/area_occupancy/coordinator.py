@@ -58,6 +58,8 @@ from .const import (
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     SAVE_INTERVAL,
+    SOJOURN_STORE_KEY_PREFIX,
+    SOJOURN_STORE_VERSION,
     TRANSITION_SHADOW_STORE_KEY_PREFIX,
     TRANSITION_SHADOW_STORE_VERSION,
 )
@@ -86,6 +88,7 @@ from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
 from .data.metrics import AccuracyMetrics, AccuracyTally, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
+from .data.sojourn import SojournShadow, SojournState
 from .data.trajectory import TrajectoryTracker
 from .data.transition_shadow import TransitionShadow, TransitionShadowState
 from .db import AreaOccupancyDB
@@ -345,6 +348,16 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             CONTINUITY_STORE_VERSION,
             f"{CONTINUITY_STORE_KEY_PREFIX}.{self.entry_id}",
+        )
+        # Sojourn-time survival shadow: learns P(still occupied | silent
+        # for s) per area from episode outcomes — the empirical decay
+        # curve the fixed exponential only approximates. Never read by
+        # the probability path.
+        self._sojourn: dict[str, SojournShadow] = {}
+        self._sojourn_store: Store[dict[str, dict[str, Any]]] = Store(
+            hass,
+            SOJOURN_STORE_VERSION,
+            f"{SOJOURN_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Closed-door holds (#558), persisted so a restart keeps a hold.
         self._door_holds: dict[str, DoorHold] = {}
@@ -954,6 +967,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             adjacency=self._adjacency_snapshot.adjacency_index,
         )
         self._observe_continuity(area_name, area, now, is_occupied)
+        self._observe_sojourn(area_name, area, now, is_occupied)
         self._accuracy_ticks.setdefault(
             area_name, deque(maxlen=ACCURACY_TICK_BUFFER_MAXLEN)
         ).append(
@@ -1196,6 +1210,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Restore closed-door holds and the continuity shadow (#558)."""
         stored_holds = await self._door_hold_store.async_load() or {}
         stored_continuity = await self._continuity_store.async_load() or {}
+        stored_sojourn = await self._sojourn_store.async_load() or {}
         for area_name in self.areas:
             if area_name in stored_holds:
                 self._door_holds[area_name] = DoorHold(
@@ -1204,6 +1219,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if area_name in stored_continuity:
                 self._continuity[area_name] = ContinuityShadow(
                     ContinuityState.from_dict(stored_continuity[area_name])
+                )
+            if area_name in stored_sojourn:
+                self._sojourn[area_name] = SojournShadow(
+                    SojournState.from_dict(stored_sojourn[area_name])
                 )
 
     def continuity_for(self, area_name: str) -> ContinuityShadow | None:
@@ -1232,17 +1251,79 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else 1.0
         )
         neighbours = self._adjacency_snapshot.adjacency_index.get(area_name, set())
+        present, doors_open, neighbour_labels = self._episode_inputs(area, neighbours)
         self._continuity.setdefault(area_name, ContinuityShadow()).observe(
             now,
-            present=_ground_truth_present(area),
+            present=present,
             occupied=is_occupied,
-            doors_open=any(
+            doors_open=doors_open,
+            neighbours=neighbour_labels,
+            half_life_ratio=ratio,
+        )
+
+    def _episode_inputs(
+        self, area: Area, neighbours: set[str]
+    ) -> tuple[bool, bool, dict[str, bool]]:
+        """Shared per-tick inputs for the episode-based shadows (#558/#sojourn).
+
+        Returns ``(present, doors_open, neighbour_labels)``: whether any
+        ground-truth sensor is active, whether a door reads open, and each
+        adjacent area's latest ground-truth label.
+        """
+        return (
+            _ground_truth_present(area),
+            any(
                 str(entity.state) in ("on", "open")
                 for entity in area.entities.entities.values()
                 if entity.type.input_type == InputType.DOOR
             ),
-            neighbours={n: self._latest_labels.get(n, False) for n in neighbours},
-            half_life_ratio=ratio,
+            {n: self._latest_labels.get(n, False) for n in neighbours},
+        )
+
+    def _observe_sojourn(
+        self, area_name: str, area: Area, now: datetime, is_occupied: bool
+    ) -> None:
+        """Record one tick of the sojourn-time survival shadow.
+
+        Same episode gating as continuity: open-plan rooms only — a room
+        with the closed-door hold already holds, and one without decay
+        never clears, so neither produces informative silence episodes.
+        """
+        if area.config.closed_door_hold or not area.config.decay.enabled:
+            _ = self._sojourn.pop(area_name, None)
+            return
+        neighbours = self._adjacency_snapshot.adjacency_index.get(area_name, set())
+        present, doors_open, neighbour_labels = self._episode_inputs(area, neighbours)
+        # The baseline the learned curve is scored against: the slowest
+        # effective entity half-life — the fade that actually governs how
+        # long the room stays on once evidence stops (max, since the room
+        # clears when the LAST evidence decays out). getattr keeps
+        # attribute-stubbed entities in tests from breaking the shadow.
+        half_life = max(
+            (
+                hl
+                for entity in area.entities.entities.values()
+                if (hl := getattr(getattr(entity, "decay", None), "half_life", 0.0)) > 0
+            ),
+            default=float(area.config.decay.half_life),
+        )
+        self._sojourn.setdefault(area_name, SojournShadow()).observe(
+            now,
+            present=present,
+            occupied=is_occupied,
+            doors_open=doors_open,
+            neighbours=neighbour_labels,
+            half_life_seconds=half_life,
+        )
+
+    def sojourn_for(self, area_name: str) -> SojournShadow | None:
+        """The area's sojourn-time survival shadow, if it has one."""
+        return self._sojourn.get(area_name)
+
+    async def async_save_sojourn(self) -> None:
+        """Persist the sojourn shadows via the HA storage helper."""
+        await self._sojourn_store.async_save(
+            {name: s.state.to_dict() for name, s in self._sojourn.items()}
         )
 
     async def async_save_continuity(self) -> None:
@@ -1618,6 +1699,14 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning(
                 "Failed to save the continuity shadow for areas: %s: %s",
+                format_area_names(self),
+                err,
+            )
+        try:
+            await self.async_save_sojourn()
+        except (HomeAssistantError, OSError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Failed to save the sojourn shadow for areas: %s: %s",
                 format_area_names(self),
                 err,
             )

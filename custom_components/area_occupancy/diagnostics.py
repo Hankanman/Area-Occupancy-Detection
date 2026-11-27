@@ -371,6 +371,9 @@ def _area_snapshot(
         continuity = coordinator.continuity_for(area_name)
         if continuity is not None and (summary := continuity.summary()):
             current["continuity"] = summary
+        sojourn = coordinator.sojourn_for(area_name)
+        if sojourn is not None and (summary := sojourn.summary()):
+            current["sojourn"] = summary
         door_hold = coordinator.door_hold_for(area_name)
         current["door_hold"] = {
             "enabled": area.config.closed_door_hold,
