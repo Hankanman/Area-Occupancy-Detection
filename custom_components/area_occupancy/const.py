@@ -143,6 +143,21 @@ CONF_HEALTH_ENABLED: Final = "health_enabled"
 # Optional boolean entity that is on while the household is away (#485). Set,
 # it replaces person tracking and ``zone.home`` as the source for away mode.
 CONF_AWAY_MODE_ENTITY: Final = "away_mode_entity"
+CONF_GLOBAL_WEATHER_ENTITY: Final = "global_weather_entity"
+CONF_GLOBAL_POWER_ENTITY: Final = "global_power_entity"
+CONF_GLOBAL_WATER_ENTITY: Final = "global_water_entity"
+CONF_GLOBAL_NETWORK_ENTITY: Final = "global_network_entity"
+CONF_GLOBAL_GUEST_MODE_ENTITY: Final = "global_guest_mode_entity"
+CONF_GLOBAL_ACTIVITY_ENTITY: Final = "global_activity_entity"
+GLOBAL_CONTEXT_ENTITY_OPTIONS: Final[dict[str, str]] = {
+    "weather": CONF_GLOBAL_WEATHER_ENTITY,
+    "power": CONF_GLOBAL_POWER_ENTITY,
+    "water": CONF_GLOBAL_WATER_ENTITY,
+    "network": CONF_GLOBAL_NETWORK_ENTITY,
+    "guest_mode": CONF_GLOBAL_GUEST_MODE_ENTITY,
+    "activity": CONF_GLOBAL_ACTIVITY_ENTITY,
+}
+GLOBAL_CONTEXT_BOOST: Final = 0.2
 
 # People configuration constants
 CONF_PEOPLE: Final = "people"
