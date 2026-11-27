@@ -320,6 +320,10 @@ def validate_sensor_states(data: dict[str, Any]) -> dict[str, str]:
         CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
     ) >= data.get(CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX):
         errors[CONF_CUSTOM_NUMERIC_SENSORS] = "custom_numeric_range_invalid"
+    if CONF_BUTTON_PULSE_DURATION in data and (
+        error := validate_button_pulse_duration(data[CONF_BUTTON_PULSE_DURATION])
+    ):
+        errors[CONF_BUTTON_PULSE_DURATION] = error
     return errors
 
 
@@ -373,11 +377,6 @@ def validate_area_config(data: dict[str, Any]) -> dict[str, str]:
         half_life = data.get(CONF_DECAY_HALF_LIFE, DEFAULT_DECAY_HALF_LIFE)
         if error := validate_decay_half_life(half_life):
             errors[CONF_DECAY_HALF_LIFE] = error
-
-    if CONF_BUTTON_PULSE_DURATION in data and (
-        error := validate_button_pulse_duration(data[CONF_BUTTON_PULSE_DURATION])
-    ):
-        errors[CONF_BUTTON_PULSE_DURATION] = error
 
     return errors
 

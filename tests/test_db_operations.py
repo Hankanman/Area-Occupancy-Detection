@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from custom_components.area_occupancy.const import (
+    DOMAIN,
     MAX_PROBABILITY,
     MAX_WEIGHT,
     MIN_PROBABILITY,
@@ -39,6 +40,7 @@ from custom_components.area_occupancy.db.operations import (
     save_occupied_intervals_cache,
     save_time_priors,
 )
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 
@@ -727,6 +729,40 @@ class TestCleanupOrphanedEntities:
         # Run cleanup
         count = _cleanup_orphaned_entities(db)
         assert count == 0
+
+    def test_cleanup_keeps_a_disabled_sleep_sensor(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        entity_registry: er.EntityRegistry,
+    ):
+        """A disabled sleep sensor never joins its area but is not removed."""
+        db = coordinator.db
+        area_name = db.coordinator.get_area_names()[0]
+        save_area_data(db, area_name)
+        sleep = entity_registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            "test_sleep_presence",
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+        with db.get_session() as session:
+            session.add(
+                db.Entities(
+                    entity_id=sleep.entity_id,
+                    entry_id=db.coordinator.entry_id,
+                    area_name=area_name,
+                    entity_type="sleep",
+                )
+            )
+            session.commit()
+
+        _cleanup_orphaned_entities(db)
+
+        with db.get_session() as session:
+            assert (
+                session.query(db.Entities).filter_by(entity_id=sleep.entity_id).first()
+                is not None
+            )
 
     def test_cleanup_orphaned_entities_with_orphans(
         self, coordinator: AreaOccupancyCoordinator

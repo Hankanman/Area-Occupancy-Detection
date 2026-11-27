@@ -217,7 +217,11 @@ class AccuracyTally:
             values = data.get(name)
             if isinstance(values, list) and len(values) == DEFAULT_CALIBRATION_BINS:
                 kind = type(getattr(tally, name)[0])
-                setattr(tally, name, [kind(v) for v in values])
+                try:
+                    converted = [kind(v) for v in values]
+                except (TypeError, ValueError):
+                    continue
+                setattr(tally, name, converted)
         return tally
 
 
@@ -498,6 +502,7 @@ def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict[str, Any]:
         if metrics.window_start
         else None,
         "window_end": metrics.window_end.isoformat() if metrics.window_end else None,
+        "fade_seconds": round(metrics.fade_seconds),
         "expected_calibration_error": metrics.expected_calibration_error,
         "suggested_threshold": suggest_threshold(metrics),
         "truth_agreement_with_db": metrics.truth_agreement_with_db,

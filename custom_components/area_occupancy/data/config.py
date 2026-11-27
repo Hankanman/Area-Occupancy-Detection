@@ -76,6 +76,7 @@ from ..const import (
     CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_BUTTON,
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_CUSTOM_BINARY,
     CONF_WEIGHT_CUSTOM_NUMERIC,
@@ -649,6 +650,7 @@ class AreaConfig:
                 CONF_WEIGHT_CUSTOM_NUMERIC, DEFAULT_WEIGHT_CUSTOM_NUMERIC
             ),
             wasp=data.get(CONF_WASP_WEIGHT, DEFAULT_WASP_WEIGHT),
+            button=data.get(CONF_WEIGHT_BUTTON, DEFAULT_WEIGHT_BUTTON),
         )
 
         # Generic per-InputType active_range override hook (see

@@ -242,7 +242,7 @@ class DoorHold:
                 state.awaiting = "cleared"
         elif state.awaiting == "cleared":
             arm = presence_on or motion_rising
-        elif motion_on:
+        elif motion_on or presence_on:
             arm = True
         if arm:
             state.held_from = now

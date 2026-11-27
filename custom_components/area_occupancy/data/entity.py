@@ -764,9 +764,10 @@ class Entity:
                 ):
                     self.record_press(pressed_at)
                     press_recorded = True
-                else:
-                    self.previous_evidence = False
-            elif state_changed:
+            # An ignored press leaves the evidence as it was: resetting it
+            # here would read a recorded press's running pulse as a new
+            # FALSE→TRUE transition and cancel the fade it scheduled.
+            if self.previous_evidence is None:
                 self.previous_evidence = False
 
         # Pure calculation from current HA state
@@ -806,7 +807,13 @@ class Entity:
             return bool(current_evidence)
 
         # Fix inconsistent state: if evidence is True but decay is running, stop decay
-        if current_evidence and self.decay.is_decaying and not press_recorded:
+        # A button's decay is scheduled by record_press to begin when its
+        # pulse ends, so it is not inconsistent while the pulse runs.
+        if (
+            current_evidence
+            and self.decay.is_decaying
+            and self.type.input_type != InputType.BUTTON
+        ):
             self.decay.stop_decay()
 
         # Check for evidence transitions

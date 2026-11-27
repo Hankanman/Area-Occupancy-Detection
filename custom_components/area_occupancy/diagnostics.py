@@ -11,7 +11,7 @@ prevent the rest of the diagnostic from being produced.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -212,7 +212,12 @@ def _accuracy_days(
         }
         for day, tally in list(days.items())[-14:]
     ]
-    recent = list(days.items())[-ACCURACY_SUMMARY_DAYS:]
+    # By calendar date, not the last N stored days: after a gap in the
+    # history those would reach back past the month.
+    cutoff = (
+        dt_util.now().date() - timedelta(days=ACCURACY_SUMMARY_DAYS - 1)
+    ).isoformat()
+    recent = [(day, tally) for day, tally in days.items() if day >= cutoff]
     pooled = AccuracyTally()
     for _day, tally in recent:
         pooled.add(tally)

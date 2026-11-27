@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import json
 from unittest.mock import patch
 
+from freezegun.api import FrozenDateTimeFactory
 import pytest
 
 from custom_components.area_occupancy.const import ACCURACY_HISTORY_DAYS
@@ -458,6 +459,14 @@ class TestAccuracyHistory:
         assert back == tally
         assert isinstance(back.bin_count[7], int)
 
+    def test_tally_with_a_corrupt_bin_keeps_the_rest(self) -> None:
+        data = AccuracyTally(samples=4, true_on=1.5).to_dict()
+        data["bin_count"] = ["bad"] * len(data["bin_count"])
+        back = AccuracyTally.from_dict(data)
+        assert back.samples == 4
+        assert back.true_on == 1.5
+        assert back.bin_count == AccuracyTally().bin_count
+
     async def test_store_round_trip_and_v1_dropped(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
     ) -> None:
@@ -501,14 +510,19 @@ class TestAccuracyHistory:
         assert tallies["2026-10-07"].true_off == pytest.approx(20.0)
 
     async def test_diagnostics_pool_the_month(
-        self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
+        self,
+        hass: HomeAssistant,
+        coordinator: AreaOccupancyCoordinator,
+        freezer: FrozenDateTimeFactory,
     ) -> None:
         """The 30-day figure pools seconds; averaging daily rates would not.
 
         Day 1: 1 h right, 0 h wrong (agreement 1.0). Day 2: 1 h right, 3 h
         false-on (agreement 0.25). Pooled: 2 h right of 5 h = 0.4, where the
-        mean of the daily rates would claim 0.625.
+        mean of the daily rates would claim 0.625. A day from before the
+        last 30 calendar days stays out, even with no days stored between.
         """
+        freezer.move_to("2026-10-08T12:00:00+00:00")
         area_name = coordinator.get_area_names()[0]
         entry = coordinator.config_entry
         entry.runtime_data = coordinator
@@ -518,7 +532,13 @@ class TestAccuracyHistory:
         day2.bin_weight[1], day2.bin_count[1] = 3600.0, 360
         day2.bin_weight[9], day2.bin_count[9] = 10800.0, 1080
         coordinator.add_accuracy_tallies(
-            area_name, {"2026-10-06": day1, "2026-10-07": day2}, T0
+            area_name,
+            {
+                "2026-09-01": AccuracyTally(samples=360, false_on=3600.0),
+                "2026-10-06": day1,
+                "2026-10-07": day2,
+            },
+            T0,
         )
         coordinator.set_accuracy_metrics(area_name, AccuracyMetrics(sample_count=1))
 
@@ -526,7 +546,11 @@ class TestAccuracyHistory:
 
         area = next(a for a in result["areas"] if a["area_name"] == area_name)
         accuracy = area["current"]["accuracy"]
-        assert [h["date"] for h in accuracy["history"]] == ["2026-10-06", "2026-10-07"]
+        assert [h["date"] for h in accuracy["history"]] == [
+            "2026-09-01",
+            "2026-10-06",
+            "2026-10-07",
+        ]
         month = accuracy["last_30_days"]
         assert month["days"] == 2
         assert month["first_day"] == "2026-10-06"
