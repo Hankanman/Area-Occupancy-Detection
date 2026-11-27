@@ -39,7 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 DEFAULT_CALIBRATION_BINS = 10
 
@@ -218,7 +218,7 @@ class AccuracyTally:
             if isinstance(values, list) and len(values) == DEFAULT_CALIBRATION_BINS:
                 kind = type(getattr(tally, name)[0])
                 try:
-                    converted = [kind(v) for v in values]
+                    converted = [kind(v) for v in cast("list[Any]", values)]
                 except (TypeError, ValueError):
                     continue
                 setattr(tally, name, converted)
