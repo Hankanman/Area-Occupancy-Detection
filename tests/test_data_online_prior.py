@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from freezegun.api import FrozenDateTimeFactory
 import pytest
 
 from custom_components.area_occupancy.const import (
@@ -673,9 +674,11 @@ def test_db_day_length_follows_dst(coordinator: AreaOccupancyCoordinator) -> Non
 
 
 async def test_shadow_step_records_completed_days(
-    coordinator: AreaOccupancyCoordinator,
+    coordinator: AreaOccupancyCoordinator, freezer: FrozenDateTimeFactory
 ) -> None:
     """The hourly step compares yesterday once, through the DB helper."""
+    # Midday local: before 01:00 yesterday is not yet a completed day.
+    freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=12))
     area_name = coordinator.get_area_names()[0]
     await coordinator.update()
     area = coordinator.get_area(area_name)

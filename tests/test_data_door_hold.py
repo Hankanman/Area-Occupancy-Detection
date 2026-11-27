@@ -180,6 +180,16 @@ DOOR_SEQUENCES = [
         [(0, 0, 1), (10, 1, 1), (20, 0, 1), (25, "?", 1), (30, 0, 1), (40, 0, 1)],
         "H-----",
     ),
+    (
+        "stronger signal behind an already-closed door arms without motion",
+        [(0, 0, 0), (10, 0, 0, 1), (20, 0, 0, 0)],
+        "-HH",
+    ),
+    (
+        "a stronger signal left on arms once: the hold still runs out",
+        [(0, 0, 0), (10, 0, 0, 1), (3000, 0, 0, 1), (3700, 0, 0, 1)],
+        "-HH-",
+    ),
 ]
 
 

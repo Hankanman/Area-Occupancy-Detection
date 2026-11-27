@@ -541,6 +541,27 @@ class TestEntityPropertiesAndMethods:
         assert entity.has_new_evidence(count_button_press=False) is False
         assert entity.evidence is False
 
+    def test_ignored_button_press_keeps_the_recorded_press_fade(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A press ignored mid-pulse must not cancel the recorded press's fade."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        first = dt_util.utcnow()
+        _set_states_get(coordinator.hass, lambda _: Mock(state=first.isoformat()))
+        assert entity.has_new_evidence() is True
+        fade_start = entity.decay.decay_start
+
+        second = first + timedelta(seconds=1)
+        _set_states_get(coordinator.hass, lambda _: Mock(state=second.isoformat()))
+        entity.has_new_evidence(count_button_press=False)
+
+        assert entity.evidence is True
+        assert entity.decay.is_decaying is True
+        assert entity.decay.decay_start == fade_start
+
     def test_stale_button_state_change_does_not_start_decay(
         self, coordinator: AreaOccupancyCoordinator
     ) -> None:

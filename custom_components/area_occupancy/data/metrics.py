@@ -39,7 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 DEFAULT_CALIBRATION_BINS = 10
 
@@ -213,11 +213,23 @@ class AccuracyTally:
             value = data.get(name)
             if isinstance(value, int | float):
                 setattr(tally, name, type(getattr(tally, name))(value))
+        # The bin arrays describe the same bins, so restore them together or
+        # not at all: mixing stored and empty arrays would skew calibration.
+        bins: dict[str, list[Any]] = {}
         for name in cls._BINS:
-            values = data.get(name)
-            if isinstance(values, list) and len(values) == DEFAULT_CALIBRATION_BINS:
-                kind = type(getattr(tally, name)[0])
-                setattr(tally, name, [kind(v) for v in values])
+            raw = data.get(name)
+            if not isinstance(raw, list):
+                return tally
+            values = cast("list[Any]", raw)
+            if len(values) != DEFAULT_CALIBRATION_BINS:
+                return tally
+            kind = int if isinstance(getattr(tally, name)[0], int) else float
+            try:
+                bins[name] = [kind(v) for v in values]
+            except (TypeError, ValueError):
+                return tally
+        for name, converted in bins.items():
+            setattr(tally, name, converted)
         return tally
 
 
@@ -498,6 +510,7 @@ def metrics_to_diagnostics(metrics: AccuracyMetrics) -> dict[str, Any]:
         if metrics.window_start
         else None,
         "window_end": metrics.window_end.isoformat() if metrics.window_end else None,
+        "fade_seconds": round(metrics.fade_seconds),
         "expected_calibration_error": metrics.expected_calibration_error,
         "suggested_threshold": suggest_threshold(metrics),
         "truth_agreement_with_db": metrics.truth_agreement_with_db,

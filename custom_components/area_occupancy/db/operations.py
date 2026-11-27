@@ -16,12 +16,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from homeassistant import helpers
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ..const import (
     DEFAULT_ENTITY_PROB_GIVEN_FALSE,
     DEFAULT_ENTITY_PROB_GIVEN_TRUE,
     DEFAULT_ENTITY_WEIGHT,
+    DOMAIN,
     GLOBAL_PRIOR_HISTORY_COUNT,
     MAX_PROBABILITY,
     MAX_WEIGHT,
@@ -587,6 +589,12 @@ def save_entity_data(db: AreaOccupancyDB) -> None:
         raise
 
 
+def _is_own_registered_entity(registry: er.EntityRegistry, entity_id: str) -> bool:
+    """Whether ``entity_id`` is one of this integration's registered entities."""
+    entry = registry.async_get(entity_id)
+    return entry is not None and entry.platform == DOMAIN
+
+
 def _cleanup_area_orphans(db: AreaOccupancyDB, area_name: str, area_data: Any) -> int:
     """Clean up orphaned entities for a single area.
 
@@ -601,11 +609,16 @@ def _cleanup_area_orphans(db: AreaOccupancyDB, area_name: str, area_data: Any) -
         # Query all entities for this area_name from database
         db_entities = session.query(db.Entities).filter_by(area_name=area_name).all()
 
-        # Find entities that exist in database but not in current config
+        # Find entities that exist in database but not in current config.
+        # Our own sensors (the area's sleep sensor) join the area only when
+        # HA adds them, which a disabled one never is; while it is still
+        # registered to this integration it is configured, not removed.
+        registry = er.async_get(db.hass)
         orphaned_entities = [
             entity
             for entity in db_entities
             if entity.entity_id not in current_entity_ids
+            and not _is_own_registered_entity(registry, entity.entity_id)
         ]
 
         if not orphaned_entities:

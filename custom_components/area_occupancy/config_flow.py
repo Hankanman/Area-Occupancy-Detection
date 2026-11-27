@@ -1501,7 +1501,10 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
         CONF_WEIGHT_BUTTON,
     ):
         if key in flat_config:
-            appliances[key] = flat_config[key]
+            val = flat_config[key]
+            if key in DURATION_FIELDS:
+                val = seconds_to_duration(val)
+            appliances[key] = val
     if appliances:
         nested["appliances"] = appliances
 

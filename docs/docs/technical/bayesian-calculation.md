@@ -64,8 +64,10 @@ For each entity with `weight > 0`:
    - Not currently active, but decaying from recent activity (`entity.decay.is_decaying`) → `entity.decay_factor`, which fades from `1.0` toward `0.0` over the decay window
    - Neither → `0.0` — an inactive sensor contributes **nothing**, not negative evidence. This is a deliberate difference from a classic naive-Bayes formulation, where an inactive sensor with a high `prob_given_true` would actively push the posterior *down*. Here it simply drops out of the sum.
 2. **Look up correlation** (\(c_i\)): the entity's learned correlation strength, or `1.0` if none is available yet.
-3. **Compute the strength factor** (\(s_i\)): `entity.prob_given_true * entity.type.strength_multiplier`.
-4. **Accumulate**: `z += effective_weight * evidence * correlation * strength_factor`.
+3. **Compute the strength factor** (\(s_i\)): `entity.prob_given_true * entity.type.strength_multiplier`. Motion and sleep entities (the ground truth) are then adjusted, both divided by the entity's information gain so they apply at its full configured weight:
+   - **Floor**: while active, the factor is at least the ground-truth floor, the strength that keeps the area at or above its threshold for `GROUND_TRUTH_HOLD_HALF_LIVES` half-lives of decay after the sensor goes quiet.
+   - **Hold**: while decaying, the factor is exactly that hold, so the area releases after that many half-lives whatever its prior.
+4. **Accumulate**: `contribution = effective_weight * evidence * correlation * strength_factor`. Motion and sleep entities that share a `device_id` (a combined PIR and mmWave sensor, two bed pads on one board) report the same presence, so each device adds only its strongest contribution to `z`. Every other entity, and motion or sleep entities on separate devices, add theirs: `z += contribution`.
 
 ### Step 3: Convert Back to Probability
 

@@ -6,7 +6,7 @@ To make the probability calculation more accurate and specific to your environme
 
 Simply put the prior is the probability that the area is occupied at any given time. For example "I spend about 30% of my time in the living room" so the prior for the living room is 0.30. This sets the "ground truth" for the living room.
 
-Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behavior of your **motion sensors**, reflecting how often that area is typically occupied. This is done by analyzing the history of your sensors over a lookback period (default: 60 days).
+Initially, the integration uses default prior values. However, the **Prior Learning** process aims to calculate a more accurate prior based on the historical behaviour of your **motion sensors, media players and sleep sensors**, reflecting how often that area is typically occupied. This is done by analyzing the history of your sensors over a lookback period (default: 60 days).
 
 In probability terms, the **prior probability** (often denoted as `P(Occupied)` or simply `prior`) represents our initial belief about the likelihood of an event _before_ considering any new evidence. For this integration, it's the baseline probability that the area is occupied, independent of the _current_ state of the sensors.
 
@@ -32,8 +32,8 @@ The Global Prior is determined by analyzing the history of your sensors over a l
 The Time-Based Prior provides granularity by breaking the week into 1-hour slots (e.g., "Monday 09:00-10:00", "Tuesday 14:00-15:00"). This allows the system to learn time-of-day patterns specific to your usage.
 
 - **Grid**: It creates a schedule of 168 slots (24 hours × 7 days).
-- **History Analysis**: For each slot, it analyzes historical motion sensor data to determine how often the room was occupied during that specific hour on that day of the week.
-- **Data Source**: Only motion sensors are used for time prior calculation (no media/appliance fallback).
+- **History Analysis**: For each slot, it analyzes the room's occupied history (see Ground Truth below) to determine how often the room was occupied during that specific hour on that day of the week.
+- **Data Source**: The same ground truth as everything else: motion, media and sleep sensors. Appliances and other inputs are not used.
 - **Calculation Method**: The system processes occupied intervals from the lookback period (default: 60 days), groups them by day of week and time slot, and calculates the occupancy percentage for each slot.
 - **Completed Hours Only**: The hour in progress isn't learned until it ends, so being in a room right now can't raise that hour's own prior.
 - **PIR Pulses Are Bridged**: PIR motion sensors pulse "on" for a few seconds per detection and go quiet while someone sits still. When learning, each detection from a PIR-style sensor counts as occupied for the area's **Motion Timeout** (default 90 seconds), so a person reading in a chair isn't learned as a string of separate visits. Sensors that hold "on" while someone is there (mmWave presence sensors) aren't extended. Each sensor is classified from its own history: a median "on" stretch under about 2 minutes means PIR-style, with a margin so a sensor near the line doesn't flip back and forth.
@@ -47,9 +47,9 @@ See [Time Prior Flow](../technical/time-prior-flow.md) for complete implementati
 
 ## Ground Truth: Defining "Occupancy"
 
-To learn from history, the system needs to know when the room was _actually_ occupied. It uses **Motion Sensors** as the "Ground Truth" or Gold Standard.
+To learn from history, the system needs to know when the room was _actually_ occupied. It uses the room's **motion sensors, media players and sleep sensors** as the "Ground Truth": the room counts as occupied while any of them is active.
 
-- **Why Motion?**: Motion sensors are the most direct indicator of human presence. They rarely generate false positives (indicating presence when no one is there).
+- **Why these?**: They are the most direct indicators of someone being there (moving, watching, sleeping) and rarely report presence when no one is there. Other inputs, such as doors or humidity, are learned against this truth rather than defining it.
 - **Motion Timeout**: For PIR-style sensors, the area's Motion Timeout (default 90 seconds) after each detection counts as occupied time (see "PIR Pulses Are Bridged" above). Every learner uses the same rule, so priors, likelihoods and transitions all agree on when the room was occupied.
 
 ## Real-Time Probability Adjustment
