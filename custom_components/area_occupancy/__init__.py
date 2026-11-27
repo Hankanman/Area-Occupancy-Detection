@@ -30,6 +30,8 @@ from .config_helpers import iter_area_subentries
 from .const import (
     ACCURACY_STORE_KEY_PREFIX,
     ACCURACY_STORE_VERSION,
+    AUXILIARY_SHADOW_STORE_KEY_PREFIX,
+    AUXILIARY_SHADOW_STORE_VERSION,
     AWAY_SHADOW_STORE_KEY_PREFIX,
     AWAY_SHADOW_STORE_VERSION,
     CONF_AREA_ID,
@@ -605,6 +607,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove away-mode shadow storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for bounded auxiliary/environmental shadow storage.
+        try:
+            await Store(
+                hass,
+                AUXILIARY_SHADOW_STORE_VERSION,
+                f"{AUXILIARY_SHADOW_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove auxiliary-shadow storage during entry removal %s",
                 entry.entry_id,
             )
 
