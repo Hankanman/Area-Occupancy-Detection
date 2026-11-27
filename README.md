@@ -109,6 +109,10 @@ AOD is extensively documented [here](https://hankanman.github.io/Area-Occupancy-
 
 ## Planned Features
 
+What's planned for each release is on the [public roadmap](https://github.com/users/Hankanman/projects/5).
+
+- **No Separate Database** (2026.12.1): Learning moves from AOD's own SQLite file to running statistics in Home Assistant's storage.
+- **House-Wide Context** (2026.12.1, in shadow): Learn how a room's occupancy depends on the rest of the home, with an opt-in, anonymised export to help train it.
 - **Learned Sensor Weights**: Learn how much each sensor should count from your own history, instead of fixed per-type weights. Being tested in shadow mode.
 - **Auto-Adjusting Threshold**: Based on history and predictions, automatically adjust the threshold so the user doesn't need to. A suggested threshold is being tested in shadow mode.
 - **Location Aware**: Leveraging BLE, WiFi, GPS.
