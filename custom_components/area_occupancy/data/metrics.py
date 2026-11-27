@@ -213,21 +213,23 @@ class AccuracyTally:
             value = data.get(name)
             if isinstance(value, int | float):
                 setattr(tally, name, type(getattr(tally, name))(value))
-        # The bin arrays describe the same bins, so restore them together or
-        # not at all: mixing stored and empty arrays would skew calibration.
+        # The bin arrays describe the same time as the totals (agreement
+        # divides the totals by the bin weights), so a day whose bins can't
+        # be restored is dropped whole: keeping its totals against empty
+        # bins would report an agreement above 1.
         bins: dict[str, list[Any]] = {}
         for name in cls._BINS:
             raw = data.get(name)
             if not isinstance(raw, list):
-                return tally
+                return cls()
             values = cast("list[Any]", raw)
             if len(values) != DEFAULT_CALIBRATION_BINS:
-                return tally
+                return cls()
             kind = int if isinstance(getattr(tally, name)[0], int) else float
             try:
                 bins[name] = [kind(v) for v in values]
             except (TypeError, ValueError):
-                return tally
+                return cls()
         for name, converted in bins.items():
             setattr(tally, name, converted)
         return tally

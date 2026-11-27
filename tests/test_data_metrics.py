@@ -18,6 +18,7 @@ from custom_components.area_occupancy.data.metrics import (
     TickSample,
     accuracy_summary,
     compute_accuracy_metrics,
+    metrics_from_tally,
     metrics_to_diagnostics,
     suggest_threshold,
     tally_by_day,
@@ -459,17 +460,19 @@ class TestAccuracyHistory:
         assert back == tally
         assert isinstance(back.bin_count[7], int)
 
-    def test_tally_with_a_corrupt_bin_keeps_the_rest(self) -> None:
-        tally = AccuracyTally(samples=4, true_on=1.5)
-        tally.bin_weight[7] = 2.5
-        data = tally.to_dict()
+    def test_tally_with_a_corrupt_bin_is_dropped_whole(self) -> None:
+        """Totals kept against empty bins would put agreement above 1."""
+        corrupt = AccuracyTally(samples=360, true_on=3600.0)
+        corrupt.bin_weight[9], corrupt.bin_count[9] = 3600.0, 360
+        data = corrupt.to_dict()
         data["bin_count"] = ["bad"] * len(data["bin_count"])
-        back = AccuracyTally.from_dict(data)
-        assert back.samples == 4
-        assert back.true_on == 1.5
-        # One bad bin array drops them all, so the bins stay consistent.
-        assert back.bin_count == AccuracyTally().bin_count
-        assert back.bin_weight == AccuracyTally().bin_weight
+        restored = AccuracyTally.from_dict(data)
+        assert restored == AccuracyTally()
+
+        valid = AccuracyTally(samples=60, true_on=600.0)
+        valid.bin_weight[9], valid.bin_count[9] = 600.0, 60
+        restored.add(valid)
+        assert metrics_from_tally(restored).agreement == pytest.approx(1.0)
 
     async def test_store_round_trip_and_v1_dropped(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator

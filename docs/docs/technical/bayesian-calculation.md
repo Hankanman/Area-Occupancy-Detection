@@ -66,7 +66,7 @@ For each entity with `weight > 0`:
 2. **Look up correlation** (\(c_i\)): the entity's learned correlation strength, or `1.0` if none is available yet.
 3. **Compute the strength factor** (\(s_i\)): `entity.prob_given_true * entity.type.strength_multiplier`. Motion and sleep entities (the ground truth) are then adjusted, both divided by the entity's information gain so they apply at its full configured weight:
    - **Floor**: while active, the factor is at least the ground-truth floor, the strength that keeps the area at or above its threshold for `GROUND_TRUTH_HOLD_HALF_LIVES` half-lives of decay after the sensor goes quiet.
-   - **Hold**: while decaying, the factor is exactly that hold, so the area releases after that many half-lives whatever its prior.
+   - **Hold**: while decaying, the factor is exactly that hold, so this sensor's contribution drops below what holds the threshold after that many half-lives, whatever the prior. Other active sensors still add theirs and can keep the area occupied.
 4. **Accumulate**: `contribution = effective_weight * evidence * correlation * strength_factor`. Motion and sleep entities that share a `device_id` (a combined PIR and mmWave sensor, two bed pads on one board) report the same presence, so each device adds only its strongest contribution to `z`. Every other entity, and motion or sleep entities on separate devices, add theirs: `z += contribution`.
 
 ### Step 3: Convert Back to Probability
@@ -107,7 +107,7 @@ Consider an area with prior `0.3` and three sensors:
 | Media player | Inactive (not decaying) | 0.85 | 0.65 | 2.0 |
 | Door | Active | 0.3 | 0.2 | 2.0 |
 
-Assume no learned correlations yet (`c_i = 1.0` for all).
+Assume no learned correlations yet (`c_i = 1.0` for all), an information gain of 1 for every sensor (each `prob_given_false` is 0, so `effective_weight` equals the configured weight) and a threshold of 50%. At that threshold the motion sensor's ground-truth floor is about 2.46, below its 2.85, so the floor doesn't change the motion term. With a real `prob_given_false` the gain is below 1 (0.79 for a 0.95/0.2 motion sensor), which scales each term down.
 
 **Step 1 — bias from the prior:**
 
