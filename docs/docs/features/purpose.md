@@ -19,7 +19,7 @@ Selecting a purpose automatically sets the **Decay Half Life** – the time it t
 | Media Room  | Lounges or reading nooks.                                                           | Long (~10 minutes)       |
 | Bedroom     | Bedrooms and similar spaces.                                                        | Very long (~20 min)      |
 
-Beyond this decay timing, two purposes also set a floor under the learned prior: **Passageway** at 10% and **Driveway** at 5% (each capped below the area's threshold). Changing to or from one of them can therefore change a low learned prior. Otherwise the purpose does not alter the probability calculation. A shorter half life causes the probability to drop faster after activity stops; a longer half life keeps the area marked as occupied for longer.
+Beyond this decay timing, two purposes also set a floor under the learned prior: **Passageway** at 10% and **Driveway** at 5% (each capped below the area's threshold). Changing to or from one of them can therefore change a low learned prior. The purpose also decides which [activities](activity-detection.md) the area can detect (a shower only in a bathroom, for example), and a detected activity adds its own boost. The boost only applies while the sensors alone put the area at or above its threshold, fading in just above it, so an activity can raise the probability of an occupied area but can't keep an area occupied on its own. Otherwise the purpose does not alter the probability calculation. A shorter half life causes the probability to drop faster after activity stops; a longer half life keeps the area marked as occupied for longer.
 
 ## Purpose Justifications
 
