@@ -98,6 +98,8 @@ class DoorHoldState:
     doors_open: bool | None = None
     # Whether motion was on at the previous observation (for rising edges).
     motion_on_previous: bool | None = None
+    # Whether a stronger signal was on at the previous observation.
+    presence_on_previous: bool | None = None
     # When motion last started while a door was open (cleared on opening and
     # on closing): someone arriving through the door.
     motion_rising_at: datetime | None = None
@@ -113,6 +115,7 @@ class DoorHoldState:
             "fade_from": self.fade_from.isoformat() if self.fade_from else None,
             "doors_open": self.doors_open,
             "motion_on_previous": self.motion_on_previous,
+            "presence_on_previous": self.presence_on_previous,
             "motion_rising_at": (
                 self.motion_rising_at.isoformat() if self.motion_rising_at else None
             ),
@@ -130,12 +133,16 @@ class DoorHoldState:
         try:
             doors_open = data.get("doors_open")
             motion_on = data.get("motion_on_previous")
+            presence_on = data.get("presence_on_previous")
             awaiting = data.get("awaiting")
             return cls(
                 held_from=_ts("held_from"),
                 fade_from=_ts("fade_from"),
                 doors_open=None if doors_open is None else bool(doors_open),
                 motion_on_previous=None if motion_on is None else bool(motion_on),
+                presence_on_previous=(
+                    None if presence_on is None else bool(presence_on)
+                ),
                 motion_rising_at=_ts("motion_rising_at"),
                 awaiting=awaiting if awaiting in ("trailing", "cleared") else None,
             )
@@ -206,14 +213,17 @@ class DoorHold:
             # ``awaiting`` stays, so a trailing PIR can't arm once they read
             # closed again.
             state.motion_on_previous = motion_on
+            state.presence_on_previous = presence_on
             state.motion_rising_at = None
             self._expire(now, max_hold, fade_half_life)
             return
         just_closed = state.doors_open is True and not doors_open
         just_opened = state.doors_open is not True and doors_open
         motion_rising = motion_on and state.motion_on_previous is not True
+        presence_rising = presence_on and state.presence_on_previous is not True
         state.doors_open = doors_open
         state.motion_on_previous = motion_on
+        state.presence_on_previous = presence_on
         if just_opened:
             state.motion_rising_at = None
             state.awaiting = None
@@ -242,7 +252,10 @@ class DoorHold:
                 state.awaiting = "cleared"
         elif state.awaiting == "cleared":
             arm = presence_on or motion_rising
-        elif motion_on or presence_on:
+        elif motion_on or presence_rising:
+            # Motion renews the hold (max_hold counts from the last motion);
+            # a stronger signal arms it once, when it comes on, so a TV left
+            # on behind a closed door does not hold the room for ever.
             arm = True
         if arm:
             state.held_from = now

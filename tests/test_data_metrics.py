@@ -460,12 +460,16 @@ class TestAccuracyHistory:
         assert isinstance(back.bin_count[7], int)
 
     def test_tally_with_a_corrupt_bin_keeps_the_rest(self) -> None:
-        data = AccuracyTally(samples=4, true_on=1.5).to_dict()
+        tally = AccuracyTally(samples=4, true_on=1.5)
+        tally.bin_weight[7] = 2.5
+        data = tally.to_dict()
         data["bin_count"] = ["bad"] * len(data["bin_count"])
         back = AccuracyTally.from_dict(data)
         assert back.samples == 4
         assert back.true_on == 1.5
+        # One bad bin array drops them all, so the bins stay consistent.
         assert back.bin_count == AccuracyTally().bin_count
+        assert back.bin_weight == AccuracyTally().bin_weight
 
     async def test_store_round_trip_and_v1_dropped(
         self, hass: HomeAssistant, coordinator: AreaOccupancyCoordinator
