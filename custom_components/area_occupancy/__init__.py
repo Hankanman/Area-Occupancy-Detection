@@ -52,6 +52,8 @@ from .const import (
     ONLINE_PRIOR_STORE_KEY_PREFIX,
     ONLINE_PRIOR_STORE_VERSION,
     PLATFORMS,
+    SOJOURN_STORE_KEY_PREFIX,
+    SOJOURN_STORE_VERSION,
     TIME_PRIORS_CARD_FILENAME,
     TRANSITION_SHADOW_STORE_KEY_PREFIX,
     TRANSITION_SHADOW_STORE_VERSION,
@@ -580,6 +582,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         except Exception:
             _LOGGER.exception(
                 "Failed to remove continuity storage during entry removal %s",
+                entry.entry_id,
+            )
+
+        # Same for the sojourn-time survival shadow.
+        try:
+            await Store(
+                hass,
+                SOJOURN_STORE_VERSION,
+                f"{SOJOURN_STORE_KEY_PREFIX}.{entry.entry_id}",
+            ).async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Failed to remove sojourn storage during entry removal %s",
                 entry.entry_id,
             )
 

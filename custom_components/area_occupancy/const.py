@@ -496,6 +496,13 @@ CONTINUITY_STORE_KEY_PREFIX: Final = f"{DOMAIN}.continuity"
 # Largest gap in any next-room share that counts as agreeing.
 TRANSITION_DIFF_TOLERANCE: Final = 0.1
 
+# --- Shadow sojourn-time survival model (decay-replacement candidate) ---
+# Store version and key prefix for the per-entry learned dwell/survival
+# state, shared between the coordinator (persistence) and __init__.py
+# (removal cleanup), mirroring the continuity pair above.
+SOJOURN_STORE_VERSION: Final = 1
+SOJOURN_STORE_KEY_PREFIX: Final = f"{DOMAIN}.sojourn"
+
 # --- Away mode lowering occupancy (#584, shadow mode) ---
 AWAY_SHADOW_STORE_VERSION: Final = 1
 AWAY_SHADOW_STORE_KEY_PREFIX: Final = f"{DOMAIN}.away_shadow"
