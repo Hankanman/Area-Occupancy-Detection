@@ -65,8 +65,8 @@ For each entity with `weight > 0`:
    - Neither → `0.0` — an inactive sensor contributes **nothing**, not negative evidence. This is a deliberate difference from a classic naive-Bayes formulation, where an inactive sensor with a high `prob_given_true` would actively push the posterior *down*. Here it simply drops out of the sum.
 2. **Look up correlation** (\(c_i\)): the entity's learned correlation strength, or `1.0` if none is available yet.
 3. **Compute the strength factor** (\(s_i\)): `entity.prob_given_true * entity.type.strength_multiplier`. Motion and sleep entities (the ground truth) are then adjusted, both divided by the entity's information gain so they apply at its full configured weight:
-   - **Floor**: while active, the factor is at least the ground-truth floor, the strength that keeps the area at or above its threshold for `GROUND_TRUTH_HOLD_HALF_LIVES` half-lives of decay after the sensor goes quiet.
-   - **Hold**: while decaying, the factor is exactly that hold, so this sensor's contribution drops below what holds the threshold after that many half-lives, whatever the prior. Other active sensors still add theirs and can keep the area occupied.
+   - **Floor**: while active, the factor is at least the larger of two strengths: the one that alone lifts the area to 75% (`logit(0.75) − bias`), and the hold below.
+   - **Hold**: `(logit(threshold) − bias) × 2^GROUND_TRUTH_HOLD_HALF_LIVES` (one half-life). While decaying, the factor is exactly that, so at full configured weight and a correlation of 1 this sensor alone keeps the area at its threshold for one half-life after it goes quiet, whatever the prior. A lower weight or correlation shortens that, possibly to nothing. Other active sensors still add theirs and can keep the area occupied for longer.
 4. **Accumulate**: `contribution = effective_weight * evidence * correlation * strength_factor`. Motion and sleep entities that share a `device_id` (a combined PIR and mmWave sensor, two bed pads on one board) report the same presence, so each device adds only its strongest contribution to `z`. Every other entity, and motion or sleep entities on separate devices, add theirs: `z += contribution`.
 
 ### Step 3: Convert Back to Probability
@@ -107,7 +107,7 @@ Consider an area with prior `0.3` and three sensors:
 | Media player | Inactive (not decaying) | 0.85 | 0.65 | 2.0 |
 | Door | Active | 0.3 | 0.2 | 2.0 |
 
-Assume no learned correlations yet (`c_i = 1.0` for all), an information gain of 1 for every sensor (each `prob_given_false` is 0, so `effective_weight` equals the configured weight) and a threshold of 50%. At that threshold the motion sensor's ground-truth floor is about 2.46, below its 2.85, so the floor doesn't change the motion term. With a real `prob_given_false` the gain is below 1 (0.79 for a 0.95/0.2 motion sensor), which scales each term down.
+Assume no learned correlations yet (`c_i = 1.0` for all), an information gain of 1 for every sensor (each `prob_given_false` is 0, so `effective_weight` equals the configured weight) and a threshold of 50%. The motion sensor's ground-truth floor is then max(`logit(0.75) − logit(0.3)` ≈ 1.95, hold `(0 + 0.85) × 2` ≈ 1.69) ≈ 1.95, below its 2.85, so the floor doesn't change the motion term. With a real `prob_given_false` the gain is below 1 (0.79 for a 0.95/0.2 motion sensor), which scales each term down.
 
 **Step 1 — bias from the prior:**
 
