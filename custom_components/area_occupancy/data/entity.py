@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    DEFAULT_BUTTON_PULSE_DURATION,
     MAX_WEIGHT,
     MIN_WEIGHT,
     SLEEP_PRESENCE_HALF_LIFE,
@@ -27,6 +29,7 @@ from .entity_type import (
     BINARY_INPUT_TYPES,
     DEFAULT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
+    GROUND_TRUTH_RULE_VERSION,
     AnalysisStatus,
     CorrelationType,
     EntityType,
@@ -156,6 +159,8 @@ class Entity:
     active_state_changed_at: datetime | None = None
     # The state the last ``has_new_evidence`` call saw, to spot those moves.
     previous_state: str | float | bool | None = None
+    press_recorded_at: datetime | None = None
+    button_pulse_duration: int = DEFAULT_BUTTON_PULSE_DURATION
     # Seconds this sensor still counts in full after it turns off before it
     # starts to decay: the area's motion timeout for a PIR-like motion
     # sensor (set by the coordinator from the live labeller's call), else 0.
@@ -204,6 +209,24 @@ class Entity:
         if self.active_state_changed_at is None or self.last_updated is None:
             return self.last_updated
         return max(self.last_updated, self.active_state_changed_at)
+
+    @property
+    def device_id(self) -> str | None:
+        """The physical device this sensor is a channel of.
+
+        A combined PIR and mmWave sensor exposes a motion and an occupancy
+        entity that see the same person, so ``sigmoid_probability`` counts
+        one device's ground-truth channels once. Read from the entity
+        registry on every call rather than cached, so an entity_id rename or
+        a device reassignment needs no invalidation. ``None`` without
+        ``hass`` (state-provider instances), or when the entity has no
+        registry entry or no device.
+        """
+        if self.hass is None:
+            return None
+        registry_entry = er.async_get(self.hass).async_get(self.entity_id)
+        device_id = getattr(registry_entry, "device_id", None)
+        return device_id if isinstance(device_id, str) else None
 
     @property
     def is_stuck(self) -> bool:
@@ -360,6 +383,8 @@ class Entity:
             if state_obj and hasattr(state_obj, "name"):
                 return state_obj.name
             return None
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.name if ha_state else None
 
@@ -438,6 +463,8 @@ class Entity:
                 return None
             # Handle both object with .state attribute and direct value
             return state_obj.state if hasattr(state_obj, "state") else state_obj
+        if self.hass is None:
+            return None
         ha_state = self.hass.states.get(self.entity_id)
         return ha_state.state if ha_state is not None else None
 
@@ -497,6 +524,12 @@ class Entity:
             bool | None: True if entity is active, False if inactive, None if state unknown
 
         """
+        if self.type.input_type == InputType.BUTTON:
+            if self.press_recorded_at is None:
+                return False
+            age = (dt_util.utcnow() - self.press_recorded_at).total_seconds()
+            return 0 <= age <= self.button_pulse_duration
+
         if self.state is None:
             return None
 
@@ -513,6 +546,13 @@ class Entity:
                 return False
 
         return None
+
+    def record_press(self, pressed_at: datetime) -> None:
+        """Record a state-reported press as a short-lived presence signal."""
+        self.press_recorded_at = to_utc(pressed_at)
+        self.last_updated = self.press_recorded_at
+        self.previous_evidence = False
+        self.decay.start_decay(delay=self.button_pulse_duration)
 
     @property
     def active(self) -> bool:
@@ -594,7 +634,12 @@ class Entity:
             # Binary sensors: don't set learned_active_range
             self.learned_active_range = None
         else:
-            # Numeric sensors: calculate thresholds (mean ± 2σ)
+            # Numeric sensors: one-sided threshold at mean ± 2σ of the
+            # unoccupied readings. The far side stays open: a sensor that
+            # rises with occupancy is stronger evidence the higher it goes, so
+            # capping it at the occupied mean + 2σ switched the evidence off
+            # exactly when it was strongest (a Bathroom's humidity above
+            # 95.8% mid-shower).
             k_factor = 2.0
 
             if correlation_type in (
@@ -602,42 +647,16 @@ class Entity:
                 CorrelationType.POSITIVE,
             ):
                 # Active > mean_unoccupied + K*std_unoccupied
-                # Same logic for both strong and weak positive correlations
                 lower_bound = mean_unoccupied + (k_factor * std_unoccupied)
-
-                # Try to determine upper bound from occupied stats
-                if mean_occupied is not None and std_occupied is not None:
-                    # Cap at mean_occupied + K*std_occupied
-                    upper_bound = mean_occupied + (k_factor * std_occupied)
-                    # Ensure logical consistency (upper > lower)
-                    if upper_bound <= lower_bound:
-                        # Fallback to open-ended if stats overlap significantly
-                        upper_bound = float("inf")
-                else:
-                    upper_bound = float("inf")
-
-                self.learned_active_range = (lower_bound, upper_bound)
+                self.learned_active_range = (lower_bound, float("inf"))
 
             elif correlation_type in (
                 CorrelationType.STRONG_NEGATIVE,
                 CorrelationType.NEGATIVE,
             ):
                 # Active < mean_unoccupied - K*std_unoccupied
-                # Same logic for both strong and weak negative correlations
                 upper_bound = mean_unoccupied - (k_factor * std_unoccupied)
-
-                # Try to determine lower bound from occupied stats
-                if mean_occupied is not None and std_occupied is not None:
-                    # Floor at mean_occupied - K*std_occupied
-                    lower_bound = mean_occupied - (k_factor * std_occupied)
-                    # Ensure logical consistency (lower < upper)
-                    if lower_bound >= upper_bound:
-                        # Fallback to open-ended if stats overlap significantly
-                        lower_bound = float("-inf")
-                else:
-                    lower_bound = float("-inf")
-
-                self.learned_active_range = (lower_bound, upper_bound)
+                self.learned_active_range = (float("-inf"), upper_bound)
             else:
                 self.learned_active_range = None
 
@@ -708,12 +727,14 @@ class Entity:
 
     def update_decay(self, decay_start: datetime | None, is_decaying: bool) -> None:
         """Update the decay of the entity."""
+        # A missing start defaults to now, as in ``Decay.__init__``: a ``None``
+        # here would break the age maths the next time the decay is read.
         self.decay.decay_start = (
-            to_utc(decay_start) if decay_start is not None else decay_start
+            to_utc(decay_start) if decay_start is not None else dt_util.utcnow()
         )
         self.decay.is_decaying = is_decaying
 
-    def has_new_evidence(self) -> bool:
+    def has_new_evidence(self, count_button_press: bool = True) -> bool:
         """Update decay on actual evidence transitions.
 
         Handles four cases:
@@ -728,13 +749,35 @@ class Entity:
             counts again, False otherwise
 
         """
+        current_state = self.state
+        press_recorded = False
+        if self.type.input_type == InputType.BUTTON:
+            state_changed = current_state != self.previous_state
+            self.previous_state = current_state
+            if state_changed and count_button_press and current_state is not None:
+                pressed_at = dt_util.parse_datetime(str(current_state))
+                if (
+                    pressed_at is not None
+                    and 0
+                    <= (dt_util.utcnow() - to_utc(pressed_at)).total_seconds()
+                    <= self.button_pulse_duration
+                ):
+                    self.record_press(pressed_at)
+                    press_recorded = True
+            # An ignored press leaves the evidence as it was: resetting it
+            # here would read a recorded press's running pulse as a new
+            # FALSE→TRUE transition and cancel the fade it scheduled.
+            if self.previous_evidence is None:
+                self.previous_evidence = False
+
         # Pure calculation from current HA state
         current_evidence = self.evidence
 
         # Capture previous evidence and state before updating them
         previous_evidence = self.previous_evidence
         previous_state = self.previous_state
-        self.previous_state = self.state
+        if self.type.input_type != InputType.BUTTON:
+            self.previous_state = current_state
 
         # Handle entity becoming unavailable (evidence was known, now None)
         if current_evidence is None:
@@ -764,7 +807,13 @@ class Entity:
             return bool(current_evidence)
 
         # Fix inconsistent state: if evidence is True but decay is running, stop decay
-        if current_evidence and self.decay.is_decaying:
+        # A button's decay is scheduled by record_press to begin when its
+        # pulse ends, so it is not inconsistent while the pulse runs.
+        if (
+            current_evidence
+            and self.decay.is_decaying
+            and self.type.input_type != InputType.BUTTON
+        ):
             self.decay.stop_decay()
 
         # Check for evidence transitions
@@ -778,7 +827,8 @@ class Entity:
             was_stuck = self.is_stuck
             self.stuck_since = None
             self.last_updated = dt_util.utcnow()
-            if current_evidence:  # FALSE→TRUE transition
+            if current_evidence and not press_recorded:
+                # FALSE→TRUE transition.
                 self.decay.stop_decay()
             elif not was_stuck:  # TRUE→FALSE transition
                 # Evidence lost - start decay (after the PIR timeout, if any)
@@ -812,15 +862,20 @@ def entity_signature(entity: Entity) -> str:
     return f"{entity.type.input_type.value}|{states}|{entity.type.active_range}"
 
 
-def ground_truth_signature(entities: dict[str, Entity]) -> str:
-    """Fingerprint an area's ground-truth sensors (motion, media, sleep)."""
-    return "\n".join(
-        sorted(
-            f"{entity_id}|{entity_signature(entity)}"
-            for entity_id, entity in entities.items()
-            if entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
-        )
+def ground_truth_signature(entities: dict[str, Entity], motion_timeout: int) -> str:
+    """Fingerprint an area's ground truth: its sensors and how they're read.
+
+    Covers the motion, media and sleep sensors, the labelling rule and the
+    motion timeout, since a change to any of them changes what counts as
+    occupied.
+    """
+    sensors = sorted(
+        f"{entity_id}|{entity_signature(entity)}"
+        for entity_id, entity in entities.items()
+        if entity.type.input_type in GROUND_TRUTH_INPUT_TYPES
     )
+    rule = f"rule={GROUND_TRUTH_RULE_VERSION}|motion_timeout={motion_timeout}"
+    return "\n".join([rule, *sensors])
 
 
 class EntityFactory:
@@ -1050,6 +1105,11 @@ class EntityFactory:
             last_updated=last_updated,
             previous_evidence=previous_evidence,
             analysis_error=analysis_error,
+            button_pulse_duration=getattr(
+                self.config.sensors,
+                "button_pulse_duration",
+                DEFAULT_BUTTON_PULSE_DURATION,
+            ),
         )
 
     def create_from_config_spec(self, entity_id: str, input_type: str) -> Entity:
@@ -1174,6 +1234,11 @@ class EntityFactory:
             last_updated=dt_util.utcnow(),
             previous_evidence=None,
             analysis_error=analysis_error,
+            button_pulse_duration=getattr(
+                self.config.sensors,
+                "button_pulse_duration",
+                DEFAULT_BUTTON_PULSE_DURATION,
+            ),
         )
 
     def create_all_from_config(self) -> dict[str, Entity]:
@@ -1353,6 +1418,7 @@ class EntityManager:
             new.stuck_since = old.stuck_since
             new.active_state_changed_at = old.active_state_changed_at
             new.previous_state = old.previous_state
+            new.press_recorded_at = old.press_recorded_at
         previous.clear()
         _LOGGER.debug("Refreshed entities from config for area: %s", self.area_name)
 

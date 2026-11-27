@@ -1,6 +1,6 @@
-# Bayesian Calculation Deep Dive
+# Probability Calculation Deep Dive
 
-This document provides a detailed mathematical explanation of the probability calculation used for area occupancy detection: a **sigmoid/logit-space model** that combines a learned prior with per-sensor evidence. "Bayesian" here refers to the general shape of the problem — start from a prior belief, update it with evidence — not to classic Bayes'-theorem odds multiplication. The engine is `sigmoid_probability()` in `custom_components/area_occupancy/utils.py`, reached via `presence_probability()` and `environmental_confidence()`.
+This document provides a detailed mathematical explanation of the probability calculation used for area occupancy detection: a **sigmoid/logit-space model** that combines a learned prior with per-sensor evidence. It starts from a prior belief and updates it with evidence, but it is not Bayes'-theorem odds multiplication. The engine is `sigmoid_probability()` in `custom_components/area_occupancy/utils.py`, reached via `presence_probability()` and `environmental_confidence()`.
 
 !!! note "Not naive Bayes"
 This integration previously shipped a classic log-odds naive-Bayes accumulator (`bayesian_probability()`). It was superseded by the model below in PR #353 (2026.2.1) and removed entirely in PR #529 (2026.8.1) after being confirmed to have zero production call sites. If you're looking at older material (a cached doc, a stale comment) that describes multiplying likelihoods and renormalizing, it's describing the removed function, not current behavior.
@@ -38,7 +38,7 @@ Where, for entity \(i\):
 
 ## Why Logit Space?
 
-Working in logit (log-odds) space instead of raw probability gives the same numerical-stability benefits classic Bayesian log-space combination has, plus a simpler combination rule:
+Working in logit (log-odds) space instead of raw probability gives the same numerical-stability benefits as classic log-space Bayesian combination, plus a simpler combination rule:
 
 - **Purely additive**: each sensor is one term added to a running sum — no renormalization step, no multiplying probabilities together
 - **Order independence**: summation is commutative, so entity iteration order can never change the result
@@ -64,8 +64,10 @@ For each entity with `weight > 0`:
    - Not currently active, but decaying from recent activity (`entity.decay.is_decaying`) → `entity.decay_factor`, which fades from `1.0` toward `0.0` over the decay window
    - Neither → `0.0` — an inactive sensor contributes **nothing**, not negative evidence. This is a deliberate difference from a classic naive-Bayes formulation, where an inactive sensor with a high `prob_given_true` would actively push the posterior *down*. Here it simply drops out of the sum.
 2. **Look up correlation** (\(c_i\)): the entity's learned correlation strength, or `1.0` if none is available yet.
-3. **Compute the strength factor** (\(s_i\)): `entity.prob_given_true * entity.type.strength_multiplier`.
-4. **Accumulate**: `z += effective_weight * evidence * correlation * strength_factor`.
+3. **Compute the strength factor** (\(s_i\)): `entity.prob_given_true * entity.type.strength_multiplier`. Motion and sleep entities (the ground truth) are then adjusted, both divided by the entity's information gain so they apply at its full configured weight:
+   - **Floor**: while active, the factor is at least the larger of two strengths: the one that alone lifts the area to 75% (`logit(0.75) − bias`), and the hold below.
+   - **Hold**: `(logit(threshold) − bias) × 2^GROUND_TRUTH_HOLD_HALF_LIVES` (one half-life). While decaying, the factor is exactly that, so at full configured weight and a correlation of 1 this sensor alone keeps the area at its threshold for one half-life after it goes quiet, whatever the prior. A lower weight or correlation shortens that, possibly to nothing. Other active sensors still add theirs and can keep the area occupied for longer.
+4. **Accumulate**: `contribution = effective_weight * evidence * correlation * strength_factor`. Motion and sleep entities that share a `device_id` (a combined PIR and mmWave sensor, two bed pads on one board) report the same presence, so each device adds only its strongest contribution to `z`. Every other entity, and motion or sleep entities on separate devices, add theirs: `z += contribution`.
 
 ### Step 3: Convert Back to Probability
 
@@ -105,7 +107,7 @@ Consider an area with prior `0.3` and three sensors:
 | Media player | Inactive (not decaying) | 0.85 | 0.65 | 2.0 |
 | Door | Active | 0.3 | 0.2 | 2.0 |
 
-Assume no learned correlations yet (`c_i = 1.0` for all).
+Assume no learned correlations yet (`c_i = 1.0` for all), an information gain of 1 for every sensor (each `prob_given_false` is 0, so `effective_weight` equals the configured weight) and a threshold of 50%. The motion sensor's ground-truth floor is then max(`logit(0.75) − logit(0.3)` ≈ 1.95, hold `(0 + 0.85) × 2` ≈ 1.69) ≈ 1.95, below its 2.85, so the floor doesn't change the motion term. With a real `prob_given_false` the gain is below 1 (0.79 for a 0.95/0.2 motion sensor), which scales each term down.
 
 **Step 1 — bias from the prior:**
 

@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceInfo
 
 from .const import (
+    ACTIVITY_BOOST_FADE_LOGIT,
     DOMAIN,
     GROUND_TRUTH_ACTIVE_FLOOR,
     GROUND_TRUTH_HOLD_HALF_LIVES,
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 def assign_device_to_ha_area(
     hass: HomeAssistant,
-    device_info: DeviceInfo | None,
+    device_info: DeviceInfo | ChildDeviceInfo | None,
     area_id: str | None,
     config_entry_id: str,
 ) -> None:
@@ -208,6 +209,10 @@ def sigmoid_probability(
     is exactly that hold, so the area releases then rather than crawling
     towards a prior close to the threshold.
 
+    Ground-truth channels of one physical device (same ``device_id``) count
+    once, at the strongest of them: they report the same presence, and
+    summing them would double the hold.
+
     Args:
         entities: Dict of Entity objects
         prior: Learned prior probability for this area (0.0-1.0)
@@ -244,6 +249,12 @@ def sigmoid_probability(
 
     # Sum weighted contributions from all entities
     z = bias
+    # Channels of one physical device (a combined PIR and mmWave sensor's
+    # motion and occupancy entities) see the same person. Summed, two of them
+    # doubled the hold and the area released after two half-lives, not one.
+    # Each device's ground-truth channels count once, at their strongest;
+    # a channel with no device counts on its own, as before.
+    device_contributions: dict[str, float] = {}
 
     for entity_id, entity in entities.items():
         if entity.weight <= 0:
@@ -287,8 +298,19 @@ def sigmoid_probability(
             else:
                 signal = max(signal, ground_truth_floor / gain)
         contribution = ew * evidence * correlation * signal
-        z += contribution
+        device_id = (
+            getattr(entity, "device_id", None)
+            if entity.type.input_type in (InputType.MOTION, InputType.SLEEP)
+            else None
+        )
+        if isinstance(device_id, str):
+            device_contributions[device_id] = max(
+                device_contributions.get(device_id, 0.0), contribution
+            )
+        else:
+            z += contribution
 
+    z += sum(device_contributions.values())
     return clamp_probability(sigmoid(z))
 
 
@@ -393,6 +415,24 @@ def combined_probability(
     z_combined = z_presence + 0.2 * z_env
 
     return clamp_probability(sigmoid(z_combined))
+
+
+def activity_boost_fade(base_probability: float, threshold: float) -> float:
+    """How much of an activity boost applies, from 0.0 to 1.0.
+
+    The boost is zero at the occupancy threshold and reaches full strength
+    ``ACTIVITY_BOOST_FADE_LOGIT`` logits above it. Activity is only detected
+    while the sensor-only probability is at or above the threshold, so a boost
+    that stayed at full strength right down to it was removed in one step as
+    the probability crossed, which looked like a sudden drop.
+
+    Never changes whether an area is occupied: below the threshold there is no
+    boost, and above it the boosted probability is still above it.
+    """
+    headroom = logit(clamp_probability(base_probability)) - logit(
+        clamp_probability(threshold)
+    )
+    return max(0.0, min(1.0, headroom / ACTIVITY_BOOST_FADE_LOGIT))
 
 
 def apply_activity_boost(
@@ -527,7 +567,9 @@ def get_coordinator(hass: HomeAssistant) -> AreaOccupancyCoordinator:
     return coordinator
 
 
-def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str | None:
+def extract_device_identifier_from_device_info(
+    device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any],
+) -> str | None:
     """Extract device identifier from DeviceInfo identifiers.
 
     Args:
@@ -551,7 +593,7 @@ def extract_device_identifier_from_device_info(device_info: DeviceInfo) -> str |
 
 def generate_entity_unique_id(
     entry_id: str,
-    device_info: DeviceInfo | dict[str, Any] | None,
+    device_info: DeviceInfo | ChildDeviceInfo | dict[str, Any] | None,
     entity_name: str,
 ) -> str:
     """Generate consistent unique_id for platform entities.

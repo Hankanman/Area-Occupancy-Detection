@@ -21,6 +21,7 @@ from .const import (
     CONF_APPLIANCE_ACTIVE_STATES,
     CONF_APPLIANCES,
     CONF_AREA_ID,
+    CONF_BUTTON_PULSE_DURATION,
     CONF_COVER_ACTIVE_STATES,
     CONF_COVER_SENSORS,
     CONF_CUSTOM_BINARY_ACTIVE_STATES,
@@ -47,6 +48,7 @@ from .const import (
     CONF_PURPOSE,
     CONF_THRESHOLD,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_BUTTON,
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_CUSTOM_BINARY,
     CONF_WEIGHT_CUSTOM_NUMERIC,
@@ -75,6 +77,7 @@ from .const import (
     DEFAULT_PURPOSE,
     DEFAULT_SLEEP_CONFIDENCE_THRESHOLD,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_BUTTON,
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_CUSTOM_BINARY,
     DEFAULT_WEIGHT_CUSTOM_NUMERIC,
@@ -108,6 +111,8 @@ THRESHOLD_MAX = 100
 # decay_default``).
 DECAY_HALF_LIFE_MIN = 10
 DECAY_HALF_LIFE_MAX = 3600
+BUTTON_PULSE_DURATION_MIN = 5
+BUTTON_PULSE_DURATION_MAX = 600
 
 # Every per-type weight key with its default, in one place so the validator
 # and any future per-type UI iterate the same list.
@@ -115,6 +120,7 @@ WEIGHT_KEYS: tuple[tuple[str, float], ...] = (
     (CONF_WEIGHT_MOTION, DEFAULT_WEIGHT_MOTION),
     (CONF_WEIGHT_MEDIA, DEFAULT_WEIGHT_MEDIA),
     (CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+    (CONF_WEIGHT_BUTTON, DEFAULT_WEIGHT_BUTTON),
     (CONF_WEIGHT_DOOR, DEFAULT_WEIGHT_DOOR),
     (CONF_WEIGHT_LOCK, DEFAULT_WEIGHT_LOCK),
     (CONF_WEIGHT_WINDOW, DEFAULT_WEIGHT_WINDOW),
@@ -277,6 +283,18 @@ def validate_decay_half_life(value: Any) -> str | None:
     return None
 
 
+def validate_button_pulse_duration(value: Any) -> str | None:
+    """Validate the duration of a button presence pulse in seconds."""
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or value < BUTTON_PULSE_DURATION_MIN
+        or value > BUTTON_PULSE_DURATION_MAX
+    ):
+        return "invalid_button_pulse_duration"
+    return None
+
+
 def validate_sensor_states(data: dict[str, Any]) -> dict[str, str]:
     """Validate the sensor groups' state and range settings.
 
@@ -302,6 +320,10 @@ def validate_sensor_states(data: dict[str, Any]) -> dict[str, str]:
         CONF_CUSTOM_NUMERIC_ACTIVE_MIN, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MIN
     ) >= data.get(CONF_CUSTOM_NUMERIC_ACTIVE_MAX, DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX):
         errors[CONF_CUSTOM_NUMERIC_SENSORS] = "custom_numeric_range_invalid"
+    if CONF_BUTTON_PULSE_DURATION in data and (
+        error := validate_button_pulse_duration(data[CONF_BUTTON_PULSE_DURATION])
+    ):
+        errors[CONF_BUTTON_PULSE_DURATION] = error
     return errors
 
 

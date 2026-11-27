@@ -4,15 +4,16 @@ from __future__ import annotations
 
 # Standard library imports
 from collections import deque
+from collections.abc import Iterable
 import contextlib
 from datetime import datetime, timedelta
 import logging
-from typing import Any
+from typing import Any, cast
 
 # Home Assistant imports
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -71,7 +72,7 @@ from .data.analysis import run_full_analysis
 from .data.away_shadow import AwayShadow, AwayShadowState
 from .data.config import IntegrationConfig
 from .data.continuity_shadow import ContinuityShadow, ContinuityState, half_life_ratio
-from .data.door_hold import DoorHold, DoorHoldState
+from .data.door_hold import DOOR_HOLD_CONFIRMING_TYPES, DoorHold, DoorHoldState
 from .data.entity_type import (
     BINARY_INPUT_TYPES,
     GROUND_TRUTH_INPUT_TYPES,
@@ -83,7 +84,7 @@ from .data.fusion import FusionLearner, FusionState, FusionTick
 from .data.ground_truth import LabelerState, LiveLabeler
 from .data.health import SensorHealthRepairs
 from .data.likelihood_shadow import LikelihoodShadow, LikelihoodShadowState
-from .data.metrics import AccuracyMetrics, TickSample, accuracy_summary
+from .data.metrics import AccuracyMetrics, AccuracyTally, TickSample
 from .data.online_prior import OnlinePriorEstimator, OnlinePriorState
 from .data.trajectory import TrajectoryTracker
 from .data.transition_shadow import TransitionShadow, TransitionShadowState
@@ -115,6 +116,55 @@ def _ground_truth_present(area: Area, *, include_stuck: bool = False) -> bool:
     )
 
 
+# Presence types whose "active" state is a standing condition (a door left open,
+# a lock or window in its usual state, a cover raised) rather than a sign of
+# someone being there right now. They can sit active all day, so they don't
+# count as explaining why an area is on.
+_STANDING_STATE_INPUT_TYPES = frozenset(
+    {InputType.DOOR, InputType.LOCK, InputType.WINDOW, InputType.COVER}
+)
+
+
+_DOOR_OPEN_STATES = frozenset({"on", "open"})
+_DOOR_CLOSED_STATES = frozenset({"off", "closed"})
+
+
+def _doors_open(states: Iterable[str]) -> bool | None:
+    """Whether an area's doors are open: True, False, or None if unreadable.
+
+    Open wins (one open door releases the hold whatever the others read).
+    Otherwise a door that isn't plainly closed, such as ``unknown``,
+    ``unavailable`` or mid-travel, makes the answer None: it must neither
+    arm a closed-door hold nor release one.
+    """
+    seen_unknown = False
+    for state in states:
+        if state in _DOOR_OPEN_STATES:
+            return True
+        if state not in _DOOR_CLOSED_STATES:
+            seen_unknown = True
+    return None if seen_unknown else False
+
+
+def _area_is_fading(area: Area) -> bool:
+    """Return whether the area is on only because sensors are fading out.
+
+    True when some sensor is decaying and no sensor that says someone is
+    there right now is active. Environmental sensors don't count as active
+    (they can only add support to a presence reading, never hold a room on),
+    and neither do standing-state sensors: a temperature sensor whose range
+    covers the room's everyday readings, or a door left open, is "active" all
+    day and would hide every fade, so the whole decay tail after motion read
+    as a false "on" in the accuracy numbers.
+    """
+    return bool(area.entities.decaying_entities) and not any(
+        entity.evidence is True
+        and entity.type.input_type in PRESENCE_INPUT_TYPES
+        and entity.type.input_type not in _STANDING_STATE_INPUT_TYPES
+        for entity in area.entities.active_entities
+    )
+
+
 def _arrived_after(area: Area, departed_at: datetime | None) -> bool:
     """Return whether one of the area's presence sensors fired after a departure.
 
@@ -135,7 +185,7 @@ def _arrived_after(area: Area, departed_at: datetime | None) -> bool:
     )
 
 
-class OnlinePriorStore(Store[dict[str, dict]]):
+class OnlinePriorStore(Store[dict[str, dict[str, Any]]]):
     """Store for the online-prior shadow state, with v1->v2 passthrough.
 
     v2 (2026.9.1) added the weekly slot accumulators and divergence
@@ -148,9 +198,29 @@ class OnlinePriorStore(Store[dict[str, dict]]):
     """
 
     async def _async_migrate_func(
-        self, old_version: int, old_data: dict[str, dict]
-    ) -> dict[str, dict]:
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
         return old_data
+
+
+class AccuracyStore(Store[dict[str, dict[str, Any]]]):
+    """Store for the daily accuracy tallies.
+
+    v1 kept one rates snapshot a day. Rates can't be pooled into a longer
+    figure, so the upgrade drops them and starts the tallies afresh; the
+    hook must exist, or ``Store.async_load`` raises on the version change.
+    """
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        return {}
 
 
 class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -240,10 +310,12 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # refreshed before each prior recalculation; prior learning leaves
         # them out (#574/#584). Empty without an away-mode entity.
         self.away_spans: list[tuple[datetime, datetime]] = []
-        # Daily summaries of the above, persisted so the metric's stability
-        # can be judged across restarts (the tick window is memory-only).
-        self._accuracy_history: dict[str, list[dict[str, Any]]] = {}
-        self._accuracy_store: Store[dict[str, list]] = Store(
+        # The seconds behind the above, one tally per local day, persisted
+        # so a month's accuracy survives restarts (the tick window is
+        # memory-only), and how far each area's ticks have been tallied.
+        self._accuracy_days: dict[str, dict[str, AccuracyTally]] = {}
+        self._accuracy_scored_until: dict[str, datetime] = {}
+        self._accuracy_store: Store[dict[str, dict[str, Any]]] = AccuracyStore(
             hass,
             ACCURACY_STORE_VERSION,
             f"{ACCURACY_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -253,7 +325,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # via the HA storage helper, and diffed against the DB-computed
         # prior each analysis cycle. Never read by the probability path.
         self._online_priors: dict[str, OnlinePriorEstimator] = {}
-        self._online_prior_store: Store[dict[str, dict]] = OnlinePriorStore(
+        self._online_prior_store: Store[dict[str, dict[str, Any]]] = OnlinePriorStore(
             hass,
             ONLINE_PRIOR_STORE_VERSION,
             f"{ONLINE_PRIOR_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -262,21 +334,21 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # rule the database applies after the fact, so learners don't need
         # the database to know the truth.
         self._labelers: dict[str, LiveLabeler] = {}
-        self._ground_truth_store: Store[dict[str, dict]] = Store(
+        self._ground_truth_store: Store[dict[str, dict[str, Any]]] = Store(
             hass,
             GROUND_TRUTH_STORE_VERSION,
             f"{GROUND_TRUTH_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Presence-continuity shadow (#558) for open-plan rooms.
         self._continuity: dict[str, ContinuityShadow] = {}
-        self._continuity_store: Store[dict[str, dict]] = Store(
+        self._continuity_store: Store[dict[str, dict[str, Any]]] = Store(
             hass,
             CONTINUITY_STORE_VERSION,
             f"{CONTINUITY_STORE_KEY_PREFIX}.{self.entry_id}",
         )
         # Closed-door holds (#558), persisted so a restart keeps a hold.
         self._door_holds: dict[str, DoorHold] = {}
-        self._door_hold_store: Store[dict[str, dict]] = Store(
+        self._door_hold_store: Store[dict[str, dict[str, Any]]] = Store(
             hass,
             DOOR_HOLD_STORE_VERSION,
             f"{DOOR_HOLD_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -284,7 +356,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Shadow sensor likelihoods (#603): learned tick by tick against the
         # live label, compared daily with the database's values.
         self._likelihood_shadow: dict[str, LikelihoodShadow] = {}
-        self._likelihood_shadow_store: Store[dict[str, dict]] = Store(
+        self._likelihood_shadow_store: Store[dict[str, dict[str, Any]]] = Store(
             hass,
             LIKELIHOOD_SHADOW_STORE_VERSION,
             f"{LIKELIHOOD_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -292,7 +364,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Live transition counts (#603), fed every area's latest label.
         self._latest_labels: dict[str, bool] = {}
         self._transition_shadow = TransitionShadow()
-        self._transition_shadow_store: Store[dict] = Store(
+        self._transition_shadow_store: Store[dict[str, Any]] = Store(
             hass,
             TRANSITION_SHADOW_STORE_VERSION,
             f"{TRANSITION_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -300,7 +372,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Away-mode shadow evidence (#584): what lowering every room to the
         # away prior would have done. Never read by the probability path.
         self._away_shadow: dict[str, AwayShadow] = {}
-        self._away_shadow_store: Store[dict[str, dict]] = Store(
+        self._away_shadow_store: Store[dict[str, dict[str, Any]]] = Store(
             hass,
             AWAY_SHADOW_STORE_VERSION,
             f"{AWAY_SHADOW_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -310,7 +382,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # like the online priors above. Never read by the probability path.
         self._fusion_ticks: dict[str, deque[FusionTick]] = {}
         self._fusion_learners: dict[str, FusionLearner] = {}
-        self._fusion_store: Store[dict[str, dict]] = Store(
+        self._fusion_store: Store[dict[str, dict[str, Any]]] = Store(
             hass,
             FUSION_STORE_VERSION,
             f"{FUSION_STORE_KEY_PREFIX}.{self.entry_id}",
@@ -641,12 +713,24 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         OnlinePriorState.from_dict(stored_priors[area_name])
                     )
 
-            # Restore the accuracy history (#499) for known areas
+            # Restore the daily accuracy tallies (#499) for known areas
             stored_accuracy = await self._accuracy_store.async_load() or {}
             for area_name in self.areas:
-                history = stored_accuracy.get(area_name)
-                if isinstance(history, list):
-                    self._accuracy_history[area_name] = history
+                stored = stored_accuracy.get(area_name)
+                if not isinstance(stored, dict):
+                    continue
+                days = stored.get("days")
+                if isinstance(days, dict):
+                    self._accuracy_days[area_name] = {
+                        day: AccuracyTally.from_dict(tally)
+                        for day, tally in days.items()
+                        if isinstance(tally, dict)
+                    }
+                scored_until = dt_util.parse_datetime(
+                    str(stored.get("scored_until") or "")
+                )
+                if scored_until is not None:
+                    self._accuracy_scored_until[area_name] = scored_until
 
             # Restore the live ground-truth labellers (#603) for known areas
             stored_labels = await self._ground_truth_store.async_load() or {}
@@ -878,13 +962,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 probability=probability,
                 occupied=is_occupied,
                 truth=truth,
+                fading=_area_is_fading(area),
             )
         )
-        # Match db.queries.get_occupied_intervals' ground-truth definition
-        # (motion ∪ media ∪ sleep) rather than motion alone, so the online
-        # numerator and the DB-computed prior it's being diffed against
-        # measure the same thing. Motion's timeout extension isn't
-        # replicated here — see module docstring's known approximations.
+        # The live label matches db.queries.get_occupied_intervals' ground
+        # truth (motion ∪ media ∪ sleep, PIR gaps bridged by the motion
+        # timeout), so the online numerator and the DB-computed prior it's
+        # diffed against measure the same thing.
         presence_active = _ground_truth_present(area)
         self._online_priors.setdefault(area_name, OnlinePriorEstimator()).observe(
             motion_active=truth, now=now
@@ -1000,6 +1084,8 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if input_type in BINARY_INPUT_TYPES:
                 binary[entity_id] = entity.evidence is True
             elif input_type in NUMERIC_INPUT_TYPES:
+                if entity.state is None:
+                    continue
                 try:
                     numeric[entity_id] = float(entity.state)
                 except (TypeError, ValueError):
@@ -1076,10 +1162,9 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._door_holds.pop(area_name, None)
             return
         decay = area.config.decay
-        wasp = area.config.wasp_in_box
         self._door_holds.setdefault(area_name, DoorHold()).observe(
             now,
-            doors_open=any(str(door.state) in ("on", "open") for door in doors),
+            doors_open=_doors_open(str(door.state) for door in doors),
             motion_on=any(
                 entity.evidence is True
                 and entity.type.input_type == InputType.MOTION
@@ -1087,8 +1172,23 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and getattr(entity, "is_stuck", False) is not True
                 for entity in area.entities.entities.values()
             ),
-            motion_window=wasp.motion_timeout,
-            max_hold=wasp.max_duration,
+            presence_on=any(
+                entity.evidence is True
+                and getattr(entity, "is_stuck", False) is not True
+                and entity.entity_id != area.wasp_entity_id
+                and (
+                    entity.type.input_type in DOOR_HOLD_CONFIRMING_TYPES
+                    or (
+                        entity.type.input_type == InputType.MOTION
+                        and entity.ha_device_class == "presence"
+                    )
+                )
+                for entity in area.entities.entities.values()
+            ),
+            # The area's motion timeout, for every area (the Wasp in Box
+            # timeout no longer feeds the hold).
+            motion_window=float(area.config.sensors.motion_timeout),
+            max_hold=float(area.config.wasp_in_box.max_duration),
             fade_half_life=decay.half_life,
         )
 
@@ -1227,8 +1327,10 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Could not read away-mode history: %s", err)
             self.away_spans = []
             return
+        # ``minimal_response=False`` returns full State objects.
         states = sorted(
-            (history or {}).get(entity_id, []), key=lambda st: st.last_changed
+            cast("list[State]", (history or {}).get(entity_id, [])),
+            key=lambda st: st.last_changed,
         )
         spans: list[tuple[datetime, datetime]] = []
         for current, following in zip(states, [*states[1:], None], strict=True):
@@ -1252,28 +1354,53 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._accuracy_metrics.get(area_name)
 
     def set_accuracy_metrics(self, area_name: str, metrics: AccuracyMetrics) -> None:
-        """Cache an area's shadow accuracy snapshot (analysis pipeline).
-
-        Also records it as the day's summary: each hourly run overwrites
-        the day's entry, so a day keeps its latest 24-hour window.
-        """
+        """Cache an area's shadow accuracy snapshot (analysis pipeline)."""
         self._accuracy_metrics[area_name] = metrics
-        day = to_local(dt_util.utcnow()).date().isoformat()
-        record = {"date": day, **accuracy_summary(metrics)}
-        history = self._accuracy_history.setdefault(area_name, [])
-        if history and history[-1].get("date") == day:
-            history[-1] = record
-        else:
-            history.append(record)
-        del history[:-ACCURACY_HISTORY_DAYS]
 
-    def accuracy_history_for(self, area_name: str) -> list[dict[str, Any]]:
-        """Return an area's persisted daily accuracy summaries, oldest first."""
-        return list(self._accuracy_history.get(area_name, ()))
+    def accuracy_scored_until(self, area_name: str) -> datetime | None:
+        """The last tick an area's daily tallies already cover, if any."""
+        return self._accuracy_scored_until.get(area_name)
+
+    def add_accuracy_tallies(
+        self,
+        area_name: str,
+        tallies: dict[str, AccuracyTally],
+        scored_until: datetime,
+    ) -> None:
+        """Fold newly scored ticks into an area's daily tallies.
+
+        Args:
+            area_name: The area.
+            tallies: The new ticks' tallies, keyed by local date.
+            scored_until: The tick they run up to, where the next batch
+                starts.
+        """
+        days = self._accuracy_days.setdefault(area_name, {})
+        for day, tally in tallies.items():
+            days.setdefault(day, AccuracyTally()).add(tally)
+        for day in sorted(days)[:-ACCURACY_HISTORY_DAYS]:
+            del days[day]
+        self._accuracy_scored_until[area_name] = scored_until
+
+    def accuracy_days_for(self, area_name: str) -> dict[str, AccuracyTally]:
+        """Return an area's daily accuracy tallies, keyed by local date."""
+        return dict(sorted(self._accuracy_days.get(area_name, {}).items()))
 
     async def async_save_accuracy_history(self) -> None:
-        """Persist the daily accuracy summaries via the HA storage helper."""
-        await self._accuracy_store.async_save(dict(self._accuracy_history))
+        """Persist the daily accuracy tallies via the HA storage helper."""
+        await self._accuracy_store.async_save(
+            {
+                area_name: {
+                    "scored_until": (
+                        scored.isoformat()
+                        if (scored := self._accuracy_scored_until.get(area_name))
+                        else None
+                    ),
+                    "days": {day: tally.to_dict() for day, tally in days.items()},
+                }
+                for area_name, days in self._accuracy_days.items()
+            }
+        )
 
     # --- Online prior (#500, shadow mode) accessors ---
     def online_prior_for(self, area_name: str) -> OnlinePriorEstimator | None:
@@ -1598,8 +1725,13 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Look up device for this area (used for both entity and device removal)
         device_registry = dr.async_get(self.hass)
-        device = device_registry.async_get_device_by_identifier(
-            (DOMAIN, area.config.area_id), self.entry_id
+        area_id = area.config.area_id
+        device = (
+            device_registry.async_get_device_by_identifier(
+                (DOMAIN, area_id), self.entry_id
+            )
+            if area_id is not None
+            else None
         )
 
         # Remove entities from entity registry that belong to this device
@@ -1992,7 +2124,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if entity_ids:
 
             async def _refresh_on_state_change(event: Any) -> None:
-                entity_id = event.data.get("entity_id")
+                entity_id = cast("str | None", event.data.get("entity_id"))
                 if not entity_id:
                     return
 
@@ -2005,7 +2137,11 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except ValueError:
                         # Entity doesn't belong to this area, skip it
                         continue
-                    changed = entity.has_new_evidence()
+                    count_button_press = not (
+                        entity.type.input_type is InputType.BUTTON
+                        and area.probability() >= area.threshold()
+                    )
+                    changed = entity.has_new_evidence(count_button_press)
                     # Take down repairs the change resolved (sensor back
                     # online, no longer stuck) now, not at the next hourly
                     # check. The virtual sensors are never checked.
@@ -2110,6 +2246,17 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if decay_enabled:
             await self.async_refresh()
         else:
+            button_expired = False
+            for area in self.areas.values():
+                area_occupied = area.probability() >= area.threshold()
+                for entity in area.entities.entities.values():
+                    if entity.type.input_type is not InputType.BUTTON:
+                        continue
+                    button_expired |= entity.has_new_evidence(
+                        count_button_press=not area_occupied
+                    )
+            if button_expired:
+                await self.async_refresh()
             # Shadow-mode estimators (#499/#500) still need a steady tick
             # cadence even when no area has decay enabled — without this,
             # they'd only observe on evidence-triggered refreshes, whose

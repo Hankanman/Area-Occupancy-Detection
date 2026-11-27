@@ -9,6 +9,7 @@ import pytest
 from custom_components.area_occupancy.const import MAX_PROBABILITY, MIN_PROBABILITY
 from custom_components.area_occupancy.data.entity_type import DEFAULT_TYPES, InputType
 from custom_components.area_occupancy.utils import (
+    activity_boost_fade,
     apply_activity_boost,
     clamp_probability,
     combine_priors,
@@ -844,6 +845,63 @@ class TestApplyActivityBoost:
         assert MIN_PROBABILITY <= result <= MAX_PROBABILITY
 
 
+class TestActivityBoostFade:
+    """The boost fades in above the threshold instead of vanishing at it.
+
+    Live report: a Bathroom's showering boost (1.5 x confidence 0.744 = 1.116
+    logits) was released when the sensor-only probability crossed the 0.5
+    threshold, so the published probability fell from 0.7565 to 0.4971 in one
+    step.
+    """
+
+    def test_no_boost_at_or_below_the_threshold(self) -> None:
+        assert activity_boost_fade(0.5, 0.5) == 0.0
+        assert activity_boost_fade(0.3, 0.5) == 0.0
+
+    def test_full_boost_one_logit_above(self) -> None:
+        assert activity_boost_fade(sigmoid(1.0), 0.5) == pytest.approx(1.0)
+        assert activity_boost_fade(0.95, 0.5) == 1.0
+
+    def test_half_way_up_is_half_a_boost(self) -> None:
+        assert activity_boost_fade(sigmoid(0.5), 0.5) == pytest.approx(0.5)
+
+    def test_it_follows_a_threshold_other_than_half(self) -> None:
+        """Headroom is measured from the threshold, not from 0.5."""
+        threshold = 0.7
+        assert activity_boost_fade(threshold, threshold) == 0.0
+        assert activity_boost_fade(
+            sigmoid(logit(threshold) + 0.25), threshold
+        ) == pytest.approx(0.25)
+
+    def test_no_cliff_as_the_base_crosses_the_threshold(self) -> None:
+        """The published probability is continuous across the threshold."""
+
+        def published(base: float) -> float:
+            return apply_activity_boost(
+                base, 1.5, 0.744 * activity_boost_fade(base, 0.5)
+            )
+
+        assert abs(published(0.5001) - published(0.4999)) < 0.001
+
+    def test_the_live_bathroom_no_longer_drops_26_points(self) -> None:
+        """Base 50.4% just before the crossing now publishes ~50.9%, not 75.7%."""
+        base = 0.504
+        # headroom = logit(0.504) = 0.016 -> boost 1.116 * 0.016 = 0.0179
+        published = apply_activity_boost(
+            base, 1.5, 0.744 * activity_boost_fade(base, 0.5)
+        )
+        assert published == pytest.approx(sigmoid(logit(base) + 0.0179), abs=1e-3)
+        assert 0.504 < published < 0.52
+
+    def test_the_boost_never_pulls_below_the_base(self) -> None:
+        """The fade only shrinks a boost: occupied status can't change."""
+        for base in (0.5, 0.52, 0.6, 0.8, 0.99):
+            faded = apply_activity_boost(
+                base, 1.5, 0.9 * activity_boost_fade(base, 0.5)
+            )
+            assert faded >= base - 1e-12
+
+
 class TestGroundTruthActiveFloor:
     """One active motion sensor clears the threshold whatever the prior.
 
@@ -1111,3 +1169,96 @@ class TestFadingHold:
         assert sigmoid_probability({"m": motion}, prior=self.PRIOR) == pytest.approx(
             0.74914, abs=1e-4
         )
+
+
+class TestOneDeviceCountsOnce:
+    """Channels of one physical device count once, at their strongest.
+
+    Live report (2026.10.2): a study with a combined PIR and mmWave sensor
+    (one device, a motion and an occupancy entity) stayed occupied two
+    half-lives after a few seconds of motion. Hand-computed with the
+    ``TestFadingHold`` room (prior 41.8%, threshold 50%, hold 0.66198): two
+    fading channels summed give ``z = -0.33099 + 2 * 0.66198 * 0.5 =
+    0.33099``, 58.20% at one half-life; counted once, exactly 50%.
+    """
+
+    PRIOR = 0.418
+
+    @staticmethod
+    def _channel(device_id: str | None, **overrides: Any) -> Mock:
+        params: dict[str, Any] = {
+            "evidence": True,
+            "prob_given_true": 0.95,
+            "prob_given_false": 0.005,
+            "weight": 1.0,
+            "input_type": InputType.MOTION,
+        }
+        entity = _create_mock_entity(**(params | overrides))
+        entity.device_id = device_id
+        return entity
+
+    def _fading_pair(
+        self, first_device: str | None, second_device: str | None
+    ) -> float:
+        fading = {"evidence": False, "is_decaying": True, "decay_factor": 0.5}
+        return sigmoid_probability(
+            {
+                "movement": self._channel(first_device, **fading),
+                "occupancy": self._channel(second_device, **fading),
+            },
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+
+    def test_same_device_releases_at_one_half_life(self) -> None:
+        """Two fading channels of one device: exactly 50% at f = 0.5."""
+        assert self._fading_pair("sensor_1", "sensor_1") == pytest.approx(0.5, abs=1e-6)
+
+    def test_different_devices_still_add_up(self) -> None:
+        """Two devices are two observations: 58.20% at f = 0.5, as before."""
+        assert self._fading_pair("sensor_1", "sensor_2") == pytest.approx(
+            0.58200, abs=1e-4
+        )
+
+    def test_channels_without_a_device_still_add_up(self) -> None:
+        """No device to group by: summed as before."""
+        assert self._fading_pair(None, None) == pytest.approx(0.58200, abs=1e-4)
+
+    def test_same_device_active_counts_one_channel(self) -> None:
+        """Both channels on: sigmoid(-0.33099 + 2.85) = 92.55%, one sensor's worth."""
+        probability = sigmoid_probability(
+            {
+                "movement": self._channel("sensor_1"),
+                "occupancy": self._channel("sensor_1"),
+            },
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+        assert probability == pytest.approx(0.92546, abs=1e-4)
+
+    def test_the_strongest_channel_wins(self) -> None:
+        """One channel on, the other fading: the active one sets the contribution."""
+        probability = sigmoid_probability(
+            {
+                "movement": self._channel("sensor_1"),
+                "occupancy": self._channel(
+                    "sensor_1", evidence=False, is_decaying=True, decay_factor=0.5
+                ),
+            },
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+        assert probability == pytest.approx(0.92546, abs=1e-4)
+
+    def test_other_types_on_the_device_are_not_grouped(self) -> None:
+        """A door on the same device is separate evidence and still adds up."""
+        door = self._channel("sensor_1", input_type=InputType.DOOR, prob_given_true=0.2)
+        alone = sigmoid_probability(
+            {"movement": self._channel("sensor_1")}, prior=self.PRIOR, threshold=0.5
+        )
+        with_door = sigmoid_probability(
+            {"movement": self._channel("sensor_1"), "door": door},
+            prior=self.PRIOR,
+            threshold=0.5,
+        )
+        assert with_door > alone

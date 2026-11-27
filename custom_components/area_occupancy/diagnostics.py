@@ -11,7 +11,7 @@ prevent the rest of the diagnostic from being produced.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ACCURACY_SUMMARY_DAYS,
     CONF_VERSION,
     CONF_VERSION_MINOR,
     DEVICE_SW_VERSION,
@@ -28,7 +29,13 @@ from .const import (
     ONLINE_PRIOR_DIFF_TOLERANCE,
     TRANSITION_DIFF_TOLERANCE,
 )
-from .data.metrics import metrics_to_diagnostics
+from .data.metrics import (
+    ACCURACY_MIN_CLASS_SECONDS,
+    AccuracyTally,
+    accuracy_summary,
+    metrics_from_tally,
+    metrics_to_diagnostics,
+)
 from .db import queries
 
 if TYPE_CHECKING:
@@ -106,6 +113,7 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
         "motion": len(sensors.motion),
         "media": len(sensors.media),
         "appliance": len(sensors.appliance),
+        "button": len(sensors.button),
         "door": len(sensors.door),
         "lock": len(sensors.lock),
         "window": len(sensors.window),
@@ -139,6 +147,7 @@ def _area_config_snapshot(area: Area) -> dict[str, Any]:
             "motion": weights.motion,
             "media": weights.media,
             "appliance": weights.appliance,
+            "button": weights.button,
             "door": weights.door,
             "lock": weights.lock,
             "window": weights.window,
@@ -181,6 +190,46 @@ def _health_snapshot(area: Area) -> dict[str, Any]:
             }
             for issue in monitor.issues
         ],
+    }
+
+
+def _accuracy_days(
+    coordinator: AreaOccupancyCoordinator, area_name: str
+) -> dict[str, Any]:
+    """An area's accuracy by day (last two weeks) and over the last month.
+
+    Both come from the persisted tallies, so unlike the 24-hour window
+    they survive restarts. The month figure pools the seconds, not the
+    daily rates.
+    """
+    days = coordinator.accuracy_days_for(area_name)
+    history = [
+        {
+            "date": day,
+            **accuracy_summary(
+                metrics_from_tally(tally, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS)
+            ),
+        }
+        for day, tally in list(days.items())[-14:]
+    ]
+    # By calendar date, not the last N stored days: after a gap in the
+    # history those would reach back past the month.
+    cutoff = (
+        dt_util.now().date() - timedelta(days=ACCURACY_SUMMARY_DAYS - 1)
+    ).isoformat()
+    recent = [(day, tally) for day, tally in days.items() if day >= cutoff]
+    pooled = AccuracyTally()
+    for _day, tally in recent:
+        pooled.add(tally)
+    return {
+        "history": history,
+        "last_30_days": {
+            "days": len(recent),
+            "first_day": recent[0][0] if recent else None,
+            **accuracy_summary(
+                metrics_from_tally(pooled, min_class_seconds=ACCURACY_MIN_CLASS_SECONDS)
+            ),
+        },
     }
 
 
@@ -272,10 +321,7 @@ def _area_snapshot(
         accuracy = coordinator.accuracy_metrics_for(area_name)
         if accuracy is not None:
             current["accuracy"] = metrics_to_diagnostics(accuracy)
-            # Daily summaries survive restarts; the last two weeks here.
-            current["accuracy"]["history"] = coordinator.accuracy_history_for(
-                area_name
-            )[-14:]
+            current["accuracy"].update(_accuracy_days(coordinator, area_name))
         estimator = coordinator.online_prior_for(area_name)
         if estimator is not None:
             now = dt_util.utcnow()
@@ -299,6 +345,14 @@ def _area_snapshot(
                     # Recent daily worst-case divergence summaries; the
                     # full 90-day history lives in the Store.
                     "diff_history": estimator.state.diff_history[-14:],
+                    # Each completed day compared on its own (diff is the
+                    # share of the day); partial days don't count.
+                    "daily_days_within_tolerance": (
+                        estimator.daily_days_within_tolerance(
+                            ONLINE_PRIOR_DIFF_TOLERANCE
+                        )
+                    ),
+                    "daily_history": estimator.state.day_diff_history[-14:],
                 }
         likelihood_shadow = coordinator.likelihood_shadow_for(area_name)
         if likelihood_shadow is not None:

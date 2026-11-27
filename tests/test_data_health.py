@@ -2454,6 +2454,128 @@ class TestPipelineRepairsSurviveTheSensorCheck:
         ]
 
 
+class TestPipelineRepairsAcrossARestart:
+    """A restart must not delete a stored pipeline repair and raise it again.
+
+    The monitor starts with no pipeline issues in memory, so the first sensor
+    check used to resolve the repair stored before the restart, and the
+    pipeline check seconds later raised it again as new, moving its created
+    time to the restart.
+    """
+
+    SLOW = {
+        "area_age_hours": None,
+        "has_global_prior": True,
+        "cache_age_hours": 1.0,
+        "last_analysis_duration_ms": 10_000_000.0,
+        "correlation_failure_count": 0,
+        "correlatable_entity_count": 0,
+    }
+
+    async def test_the_first_sensor_check_leaves_the_stored_repair(
+        self, hass: HomeAssistant
+    ) -> None:
+        before = HealthMonitor("Lounge", "lounge", hass)
+        before.check_pipeline_health(**self.SLOW)
+        issue_id = _issue_id("lounge", None, HealthIssueType.SLOW_ANALYSIS)
+        registry = ir.async_get(hass)
+        created = registry.async_get_issue(DOMAIN, issue_id).created
+
+        # A restart: the new monitor knows only what the registry stored.
+        after = HealthMonitor("Lounge", "lounge", hass)
+        after.check_health({})
+
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        assert issue_id in after._active_issue_ids
+
+        after.check_pipeline_health(**self.SLOW)
+        assert registry.async_get_issue(DOMAIN, issue_id).created == created
+
+    async def test_a_cleared_condition_is_still_resolved_after_a_restart(
+        self, hass: HomeAssistant
+    ) -> None:
+        HealthMonitor("Lounge", "lounge", hass).check_pipeline_health(**self.SLOW)
+        issue_id = _issue_id("lounge", None, HealthIssueType.SLOW_ANALYSIS)
+        registry = ir.async_get(hass)
+
+        after = HealthMonitor("Lounge", "lounge", hass)
+        after.check_health({})
+        after.check_pipeline_health(**{**self.SLOW, "last_analysis_duration_ms": 1.0})
+
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+class TestPipelineIssuesKeepTheirFirstSeenTime:
+    """A lasting pipeline issue shows how long it has lasted, not a fresh start."""
+
+    CALL = {
+        "area_age_hours": None,
+        "has_global_prior": True,
+        "cache_age_hours": 1.0,
+        "last_analysis_duration_ms": 1.0,
+        "correlation_failure_count": 0,
+        "correlatable_entity_count": 0,
+        "peak_prior": (0.64, "Sunday 23:00"),
+        "threshold": 0.5,
+    }
+
+    async def test_since_and_duration_carry_forward(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        monitor = HealthMonitor("Bedroom", "bedroom", hass)
+        first = monitor.check_pipeline_health(**self.CALL)[0]
+        assert first.duration_hours == 0.0
+
+        freezer.tick(timedelta(hours=3))
+        second = monitor.check_pipeline_health(**self.CALL)[0]
+
+        assert second.since == first.since
+        assert second.duration_hours == pytest.approx(3.0, abs=0.1)
+
+    async def test_a_cleared_issue_starts_again_when_it_returns(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        monitor = HealthMonitor("Bedroom", "bedroom", hass)
+        first = monitor.check_pipeline_health(**self.CALL)[0]
+
+        freezer.tick(timedelta(hours=1))
+        assert monitor.check_pipeline_health(**{**self.CALL, "peak_prior": None}) == []
+
+        freezer.tick(timedelta(hours=1))
+        again = monitor.check_pipeline_health(**self.CALL)[0]
+
+        assert again.since > first.since
+        assert again.duration_hours == 0.0
+
+
+class TestFirstSeenSurvivesARestart:
+    """The repair registry remembers when an issue was first raised."""
+
+    CALL = TestPipelineIssuesKeepTheirFirstSeenTime.CALL
+
+    async def test_a_restarted_monitor_takes_the_registered_time(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        before = HealthMonitor("Bedroom", "bedroom", hass)
+        first = before.check_pipeline_health(**self.CALL)[0]
+
+        freezer.tick(timedelta(hours=30))
+        after = HealthMonitor("Bedroom", "bedroom", hass)
+        after.check_health({})
+        again = after.check_pipeline_health(**self.CALL)[0]
+
+        assert again.since == first.since
+        assert again.duration_hours == pytest.approx(30.0, abs=0.1)
+
+    async def test_a_new_issue_with_no_stored_repair_starts_now(
+        self, hass: HomeAssistant
+    ) -> None:
+        issue = HealthMonitor("Bedroom", "bedroom", hass).check_pipeline_health(
+            **self.CALL
+        )[0]
+        assert issue.duration_hours == 0.0
+
+
 class TestSharedSensorRepairs:
     """A shared input has one repair while each room retains its diagnosis."""
 

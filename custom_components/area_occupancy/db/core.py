@@ -73,6 +73,7 @@ def _create_delegated_methods() -> dict[str, Any]:
         "init_db": maintenance.init_db,
         # Operations methods
         "load_data": operations.load_data,
+        "delete_stale_entities": operations.delete_stale_entities,
         "save_data": operations.save_data,
         "save_area_data": operations.save_area_data,
         "save_entity_data": operations.save_entity_data,
@@ -195,6 +196,8 @@ class AreaOccupancyDB:
 
         self.last_area_save_ts: float = 0.0
         self.last_entities_save_ts: float = 0.0
+        # False until platform setup has registered every area's own sensors.
+        self.area_entities_ready: bool = False
         self._save_debounce_seconds: float = 1.5
 
     def _setup_delegation(self) -> None:

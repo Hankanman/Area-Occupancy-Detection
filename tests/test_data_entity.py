@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from custom_components.area_occupancy.const import CONF_SLEEP_END, CONF_SLEEP_START
+from custom_components.area_occupancy.const import (
+    CONF_SLEEP_END,
+    CONF_SLEEP_START,
+    DEFAULT_BUTTON_PULSE_DURATION,
+)
 from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
 from custom_components.area_occupancy.data.decay import Decay
 from custom_components.area_occupancy.data.entity import (
@@ -495,6 +499,89 @@ class TestEntityPropertiesAndMethods:
             assert entity.evidence is expected_evidence
         finally:
             object.__setattr__(coordinator.hass, "states", original_states)
+
+    def test_button_state_change_is_short_lived_presence_evidence(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A state-reported button press uses the configured presence window."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+
+        assert entity.evidence is False
+        pressed_at = dt_util.utcnow()
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+        assert entity.has_new_evidence() is True
+        assert entity.evidence is True
+        assert entity.decay.is_decaying is True
+
+        entity.press_recorded_at = dt_util.utcnow() - timedelta(
+            seconds=DEFAULT_BUTTON_PULSE_DURATION + 1
+        )
+        assert entity.evidence is False
+
+    def test_button_state_change_can_be_ignored_when_area_is_occupied(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An ignored button press must not create presence evidence."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        pressed_at = dt_util.utcnow()
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+
+        assert entity.has_new_evidence(count_button_press=False) is False
+        assert entity.evidence is False
+
+    def test_ignored_button_press_keeps_the_recorded_press_fade(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A press ignored mid-pulse must not cancel the recorded press's fade."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        first = dt_util.utcnow()
+        _set_states_get(coordinator.hass, lambda _: Mock(state=first.isoformat()))
+        assert entity.has_new_evidence() is True
+        fade_start = entity.decay.decay_start
+
+        second = first + timedelta(seconds=1)
+        _set_states_get(coordinator.hass, lambda _: Mock(state=second.isoformat()))
+        entity.has_new_evidence(count_button_press=False)
+
+        assert entity.evidence is True
+        assert entity.decay.is_decaying is True
+        assert entity.decay.decay_start == fade_start
+
+    def test_stale_button_state_change_does_not_start_decay(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A restored old button timestamp must not count as a new press."""
+        entity = create_test_entity(
+            entity_type=EntityType(InputType.BUTTON),
+            coordinator=coordinator,
+        )
+        pressed_at = dt_util.utcnow() - timedelta(
+            seconds=DEFAULT_BUTTON_PULSE_DURATION + 1
+        )
+        _set_states_get(
+            coordinator.hass,
+            lambda _: Mock(state=pressed_at.isoformat()),
+        )
+
+        assert entity.has_new_evidence() is False
+        assert entity.press_recorded_at is None
+        assert entity.evidence is False
+        assert entity.decay.is_decaying is False
 
     def test_has_new_evidence_transitions(
         self, coordinator: AreaOccupancyCoordinator
@@ -1350,8 +1437,9 @@ class TestEntityPropertiesAndMethods:
         assert entity.learned_gaussian_params.mean_unoccupied == 10.0
         assert entity.learned_gaussian_params.std_unoccupied == 2.0
 
-        # Should also set learned_active_range
-        assert entity.learned_active_range == (14.0, 26.0)  # 10+2*2, 20+2*3
+        # Should also set learned_active_range: one-sided, never capped at
+        # the occupied mean + 2σ (26.0)
+        assert entity.learned_active_range == (14.0, float("inf"))  # 10+2*2
 
     def test_update_correlation_binary_sensor(
         self, coordinator: AreaOccupancyCoordinator
@@ -1456,6 +1544,49 @@ class TestEntityPropertiesAndMethods:
 
         # Should fallback to open-ended range when stats overlap
         assert entity.learned_active_range == expected_range
+
+    def test_strong_reading_is_not_capped_out_of_the_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A shower's 96-99% humidity must stay active (it was capped at 95.8).
+
+        Learned on a live Bathroom: unoccupied 62.5 +/- 6.3, occupied
+        71.2 +/- 12.3. Hand-computed lower bound 62.5 + 2 * 6.3 = 75.1; the old
+        upper bound 71.2 + 2 * 12.3 = 95.8 switched the evidence off above it.
+        """
+        entity = create_test_entity(coordinator=coordinator)
+        entity.update_correlation(
+            {
+                "confidence": 0.8,
+                "correlation_type": "positive",
+                "mean_value_when_unoccupied": 62.5,
+                "std_dev_when_unoccupied": 6.3,
+                "mean_value_when_occupied": 71.2,
+                "std_dev_when_occupied": 12.3,
+            }
+        )
+        low, high = entity.learned_active_range
+        assert low == pytest.approx(75.1)
+        assert high == float("inf")
+
+    def test_falling_sensor_is_not_floored_out_of_the_range(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """The mirror: a reading far below the learned range stays active."""
+        entity = create_test_entity(coordinator=coordinator)
+        entity.update_correlation(
+            {
+                "confidence": 0.8,
+                "correlation_type": "negative",
+                "mean_value_when_unoccupied": 500.0,
+                "std_dev_when_unoccupied": 20.0,
+                "mean_value_when_occupied": 450.0,
+                "std_dev_when_occupied": 10.0,
+            }
+        )
+        low, high = entity.learned_active_range
+        assert low == float("-inf")
+        assert high == pytest.approx(460.0)
 
     def test_update_correlation_unknown_type(
         self, coordinator: AreaOccupancyCoordinator
@@ -3376,3 +3507,75 @@ class TestOffline:
             entity.state_provider = lambda _eid: None  # gone from HA
 
         assert entity.offline is offline
+
+
+class TestEntityDeviceId:
+    """``Entity.device_id`` names the physical device a channel belongs to."""
+
+    def test_reads_the_device_from_the_entity_registry(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """Two channels of one device resolve to the same device id."""
+        from pytest_homeassistant_custom_component.common import (  # noqa: PLC0415
+            MockConfigEntry,
+        )
+
+        from homeassistant.helpers import (  # noqa: PLC0415
+            device_registry as dr,
+            entity_registry as er,
+        )
+
+        hass = coordinator.hass
+        device_owner = MockConfigEntry(domain="test")
+        device_owner.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=device_owner.entry_id,
+            identifiers={("test", "presence_sensor")},
+        )
+        entity_registry = er.async_get(hass)
+        movement = entity_registry.async_get_or_create(
+            "binary_sensor", "test", "presence_movement", device_id=device.id
+        )
+        occupancy = entity_registry.async_get_or_create(
+            "binary_sensor", "test", "presence_occupancy", device_id=device.id
+        )
+
+        assert (
+            create_test_entity(
+                entity_id=movement.entity_id, coordinator=coordinator
+            ).device_id
+            == device.id
+        )
+        assert (
+            create_test_entity(
+                entity_id=occupancy.entity_id, coordinator=coordinator
+            ).device_id
+            == device.id
+        )
+
+    def test_none_without_a_registry_entry(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """An entity the registry doesn't know has no device."""
+        entity = create_test_entity(
+            entity_id="binary_sensor.not_registered", coordinator=coordinator
+        )
+        assert entity.device_id is None
+
+    def test_none_for_state_provider_instances(self) -> None:
+        """Without hass there is no registry to read."""
+        entity = Entity(
+            entity_id="binary_sensor.provided",
+            type=EntityType(
+                input_type=InputType.MOTION,
+                weight=1.0,
+                prob_given_true=0.95,
+                prob_given_false=0.005,
+                active_states=[STATE_ON],
+            ),
+            prob_given_true=0.95,
+            prob_given_false=0.005,
+            decay=Decay(half_life=60.0),
+            state_provider=lambda _entity_id: None,
+        )
+        assert entity.device_id is None

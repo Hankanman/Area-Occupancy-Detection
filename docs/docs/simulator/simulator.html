@@ -139,8 +139,8 @@
                   global and time priors
                 </li>
                 <li>
-                  <strong>Final Prior:</strong> Effective prior after Bayesian
-                  factor and clamping are applied
+                  <strong>Final Prior:</strong> Effective prior after the
+                  prior factor (currently 1.0) and clamping are applied
                 </li>
                 <li>
                   <strong>Area Purpose:</strong> Select a purpose (Social, Work,
@@ -308,7 +308,7 @@
             <sl-input label="Combined Prior" value="50.00%" disabled id="combined-prior-input"
               help-text="Weighted result of global and time priors."></sl-input>
             <sl-input label="Final Prior (after factor &amp; clamp)" value="50.00%" disabled id="final-prior-input"
-              help-text="Effective prior after Bayesian factor and clamping are applied."></sl-input>
+              help-text="Effective prior after the prior factor (currently 1.0) and clamping are applied."></sl-input>
             <sl-select id="purpose-select" label="Area Purpose" clearable
               help-text="Choose a purpose to auto-populate decay settings.">
               <sl-option value="">Loading...</sl-option>

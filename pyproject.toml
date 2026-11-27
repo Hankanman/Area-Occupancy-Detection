@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "area-occupancy-detection"
-version = "2026.11.1-pre1"
+version = "2026.11.1"
 license = "Apache-2.0"
-description = "Home Assistant integration for intelligent room occupancy detection using Bayesian probability."
+description = "Home Assistant integration for intelligent room occupancy detection using learned, weighted sensor probability."
 readme = "README.md"  # Assuming you'll have a README.md
 authors = [
   { name = "Hankanman", email = "sebburrell@outlook.com" }, # Add your details
@@ -51,6 +51,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "ruff==0.15.2",
+  "basedpyright==1.40.2",
   "pre-commit",
 ]
 test = [
@@ -131,6 +132,35 @@ exclude_lines = [
   "pass", # Exclude simple pass statements
 ]
 fail_under = 85 # Enforced global minimum; aim for 90%+ on core calculation modules (AGENTS.md)
+
+[tool.basedpyright]
+# Type checking for the integration (the tests are not checked). Run it with
+# ``uv run basedpyright``; it needs the test extra too, which brings Home
+# Assistant. Existing findings are recorded in .basedpyright/baseline.json, so
+# only new ones fail; shrink it with ``uv run basedpyright --writebaseline``
+# after fixing some.
+include = ["custom_components/area_occupancy"]
+# The SQLite code is retired in 2026.12.1 (#500), so it isn't worth typing.
+exclude = ["custom_components/area_occupancy/db"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "recommended"
+# Home Assistant's own APIs are typed with ``Any`` (``dict[str, Any]``,
+# ``ConfigType``...), as HA core's strict mypy allows, so flagging every use
+# of it only adds noise.
+reportAny = false
+reportExplicitAny = false
+# Home Assistant declares entity properties such as ``native_value`` as
+# ``cached_property``, and the documented way to implement them is a plain
+# ``@property``, which this rule reports as an incompatible override.
+reportIncompatibleVariableOverride = false
+# Attributes that a loader method fills in right after ``__init__`` (config
+# and flow classes) are initialised, just not in the class body.
+reportUninitializedInstanceVariable = false
+# Cycles that only exist for type checking (``TYPE_CHECKING`` imports).
+reportImportCycles = false
+# Style, which ruff already covers.
+reportImplicitStringConcatenation = false
 
 [tool.ruff]
 # Shipped integration code must IMPORT on the Python of the oldest supported

@@ -131,4 +131,4 @@ For non-motion sensors, these defaults are replaced by learned values once suffi
 - [Sensor Correlation Analysis Chain](analysis-chain.md) - End-to-end process
 - [Sensor Correlation Feature](../features/sensor-correlation.md) - User-facing documentation
 - [Prior Calculation Deep Dive](../features/prior-learning.md) - Related learning process
-- [Bayesian Calculation Deep Dive](bayesian-calculation.md) - How likelihoods are used
+- [Probability Calculation Deep Dive](bayesian-calculation.md) - How likelihoods are used

@@ -45,6 +45,7 @@ from custom_components.area_occupancy.const import (
     CONF_WASP_ENABLED,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_BUTTON,
     CONF_WEIGHT_DOOR,
     CONF_WEIGHT_ENVIRONMENTAL,
     CONF_WEIGHT_LOCK,
@@ -444,6 +445,7 @@ class TestAreaConfigInitialization:
             CONF_WEIGHT_MOTION: 0.85,
             CONF_WEIGHT_MEDIA: 0.7,
             CONF_WEIGHT_APPLIANCE: 0.5,
+            CONF_WEIGHT_BUTTON: 0.4,
             CONF_PURPOSE: "social",
             CONF_DECAY_HALF_LIFE: 300,
         }
@@ -464,6 +466,7 @@ class TestAreaConfigInitialization:
         assert config.weights.motion == 0.85
         assert config.weights.media == 0.7
         assert config.weights.appliance == 0.5
+        assert config.weights.button == 0.4
         assert config.purpose == "social"
         assert config.decay.half_life == 300
 

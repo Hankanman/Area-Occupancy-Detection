@@ -21,6 +21,7 @@ bucketing + adjacent-silence decay modifier).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import TYPE_CHECKING, Protocol
 
 from ..const import (
@@ -32,6 +33,7 @@ from ..db.transitions import LEVEL_STATIC_DEFAULT
 from ..utils import clamp_probability, logit
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Mapping
     from datetime import datetime
 
     from ..db.transitions import TransitionLookupResult
@@ -114,14 +116,29 @@ class DecayModifierContribution:
     # ^^ list of (neighbour, P_neighbour_lagged, P(this→neighbour | trajectory))
 
 
+# ─── Helpers ────────────────────────────────────────────────────────
+
+
+def _bounded_unit(value: float | None, *, fallback: float) -> float:
+    """Bound ``value`` to [0, 1]; return ``fallback`` if it is missing or not finite.
+
+    Plain ``max(0, min(1, x))`` silently maps NaN to 1.0 (``min(1.0, nan)``
+    returns 1.0), which would distort the silence score. Callers choose a
+    conservative ``fallback`` instead.
+    """
+    if value is None or not math.isfinite(value):
+        return fallback
+    return max(0.0, min(1.0, value))
+
+
 # ─── Bayesian boost ─────────────────────────────────────────────────
 
 
 # logit(0.5) = 0; the centring term ``- 0.5 * k * logit(0.5)`` from the
-# PR plan is therefore identically zero. Keeping the comment so future
+# PR plan is therefore identically zero. Keeping the constant so future
 # maintainers don't think it was forgotten.
-
 _LOGIT_HALF: float = 0.0
+_HALF: float = 0.5
 
 
 def compute_adjacency_boost(
@@ -193,10 +210,18 @@ def compute_adjacency_boost(
     out.total_count = result.total_count
     if result.level == LEVEL_STATIC_DEFAULT:
         return out  # Nothing learned for this chain yet: no effect.
+
+    probability = result.probability
+    # Only P > 0.5 yields a positive logit, so anything else contributes
+    # exactly 0 (same result as ``max(0, logit(P))``). Short-circuiting here
+    # also avoids evaluating logit(0) for non-adjacent targets and keeps a
+    # NaN from the lookup out of the probability path.
+    if not math.isfinite(probability) or probability <= _HALF:
+        return out
     # Centre around logit(0.5) and keep only the upward part (see the
     # docstring). logit(0.5) = 0 makes the centring term a no-op, but we
     # keep the formula explicit for clarity.
-    out.logit_contribution = gain * max(0.0, logit(result.probability) - _LOGIT_HALF)
+    out.logit_contribution = gain * max(0.0, logit(probability) - _LOGIT_HALF)
     return out
 
 
@@ -208,12 +233,13 @@ def apply_logit_boost(base_probability: float, boost: BoostContribution) -> floa
     """
     if not boost.fired or boost.logit_contribution == 0.0:
         return base_probability
+    if math.isnan(boost.logit_contribution):
+        # A NaN would otherwise be clamped to MAX_PROBABILITY silently.
+        return base_probability
     base = clamp_probability(base_probability)
     new_logit = logit(base) + boost.logit_contribution
     # Inline sigmoid; importing utils.sigmoid_probability would pull in
     # entity-graph dependencies we don't need.
-    import math  # noqa: PLC0415  - tiny local scope; avoid module-level import cycle
-
     new_prob = 1.0 / (1.0 + math.exp(-new_logit))
     return clamp_probability(new_prob)
 
@@ -224,8 +250,8 @@ def apply_logit_boost(base_probability: float, boost: BoostContribution) -> floa
 def compute_decay_modifier(
     *,
     target_area: str,
-    adjacency_index: dict[str, set[str]],
-    lagged_probabilities: dict[str, float],
+    adjacency_index: Mapping[str, Collection[str]],
+    lagged_probabilities: Mapping[str, float],
     trajectory: Trajectory,
     lookup: TransitionLookupFn,
     base_half_life_seconds: float,
@@ -238,7 +264,7 @@ def compute_decay_modifier(
 
         silence_score = Σ_X∈adj(target) ( (1 − P_X_lagged)
                                           × P(target → X | trajectory, hour) )
-        decay_modifier = min(1 + gain × silence_score, cap)
+        decay_modifier = clamp(1 + gain × silence_score, 1, cap)
         effective_half_life = base_half_life × decay_modifier
 
     ``silence_score`` is in [0, 1]: each adjacent X contributes more
@@ -278,7 +304,7 @@ def compute_decay_modifier(
         effective_half_life_seconds=base_half_life_seconds,
     )
 
-    neighbours = adjacency_index.get(target_area, set())
+    neighbours = adjacency_index.get(target_area) or ()
     if not neighbours:
         return out  # No neighbours → no silence to score
 
@@ -300,8 +326,11 @@ def compute_decay_modifier(
         # (neighbour confidently empty) should yield the full silence
         # contribution. The clamp_probability helper exists to avoid
         # ``log(0)`` in logit-space code, which doesn't apply here.
-        raw = lagged_probabilities.get(neighbour, 0.0)
-        neighbour_prob = max(0.0, min(1.0, raw))
+        # Non-finite values fall back to 1.0 ("not silent"), matching the
+        # previous behaviour for NaN and staying conservative.
+        neighbour_prob = _bounded_unit(
+            lagged_probabilities.get(neighbour, 0.0), fallback=1.0
+        )
         # P(target → neighbour | trajectory, hour). The 1-hop fallback
         # is fine when the trajectory hasn't yet built up to 2 hops.
         result = lookup(
@@ -311,17 +340,22 @@ def compute_decay_modifier(
             hour_of_week=trajectory.hour_of_week,
         )
         # Nothing learned for this exit yet: it isn't a known way out.
+        # Invalid lookup values are treated the same way, so they can
+        # never inflate the silence score.
         exit_probability = (
-            0.0 if result.level == LEVEL_STATIC_DEFAULT else result.probability
+            0.0
+            if result.level == LEVEL_STATIC_DEFAULT
+            else _bounded_unit(result.probability, fallback=0.0)
         )
-        contribution = (1.0 - neighbour_prob) * exit_probability
-        silence_score += contribution
+        silence_score += (1.0 - neighbour_prob) * exit_probability
         silent_breakdown.append((neighbour, neighbour_prob, exit_probability))
 
     # silence_score is now in [0, len(neighbours)]; clamp to [0, 1] so
     # the modifier scales sanely regardless of household density.
     silence_score = max(0.0, min(1.0, silence_score))
-    modifier = min(1.0 + gain * silence_score, cap)
+    # Lower bound 1.0 keeps the documented range [1, cap] even if gain or
+    # cap are misconfigured: this modifier may only slow decay, never speed it up.
+    modifier = max(1.0, min(1.0 + gain * silence_score, cap))
 
     out.fired = True
     out.silence_score = silence_score

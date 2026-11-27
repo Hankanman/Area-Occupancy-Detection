@@ -152,11 +152,16 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -336,11 +341,16 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -436,7 +446,7 @@
                 "menu_option_descriptions": {
                     "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
                     "edit_sensors_media": "{media_count} configured",
-                    "edit_sensors_appliances": "{appliance_count} configured",
+                    "edit_sensors_appliances": "{appliance_count} appliances · {button_count} buttons configured",
                     "edit_sensors_environmental": "{environmental_count} configured",
                     "edit_sensors_power": "{power_count} configured",
                     "edit_sensors_wifi_clients": "{wifi_count} configured",
@@ -503,6 +513,7 @@
             "invalid_threshold": "Threshold must be between 1 and 100.",
             "invalid_weight": "Weight must be between 0 and 1.",
             "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
+            "invalid_button_pulse_duration": "Button pulse duration must be between 5 seconds and 10 minutes.",
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
@@ -671,11 +682,16 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -855,11 +871,16 @@
                         "data": {
                             "appliances": "Appliances",
                             "appliance_active_states": "Appliance Active States",
-                            "weight_appliance": "Appliance Weight"
+                            "button_sensors": "Presence Buttons and Event Entities",
+                            "button_pulse_duration": "Button Pulse Duration",
+                            "weight_appliance": "Appliance Weight",
+                            "weight_button": "Button Weight"
                         },
                         "data_description": {
                             "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                            "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                            "weight_button": "The weight given to button presses in the occupancy calculation.",
+                            "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                         }
                     },
                     "environmental": {
@@ -955,7 +976,7 @@
                 "menu_option_descriptions": {
                     "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
                     "edit_sensors_media": "{media_count} configured",
-                    "edit_sensors_appliances": "{appliance_count} configured",
+                    "edit_sensors_appliances": "{appliance_count} appliances · {button_count} buttons configured",
                     "edit_sensors_environmental": "{environmental_count} configured",
                     "edit_sensors_power": "{power_count} configured",
                     "edit_sensors_wifi_clients": "{wifi_count} configured",
@@ -1090,6 +1111,7 @@
             "invalid_threshold": "Threshold must be between 1 and 100.",
             "invalid_weight": "Weight must be between 0 and 1.",
             "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
+            "invalid_button_pulse_duration": "Button pulse duration must be between 5 seconds and 10 minutes.",
             "media_states_required": "Media active states are required when media devices are configured.",
             "appliance_states_required": "Appliance active states are required when appliances are configured.",
             "door_state_required": "Door active state is required when door sensors are configured.",
@@ -1252,7 +1274,7 @@
         },
         "pipeline_health_insufficient_priors": {
             "title": "Priors haven't trained for {area}",
-            "description": "The integration has been running for {duration} in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every Bayesian update falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
+            "description": "The integration has been running for {duration} in **{area}** but no global occupancy prior has been learned yet. Without a learned prior, every probability calculation falls back to a minimum baseline, reducing accuracy.\n\n{details}\n\n**What to do:**\n- Confirm that motion sensors are configured and triggering — they're the ground truth used for prior learning\n- Check that the Home Assistant recorder is retaining at least 7 days of history for the configured sensors\n- Look for a `correlation_failures` repair below — many failed correlations starve prior learning too\n\nThis issue will resolve automatically once enough historical occupancy is recorded for the area."
         },
         "pipeline_health_stale_intervals_cache": {
             "title": "Occupancy data hasn't refreshed for {area}",
@@ -1385,11 +1407,16 @@
                             "data": {
                                 "appliances": "Appliances",
                                 "appliance_active_states": "Appliance Active States",
-                                "weight_appliance": "Appliance Weight"
+                                "button_sensors": "Presence Buttons and Event Entities",
+                                "button_pulse_duration": "Button Pulse Duration",
+                                "weight_appliance": "Appliance Weight",
+                                "weight_button": "Button Weight"
                             },
                             "data_description": {
                                 "appliance_active_states": "These are the states of the appliances that will be used to detect occupancy.",
-                                "weight_appliance": "The weight given to appliance inputs in the occupancy calculation."
+                                "weight_appliance": "The weight given to appliance inputs in the occupancy calculation.",
+                                "weight_button": "The weight given to button presses in the occupancy calculation.",
+                                "button_pulse_duration": "How long a button press contributes presence evidence (5 seconds to 10 minutes)."
                             }
                         },
                         "environmental": {
@@ -1485,7 +1512,7 @@
                     "menu_option_descriptions": {
                         "edit_sensors_windows_and_doors": "Doors {door_count} · Windows {window_count} · Locks {lock_count} · Covers {cover_count}",
                         "edit_sensors_media": "{media_count} configured",
-                        "edit_sensors_appliances": "{appliance_count} configured",
+                        "edit_sensors_appliances": "{appliance_count} appliances · {button_count} buttons configured",
                         "edit_sensors_environmental": "{environmental_count} configured",
                         "edit_sensors_power": "{power_count} configured",
                         "edit_sensors_wifi_clients": "{wifi_count} configured",
@@ -1544,6 +1571,7 @@
                 "invalid_threshold": "Threshold must be between 1 and 100.",
                 "invalid_weight": "Weight must be between 0 and 1.",
                 "invalid_decay_half_life": "Decay half-life must be 0 (use purpose default) or between 10 seconds and 1 hour.",
+                "invalid_button_pulse_duration": "Button pulse duration must be between 5 seconds and 10 minutes.",
                 "media_states_required": "Media active states are required when media devices are configured.",
                 "appliance_states_required": "Appliance active states are required when appliances are configured.",
                 "door_state_required": "Door active state is required when door sensors are configured.",

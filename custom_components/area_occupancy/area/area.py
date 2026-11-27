@@ -8,7 +8,7 @@ This represents a single device area in the multi-area architecture.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import dt as dt_util
@@ -27,6 +27,7 @@ from ..data.analysis import start_prior_analysis
 from ..data.door_hold import DoorHold
 from ..data.health import HealthMonitor
 from ..utils import (
+    activity_boost_fade,
     apply_activity_boost,
     clamp_probability,
     combined_probability as calc_combined,
@@ -104,7 +105,7 @@ class Area:
         self,
         coordinator: AreaOccupancyCoordinator,
         area_name: str,
-        area_data: dict | None = None,
+        area_data: dict[str, Any] | None = None,
         subentry_id: str | None = None,
     ) -> None:
         """Initialize the Area instance.
@@ -300,8 +301,13 @@ class Area:
         if activity.activity_id in (ActivityId.UNOCCUPIED, ActivityId.IDLE):
             result = base
         else:
+            # Fade the boost in above the threshold: activity is only detected
+            # while ``base`` is at or above it, so a full-strength boost was
+            # removed in a single step as ``base`` crossed.
             result = apply_activity_boost(
-                base, activity.occupancy_boost, activity.confidence
+                base,
+                activity.occupancy_boost,
+                activity.confidence * activity_boost_fade(base, self.config.threshold),
             )
 
         boost = self.coordinator.adjacency_boost_for(self.area_name)

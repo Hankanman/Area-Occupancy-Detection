@@ -7,10 +7,11 @@ validation of all inputs to ensure a valid configuration.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import contextlib
 import logging
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import voluptuous as vol
 
@@ -93,6 +94,8 @@ from .const import (
     CONF_APPLIANCES,
     CONF_AREA_ID,
     CONF_AWAY_MODE_ENTITY,
+    CONF_BUTTON_PULSE_DURATION,
+    CONF_BUTTON_SENSORS,
     CONF_CLOSED_DOOR_HOLD,
     CONF_CO2_SENSORS,
     CONF_CO_SENSORS,
@@ -147,6 +150,7 @@ from .const import (
     CONF_WASP_VERIFICATION_DELAY,
     CONF_WASP_WEIGHT,
     CONF_WEIGHT_APPLIANCE,
+    CONF_WEIGHT_BUTTON,
     CONF_WEIGHT_COVER,
     CONF_WEIGHT_CUSTOM_BINARY,
     CONF_WEIGHT_CUSTOM_NUMERIC,
@@ -162,6 +166,7 @@ from .const import (
     CONF_WINDOW_ACTIVE_STATE,
     CONF_WINDOW_SENSORS,
     DEFAULT_APPLIANCE_ACTIVE_STATES,
+    DEFAULT_BUTTON_PULSE_DURATION,
     DEFAULT_COVER_ACTIVE_STATES,
     DEFAULT_CUSTOM_BINARY_ACTIVE_STATES,
     DEFAULT_CUSTOM_NUMERIC_ACTIVE_MAX,
@@ -186,6 +191,7 @@ from .const import (
     DEFAULT_WASP_VERIFICATION_DELAY,
     DEFAULT_WASP_WEIGHT,
     DEFAULT_WEIGHT_APPLIANCE,
+    DEFAULT_WEIGHT_BUTTON,
     DEFAULT_WEIGHT_COVER,
     DEFAULT_WEIGHT_CUSTOM_BINARY,
     DEFAULT_WEIGHT_CUSTOM_NUMERIC,
@@ -356,6 +362,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
     """Get lists of entities to include for specific selectors."""
     registry = er.async_get(hass)
     include_appliance_entities = []
+    include_button_entities = []
     include_window_entities = []
     include_door_entities = []
     include_temperature_entities = []
@@ -392,7 +399,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
         *door_window_classes,
     ]
 
-    # Check binary_sensor, switch, fan, light for potential appliances
+    # Check binary_sensor, switch, fan, and light for potential appliances.
     domains_to_check = [
         Platform.BINARY_SENSOR,
         Platform.SWITCH,
@@ -409,6 +416,11 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
             device_class = state.attributes.get("device_class")
             if device_class not in appliance_excluded_classes:
                 include_appliance_entities.append(eid)
+
+    include_button_entities = [
+        *hass.states.async_entity_ids(Platform.BUTTON),
+        *hass.states.async_entity_ids(Platform.EVENT),
+    ]
 
     # Check registry for specific door/window classes
     for entry in registry.entities.values():
@@ -541,6 +553,24 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
                 include_custom_binary_entities.append(entry.entity_id)
                 include_custom_numeric_entities.append(entry.entity_id)
 
+    # input_boolean helpers are on/off flags that a person or an automation
+    # flips (a "showering" or "do not disturb" toggle), so they are natural
+    # custom-binary inputs. They sit in neither the binary_sensor nor the
+    # sensor domain, so the registry loop above never offered them. Discover
+    # them via hass.states, like locks, so YAML-defined helpers without a
+    # registry entry are offered too. Disabled registry entries are skipped:
+    # a disabled helper no longer updates, so it would never give evidence.
+    disabled_input_booleans = {
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.domain == "input_boolean" and entry.disabled
+    }
+    include_custom_binary_entities.extend(
+        entity_id
+        for entity_id in hass.states.async_entity_ids("input_boolean")
+        if entity_id not in disabled_input_booleans
+    )
+
     # Collect all cover entities (blinds, shades, garage doors, shutters, etc.)
     include_cover_entities = [
         entry.entity_id
@@ -568,6 +598,7 @@ def _get_include_entities(hass: HomeAssistant) -> dict[str, list[str]]:
 
     return {
         "appliance": include_appliance_entities,
+        "button": include_button_entities,
         "window": include_window_entities,
         "door": include_door_entities,
         "lock": include_lock_entities,
@@ -754,6 +785,7 @@ def _create_media_section_schema(
 def _create_appliances_section_schema(
     defaults: dict[str, Any],
     include_entities: list[str],
+    button_entities: list[str],
     state_options: list[SelectOptionDict],
 ) -> vol.Schema:
     """Create schema for the appliances section."""
@@ -780,6 +812,30 @@ def _create_appliances_section_schema(
             vol.Optional(
                 CONF_WEIGHT_APPLIANCE,
                 default=defaults.get(CONF_WEIGHT_APPLIANCE, DEFAULT_WEIGHT_APPLIANCE),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=WEIGHT_MIN,
+                    max=WEIGHT_MAX,
+                    step=WEIGHT_STEP,
+                    mode=NumberSelectorMode.SLIDER,
+                )
+            ),
+            vol.Optional(
+                CONF_BUTTON_SENSORS, default=defaults.get(CONF_BUTTON_SENSORS, [])
+            ): EntitySelector(
+                EntitySelectorConfig(include_entities=button_entities, multiple=True)
+            ),
+            vol.Optional(
+                CONF_BUTTON_PULSE_DURATION,
+                default=seconds_to_duration(
+                    defaults.get(
+                        CONF_BUTTON_PULSE_DURATION, DEFAULT_BUTTON_PULSE_DURATION
+                    )
+                ),
+            ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+            vol.Optional(
+                CONF_WEIGHT_BUTTON,
+                default=defaults.get(CONF_WEIGHT_BUTTON, DEFAULT_WEIGHT_BUTTON),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=WEIGHT_MIN,
@@ -1278,6 +1334,7 @@ def _create_sensors_step_schema(
         "appliances": lambda: _create_appliances_section_schema(
             defaults,
             include_entities["appliance"],
+            include_entities["button"],
             cast("list[SelectOptionDict]", appliance_state_options),
         ),
         "environmental": lambda: _create_environmental_section_schema(
@@ -1435,9 +1492,19 @@ def _nest_config_for_sections(flat_config: dict[str, Any]) -> dict[str, Any]:  #
 
     # Appliances section
     appliances: dict[str, Any] = {}
-    for key in (CONF_APPLIANCES, CONF_APPLIANCE_ACTIVE_STATES, CONF_WEIGHT_APPLIANCE):
+    for key in (
+        CONF_APPLIANCES,
+        CONF_APPLIANCE_ACTIVE_STATES,
+        CONF_WEIGHT_APPLIANCE,
+        CONF_BUTTON_SENSORS,
+        CONF_BUTTON_PULSE_DURATION,
+        CONF_WEIGHT_BUTTON,
+    ):
         if key in flat_config:
-            appliances[key] = flat_config[key]
+            val = flat_config[key]
+            if key in DURATION_FIELDS:
+                val = seconds_to_duration(val)
+            appliances[key] = val
     if appliances:
         nested["appliances"] = appliances
 
@@ -1667,6 +1734,7 @@ def _build_area_description_placeholders(
         "window_count": _count(CONF_WINDOW_SENSORS),
         "cover_count": _count(CONF_COVER_SENSORS),
         "appliance_count": _count(CONF_APPLIANCES),
+        "button_count": _count(CONF_BUTTON_SENSORS),
         "environmental_count": str(environmental_count),
         "power_count": _count(CONF_POWER_SENSORS),
         "wifi_count": _count(CONF_WIFI_CLIENTS_SENSORS),
@@ -1808,7 +1876,7 @@ def _create_area_selector_schema(
     )
 
 
-def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _create_global_settings_schema(defaults: Mapping[str, Any]) -> vol.Schema:
     """Create schema for global settings."""
     return vol.Schema(
         {
@@ -1850,12 +1918,42 @@ def _create_global_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-class BaseOccupancyFlow:
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    class _FlowBase:
+        """What the mixin below uses from Home Assistant's flow classes.
+
+        The mixin is only ever combined with the config flow, the options flow
+        or the subentry flow, which provide these. They are declared here, for
+        the type checker only. The three flows have different result types, so
+        the results are ``Any`` and the arguments aren't checked inside the
+        mixin; Home Assistant's own signatures apply at run time. At run time
+        this base is ``object``.
+        """
+
+        hass: HomeAssistant
+        add_suggested_values_to_schema: Callable[..., vol.Schema]
+        async_show_form: Callable[..., Any]
+        async_show_menu: Callable[..., Any]
+
+else:
+    _FlowBase = object
+
+
+class BaseOccupancyFlow(_FlowBase):
     """Base class for config and options flow.
 
     This class provides shared validation logic used by both the config flow
     and options flow. It ensures consistent validation across both flows.
     """
+
+    if TYPE_CHECKING:
+
+        async def async_step_area_action(
+            self, user_input: dict[str, Any] | None = None
+        ) -> Any:
+            """The hub menu, defined by the flows that use this mixin."""
 
     def _validate_duplicate_area_id(
         self,
@@ -2508,7 +2606,9 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Every configured area, for duplicate and adjacency checks."""
         return [data for _, data in iter_area_subentries(self._get_entry())]
 
-    async def _on_area_config_complete(
+    # The subentry flow ends with a subentry result, the other flows with a
+    # config flow result, and the shared base method is typed for the latter.
+    async def _on_area_config_complete(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, config: dict[str, Any]
     ) -> SubentryFlowResult:
         """Write the area, mirroring adjacency onto its neighbours."""
@@ -2565,7 +2665,11 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Add an area: the full linear wizard."""
         self._area_being_edited = None
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        # The shared wizard steps are typed with the config flow's result,
+        # but under this flow they return its own.
+        return cast(
+            "SubentryFlowResult", cast("object", await self.async_step_area_basics())
+        )
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -2604,7 +2708,9 @@ class AreaSubentryFlowHandler(ConfigSubentryFlow, BaseOccupancyFlow):
         """Walk every wizard page in order."""
         self._prepare_area_action_edit()
         self._init_area_wizard()
-        return await self.async_step_area_basics()
+        return cast(
+            "SubentryFlowResult", cast("object", await self.async_step_area_basics())
+        )
 
 
 class AreaOccupancyConfigFlow(ConfigFlow, BaseOccupancyFlow, domain=DOMAIN):
@@ -3199,14 +3305,14 @@ class AreaOccupancyOptionsFlow(OptionsFlow, BaseOccupancyFlow):
         if user_input is not None:
             # Validate and coerce using the schema
             schema = _create_global_settings_schema(self.config_entry.options)
-            user_input = schema(user_input)
+            validated = cast("dict[str, Any]", schema(user_input))
 
             # Update the config entry options directly
             new_options = dict(self.config_entry.options)
-            new_options.update(user_input)
+            new_options.update(validated)
             # A cleared optional field is left out of the input, and update()
             # cannot remove a key, so the old value would come back.
-            if CONF_AWAY_MODE_ENTITY not in user_input:
+            if CONF_AWAY_MODE_ENTITY not in validated:
                 new_options.pop(CONF_AWAY_MODE_ENTITY, None)
 
             return self.async_create_entry(title="", data=new_options)

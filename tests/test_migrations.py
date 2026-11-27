@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -23,6 +24,7 @@ from custom_components.area_occupancy.const import (
     CONF_VERSION,
     CONF_VERSION_MINOR,
     DOMAIN,
+    MIN_HA_VERSION,
     SUBENTRY_TYPE_AREA,
 )
 from custom_components.area_occupancy.migrations import (
@@ -199,6 +201,28 @@ class TestAsyncMigrateEntry:
 
         result = await async_migrate_entry(hass, mock_entry)
         assert result is True
+
+    async def test_async_migrate_entry_refuses_old_home_assistant(
+        self, hass: HomeAssistant, mock_config_entry_v1_0: Mock
+    ) -> None:
+        """On a too-old Home Assistant nothing is migrated or written (#623)."""
+        hass.config_entries.async_update_entry = Mock()
+        with (
+            patch("custom_components.area_occupancy.migrations.HA_VERSION", "2026.2.3"),
+            patch(
+                "custom_components.area_occupancy.migrations.async_reset_database_if_needed"
+            ) as mock_reset,
+        ):
+            result = await async_migrate_entry(hass, mock_config_entry_v1_0)
+
+        assert result is False
+        hass.config_entries.async_update_entry.assert_not_called()
+        mock_reset.assert_not_called()
+
+    def test_min_ha_version_matches_hacs_json(self) -> None:
+        """The migration's minimum is the one HACS is told about."""
+        hacs = json.loads((Path(__file__).parents[1] / "hacs.json").read_text())
+        assert hacs["homeassistant"] == MIN_HA_VERSION
 
 
 class TestAsyncResetDatabaseIfNeeded:

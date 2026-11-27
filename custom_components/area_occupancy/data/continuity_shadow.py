@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
+from typing import Any
 
 from ..const import ADJACENCY_TRANSITION_WINDOW_S
 from ..time_utils import ensure_utc_datetime, to_local
@@ -83,7 +84,7 @@ class Episode:
     quiet_neighbours: list[str]
     live_cleared: float | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize (JSON-safe)."""
         return {
             "start": self.start.isoformat(),
@@ -93,7 +94,7 @@ class Episode:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Episode:
+    def from_dict(cls, data: dict[str, Any]) -> Episode:
         """Restore; raises on malformed data."""
         cleared = data.get("live_cleared")
         return cls(
@@ -114,7 +115,7 @@ class ContinuityState:
     # Local date (of the episode start) -> counters.
     days: dict[str, dict[str, float]] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize for the HA storage helper (JSON-safe)."""
         return {
             "present": self.present,
@@ -124,7 +125,7 @@ class ContinuityState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> ContinuityState:
+    def from_dict(cls, data: dict[str, Any]) -> ContinuityState:
         """Restore from storage; malformed payloads fall back to empty."""
         try:
             present = data.get("present")
@@ -206,12 +207,14 @@ class ContinuityShadow:
         counters["episodes"] += 1
         counters[outcome] += 1
         live = episode.live_cleared
-        continuity = None if live is None else live * episode.half_life_ratio
         if outcome == "unexplained":
-            if continuity is not None and continuity > live:
-                counters["false_holds"] += 1
-                counters["false_hold_seconds"] += continuity - live
+            if live is not None:
+                continuity = live * episode.half_life_ratio
+                if continuity > live:
+                    counters["false_holds"] += 1
+                    counters["false_hold_seconds"] += continuity - live
         elif live is not None:
+            continuity = live * episode.half_life_ratio
             # Time continuity kept the room occupied past today's clear,
             # up to the resume or exit, while the person was still there.
             counters["recovered_seconds"] += max(min(continuity, elapsed) - live, 0.0)
@@ -223,12 +226,12 @@ class ContinuityShadow:
         for old in sorted(self.state.days)[:-HISTORY_DAYS]:
             del self.state.days[old]
 
-    def summary(self) -> dict | None:
+    def summary(self) -> dict[str, Any] | None:
         """Outcomes pooled over the latest days (diagnostics)."""
         days = sorted(self.state.days)[-WINDOW_DAYS:]
         if not days:
             return None
-        total = dict.fromkeys(_COUNTERS, 0.0)
+        total: dict[str, float] = dict.fromkeys(_COUNTERS, 0.0)
         for day in days:
             for key in _COUNTERS:
                 total[key] += self.state.days[day].get(key, 0.0)

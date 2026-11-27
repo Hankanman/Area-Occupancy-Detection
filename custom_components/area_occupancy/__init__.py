@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import sqlalchemy as sa
 from sqlalchemy import create_engine
@@ -78,6 +78,9 @@ from .db.schema import (
 )
 from .migrations import async_migrate_entry
 from .service import async_setup_services, async_unload_services
+
+if TYPE_CHECKING:
+    from .db.core import AreaOccupancyDB
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -203,6 +206,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Setup platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Only now has each area's sleep sensor joined it, so only now can the
+    # database tell a removed sensor from one that isn't set up yet.
+    await coordinator.db.delete_stale_entities()
 
     # Setup services (idempotent - only needs to run once)
     if DOMAIN not in hass.data.get("_services_setup", {}):
@@ -377,7 +384,11 @@ def _purge_entry_database_data(
         offline_db = _OfflineDB()
         for area_name in area_names:
             try:
-                deleted = _delete_area_data(offline_db, area_name)
+                # The adapter provides just the tables ``delete_area_data`` uses,
+                # so it is not an ``AreaOccupancyDB`` as far as the checker goes.
+                deleted = _delete_area_data(
+                    cast("AreaOccupancyDB", cast("object", offline_db)), area_name
+                )
             except Exception:
                 _LOGGER.exception(
                     "Failed to purge database data for area '%s' during entry removal",

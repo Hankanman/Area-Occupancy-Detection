@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 import logging
-from typing import Any
+from typing import Final, NotRequired, TypedDict
 
 from homeassistant.components.lock import LockState
 from homeassistant.const import (
@@ -14,6 +14,8 @@ from homeassistant.const import (
     STATE_PLAYING,
     STATE_STANDBY,
 )
+
+from ..const import DEFAULT_WEIGHT_BUTTON
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ class InputType(StrEnum):
     MOTION = "motion"
     MEDIA = "media"
     APPLIANCE = "appliance"
+    BUTTON = "button"
     DOOR = "door"
     LOCK = "lock"
     WINDOW = "window"
@@ -120,7 +123,7 @@ class EntityType:
             raise ValueError(f"Invalid active range for {input_type}: {active_range}")
 
         # Get defaults from DEFAULT_TYPES with safe fallback
-        default_type = DEFAULT_TYPES.get(input_type)
+        default_type: _TypeDefaults | None = DEFAULT_TYPES.get(input_type)
         if default_type is None:
             _LOGGER.warning(
                 "InputType %s is missing from DEFAULT_TYPES, falling back to UNKNOWN. "
@@ -138,7 +141,7 @@ class EntityType:
                     "active_range": None,
                     "strength_multiplier": 2.0,
                 }
-        defaults = dict(default_type)
+        defaults = default_type
 
         # Start with defaults, then override with explicit params if provided
         self.weight = weight if weight is not None else defaults["weight"]
@@ -195,6 +198,7 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
     InputType.MOTION,
     InputType.MEDIA,
     InputType.APPLIANCE,
+    InputType.BUTTON,
     InputType.DOOR,
     InputType.LOCK,
     InputType.WINDOW,
@@ -221,6 +225,11 @@ PRESENCE_INPUT_TYPES: set[InputType] = {
 GROUND_TRUTH_INPUT_TYPES: frozenset[InputType] = frozenset(
     {InputType.MOTION, InputType.MEDIA, InputType.SLEEP}
 )
+
+# Bump when the rule that turns those sensors into an occupied label
+# changes (2: PIR-like motion bridged by the motion timeout, #604/#625).
+# Shadow statistics gathered under another rule are restarted.
+GROUND_TRUTH_RULE_VERSION: Final = 2
 
 BINARY_INPUT_TYPES: set[InputType] = {
     InputType.MEDIA,
@@ -257,7 +266,19 @@ NUMERIC_INPUT_TYPES: set[InputType] = ENVIRONMENTAL_INPUT_TYPES | {
     InputType.CUSTOM_NUMERIC,
 }
 
-DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
+
+class _TypeDefaults(TypedDict):
+    """The default settings of one input type."""
+
+    weight: float
+    prob_given_true: float
+    prob_given_false: float
+    active_states: list[str] | None
+    active_range: tuple[float, float] | None
+    strength_multiplier: NotRequired[float]
+
+
+DEFAULT_TYPES: dict[InputType, _TypeDefaults] = {
     InputType.MOTION: {
         "weight": 1,
         "prob_given_true": 0.95,  # Much higher for ground truth
@@ -279,6 +300,14 @@ DEFAULT_TYPES: dict[InputType, dict[str, Any]] = {
         "prob_given_true": 0.2,
         "prob_given_false": 0.02,
         "active_states": [STATE_ON, STATE_STANDBY],
+        "active_range": None,
+        "strength_multiplier": 2.0,
+    },
+    InputType.BUTTON: {
+        "weight": DEFAULT_WEIGHT_BUTTON,
+        "prob_given_true": 0.8,
+        "prob_given_false": 0.01,
+        "active_states": [STATE_ON],
         "active_range": None,
         "strength_multiplier": 2.0,
     },

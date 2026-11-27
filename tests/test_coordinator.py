@@ -15,8 +15,12 @@ from custom_components.area_occupancy.const import (
     DEVICE_SW_VERSION,
     DOMAIN,
 )
-from custom_components.area_occupancy.coordinator import AreaOccupancyCoordinator
+from custom_components.area_occupancy.coordinator import (
+    AreaOccupancyCoordinator,
+    _area_is_fading,
+)
 from custom_components.area_occupancy.data.config import Sensors
+from custom_components.area_occupancy.data.entity_type import InputType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import area_registry as ar
@@ -528,6 +532,46 @@ class TestAreaOccupancyCoordinator:
         mock_refresh.assert_not_called()
         assert len(coordinator.accuracy_samples_for(area_name)) == 1
         assert coordinator.online_prior_for(area_name) is not None
+
+    async def test_handle_decay_timer_checks_all_buttons_without_bypassing_occupied(
+        self,
+        hass: HomeAssistant,
+        mock_realistic_config_entry: Mock,
+    ) -> None:
+        """The decay tick must inspect every button and honor occupancy."""
+        coordinator = AreaOccupancyCoordinator(hass, mock_realistic_config_entry)
+        coordinator._global_decay_timer = Mock()
+        area = create_test_area(coordinator, area_name="Test Area")
+        coordinator.areas = {area.area_name: area}
+        area.config.decay.enabled = False
+        area.probability = Mock(return_value=0.9)
+        area.threshold = Mock(return_value=0.5)
+
+        first_button = Mock()
+        first_button.type.input_type = InputType.BUTTON
+        first_button.weight = 0.0  # keep the shadow tick's fusion row out of it
+        first_button.has_new_evidence.return_value = False
+        second_button = Mock()
+        second_button.type.input_type = InputType.BUTTON
+        second_button.weight = 0.0  # keep the shadow tick's fusion row out of it
+        second_button.has_new_evidence.return_value = True
+        area.entities._entities = {
+            "button.first": first_button,
+            "button.second": second_button,
+        }
+
+        with (
+            patch.object(coordinator, "async_refresh", new=AsyncMock()) as mock_refresh,
+            patch(
+                "custom_components.area_occupancy.coordinator.async_track_point_in_time",
+                return_value=None,
+            ),
+        ):
+            await coordinator._handle_decay_timer(dt_util.utcnow())
+
+        first_button.has_new_evidence.assert_called_once_with(count_button_press=False)
+        second_button.has_new_evidence.assert_called_once_with(count_button_press=False)
+        mock_refresh.assert_called_once()
 
     async def test_run_analysis(
         self, hass: HomeAssistant, mock_realistic_config_entry: Mock
@@ -2221,3 +2265,64 @@ class TestCoordinatorFindAreaForEntity:
 
         result = coordinator.find_area_for_entity(entity_id)
         assert result == expected_result
+
+
+class TestAreaIsFading:
+    """The decay tail after motion is "fading" whatever else sits active (#642).
+
+    A Kitchen with a temperature sensor whose range covers everyday readings
+    had that sensor "active" all day, which hid every fade: the whole decay
+    tail after each burst of motion (45% of the room's on-time over a
+    weekend) was scored as a false "on".
+    """
+
+    @staticmethod
+    def _entity(
+        input_type: InputType, *, active: bool = False, decaying: bool = False
+    ) -> Mock:
+        entity = Mock()
+        entity.evidence = active
+        entity.type.input_type = input_type
+        entity.decay.is_decaying = decaying
+        return entity
+
+    def _area(self, *entities: Mock) -> Mock:
+        area = Mock()
+        area.entities.active_entities = list(entities)
+        area.entities.decaying_entities = [e for e in entities if e.decay.is_decaying]
+        return area
+
+    @pytest.mark.parametrize(
+        ("others", "expected"),
+        [
+            # Only the fading motion sensor: a fade.
+            ([], True),
+            # Standing conditions don't explain the "on": still a fade.
+            ([(InputType.TEMPERATURE, True)], True),
+            ([(InputType.HUMIDITY, True), (InputType.ILLUMINANCE, True)], True),
+            ([(InputType.DOOR, True)], True),
+            ([(InputType.WINDOW, True), (InputType.COVER, True)], True),
+            # Something that says someone is there right now: not a fade.
+            ([(InputType.MEDIA, True)], False),
+            ([(InputType.APPLIANCE, True)], False),
+            ([(InputType.POWER, True)], False),
+            ([(InputType.BUTTON, True)], False),
+            ([(InputType.MOTION, True)], False),
+            # Inactive sensors of any kind change nothing.
+            ([(InputType.MEDIA, False), (InputType.TEMPERATURE, False)], True),
+        ],
+    )
+    def test_fading_motion_with_other_sensors(
+        self, others: list[tuple[InputType, bool]], expected: bool
+    ) -> None:
+        """A fading motion sensor plus other sensors: only presence ones block it."""
+        fading_motion = self._entity(InputType.MOTION, decaying=True)
+        area = self._area(
+            fading_motion, *(self._entity(t, active=a) for t, a in others)
+        )
+        assert _area_is_fading(area) is expected
+
+    def test_nothing_decaying_is_not_a_fade(self) -> None:
+        """No decaying sensor: nothing is fading, whatever is active."""
+        area = self._area(self._entity(InputType.TEMPERATURE, active=True))
+        assert _area_is_fading(area) is False

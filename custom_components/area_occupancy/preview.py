@@ -22,7 +22,7 @@ ends.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import voluptuous as vol
 
@@ -198,7 +198,9 @@ def compute_area_preview(
     threshold, the live probability for comparison, and which sensors are
     currently contributing.
     """
-    entities = build_preview_entities(area, candidate)
+    # ``PreviewEntity`` stands in for ``Entity``: it delegates everything but
+    # the weight and likelihoods, which is all the probability maths reads.
+    entities = cast("dict[str, Entity]", build_preview_entities(area, candidate))
     prior = float(area.prior.value)
     correlations = area.coordinator.get_cached_correlations(area.area_name)
 

@@ -581,4 +581,4 @@ hatches those cells.
 - [Database Schema](database-schema.md) - Complete database schema documentation
 - [Prior Learning](../features/prior-learning.md) - User-facing prior learning documentation
 - [Data Flow](data-flow.md) - Overall data flow diagrams
-- [Bayesian Calculation](bayesian-calculation.md) - How priors are used in calculations
+- [Probability Calculation](bayesian-calculation.md) - How priors are used in calculations

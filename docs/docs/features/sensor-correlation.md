@@ -66,13 +66,13 @@ $$ f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{1}{2}(\frac{x-\mu}{\sigma})^2} $
 1. **$P(x | Occupied)$**: Likelihood of $x$ given the "Occupied" distribution.
 2. **$P(x | Unoccupied)$**: Likelihood of $x$ given the "Unoccupied" distribution.
 
-#### 4. Bayesian Update
+#### 4. How the Densities Are Used
 
-These densities are used directly in the Bayesian update formula.
+The two densities set the sensor's **information gain**, $|P(x|Occupied) - P(x|Unoccupied)| / \max(P(x|Occupied), P(x|Unoccupied), 0.01)$ (capped at 1). The floor of 0.01 stops two tiny densities from looking decisive, which scales its weight in the [probability calculation](calculation.md).
 
-- If $x$ is closer to the Occupied Mean, the likelihood ratio favors occupancy.
-- If $x$ is closer to the Unoccupied Mean, it favors vacancy.
-- The strength of the evidence scales with how extreme the value is relative to the distributions.
+- Where the two distributions are far apart at the current reading, the sensor counts at close to its full weight.
+- Where they overlap, it counts for little.
+- The sensor counts in full while its reading is inside its active range. When the reading leaves the range it fades out over the area's decay, like any other sensor, and it never counts against occupancy. The gain measures how far apart the densities are, whichever one is higher.
 
 ### Binary Sensors: Duration-Based Analysis
 
@@ -107,7 +107,7 @@ These static probabilities are stored directly in the `Entities` table as `prob_
 
 | Current Temp ($x$) | Result                                                |
 | :----------------- | :---------------------------------------------------- |
-| **20°C**           | **Strong Vacancy Evidence** (Matches Unoccupied mean) |
+| **20°C**           | **No evidence** (outside the active range, so the sensor fades out; it never counts against occupancy) |
 | **22°C**           | **Neutral** (Ambiguous overlap)                       |
 | **24°C**           | **Strong Occupancy Evidence** (Matches Occupied mean) |
 

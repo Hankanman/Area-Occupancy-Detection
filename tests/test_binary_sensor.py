@@ -106,6 +106,120 @@ class TestOccupancy:
         assert entity.is_on is expected_is_on
 
 
+def _stored_state(state: str, attributes: dict) -> Mock:
+    """Build the last state RestoreEntity would hand back after a restart.
+
+    Args:
+        state: Stored state string (``on``, ``off``, ``unavailable``).
+        attributes: Stored state attributes.
+    """
+    stored = Mock()
+    stored.state = state
+    stored.attributes = attributes
+    return stored
+
+
+class TestOccupancyStateSince:
+    """The time the current state began survives an HA restart."""
+
+    STORED_SINCE = "2026-11-21T16:00:00+00:00"
+
+    @pytest.mark.parametrize(
+        ("occupied", "stored", "expected_restored"),
+        [
+            # Same state as before the restart: the old time is kept.
+            (
+                True,
+                (STATE_ON, {"occupied_since": STORED_SINCE, "vacant_since": None}),
+                True,
+            ),
+            (
+                False,
+                (STATE_OFF, {"occupied_since": None, "vacant_since": STORED_SINCE}),
+                True,
+            ),
+            # The state changed across the restart: a real transition, stamped now.
+            (
+                False,
+                (STATE_ON, {"occupied_since": STORED_SINCE, "vacant_since": None}),
+                False,
+            ),
+            # Nothing usable stored: first start, unavailable, older version.
+            (True, None, False),
+            (True, ("unavailable", {}), False),
+            (True, (STATE_ON, {}), False),
+            (True, (STATE_ON, {"occupied_since": "not a time"}), False),
+        ],
+    )
+    async def test_restore_state_since(
+        self,
+        coordinator: AreaOccupancyCoordinator,
+        occupied: bool,
+        stored: tuple[str, dict] | None,
+        expected_restored: bool,
+    ) -> None:
+        """Restore the stored time only when the state held across the restart."""
+        area_name = coordinator.get_area_names()[0]
+        coordinator.get_area(area_name).occupied = Mock(return_value=occupied)
+        entity = Occupancy(area_handle=coordinator.get_area_handle(area_name))
+        last_state = _stored_state(*stored) if stored is not None else None
+        now = dt_util.utcnow()
+
+        with (
+            patch.object(
+                entity, "async_get_last_state", AsyncMock(return_value=last_state)
+            ),
+            patch(
+                "custom_components.area_occupancy.binary_sensor.dt_util.utcnow",
+                return_value=now,
+            ),
+        ):
+            await entity._restore_state_since()
+
+        expected_since = self.STORED_SINCE if expected_restored else now.isoformat()
+        attributes = entity.extra_state_attributes
+        assert (
+            attributes["occupied_since" if occupied else "vacant_since"]
+            == expected_since
+        )
+        assert attributes["vacant_since" if occupied else "occupied_since"] is None
+
+    async def test_transition_stamps_new_time(
+        self, coordinator: AreaOccupancyCoordinator
+    ) -> None:
+        """A coordinator update that flips the state moves the time; one that does not, keeps it."""
+        area_name = coordinator.get_area_names()[0]
+        area = coordinator.get_area(area_name)
+        area.occupied = Mock(return_value=False)
+        entity = Occupancy(area_handle=coordinator.get_area_handle(area_name))
+        stored = _stored_state(STATE_OFF, {"vacant_since": self.STORED_SINCE})
+        with patch.object(
+            entity, "async_get_last_state", AsyncMock(return_value=stored)
+        ):
+            await entity._restore_state_since()
+
+        later = dt_util.utcnow() + timedelta(minutes=5)
+        with (
+            patch(
+                "homeassistant.helpers.update_coordinator.CoordinatorEntity._handle_coordinator_update"
+            ),
+            patch(
+                "custom_components.area_occupancy.binary_sensor.dt_util.utcnow",
+                return_value=later,
+            ),
+        ):
+            entity._handle_coordinator_update()
+            assert entity.extra_state_attributes["vacant_since"] == self.STORED_SINCE
+
+            area.occupied = Mock(return_value=True)
+            entity._handle_coordinator_update()
+
+        assert entity.extra_state_attributes == {
+            "occupied_since": later.isoformat(),
+            "vacant_since": None,
+        }
+
+
 # Shared fixtures for WaspInBoxSensor tests
 @pytest.fixture
 def wasp_coordinator(
