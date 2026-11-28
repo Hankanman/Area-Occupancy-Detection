@@ -25,7 +25,7 @@ from ..data.activity import ActivityId, DetectedActivity, detect_activity
 from ..data.adjacency import apply_logit_boost
 from ..data.analysis import start_prior_analysis
 from ..data.door_hold import DoorHold
-from ..data.health import HealthMonitor
+from ..data.health import HealthMonitor, delete_pipeline_repairs
 from ..utils import (
     activity_boost_fade,
     apply_activity_boost,
@@ -198,24 +198,29 @@ class Area:
         """Run prior analysis for this area."""
         await start_prior_analysis(self.coordinator, self.area_name, self.prior)
 
-    async def async_cleanup(self) -> None:
+    async def async_cleanup(self, *, removed: bool = True) -> None:
         """Clean up the area's resources.
 
         This should be called when the area is being removed or the
-        integration is shutting down.
+        integration is shutting down. Pass ``removed=False`` on an unload or
+        shutdown so the area's pipeline repairs, and their age, survive the
+        reload (#683).
         """
         # Clear prior cache first to release cached data
         if self._prior is not None:
             self._prior.clear_cache()
         # Clean up health monitor repair issues to prevent orphans
         if self._health_monitor is not None:
-            self._health_monitor.cleanup()
+            self._health_monitor.cleanup(delete_repairs=removed)
         else:
             # Options updates can replace an Area before its lazy monitor is
             # accessed. Withdraw any findings its previous instance reported.
-            self.coordinator.sensor_health_repairs.remove_area(
-                self.config.area_id or self.area_name
-            )
+            area_key = self.config.area_id or self.area_name
+            self.coordinator.sensor_health_repairs.remove_area(area_key)
+            if removed:
+                # Repairs kept from an earlier unload (#683) have no monitor
+                # in memory to delete them.
+                delete_pipeline_repairs(self.coordinator.hass, area_key)
         await self.entities.cleanup()
         self.purpose.cleanup()
 

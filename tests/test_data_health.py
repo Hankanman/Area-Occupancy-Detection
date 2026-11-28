@@ -2576,6 +2576,68 @@ class TestFirstSeenSurvivesARestart:
         assert issue.duration_hours == 0.0
 
 
+class TestPipelineRepairAge:
+    """A repair reports the age of its current occurrence (#683)."""
+
+    CALL = TestPipelineIssuesKeepTheirFirstSeenTime.CALL
+
+    async def test_an_ignored_repair_that_recurs_starts_again(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        monitor = HealthMonitor("Bedroom", "bedroom", hass)
+        first = monitor.check_pipeline_health(**self.CALL)[0]
+        issue_id = _issue_id("bedroom", None, HealthIssueType.PRIOR_ABOVE_THRESHOLD)
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+
+        freezer.tick(timedelta(hours=2))
+        assert monitor.check_pipeline_health(**{**self.CALL, "peak_prior": None}) == []
+        registry = ir.async_get(hass)
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None  # Ignore kept
+
+        freezer.tick(timedelta(hours=5))
+        again = monitor.check_pipeline_health(**self.CALL)[0]
+
+        # Before: since was the first occurrence and the age 7 h, healthy gap
+        # included.
+        assert again.since > first.since
+        assert again.duration_hours == 0.0
+        assert registry.async_get_issue(DOMAIN, issue_id).dismissed_version
+
+        freezer.tick(timedelta(hours=1))
+        later = monitor.check_pipeline_health(**self.CALL)[0]
+        assert later.since == again.since
+        assert later.duration_hours == pytest.approx(1.0, abs=0.1)
+
+    async def test_an_unload_keeps_the_repair_and_its_age(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        before = HealthMonitor("Bedroom", "bedroom", hass)
+        first = before.check_pipeline_health(**self.CALL)[0]
+        issue_id = _issue_id("bedroom", None, HealthIssueType.PRIOR_ABOVE_THRESHOLD)
+
+        before.cleanup(delete_repairs=False)
+        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+        freezer.tick(timedelta(hours=4))
+        after = HealthMonitor("Bedroom", "bedroom", hass)
+        again = after.check_pipeline_health(**self.CALL)[0]
+
+        # Before: the unload deleted the repair, so the age restarted at 0.
+        assert again.since == first.since
+        assert again.duration_hours == pytest.approx(4.0, abs=0.1)
+
+    async def test_removing_the_area_deletes_its_repairs(
+        self, hass: HomeAssistant
+    ) -> None:
+        monitor = HealthMonitor("Bedroom", "bedroom", hass)
+        monitor.check_pipeline_health(**self.CALL)
+        issue_id = _issue_id("bedroom", None, HealthIssueType.PRIOR_ABOVE_THRESHOLD)
+
+        monitor.cleanup()
+
+        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 class TestSharedSensorRepairs:
     """A shared input has one repair while each room retains its diagnosis."""
 

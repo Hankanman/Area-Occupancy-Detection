@@ -1682,7 +1682,7 @@ class AreaOccupancyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (HomeAssistantError, OSError, RuntimeError) as err:
             _LOGGER.warning("Failed to save sensor health Ignore choices: %s", err)
         for area in list(self.areas.values()):
-            await area.async_cleanup()
+            await area.async_cleanup(removed=False)
 
         # Step 8: Reset AllAreas and floor aggregators to release references to old areas
         # This must be done after areas are cleaned up to break circular references

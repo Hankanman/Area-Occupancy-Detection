@@ -59,7 +59,7 @@ from .const import (
     WASP_IN_BOX_DOCS_URL,
 )
 from .coordinator import AreaOccupancyCoordinator
-from .data.health import SensorHealthRepairs
+from .data.health import SensorHealthRepairs, delete_pipeline_repairs
 from .db.operations import delete_area_data as _delete_area_data
 from .db.schema import (
     AreaRelationships,
@@ -424,6 +424,13 @@ def _delete_db_file(db_path: Path) -> bool:
     return deleted_any
 
 
+def _delete_entry_pipeline_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the entry's pipeline repairs, which an unload keeps (#683)."""
+    for _, data in iter_area_subentries(entry):
+        if data.get(CONF_AREA_ID):
+            delete_pipeline_repairs(hass, str(data[CONF_AREA_ID]))
+
+
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of a config entry and clean up learned history.
 
@@ -435,6 +442,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     Home Assistant from completing the entry removal.
     """
     ir.async_delete_issue(hass, DOMAIN, WASP_IN_BOX_DEPRECATION_ISSUE)
+    _delete_entry_pipeline_repairs(hass, entry)
     _LOGGER.info(
         "Removing Area Occupancy config entry %s (cleaning up learned history)",
         entry.entry_id,

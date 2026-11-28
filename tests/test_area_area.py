@@ -208,6 +208,21 @@ class TestAreaMethods:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("removed", [True, False], ids=["removed", "unloaded"])
+    async def test_async_cleanup_keeps_repairs_on_unload(
+        self, default_area: Area, removed: bool
+    ) -> None:
+        """Only removing the area deletes its pipeline repairs (#683)."""
+        monitor = default_area.health_monitor
+        with (
+            patch.object(monitor, "cleanup") as mock_monitor_cleanup,
+            patch.object(default_area.entities, "cleanup", new_callable=AsyncMock),
+        ):
+            await default_area.async_cleanup(removed=removed)
+
+        mock_monitor_cleanup.assert_called_once_with(delete_repairs=removed)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "prior_is_none", [False, True], ids=["with_prior", "no_prior"]
     )
