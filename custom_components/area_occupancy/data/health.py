@@ -250,6 +250,18 @@ def stuck_active_threshold(
     return timedelta(seconds=base.total_seconds() * multiplier)
 
 
+def delete_pipeline_repairs(hass: HomeAssistant, area_id: str) -> None:
+    """Delete every stored pipeline repair for ``area_id``.
+
+    An unload keeps them (#683), so removing an area or the integration has
+    to delete them even when no monitor for the area is in memory.
+    """
+    prefix = f"pipeline_health_{area_id}_"
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(prefix):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
 def _issue_id(area_id: str, entity_id: str | None, issue_type: HealthIssueType) -> str:
     """Build a repair ID, shared across areas for sensor issues.
 
@@ -582,6 +594,11 @@ class HealthMonitor:
         # Until it has, the monitor knows nothing about pipeline issues, so a
         # sensor check must not resolve the ones stored from before a restart.
         self._pipeline_checked: bool = False
+        # Ignored pipeline repairs whose condition has cleared. They stay in
+        # the registry (deleting one drops the Ignore), so a recurrence must
+        # not take its start from the registry entry. In memory only: after a
+        # restart the first pipeline check refills it.
+        self._cleared_ignored_ids: set[str] = set()
 
     def _load_existing_issue_ids(self) -> set[str]:
         """Load existing repair issue IDs for this area from the HA issue registry.
@@ -803,17 +820,21 @@ class HealthMonitor:
         for entity in entities.values():
             entity.stuck_since = stuck.get(entity.entity_id)
 
-    def cleanup(self) -> None:
-        """Remove all repair issues for this area.
+    def cleanup(self, *, delete_repairs: bool = True) -> None:
+        """Release this monitor and, by default, remove the area's repairs.
 
-        Call when the area is unloaded, removed, or the integration shuts down
-        to prevent orphaned repair entries.
+        Call when the area is removed, unloaded or the integration shuts down.
+        On an unload or shutdown pass ``delete_repairs=False``: the pipeline
+        repairs stay in the registry, so after a reload a continuing repair
+        keeps its age instead of starting again (#683). The next pipeline
+        check resolves any that have cleared in the meantime.
         """
         self._sensor_repairs.remove_area(self._area_id)
-        for issue_id in self._active_issue_ids:
-            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        if delete_repairs:
+            for issue_id in self._active_issue_ids:
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
 
-        if self._active_issue_ids:
+        if delete_repairs and self._active_issue_ids:
             _LOGGER.debug(
                 "Cleaned up %d health repair issue(s) for area '%s'",
                 len(self._active_issue_ids),
@@ -935,6 +956,14 @@ class HealthMonitor:
             )
             for issue in new_issues
         ]
+        # An ignored repair that cleared stays in the registry to keep the
+        # Ignore, so its ``created`` time belongs to the earlier occurrence.
+        # A recurrence starts counting from now (#683).
+        for issue in new_issues:
+            if issue.issue_type in _PIPELINE_ISSUE_TYPES:
+                self._cleared_ignored_ids.discard(
+                    _issue_id(self._area_id, None, issue.issue_type)
+                )
 
         self._issues = new_issues
         self._update_repair_issues()
@@ -944,9 +973,10 @@ class HealthMonitor:
         """When the repair for ``issue`` was first raised, if one is stored."""
         if issue.issue_type not in _PIPELINE_ISSUE_TYPES:
             return None
-        entry = ir.async_get(self._hass).async_get_issue(
-            DOMAIN, _issue_id(self._area_id, None, issue.issue_type)
-        )
+        issue_id = _issue_id(self._area_id, None, issue.issue_type)
+        if issue_id in self._cleared_ignored_ids:
+            return None  # A new occurrence, not the one the registry recorded
+        entry = ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id)
         return entry.created if entry is not None else None
 
     @staticmethod
@@ -1509,6 +1539,7 @@ class HealthMonitor:
         # choice. Keep tracking it so a recurrence is not announced as new.
         candidate_ids = self._active_issue_ids - current_issue_ids
         ignored_ids = {i for i in candidate_ids if self._is_ignored(i)}
+        self._cleared_ignored_ids |= ignored_ids
         resolved_ids = candidate_ids - ignored_ids
         for resolved_id in resolved_ids:
             ir.async_delete_issue(self._hass, DOMAIN, resolved_id)
