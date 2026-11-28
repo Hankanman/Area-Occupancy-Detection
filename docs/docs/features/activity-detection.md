@@ -36,6 +36,21 @@ Each activity definition contains a list of **indicators** — sensor types with
       2. Purpose specificity (fewer allowed purposes = more specific)
       3. Highest matched evidence weight
 
+### TV or music?
+
+Media players are told apart by their Home Assistant device class: `tv` counts as watching TV, `speaker` as listening to music, and `receiver` as either. A soundbar playing from its TV input counts as TV. A media player with no device class (an Apple TV, some TVs) counts as TV.
+
+If a player is still detected wrongly, set its class in `configuration.yaml`. Media players have no **Show as** option in the UI:
+
+```yaml
+homeassistant:
+  customize:
+    media_player.kitchen_speaker:
+      device_class: speaker
+```
+
+Restart Home Assistant afterwards; the class appears on the entity's next state update.
+
 ### Environmental Indicators
 
 Some indicators check whether an environmental sensor reading is **elevated** or **suppressed** relative to learned Gaussian parameters, rather than using hardcoded thresholds. For example, the "Showering" activity checks for elevated humidity — what counts as "elevated" is learned from historical data specific to your home.

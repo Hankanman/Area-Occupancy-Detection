@@ -424,12 +424,17 @@ def _effective_device_class(indicator: Indicator, entity: Entity) -> str | None:
     indicators, so WATCHING_TV vs LISTENING_TO_MUSIC scoring reflects
     what's really happening rather than the device_class HA reports for
     the hardware.
+
+    A media_player with no device class (Apple TV and some TVs set none) is
+    treated as "tv" too. Matching neither activity left the choice to motion,
+    which weighs more in LISTENING_TO_MUSIC, so a playing Apple TV read as
+    music (#696). A speaker still needs ``device_class: speaker``.
     """
     device_class = entity.ha_device_class
-    if (
-        indicator.input_type == InputType.MEDIA
-        and device_class == "speaker"
-        and entity.media_is_tv_source
+    if indicator.input_type != InputType.MEDIA:
+        return device_class
+    if device_class is None or (
+        device_class == "speaker" and entity.media_is_tv_source
     ):
         return "tv"
     return device_class

@@ -864,15 +864,30 @@ class TestDeviceClassFiltering:
             ActivityId.LISTENING_TO_MUSIC,
         )
 
-    def test_media_without_device_class_matches_no_filtered_activity(self) -> None:
-        """Media entity with no device_class should not match filtered indicators."""
+    @pytest.mark.parametrize(
+        ("motion_on", "expected_confidence"),
+        [
+            # Media 0.6 + motion 0.1, over the definition's total weight 1.0.
+            (True, 0.7),
+            # Media 0.6 alone.
+            (False, 0.6),
+        ],
+    )
+    def test_media_without_device_class_is_watching_tv(
+        self, motion_on: bool, expected_confidence: float
+    ) -> None:
+        """A playing media_player with no device class reads as TV (#696).
+
+        Before, it matched neither TV nor music, so motion (0.2 in music,
+        0.1 in TV) decided and a playing Apple TV read as music.
+        """
         media = _make_entity(
-            "media_player.unknown",
+            "media_player.apple_tv",
             InputType.MEDIA,
             evidence=True,
             ha_device_class=None,
         )
-        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=motion_on)
 
         area = _make_area(
             purpose=AreaPurpose.SOCIAL,
@@ -882,12 +897,28 @@ class TestDeviceClassFiltering:
             },
         )
         result = detect_activity(area)
-        # None device_class doesn't match {"tv","receiver"} or {"speaker","receiver"}.
-        # Neither watching_tv nor listening_to_music should trigger.
-        assert result.activity_id not in (
-            ActivityId.WATCHING_TV,
-            ActivityId.LISTENING_TO_MUSIC,
+        assert result.activity_id == ActivityId.WATCHING_TV
+        assert result.confidence == pytest.approx(expected_confidence)
+
+    def test_media_without_device_class_is_not_music(self) -> None:
+        """An unclassed media_player is not music evidence; a speaker still is."""
+        media = _make_entity(
+            "media_player.apple_tv",
+            InputType.MEDIA,
+            evidence=True,
+            ha_device_class=None,
         )
+        motion = _make_entity("binary_sensor.m1", InputType.MOTION, evidence=True)
+
+        area = _make_area(
+            purpose=AreaPurpose.WORKING,  # music is allowed here, TV is not
+            entities_by_type={
+                InputType.MEDIA: [media],
+                InputType.MOTION: [motion],
+            },
+        )
+        result = detect_activity(area)
+        assert result.activity_id != ActivityId.LISTENING_TO_MUSIC
 
 
 # ─── Speaker Relaying TV Audio (media_is_tv_source) ──────────────────
